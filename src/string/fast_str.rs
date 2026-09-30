@@ -139,6 +139,7 @@ impl<'a> FastStr<'a> {
 
     /// Get a substring starting at `start` with length `len`
     pub fn substring(&self, start: usize, len: usize) -> FastStr<'a> {
+        let start = start.min(self.data.len());
         let end = start.saturating_add(len).min(self.data.len());
         FastStr::new(&self.data[start..end])
     }
@@ -200,7 +201,8 @@ impl<'a> FastStr<'a> {
         // Use AVX-512 accelerated search for larger patterns when available
         #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
         {
-            if needle.len() >= 4
+            if !cfg!(miri)
+                && needle.len() >= 4
                 && self.len() >= 64
                 && is_x86_feature_detected!("avx512f")
                 && is_x86_feature_detected!("avx512bw")
@@ -223,11 +225,12 @@ impl<'a> FastStr<'a> {
     pub fn find_byte_optimized(&self, byte: u8) -> Option<usize> {
         #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
         {
-            if self.len() >= 64
+            if !cfg!(miri)
+                && self.len() >= 64
                 && is_x86_feature_detected!("avx512f")
                 && is_x86_feature_detected!("avx512bw")
             {
-                // SAFETY: AVX-512 feature detected at runtime
+                // SAFETY: AVX-512F and AVX-512BW features detected at runtime
                 return unsafe { self.find_byte_avx512(byte) };
             }
         }
@@ -242,13 +245,20 @@ impl<'a> FastStr<'a> {
     /// on large text processing workloads.
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     fn find_avx512(&self, needle: FastStr) -> Option<usize> {
-        // SAFETY: AVX-512 feature detected at runtime in caller
+        // SAFETY: AVX-512F and AVX-512BW features detected at runtime in caller
         unsafe { self.find_avx512_impl(needle) }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports `avx512f` and `avx512bw`.
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-    #[target_feature(enable = "avx512f")]
+    #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn find_avx512_impl(&self, needle: FastStr) -> Option<usize> {
+        use std::arch::x86_64::{
+            __m512i, _mm512_cmpeq_epi8_mask, _mm512_loadu_si512, _mm512_set1_epi8,
+        };
+
         let haystack = self.data;
         let needle_data = needle.data;
 
@@ -256,31 +266,34 @@ impl<'a> FastStr<'a> {
             return None;
         }
 
-        let _first_byte = needle_data[0];
+        let first_vec = _mm512_set1_epi8(needle_data[0] as i8);
         let needle_len = needle_data.len();
-
-        // Use AVX-512 to find potential first byte matches
         let search_end = haystack.len() - needle_len + 1;
         let mut i = 0;
 
-        // Process large chunks efficiently with AVX-512 acceleration
-        while i + 64 <= search_end {
-            // Process 64 bytes at a time
-            let chunk_end = (i + 64).min(search_end);
+        while i + 64 <= haystack.len() && i < search_end {
+            // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], i + 64 <= haystack.len()
+            let mask = unsafe {
+                let chunk = _mm512_loadu_si512(haystack[i..].as_ptr() as *const __m512i);
+                _mm512_cmpeq_epi8_mask(chunk, first_vec)
+            };
 
-            // Check for needle in this chunk
-            for pos in i..chunk_end {
-                if pos + needle_len <= haystack.len()
-                    && &haystack[pos..pos + needle_len] == needle_data
-                {
+            let mut m = mask;
+            while m != 0 {
+                let bit = m.trailing_zeros() as usize;
+                let pos = i + bit;
+                if pos >= search_end {
+                    break;
+                }
+                if &haystack[pos..pos + needle_len] == needle_data {
                     return Some(pos);
                 }
+                m &= m - 1;
             }
 
             i += 64;
         }
 
-        // Handle remaining bytes with standard search
         for pos in i..search_end {
             if &haystack[pos..pos + needle_len] == needle_data {
                 return Some(pos);
@@ -291,24 +304,33 @@ impl<'a> FastStr<'a> {
     }
 
     /// AVX-512 accelerated single byte search
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports `avx512f` and `avx512bw`.
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-    #[target_feature(enable = "avx512f")]
+    #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn find_byte_avx512(&self, byte: u8) -> Option<usize> {
+        use std::arch::x86_64::{
+            __m512i, _mm512_cmpeq_epi8_mask, _mm512_loadu_si512, _mm512_set1_epi8,
+        };
+
         let data = self.data;
+        let target = _mm512_set1_epi8(byte as i8);
         let mut i = 0;
 
-        // Process 64 bytes at a time using AVX-512 (simplified implementation)
         while i + 64 <= data.len() {
-            // Check 64 bytes for the target byte
-            for j in 0..64 {
-                if data[i + j] == byte {
-                    return Some(i + j);
-                }
+            // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], i + 64 <= data.len()
+            let mask = unsafe {
+                let chunk = _mm512_loadu_si512(data[i..].as_ptr() as *const __m512i);
+                _mm512_cmpeq_epi8_mask(chunk, target)
+            };
+            if mask != 0 {
+                return Some(i + mask.trailing_zeros() as usize);
             }
             i += 64;
         }
 
-        // Handle remaining bytes
         (i..data.len()).find(|&pos| data[pos] == byte)
     }
 
@@ -364,15 +386,20 @@ impl<'a> FastStr<'a> {
             // Runtime CPU feature detection with AVX-512 support
             #[cfg(feature = "avx512")]
             {
-                if is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") {
+                if !cfg!(miri)
+                    && is_x86_feature_detected!("avx512f")
+                    && is_x86_feature_detected!("avx512bw")
+                {
                     return self.hash_avx512();
                 }
             }
 
             if is_x86_feature_detected!("avx2") {
-                self.hash_avx2()
+                // SAFETY: AVX2 verified via is_x86_feature_detected!("avx2")
+                unsafe { self.hash_avx2() }
             } else if is_x86_feature_detected!("sse2") {
-                self.hash_sse2()
+                // SAFETY: SSE2 verified via is_x86_feature_detected!("sse2")
+                unsafe { self.hash_sse2() }
             } else {
                 self.hash_fallback()
             }
@@ -392,9 +419,13 @@ impl<'a> FastStr<'a> {
         }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports `avx2`.
     #[cfg(target_arch = "x86_64")]
-    fn hash_avx2(&self) -> u64 {
-        // SAFETY: AVX2 guaranteed by runtime detection in hash() caller, pointer valid from slice
+    #[target_feature(enable = "avx2")]
+    unsafe fn hash_avx2(&self) -> u64 {
+        // SAFETY: AVX2 guaranteed by #[target_feature] and caller runtime check, pointer valid from slice
         unsafe {
             let data = self.data;
             let mut h = 2134173u64.wrapping_add(data.len() as u64 * 31);
@@ -402,8 +433,6 @@ impl<'a> FastStr<'a> {
             // AVX2 can process 32 bytes at a time
             let chunks_32 = data.chunks_exact(32);
             let remainder_after_32 = chunks_32.remainder();
-
-            // Note: We could use SIMD for parallel mixing operations in the future
 
             // Process 32-byte chunks with AVX2
             for chunk in chunks_32 {
@@ -433,7 +462,9 @@ impl<'a> FastStr<'a> {
             let final_remainder = chunks_8.remainder();
 
             for chunk in chunks_8 {
-                let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
+                let word = u64::from_le_bytes([
+                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+                ]);
                 h = h.wrapping_add(word);
                 h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
                 h ^= h >> 30;
@@ -448,9 +479,13 @@ impl<'a> FastStr<'a> {
         }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports `sse2`.
     #[cfg(target_arch = "x86_64")]
-    fn hash_sse2(&self) -> u64 {
-        // SAFETY: SSE2 guaranteed by runtime detection in hash() caller, pointer valid from slice
+    #[target_feature(enable = "sse2")]
+    unsafe fn hash_sse2(&self) -> u64 {
+        // SAFETY: SSE2 guaranteed by #[target_feature] and caller runtime check, pointer valid from slice
         unsafe {
             let data = self.data;
             let mut h = 2134173u64.wrapping_add(data.len() as u64 * 31);
@@ -487,7 +522,9 @@ impl<'a> FastStr<'a> {
             let final_remainder = chunks_8.remainder();
 
             for chunk in chunks_8 {
-                let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
+                let word = u64::from_le_bytes([
+                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+                ]);
                 h = h.wrapping_add(word);
                 h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
                 h ^= h >> 30;
@@ -520,6 +557,9 @@ impl<'a> FastStr<'a> {
         unsafe { self.hash_avx512_impl() }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports `avx512f`.
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     #[target_feature(enable = "avx512f")]
     unsafe fn hash_avx512_impl(&self) -> u64 {
@@ -585,7 +625,9 @@ impl<'a> FastStr<'a> {
         let final_remainder = chunks_8.remainder();
 
         for chunk in chunks_8 {
-            let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
+            let word = u64::from_le_bytes([
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ]);
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
             h ^= h >> 30;
@@ -615,6 +657,9 @@ impl<'a> FastStr<'a> {
         unsafe { self.hash_neon_impl() }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports `neon`.
     #[cfg(target_arch = "aarch64")]
     #[target_feature(enable = "neon")]
     unsafe fn hash_neon_impl(&self) -> u64 {
@@ -664,7 +709,9 @@ impl<'a> FastStr<'a> {
         let final_remainder = chunks_8.remainder();
 
         for chunk in chunks_8 {
-            let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
+            let word = u64::from_le_bytes([
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ]);
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
             h ^= h >> 30;
@@ -687,7 +734,9 @@ impl<'a> FastStr<'a> {
         let remainder = chunks.remainder();
 
         for chunk in chunks {
-            let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
+            let word = u64::from_le_bytes([
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ]);
             // Improved mixing for better avalanche effect
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64); // Golden ratio based multiplier
@@ -714,7 +763,9 @@ impl<'a> FastStr<'a> {
         let final_remainder = chunks.remainder();
 
         for chunk in chunks {
-            let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
+            let word = u64::from_le_bytes([
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ]);
             // Use same improved mixing as main algorithm
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
@@ -1212,7 +1263,8 @@ mod tests {
             #[cfg(target_arch = "x86_64")]
             {
                 if is_x86_feature_detected!("sse2") {
-                    let sse2_hash = fs.hash_sse2();
+                    // SAFETY: SSE2 support is verified by `is_x86_feature_detected!("sse2")`.
+                    let sse2_hash = unsafe { fs.hash_sse2() };
                     assert_eq!(
                         fallback_hash,
                         sse2_hash,
@@ -1223,7 +1275,8 @@ mod tests {
                 }
 
                 if is_x86_feature_detected!("avx2") {
-                    let avx2_hash = fs.hash_avx2();
+                    // SAFETY: AVX2 support is verified by `is_x86_feature_detected!("avx2")`.
+                    let avx2_hash = unsafe { fs.hash_avx2() };
                     assert_eq!(
                         fallback_hash,
                         avx2_hash,
@@ -1412,5 +1465,44 @@ mod tests {
         let null_hash = null_fs.hash_fast();
         let null_fallback = null_fs.hash_fallback();
         assert_eq!(null_hash, null_fallback);
+    }
+
+    #[test]
+    fn test_c8_3_fast_str_substring_past_end_and_simd_tier_equivalence() {
+        let s = FastStr::from_string("abc");
+        // Previously `s.substring(5, 2)` panicked with `slice index starts at 5 but ends at 3`.
+        assert_eq!(s.substring(5, 2), FastStr::from_string(""));
+        assert_eq!(s.substring(usize::MAX, 10), FastStr::from_string(""));
+        assert_eq!(s.substring(2, 10), FastStr::from_string("c"));
+
+        // Verify SIMD hash and search tiers match fallback across lengths 0..=128.
+        for len in [0usize, 1, 7, 8, 15, 16, 24, 31, 32, 40, 63, 64, 72, 96, 128] {
+            let mut buf: Vec<u8> = (0..len).map(|i| b'a' + (i % 26) as u8).collect();
+            if len >= 4 {
+                let mid = len / 2;
+                buf[mid] = 0x00;
+            }
+            let fs = FastStr::new(&buf);
+            let expected_hash = fs.hash_fallback();
+            assert_eq!(fs.hash_fast(), expected_hash, "hash_fast mismatch at len={len}");
+            #[cfg(target_arch = "x86_64")]
+            {
+                if is_x86_feature_detected!("sse2") {
+                    assert_eq!(unsafe { fs.hash_sse2() }, expected_hash);
+                }
+                if is_x86_feature_detected!("avx2") {
+                    assert_eq!(unsafe { fs.hash_avx2() }, expected_hash);
+                }
+                #[cfg(feature = "avx512")]
+                if !cfg!(miri)
+                    && is_x86_feature_detected!("avx512f")
+                    && is_x86_feature_detected!("avx512bw")
+                {
+                    assert_eq!(fs.hash_avx512(), expected_hash);
+                }
+            }
+            assert_eq!(fs.find_byte_optimized(0x00), fs.find_byte(0x00));
+            assert_eq!(fs.find_byte_optimized(b'z'), fs.find_byte(b'z'));
+        }
     }
 }

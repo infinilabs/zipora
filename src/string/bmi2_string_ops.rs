@@ -55,7 +55,7 @@ impl Bmi2StringProcessor {
 
     /// Check if BMI2 acceleration is available
     pub fn is_bmi2_available(&self) -> bool {
-        self.capabilities.has_bmi2
+        self.capabilities.has_bmi1 && self.capabilities.has_bmi2
     }
 
     /// Get BMI2 capabilities
@@ -74,8 +74,8 @@ impl Bmi2StringProcessor {
     pub fn validate_utf8_bmi2(&self, input: &[u8]) -> bool {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && input.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice
+            if self.is_bmi2_available() && input.len() >= 8 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), input is valid slice
                 return unsafe { self.validate_utf8_bmi2_impl(input) };
             }
         }
@@ -91,8 +91,8 @@ impl Bmi2StringProcessor {
     pub fn count_utf8_chars_bmi2(&self, input: &[u8]) -> Result<usize> {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && input.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice
+            if self.is_bmi2_available() && input.len() >= 8 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), input is valid slice
                 return unsafe { self.count_utf8_chars_bmi2_impl(input) };
             }
         }
@@ -111,8 +111,8 @@ impl Bmi2StringProcessor {
     pub fn extract_utf8_chars_bmi2(&self, input: &[u8]) -> Result<Vec<u32>> {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && input.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice
+            if self.is_bmi2_available() && input.len() >= 8 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), input is valid slice
                 return unsafe { self.extract_utf8_chars_bmi2_impl(input) };
             }
         }
@@ -131,8 +131,8 @@ impl Bmi2StringProcessor {
     pub fn utf8_to_utf16_bmi2(&self, input: &[u8]) -> Result<Vec<u16>> {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && input.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice
+            if self.is_bmi2_available() && input.len() >= 8 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), input is valid slice
                 return unsafe { self.utf8_to_utf16_bmi2_impl(input) };
             }
         }
@@ -162,8 +162,8 @@ impl Bmi2StringProcessor {
 
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && haystack.len() >= 16 && needle.len() >= 4 {
-                // SAFETY: bmi2 guaranteed by runtime check, haystack and needle are valid slices from str
+            if self.is_bmi2_available() && haystack.len() >= 16 && needle.len() >= 4 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), haystack and needle are valid slices from str
                 return unsafe { self.search_bmi2_impl(haystack.as_bytes(), needle.as_bytes()) };
             }
         }
@@ -179,8 +179,13 @@ impl Bmi2StringProcessor {
     pub fn wildcard_match_bmi2(&self, text: &str, pattern: &str) -> bool {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && text.len() >= 8 && pattern.len() >= 4 {
-                // SAFETY: bmi2 guaranteed by runtime check, text and pattern are valid slices from str
+            if self.is_bmi2_available()
+                && text.len() >= 8
+                && pattern.len() >= 4
+                && text.is_ascii()
+                && pattern.is_ascii()
+            {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), text and pattern are valid slices from str
                 return unsafe {
                     self.wildcard_match_bmi2_impl(text.as_bytes(), pattern.as_bytes())
                 };
@@ -198,8 +203,8 @@ impl Bmi2StringProcessor {
     pub fn char_class_match_bmi2(&self, text: &str, char_classes: &[CharClass]) -> Vec<bool> {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && text.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, text is valid slice from str
+            if self.is_bmi2_available() && text.len() >= 8 && text.is_ascii() {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), text is valid ASCII slice from str
                 return unsafe { self.char_class_match_bmi2_impl(text.as_bytes(), char_classes) };
             }
         }
@@ -223,14 +228,17 @@ impl Bmi2StringProcessor {
         let text_bytes = text.as_bytes();
 
         for &(start, len) in ranges {
-            if start + len > text.len() {
+            let Some(end) = start.checked_add(len) else {
+                return Err(ZiporaError::invalid_data("Substring range out of bounds"));
+            };
+            if end > text.len() {
                 return Err(ZiporaError::invalid_data("Substring range out of bounds"));
             }
 
             #[cfg(target_arch = "x86_64")]
             {
-                if self.capabilities.has_bmi2 && len >= 8 {
-                    // SAFETY: bmi2 guaranteed by runtime check, text_bytes is valid slice, bounds checked above
+                if self.is_bmi2_available() && len >= 8 {
+                    // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), text_bytes is valid slice, bounds checked above
                     let substring =
                         unsafe { self.extract_substring_bmi2_impl(text_bytes, start, len)? };
                     results.push(substring);
@@ -238,9 +246,11 @@ impl Bmi2StringProcessor {
                 }
             }
 
-            // Fallback to standard substring extraction
-            let substring = text[start..start + len].to_string();
-            results.push(substring);
+            // Fallback to standard substring extraction with UTF-8 boundary check
+            match std::str::from_utf8(&text_bytes[start..end]) {
+                Ok(s) => results.push(s.to_string()),
+                Err(_) => return Err(ZiporaError::invalid_data("Invalid UTF-8 in substring")),
+            }
         }
 
         Ok(results)
@@ -257,8 +267,8 @@ impl Bmi2StringProcessor {
     pub fn to_lowercase_ascii_bmi2(&self, input: &str) -> String {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && input.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
+            if self.is_bmi2_available() && input.len() >= 8 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), input is valid slice from str
                 return unsafe { self.to_lowercase_ascii_bmi2_impl(input.as_bytes()) };
             }
         }
@@ -274,8 +284,8 @@ impl Bmi2StringProcessor {
     pub fn to_uppercase_ascii_bmi2(&self, input: &str) -> String {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && input.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
+            if self.is_bmi2_available() && input.len() >= 8 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), input is valid slice from str
                 return unsafe { self.to_uppercase_ascii_bmi2_impl(input.as_bytes()) };
             }
         }
@@ -291,8 +301,8 @@ impl Bmi2StringProcessor {
     pub fn filter_chars_bmi2(&self, input: &str, filter: CharFilter) -> String {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && input.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
+            if self.is_bmi2_available() && input.len() >= 8 && input.is_ascii() {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), input is valid ASCII slice from str
                 return unsafe { self.filter_chars_bmi2_impl(input.as_bytes(), filter) };
             }
         }
@@ -308,8 +318,8 @@ impl Bmi2StringProcessor {
     pub fn hash_string_bmi2(&self, input: &str, seed: u64) -> u64 {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && input.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
+            if self.is_bmi2_available() && input.len() >= 8 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), input is valid slice from str
                 return unsafe { self.hash_string_bmi2_impl(input.as_bytes(), seed) };
             }
         }
@@ -329,8 +339,8 @@ impl Bmi2StringProcessor {
     pub fn detect_runs_bmi2(&self, input: &str) -> Vec<CharRun> {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && input.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
+            if self.is_bmi2_available() && input.len() >= 8 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), input is valid slice from str
                 return unsafe { self.detect_runs_bmi2_impl(input.as_bytes()) };
             }
         }
@@ -346,8 +356,8 @@ impl Bmi2StringProcessor {
     pub fn analyze_compression_bmi2(&self, input: &str) -> CompressionAnalysis {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && input.len() >= 16 {
-                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
+            if self.is_bmi2_available() && input.len() >= 16 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), input is valid slice from str
                 return unsafe { self.analyze_compression_bmi2_impl(input.as_bytes()) };
             }
         }
@@ -367,8 +377,8 @@ impl Bmi2StringProcessor {
     ) -> Vec<DictionaryMatch> {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && text.len() >= 8 {
-                // SAFETY: bmi2 guaranteed by runtime check, text is valid slice from str
+            if self.is_bmi2_available() && text.len() >= 8 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), text is valid slice from str
                 return unsafe { self.dictionary_lookup_bmi2_impl(text.as_bytes(), dictionary) };
             }
         }
@@ -388,8 +398,8 @@ impl Bmi2StringProcessor {
     pub fn validate_bulk_bmi2(&self, strings: &[&str]) -> Vec<bool> {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && strings.len() >= 4 {
-                // SAFETY: bmi2 guaranteed by runtime check, strings is valid slice of str references
+            if self.is_bmi2_available() && strings.len() >= 4 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), strings is valid slice of str references
                 return unsafe { self.validate_bulk_bmi2_impl(strings) };
             }
         }
@@ -408,8 +418,8 @@ impl Bmi2StringProcessor {
     pub fn hash_bulk_bmi2(&self, strings: &[&str], seed: u64) -> Vec<u64> {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && strings.len() >= 4 {
-                // SAFETY: bmi2 guaranteed by runtime check, strings is valid slice of str references
+            if self.is_bmi2_available() && strings.len() >= 4 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), strings is valid slice of str references
                 return unsafe { self.hash_bulk_bmi2_impl(strings, seed) };
             }
         }
@@ -428,8 +438,8 @@ impl Bmi2StringProcessor {
     pub fn compare_bulk_bmi2(&self, pairs: &[(&str, &str)]) -> Vec<bool> {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.capabilities.has_bmi2 && pairs.len() >= 4 {
-                // SAFETY: bmi2 guaranteed by runtime check, pairs is valid slice of str reference tuples
+            if self.is_bmi2_available() && pairs.len() >= 4 {
+                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), pairs is valid slice of str reference tuples
                 return unsafe { self.compare_bulk_bmi2_impl(pairs) };
             }
         }
@@ -643,71 +653,48 @@ impl Bmi2StringProcessor {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn wildcard_match_bmi2_impl(&self, text: &[u8], pattern: &[u8]) -> bool {
-        // Simplified wildcard matching with BMI2 acceleration
-        // Supports * and ? wildcards
-
         let mut text_idx = 0;
         let mut pattern_idx = 0;
+        let mut star_idx: Option<usize> = None;
+        let mut match_idx = 0;
 
-        while pattern_idx < pattern.len() && text_idx < text.len() {
-            match pattern[pattern_idx] {
-                b'*' => {
-                    // Skip consecutive asterisks
-                    while pattern_idx < pattern.len() && pattern[pattern_idx] == b'*' {
-                        pattern_idx += 1;
-                    }
+        let read_byte_bmi2 = |slice: &[u8], idx: usize| -> u8 {
+            if idx + 8 <= slice.len() {
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, idx + 8 <= len checked
+                let chunk =
+                    unsafe { std::ptr::read_unaligned(slice.as_ptr().add(idx) as *const u64) };
+                Bmi2BextrOps::extract_bits_bextr(chunk, 0, 8) as u8
+            } else {
+                slice[idx]
+            }
+        };
 
-                    if pattern_idx == pattern.len() {
-                        return true; // Pattern ends with *, matches everything
-                    }
-
-                    // Find next matching character using BMI2
-                    let next_char = pattern[pattern_idx];
-                    while text_idx < text.len() {
-                        let current_char = if text_idx + 8 <= text.len() {
-                            // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, text_idx + 8 <= len checked
-                            let chunk = unsafe {
-                                std::ptr::read_unaligned(text.as_ptr().add(text_idx) as *const u64)
-                            };
-                            Bmi2BextrOps::extract_bits_bextr(chunk, 0, 8) as u8
-                        } else {
-                            text[text_idx]
-                        };
-
-                        if current_char == next_char {
-                            break;
-                        }
-                        text_idx += 1;
-                    }
-                }
-                b'?' => {
-                    // Single character wildcard
+        while text_idx < text.len() {
+            if pattern_idx < pattern.len() {
+                let pat_byte = read_byte_bmi2(pattern, pattern_idx);
+                if pat_byte == b'?' || pat_byte == read_byte_bmi2(text, text_idx) {
                     text_idx += 1;
                     pattern_idx += 1;
+                    continue;
                 }
-                c => {
-                    // Literal character match
-                    let text_char = if text_idx + 8 <= text.len() {
-                        // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, text_idx + 8 <= len checked
-                        let chunk = unsafe {
-                            std::ptr::read_unaligned(text.as_ptr().add(text_idx) as *const u64)
-                        };
-                        Bmi2BextrOps::extract_bits_bextr(chunk, 0, 8) as u8
-                    } else {
-                        text[text_idx]
-                    };
-
-                    if text_char != c {
-                        return false;
-                    }
-                    text_idx += 1;
+                if pat_byte == b'*' {
+                    star_idx = Some(pattern_idx);
+                    match_idx = text_idx;
                     pattern_idx += 1;
+                    continue;
                 }
+            }
+
+            if let Some(s_idx) = star_idx {
+                pattern_idx = s_idx + 1;
+                match_idx += 1;
+                text_idx = match_idx;
+            } else {
+                return false;
             }
         }
 
-        // Check if we consumed all of pattern
-        while pattern_idx < pattern.len() && pattern[pattern_idx] == b'*' {
+        while pattern_idx < pattern.len() && read_byte_bmi2(pattern, pattern_idx) == b'*' {
             pattern_idx += 1;
         }
 
@@ -774,7 +761,9 @@ impl Bmi2StringProcessor {
         start: usize,
         len: usize,
     ) -> Result<String> {
-        let end = start + len;
+        let Some(end) = start.checked_add(len) else {
+            return Err(ZiporaError::invalid_data("Substring range out of bounds"));
+        };
         if end > text.len() {
             return Err(ZiporaError::invalid_data("Substring range out of bounds"));
         }
@@ -881,7 +870,14 @@ impl Bmi2StringProcessor {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn filter_chars_bmi2_impl(&self, input: &[u8], filter: CharFilter) -> String {
-        let mut output = Vec::new();
+        if !input.is_ascii() {
+            return match std::str::from_utf8(input) {
+                Ok(s) => s.chars().filter(|&c| filter.matches(c)).collect(),
+                Err(_) => String::new(),
+            };
+        }
+
+        let mut output = Vec::with_capacity(input.len());
 
         for chunk in input.chunks(8) {
             if chunk.len() == 8 {
@@ -907,7 +903,7 @@ impl Bmi2StringProcessor {
             }
         }
 
-        // SAFETY: output bytes are filtered subset of input which is valid UTF-8 str
+        // SAFETY: input.is_ascii() was verified above, so every filtered byte is in 0x00..=0x7F (valid UTF-8)
         unsafe { String::from_utf8_unchecked(output) }
     }
 
@@ -1066,7 +1062,7 @@ impl Bmi2StringProcessor {
                 // Check if we have enough bytes for this entry
                 if remaining.len() >= entry.text.len() {
                     // Use BMI2 for accelerated comparison when possible
-                    let match_found = if entry.text.len() >= 8 && self.capabilities.has_bmi2 {
+                    let match_found = if entry.text.len() >= 8 && self.is_bmi2_available() {
                         // Use BMI2 for longer strings
                         self.compare_strings_bmi2(
                             remaining,
@@ -1207,44 +1203,48 @@ impl Bmi2StringProcessor {
                 *position += 1;
                 Some(first_byte as u32)
             }
-            0xC0..=0xDF => {
-                if *position + 1 < 4 {
-                    let second_byte = ((char_bytes >> 8) & 0xFF) as u8;
-                    *position += 2;
-                    Some(((first_byte as u32 & 0x1F) << 6) | (second_byte as u32 & 0x3F))
-                } else {
-                    None
+            0xC2..=0xDF => {
+                let second_byte = ((char_bytes >> 8) & 0xFF) as u8;
+                if (second_byte & 0xC0) != 0x80 {
+                    return None;
                 }
+                *position += 2;
+                Some(((first_byte as u32 & 0x1F) << 6) | (second_byte as u32 & 0x3F))
             }
             0xE0..=0xEF => {
-                if *position + 2 < 4 {
-                    let second_byte = ((char_bytes >> 8) & 0xFF) as u8;
-                    let third_byte = ((char_bytes >> 16) & 0xFF) as u8;
-                    *position += 3;
-                    Some(
-                        ((first_byte as u32 & 0x0F) << 12)
-                            | ((second_byte as u32 & 0x3F) << 6)
-                            | (third_byte as u32 & 0x3F),
-                    )
-                } else {
-                    None
+                let second_byte = ((char_bytes >> 8) & 0xFF) as u8;
+                let third_byte = ((char_bytes >> 16) & 0xFF) as u8;
+                if (second_byte & 0xC0) != 0x80 || (third_byte & 0xC0) != 0x80 {
+                    return None;
                 }
+                let cp = ((first_byte as u32 & 0x0F) << 12)
+                    | ((second_byte as u32 & 0x3F) << 6)
+                    | (third_byte as u32 & 0x3F);
+                if cp < 0x800 || (0xD800..=0xDFFF).contains(&cp) {
+                    return None;
+                }
+                *position += 3;
+                Some(cp)
             }
-            0xF0..=0xF7 => {
-                if *position + 3 < 4 {
-                    let second_byte = ((char_bytes >> 8) & 0xFF) as u8;
-                    let third_byte = ((char_bytes >> 16) & 0xFF) as u8;
-                    let fourth_byte = ((char_bytes >> 24) & 0xFF) as u8;
-                    *position += 4;
-                    Some(
-                        ((first_byte as u32 & 0x07) << 18)
-                            | ((second_byte as u32 & 0x3F) << 12)
-                            | ((third_byte as u32 & 0x3F) << 6)
-                            | (fourth_byte as u32 & 0x3F),
-                    )
-                } else {
-                    None
+            0xF0..=0xF4 => {
+                let second_byte = ((char_bytes >> 8) & 0xFF) as u8;
+                let third_byte = ((char_bytes >> 16) & 0xFF) as u8;
+                let fourth_byte = ((char_bytes >> 24) & 0xFF) as u8;
+                if (second_byte & 0xC0) != 0x80
+                    || (third_byte & 0xC0) != 0x80
+                    || (fourth_byte & 0xC0) != 0x80
+                {
+                    return None;
                 }
+                let cp = ((first_byte as u32 & 0x07) << 18)
+                    | ((second_byte as u32 & 0x3F) << 12)
+                    | ((third_byte as u32 & 0x3F) << 6)
+                    | (fourth_byte as u32 & 0x3F);
+                if !(0x10000..=0x10FFFF).contains(&cp) {
+                    return None;
+                }
+                *position += 4;
+                Some(cp)
             }
             _ => None,
         }
@@ -1321,44 +1321,39 @@ impl Bmi2StringProcessor {
     // =============================================================================
 
     fn wildcard_match_scalar(&self, text: &str, pattern: &str) -> bool {
-        // Basic wildcard matching implementation
         let text_chars: Vec<char> = text.chars().collect();
         let pattern_chars: Vec<char> = pattern.chars().collect();
 
-        self.wildcard_match_recursive(&text_chars, &pattern_chars, 0, 0)
-    }
+        let mut text_idx = 0;
+        let mut pattern_idx = 0;
+        let mut star_idx: Option<usize> = None;
+        let mut match_idx = 0;
 
-    fn wildcard_match_recursive(
-        &self,
-        text: &[char],
-        pattern: &[char],
-        text_idx: usize,
-        pattern_idx: usize,
-    ) -> bool {
-        if pattern_idx == pattern.len() {
-            return text_idx == text.len();
-        }
-
-        if text_idx == text.len() {
-            return pattern[pattern_idx..].iter().all(|&c| c == '*');
-        }
-
-        match pattern[pattern_idx] {
-            '*' => {
-                // Try matching zero or more characters
-                self.wildcard_match_recursive(text, pattern, text_idx, pattern_idx + 1)
-                    || self.wildcard_match_recursive(text, pattern, text_idx + 1, pattern_idx)
-            }
-            '?' => {
-                // Match any single character
-                self.wildcard_match_recursive(text, pattern, text_idx + 1, pattern_idx + 1)
-            }
-            c => {
-                // Match literal character
-                text[text_idx] == c
-                    && self.wildcard_match_recursive(text, pattern, text_idx + 1, pattern_idx + 1)
+        while text_idx < text_chars.len() {
+            if pattern_idx < pattern_chars.len()
+                && (pattern_chars[pattern_idx] == '?'
+                    || pattern_chars[pattern_idx] == text_chars[text_idx])
+            {
+                text_idx += 1;
+                pattern_idx += 1;
+            } else if pattern_idx < pattern_chars.len() && pattern_chars[pattern_idx] == '*' {
+                star_idx = Some(pattern_idx);
+                match_idx = text_idx;
+                pattern_idx += 1;
+            } else if let Some(s_idx) = star_idx {
+                pattern_idx = s_idx + 1;
+                match_idx += 1;
+                text_idx = match_idx;
+            } else {
+                return false;
             }
         }
+
+        while pattern_idx < pattern_chars.len() && pattern_chars[pattern_idx] == '*' {
+            pattern_idx += 1;
+        }
+
+        pattern_idx == pattern_chars.len()
     }
 
     fn detect_runs_scalar(&self, input: &str) -> Vec<CharRun> {
@@ -1450,8 +1445,18 @@ impl Bmi2StringProcessor {
     }
 
     fn hash_string_scalar(&self, input: &[u8], mut hash: u64) -> u64 {
-        for &byte in input {
-            hash = hash.rotate_left(5).wrapping_add(byte as u64);
+        for chunk in input.chunks(8) {
+            if chunk.len() == 8 {
+                let bytes = u64::from_le_bytes([
+                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+                ]);
+                hash = hash.rotate_left(5).wrapping_add(bytes);
+                hash ^= (hash >> 13) & ((1u64 << 19) - 1);
+            } else {
+                for &byte in chunk {
+                    hash = hash.rotate_left(5).wrapping_add(byte as u64);
+                }
+            }
         }
         hash
     }
@@ -1489,7 +1494,11 @@ pub enum CharClass {
 impl CharClass {
     /// Check if character matches this class
     pub fn matches(&self, c: char) -> bool {
-        self.matches_byte(c as u8)
+        if c.is_ascii() {
+            self.matches_byte(c as u8)
+        } else {
+            false
+        }
     }
 
     /// Check if byte matches this class (for ASCII)
@@ -1526,7 +1535,11 @@ pub enum CharFilter {
 impl CharFilter {
     /// Check if character matches the filter (should be kept)
     pub fn matches(&self, c: char) -> bool {
-        self.matches_byte(c as u8)
+        if c.is_ascii() {
+            self.matches_byte(c as u8)
+        } else {
+            matches!(self, CharFilter::NoWhitespace | CharFilter::RemoveChars(_))
+        }
     }
 
     /// Check if byte matches the filter (should be kept)
@@ -1959,5 +1972,91 @@ mod tests {
                 .unwrap(),
             1000
         );
+    }
+
+    #[test]
+    fn test_c8_2_bmi2_filter_chars_non_ascii_utf8_safety() {
+        let processor = Bmi2StringProcessor::new();
+        // 'é' is [0xC3, 0xA9]; previously KeepChars([0xC3, b'a']) or RemoveChars([0xA9])
+        // filtered raw UTF-8 bytes and passed invalid UTF-8 to String::from_utf8_unchecked.
+        let s = "éaaaaaaa";
+        let kept = processor.filter_chars_bmi2(s, CharFilter::KeepChars(vec![0xC3, b'a']));
+        assert!(std::str::from_utf8(kept.as_bytes()).is_ok());
+        assert_eq!(kept, "aaaaaaa");
+
+        let removed = processor.filter_chars_bmi2(s, CharFilter::RemoveChars(vec![0xA9]));
+        assert!(std::str::from_utf8(removed.as_bytes()).is_ok());
+        assert_eq!(removed, s);
+
+        // 'Ł' (U+0141) has low byte 0x41 == b'A'; must not be treated as ASCII Alpha.
+        assert!(!CharClass::Alpha.matches('Ł'));
+        assert_eq!(
+            processor.filter_chars_bmi2("Ł12345678", CharFilter::AlphaOnly),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_c8_2_bmi2_decode_utf8_multibyte_past_offset_0_and_invalid_sequences() {
+        let processor = Bmi2StringProcessor::new();
+        // Multi-byte UTF-8 characters starting at offset >= 1 in an >= 8-byte buffer
+        // previously failed the bogus `*position + 1 < 4` check in decode_utf8_char_bmi2.
+        let text = "hello, Привет мир! 🦀🎉";
+        let expected_cp: Vec<u32> = text.chars().map(|c| c as u32).collect();
+        assert_eq!(
+            processor.extract_utf8_chars_bmi2(text.as_bytes()).unwrap(),
+            expected_cp
+        );
+        let expected_u16: Vec<u16> = text.encode_utf16().collect();
+        assert_eq!(
+            processor.utf8_to_utf16_bmi2(text.as_bytes()).unwrap(),
+            expected_u16
+        );
+
+        // Overlong and invalid continuation sequences in >= 8-byte buffers must error.
+        let overlong = [0xC0u8, 0x80, b'a', b'b', b'c', b'd', b'e', b'f'];
+        assert!(processor.extract_utf8_chars_bmi2(&overlong).is_err());
+        assert!(processor.utf8_to_utf16_bmi2(&overlong).is_err());
+
+        let bad_cont = [0xC3u8, 0x28, b'a', b'b', b'c', b'd', b'e', b'f'];
+        assert!(processor.extract_utf8_chars_bmi2(&bad_cont).is_err());
+    }
+
+    #[test]
+    fn test_c8_2_bmi2_wildcard_backtracking_and_tier_parity() {
+        let bmi2 = Bmi2StringProcessor::new();
+        let mut scalar = Bmi2StringProcessor::new();
+        scalar.capabilities.has_bmi1 = false;
+        scalar.capabilities.has_bmi2 = false;
+
+        // 1. Pattern shorter than text without trailing '*' must not match prefix only.
+        assert!(!bmi2.wildcard_match_bmi2("abcdefgh_extra", "abcd"));
+        // 2. '*' followed by repeated literal requires backtracking.
+        assert!(bmi2.wildcard_match_bmi2("abXdefXghi", "*Xghi"));
+        assert!(!bmi2.wildcard_match_bmi2("abXdefXghZ", "*Xghi"));
+        // 3. '*' followed by '?' wildcard.
+        assert!(bmi2.wildcard_match_bmi2("abcdefghij", "*?ij"));
+        // 4. Non-ASCII '?' matches one Unicode scalar value, not one UTF-8 byte.
+        assert!(bmi2.wildcard_match_bmi2("ééééabcd", "????abcd"));
+
+        // 5. Hash and char_class_match parity between BMI2 and scalar across lengths.
+        for s in ["short", "exactly8", "longer_ascii_string_12345", "ééééabcd1234"] {
+            assert_eq!(
+                bmi2.hash_string_bmi2(s, 0x1234),
+                scalar.hash_string_bmi2(s, 0x1234),
+                "hash mismatch on {s:?}"
+            );
+            assert_eq!(
+                bmi2.char_class_match_bmi2(s, &[CharClass::Alpha, CharClass::Digit]),
+                scalar.char_class_match_bmi2(s, &[CharClass::Alpha, CharClass::Digit]),
+                "char_class_match mismatch on {s:?}"
+            );
+        }
+
+        // 6. extract_substrings_bmi2 on non-char-boundary and overflow returns Err instead of panicking.
+        assert!(bmi2.extract_substrings_bmi2("éaaaaaaa", &[(0, 1)]).is_err());
+        assert!(bmi2
+            .extract_substrings_bmi2("éaaaaaaa", &[(usize::MAX, 2)])
+            .is_err());
     }
 }

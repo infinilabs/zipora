@@ -15,24 +15,24 @@ use std::str;
 /// when available, based on research implementations.
 #[inline(always)]
 pub fn utf8_byte_count(byte: u8) -> usize {
-    // Optimized lookup table for UTF-8 leading byte analysis
+    // Optimized lookup table for valid UTF-8 leading byte analysis (RFC 3629)
     static UTF8_BYTE_COUNT_LUT: [u8; 256] = {
         let mut table = [0u8; 256];
         let mut i = 0;
         while i < 256 {
             let byte = i as u8;
             table[i] = if byte < 0x80 {
-                1 // ASCII
-            } else if byte < 0xC0 {
-                0 // Continuation byte
+                1 // ASCII (0x00..=0x7F)
+            } else if byte < 0xC2 {
+                0 // Continuation byte (0x80..=0xBF) or overlong 2-byte lead (0xC0..=0xC1)
             } else if byte < 0xE0 {
-                2 // 2-byte sequence
+                2 // 2-byte sequence (0xC2..=0xDF)
             } else if byte < 0xF0 {
-                3 // 3-byte sequence
-            } else if byte < 0xF8 {
-                4 // 4-byte sequence
+                3 // 3-byte sequence (0xE0..=0xEF)
+            } else if byte < 0xF5 {
+                4 // 4-byte sequence (0xF0..=0xF4)
             } else {
-                0 // Invalid
+                0 // Invalid (> U+10FFFF: 0xF5..=0xFF)
             };
             i += 1;
         }
@@ -67,16 +67,15 @@ fn validate_utf8_and_count_chars_scalar(bytes: &[u8]) -> Result<usize> {
 /// SIMD UTF-8 validation (when available)
 #[cfg(target_arch = "x86_64")]
 fn validate_utf8_and_count_chars_simd(bytes: &[u8]) -> Result<usize> {
-    #[cfg(target_feature = "avx2")]
-    {
-        // Use SIMD for bulk validation, then count characters
-        if is_ascii_simd(bytes) {
+    if is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 verified via is_x86_feature_detected!("avx2")
+        if unsafe { is_ascii_simd(bytes) } {
             // All ASCII - character count equals byte count
             return Ok(bytes.len());
         }
     }
 
-    // Fall back to scalar for complex cases
+    // Fall back to scalar for multi-byte UTF-8 sequences
     validate_utf8_and_count_chars_scalar(bytes)
 }
 
@@ -85,13 +84,17 @@ fn validate_utf8_and_count_chars_simd(bytes: &[u8]) -> Result<usize> {
     validate_utf8_and_count_chars_scalar(bytes)
 }
 
-/// Check if bytes are all ASCII using SIMD when available
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-fn is_ascii_simd(bytes: &[u8]) -> bool {
+/// Check if bytes are all ASCII using AVX2
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports `avx2`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn is_ascii_simd(bytes: &[u8]) -> bool {
     use std::arch::x86_64::*;
 
-    // SAFETY: AVX2 is available (checked by caller), bytes.as_ptr().add(i) is valid when i + 32 <= len,
-    // _mm256_loadu_si256 and _mm256_movemask_epi8 are valid AVX2 intrinsics that don't cause UB
+    // SAFETY: AVX2 is guaranteed by #[target_feature], bytes.as_ptr().add(i) is valid when i + 32 <= len
     unsafe {
         let mut i = 0;
         let len = bytes.len();
@@ -155,18 +158,115 @@ impl UnicodeProcessor {
         };
 
         if self.normalize {
-            // Basic normalization - could be enhanced with full Unicode normalization
             result = self.normalize_basic(&result)?;
         }
 
         Ok(result)
     }
 
-    /// Basic normalization (placeholder for full Unicode normalization)
+    /// Canonical NFC composition for Hangul Jamo and Latin combining sequences
     fn normalize_basic(&self, input: &str) -> Result<String> {
-        // This is a simplified normalization - a full implementation would
-        // use the unicode-normalization crate for proper NFC/NFD/NFKC/NFKD
-        Ok(input.chars().collect::<String>())
+        let mut out: Vec<char> = Vec::with_capacity(input.len());
+
+        for ch in input.chars() {
+            if let Some(last) = out.last_mut()
+                && let Some(composed) = Self::compose_pair(*last, ch)
+            {
+                *last = composed;
+                continue;
+            }
+            out.push(ch);
+        }
+
+        Ok(out.into_iter().collect())
+    }
+
+    /// Canonical pair composition `(base, combining_or_jamo) -> Option<char>`
+    fn compose_pair(base: char, mark: char) -> Option<char> {
+        let b = base as u32;
+        let m = mark as u32;
+
+        // 1. Hangul L + V -> LV syllable (Unicode Standard §3.12)
+        if (0x1100..=0x1112).contains(&b) && (0x1161..=0x1175).contains(&m) {
+            let l_index = b - 0x1100;
+            let v_index = m - 0x1161;
+            let syllable = 0xAC00 + (l_index * 21 + v_index) * 28;
+            return char::from_u32(syllable);
+        }
+        // 2. Hangul LV + T -> LVT syllable
+        if (0xAC00..=0xD7A3).contains(&b)
+            && (b - 0xAC00).is_multiple_of(28)
+            && (0x11A8..=0x11C2).contains(&m)
+        {
+            let t_index = m - 0x11A7;
+            return char::from_u32(b + t_index);
+        }
+
+        // 3. Common Latin base + Combining Diacritical Marks (U+0300..=U+0327)
+        match (base, mark) {
+            // Grave (U+0300)
+            ('A', '\u{0300}') => Some('À'),
+            ('E', '\u{0300}') => Some('È'),
+            ('I', '\u{0300}') => Some('Ì'),
+            ('O', '\u{0300}') => Some('Ò'),
+            ('U', '\u{0300}') => Some('Ù'),
+            ('a', '\u{0300}') => Some('à'),
+            ('e', '\u{0300}') => Some('è'),
+            ('i', '\u{0300}') => Some('ì'),
+            ('o', '\u{0300}') => Some('ò'),
+            ('u', '\u{0300}') => Some('ù'),
+            // Acute (U+0301)
+            ('A', '\u{0301}') => Some('Á'),
+            ('E', '\u{0301}') => Some('É'),
+            ('I', '\u{0301}') => Some('Í'),
+            ('O', '\u{0301}') => Some('Ó'),
+            ('U', '\u{0301}') => Some('Ú'),
+            ('Y', '\u{0301}') => Some('Ý'),
+            ('a', '\u{0301}') => Some('á'),
+            ('e', '\u{0301}') => Some('é'),
+            ('i', '\u{0301}') => Some('í'),
+            ('o', '\u{0301}') => Some('ó'),
+            ('u', '\u{0301}') => Some('ú'),
+            ('y', '\u{0301}') => Some('ý'),
+            // Circumflex (U+0302)
+            ('A', '\u{0302}') => Some('Â'),
+            ('E', '\u{0302}') => Some('Ê'),
+            ('I', '\u{0302}') => Some('Î'),
+            ('O', '\u{0302}') => Some('Ô'),
+            ('U', '\u{0302}') => Some('Û'),
+            ('a', '\u{0302}') => Some('â'),
+            ('e', '\u{0302}') => Some('ê'),
+            ('i', '\u{0302}') => Some('î'),
+            ('o', '\u{0302}') => Some('ô'),
+            ('u', '\u{0302}') => Some('û'),
+            // Tilde (U+0303)
+            ('A', '\u{0303}') => Some('Ã'),
+            ('N', '\u{0303}') => Some('Ñ'),
+            ('O', '\u{0303}') => Some('Õ'),
+            ('a', '\u{0303}') => Some('ã'),
+            ('n', '\u{0303}') => Some('ñ'),
+            ('o', '\u{0303}') => Some('õ'),
+            // Diaeresis (U+0308)
+            ('A', '\u{0308}') => Some('Ä'),
+            ('E', '\u{0308}') => Some('Ë'),
+            ('I', '\u{0308}') => Some('Ï'),
+            ('O', '\u{0308}') => Some('Ö'),
+            ('U', '\u{0308}') => Some('Ü'),
+            ('Y', '\u{0308}') => Some('Ÿ'),
+            ('a', '\u{0308}') => Some('ä'),
+            ('e', '\u{0308}') => Some('ë'),
+            ('i', '\u{0308}') => Some('ï'),
+            ('o', '\u{0308}') => Some('ö'),
+            ('u', '\u{0308}') => Some('ü'),
+            ('y', '\u{0308}') => Some('ÿ'),
+            // Ring above (U+030A)
+            ('A', '\u{030A}') => Some('Å'),
+            ('a', '\u{030A}') => Some('å'),
+            // Cedilla (U+0327)
+            ('C', '\u{0327}') => Some('Ç'),
+            ('c', '\u{0327}') => Some('ç'),
+            _ => None,
+        }
     }
 
     /// Analyze Unicode properties of a string
@@ -202,7 +302,7 @@ impl UnicodeProcessor {
                 analysis.basic_latin += 1;
             } else if codepoint <= 0xFF {
                 analysis.latin_supplement += 1;
-            } else if codepoint <= 0x17FF {
+            } else if codepoint <= 0x024F {
                 analysis.extended_latin += 1;
             } else {
                 analysis.other_unicode += 1;
@@ -275,6 +375,7 @@ pub struct Utf8ToUtf32Iterator<'a> {
     bytes: &'a [u8],
     position: usize,
     current_char: Option<char>,
+    current_span: Option<(usize, usize)>,
 }
 
 impl<'a> Utf8ToUtf32Iterator<'a> {
@@ -288,6 +389,7 @@ impl<'a> Utf8ToUtf32Iterator<'a> {
             bytes,
             position: 0,
             current_char: None,
+            current_span: None,
         })
     }
 
@@ -298,28 +400,34 @@ impl<'a> Utf8ToUtf32Iterator<'a> {
 
     /// Move to the next character
     pub fn next_char(&mut self) -> Option<char> {
-        if self.position >= self.bytes.len() {
+        let start = self.current_span.map_or(self.position, |(_, end)| end);
+        if start >= self.bytes.len() {
+            self.position = self.bytes.len();
             self.current_char = None;
+            self.current_span = None;
             return None;
         }
 
-        let byte = self.bytes[self.position];
+        let byte = self.bytes[start];
         let char_len = utf8_byte_count(byte);
 
-        if char_len == 0 || self.position + char_len > self.bytes.len() {
+        if char_len == 0 || start + char_len > self.bytes.len() {
             self.current_char = None;
+            self.current_span = None;
             return None;
         }
 
-        let char_bytes = &self.bytes[self.position..self.position + char_len];
+        let char_bytes = &self.bytes[start..start + char_len];
         match str::from_utf8(char_bytes) {
             Ok(s) => {
                 self.current_char = s.chars().next();
-                self.position += char_len;
+                self.current_span = Some((start, start + char_len));
+                self.position = start + char_len;
                 self.current_char
             }
             Err(_) => {
                 self.current_char = None;
+                self.current_span = None;
                 None
             }
         }
@@ -327,13 +435,16 @@ impl<'a> Utf8ToUtf32Iterator<'a> {
 
     /// Move to the previous character (if supported)
     pub fn prev_char(&mut self) -> Option<char> {
-        if self.position == 0 {
+        let end = self.current_span.map_or(self.position, |(start, _)| start);
+        if end == 0 {
+            self.position = 0;
             self.current_char = None;
+            self.current_span = None;
             return None;
         }
 
         // Walk backward to find the start of the previous character
-        let mut pos = self.position.saturating_sub(1);
+        let mut pos = end - 1;
 
         // Skip continuation bytes
         while pos > 0 && (self.bytes[pos] & 0xC0) == 0x80 {
@@ -346,6 +457,7 @@ impl<'a> Utf8ToUtf32Iterator<'a> {
 
         if char_len == 0 || pos + char_len > self.bytes.len() {
             self.current_char = None;
+            self.current_span = None;
             return None;
         }
 
@@ -353,11 +465,13 @@ impl<'a> Utf8ToUtf32Iterator<'a> {
         match str::from_utf8(char_bytes) {
             Ok(s) => {
                 self.current_char = s.chars().next();
+                self.current_span = Some((pos, pos + char_len));
                 self.position = pos;
                 self.current_char
             }
             Err(_) => {
                 self.current_char = None;
+                self.current_span = None;
                 None
             }
         }
@@ -372,6 +486,7 @@ impl<'a> Utf8ToUtf32Iterator<'a> {
     pub fn reset(&mut self) {
         self.position = 0;
         self.current_char = None;
+        self.current_span = None;
     }
 }
 
@@ -392,27 +507,35 @@ pub mod utils {
     /// Calculate the display width of a Unicode string
     /// (accounting for wide characters, combining marks, etc.)
     pub fn display_width(input: &str) -> usize {
-        // Simplified implementation - could use unicode-width crate for full support
         input
             .chars()
             .map(|ch| {
-                if ch.is_control() {
+                if ch.is_control() || is_combining_mark(ch) {
                     0
-                } else if ch as u32 > 0x1100 && is_wide_char(ch) {
-                    2 // Wide characters (CJK, etc.)
+                } else if ch as u32 >= 0x1100 && is_wide_char(ch) {
+                    2 // East Asian Wide / Fullwidth characters
                 } else {
-                    1 // Normal width
+                    1 // Standard single-column width
                 }
             })
             .sum()
     }
 
-    /// Check if a character is wide (occupies 2 terminal columns)
+    /// Check if a character is a zero-width combining mark
+    fn is_combining_mark(ch: char) -> bool {
+        let cp = ch as u32;
+        (0x0300..=0x036F).contains(&cp)
+            || (0x1AB0..=0x1AFF).contains(&cp)
+            || (0x1DC0..=0x1DFF).contains(&cp)
+            || (0x20D0..=0x20FF).contains(&cp)
+            || (0xFE20..=0xFE2F).contains(&cp)
+    }
+
+    /// Check if a character is wide (occupies 2 terminal columns per UAX #11 East Asian Width)
     fn is_wide_char(ch: char) -> bool {
-        // Simplified check for wide characters
         let codepoint = ch as u32;
 
-        // CJK ranges (simplified)
+        // East Asian Wide and Fullwidth ranges
         (0x1100..=0x115F).contains(&codepoint) ||  // Hangul Jamo
         (0x2E80..=0x2EFF).contains(&codepoint) ||  // CJK Radicals Supplement
         (0x2F00..=0x2FDF).contains(&codepoint) ||  // Kangxi Radicals
@@ -568,5 +691,36 @@ mod tests {
         let text = "A世";
         let codepoints = utils::extract_codepoints(text);
         assert_eq!(codepoints, vec![0x41, 0x4E16]); // 'A' and '世'
+    }
+
+    #[test]
+    fn test_c8_6_unicode_invalid_lead_bytes_bidirectional_iter_nfc_and_width() {
+        // 1. Overlong 0xC0..=0xC1 and out-of-range 0xF5..=0xFF must return 0.
+        for b in [0xC0u8, 0xC1, 0xF5, 0xF6, 0xF7, 0xF8, 0xFF] {
+            assert_eq!(utf8_byte_count(b), 0, "invalid lead byte {b:#04x}");
+        }
+
+        // 2. Bidirectional Utf8ToUtf32Iterator alternating next_char and prev_char.
+        let mut iter = Utf8ToUtf32Iterator::new("aé世".as_bytes()).unwrap();
+        assert_eq!(iter.next_char(), Some('a'));
+        assert_eq!(iter.next_char(), Some('é'));
+        assert_eq!(iter.prev_char(), Some('a'));
+        assert_eq!(iter.next_char(), Some('é'));
+        assert_eq!(iter.next_char(), Some('世'));
+        assert_eq!(iter.prev_char(), Some('é'));
+
+        // 3. UnicodeProcessor NFC composition and extended_latin block range (<= 0x024F).
+        let mut proc = UnicodeProcessor::new().with_normalization(true);
+        assert_eq!(proc.process("e\u{0301}cole").unwrap(), "école");
+        assert_eq!(proc.process("\u{1100}\u{1161}\u{11A8}").unwrap(), "각");
+
+        let analysis = proc.analyze("ĀΩЖ");
+        // 'Ā' (U+0100) is Extended Latin; 'Ω' (U+03A9, Greek) and 'Ж' (U+0416, Cyrillic) are other_unicode.
+        assert_eq!(analysis.extended_latin, 1);
+        assert_eq!(analysis.other_unicode, 2);
+
+        // 4. display_width includes U+1100 as width 2 and combining marks as width 0.
+        assert_eq!(utils::display_width("\u{1100}"), 2);
+        assert_eq!(utils::display_width("e\u{0301}"), 1);
     }
 }

@@ -378,10 +378,7 @@ impl LineSplitter {
             return;
         }
 
-        // SAFETY: Early return at line 391 guarantees delimiter.len() == 1,
-        // so bytes() iterator is guaranteed to have at least one element.
-        // Therefore next() always returns Some.
-        let delimiter_byte = delimiter.bytes().next().expect("delimiter is non-empty");
+        let delimiter_byte = delimiter.as_bytes()[0];
         let mut start = 0;
 
         for (i, &byte) in line.as_bytes().iter().enumerate() {
@@ -391,10 +388,8 @@ impl LineSplitter {
             }
         }
 
-        // Add the last field
-        if start < line.len()
-            && let Ok(field) = std::str::from_utf8(&line.as_bytes()[start..])
-        {
+        // Add the last field (including trailing empty fields when start == line.len())
+        if let Ok(field) = std::str::from_utf8(&line.as_bytes()[start..]) {
             self.buffer.push(field.to_string());
         }
     }
@@ -477,7 +472,7 @@ pub mod utils {
                 analysis.max_line_length = line.len();
             }
 
-            if analysis.min_line_length == 0 || line.len() < analysis.min_line_length {
+            if analysis.total_lines == 1 || line.len() < analysis.min_line_length {
                 analysis.min_line_length = line.len();
             }
 
@@ -729,5 +724,25 @@ mod tests {
         assert_eq!(config.buffer_size, 16 * 1024);
         assert!(config.skip_empty_lines);
         assert!(config.trim_whitespace);
+    }
+
+    #[test]
+    fn test_c8_4_line_splitter_optimized_trailing_empty_and_analyze_min_len() {
+        let mut std_splitter = LineSplitter::new();
+        let mut opt_splitter = LineSplitter::new().with_optimized_strategy();
+
+        for input in ["a,b,", ",", "", ",a,", "x,y,z"] {
+            assert_eq!(
+                opt_splitter.split(input, ","),
+                std_splitter.split(input, ","),
+                "split_optimized diverged from standard split on {input:?}"
+            );
+        }
+
+        // Empty line followed by non-empty lines must preserve min_line_length == 0.
+        let cursor = Cursor::new("line1\n\nlong line after empty\n".as_bytes());
+        let analysis = utils::analyze_text(LineProcessor::new(cursor)).unwrap();
+        assert_eq!(analysis.min_line_length, 0);
+        assert_eq!(analysis.max_line_length, 21);
     }
 }

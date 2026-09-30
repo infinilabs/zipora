@@ -227,8 +227,8 @@ impl SimdStringSearch {
 
     /// String comparison with early exit optimizations
     ///
-    /// Performs lexicographic comparison with hardware-accelerated mismatch detection.
-    /// Uses SIMD operations to quickly find the first differing bytes.
+    /// Compares lengths first (shortlex order) for fast mismatch rejection, and performs
+    /// lexicographic byte comparison with hardware-accelerated mismatch detection on equal lengths.
     ///
     /// # Arguments
     /// * `a` - First byte array to compare
@@ -277,20 +277,21 @@ impl SimdStringSearch {
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_strchr_max_16(&self, haystack: &[u8], needle: u8) -> Option<usize> {
         debug_assert!(haystack.len() <= 16);
+        let search_len = haystack.len().min(16);
 
         // Create needle vector with single character
         let needle_vec = _mm_set1_epi8(needle as i8);
 
         // Load haystack data (up to 16 bytes)
-        let haystack_vec = if haystack.len() == 16 {
-            // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from slice, len == 16 checked
+        let haystack_vec = if search_len == 16 {
+            // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from slice, search_len == 16 checked
             unsafe { _mm_loadu_si128(haystack.as_ptr() as *const __m128i) }
         } else {
             // For lengths < 16, we need to be careful about reading past the end
             let mut data = [0u8; 16];
-            // SAFETY: pointer valid from slice, haystack.len() <= 16 from caller, copy within bounds
+            // SAFETY: pointer valid from slice, search_len < 16 clamped above, copy within bounds
             unsafe {
-                std::ptr::copy_nonoverlapping(haystack.as_ptr(), data.as_mut_ptr(), haystack.len())
+                std::ptr::copy_nonoverlapping(haystack.as_ptr(), data.as_mut_ptr(), search_len)
             };
             // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
             unsafe { _mm_loadu_si128(data.as_ptr() as *const __m128i) }
@@ -301,13 +302,13 @@ impl SimdStringSearch {
             needle_vec,
             1, // needle length is 1
             haystack_vec,
-            haystack.len() as i32,
+            search_len as i32,
             pcmpestri_flags::UBYTE_OPS
                 | pcmpestri_flags::CMP_EQUAL_ORDERED
                 | pcmpestri_flags::LEAST_SIGNIFICANT,
         );
 
-        if result < haystack.len() as i32 {
+        if result < search_len as i32 {
             Some(result as usize)
         } else {
             None
@@ -330,11 +331,22 @@ impl SimdStringSearch {
             return Some(pos);
         }
 
-        // Search remaining bytes
+        // Search remaining bytes (up to 19 bytes when haystack.len() <= 35)
         let remaining = &haystack[16..];
-        // SAFETY: sse4.2 guaranteed by #[target_feature], remaining is valid slice
-        if let Some(pos) = unsafe { self.sse42_strchr_max_16(remaining, needle) } {
-            return Some(16 + pos);
+        if remaining.len() <= 16 {
+            // SAFETY: sse4.2 guaranteed by #[target_feature], remaining.len() <= 16 checked
+            if let Some(pos) = unsafe { self.sse42_strchr_max_16(remaining, needle) } {
+                return Some(16 + pos);
+            }
+        } else {
+            // SAFETY: sse4.2 guaranteed by #[target_feature], remaining.len() > 16 so remaining[..16] and remaining[16..] are <= 16 bytes
+            if let Some(pos) = unsafe { self.sse42_strchr_max_16(&remaining[..16], needle) } {
+                return Some(16 + pos);
+            }
+            // SAFETY: sse4.2 guaranteed by #[target_feature], remaining[16..] has length 1..=3 <= 16
+            if let Some(pos) = unsafe { self.sse42_strchr_max_16(&remaining[16..], needle) } {
+                return Some(32 + pos);
+            }
         }
 
         None
@@ -694,9 +706,46 @@ impl SimdStringSearch {
     /// invoking on hardware without AVX2 support is undefined behavior.
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_multi_search(&self, haystack: &[u8], needles: &[u8]) -> MultiSearchResult {
-        // For AVX2, we can process multiple needles more efficiently
-        // For now, fall back to individual searches for simplicity
-        self.scalar_multi_search(haystack, needles)
+        if needles.len() > 16 {
+            return self.scalar_multi_search(haystack, needles);
+        }
+
+        let mut positions = Vec::new();
+        let mut characters = Vec::new();
+        let chunks = haystack.len() / 32;
+
+        for i in 0..chunks {
+            let offset = i * 32;
+            // SAFETY: avx2 guaranteed by #[target_feature], offset + 32 <= haystack.len()
+            let chunk = unsafe { _mm256_loadu_si256(haystack[offset..].as_ptr() as *const __m256i) };
+            let mut match_vec = _mm256_setzero_si256();
+            for &needle in needles {
+                let cmp = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8(needle as i8));
+                match_vec = _mm256_or_si256(match_vec, cmp);
+            }
+
+            let mut mask = _mm256_movemask_epi8(match_vec) as u32;
+            while mask != 0 {
+                let bit = mask.trailing_zeros() as usize;
+                let pos = offset + bit;
+                positions.push(pos);
+                characters.push(haystack[pos]);
+                mask &= mask - 1;
+            }
+        }
+
+        let remaining_start = chunks * 32;
+        for (rel_pos, &byte) in haystack[remaining_start..].iter().enumerate() {
+            if needles.contains(&byte) {
+                positions.push(remaining_start + rel_pos);
+                characters.push(byte);
+            }
+        }
+
+        MultiSearchResult {
+            positions,
+            characters,
+        }
     }
 
     /// # Safety
@@ -823,8 +872,48 @@ impl SimdStringSearch {
     /// undefined behavior.
     #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn avx512_multi_search(&self, haystack: &[u8], needles: &[u8]) -> MultiSearchResult {
-        // AVX-512 implementation for multi-character search
-        self.scalar_multi_search(haystack, needles)
+        if needles.len() > 16 {
+            return self.scalar_multi_search(haystack, needles);
+        }
+
+        let mut positions = Vec::new();
+        let mut characters = Vec::new();
+        let chunks = haystack.len() / 64;
+
+        for i in 0..chunks {
+            let offset = i * 64;
+            // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], offset + 64 <= haystack.len()
+            let mask = unsafe {
+                let chunk = _mm512_loadu_si512(haystack[offset..].as_ptr() as *const __m512i);
+                let mut m = 0u64;
+                for &needle in needles {
+                    m |= _mm512_cmpeq_epi8_mask(chunk, _mm512_set1_epi8(needle as i8));
+                }
+                m
+            };
+
+            let mut m = mask;
+            while m != 0 {
+                let bit = m.trailing_zeros() as usize;
+                let pos = offset + bit;
+                positions.push(pos);
+                characters.push(haystack[pos]);
+                m &= m - 1;
+            }
+        }
+
+        let remaining_start = chunks * 64;
+        for (rel_pos, &byte) in haystack[remaining_start..].iter().enumerate() {
+            if needles.contains(&byte) {
+                positions.push(remaining_start + rel_pos);
+                characters.push(byte);
+            }
+        }
+
+        MultiSearchResult {
+            positions,
+            characters,
+        }
     }
 
     #[cfg(feature = "avx512")]
@@ -1205,6 +1294,116 @@ mod tests {
                 assert_eq!(search.sse42_strchr(&test_data, b'x'), Some(size - 1));
             }
             assert_eq!(search.sse42_strchr(&test_data, b'y'), None);
+        }
+    }
+
+    #[test]
+    fn test_c8_1_sse42_strchr_lengths_33_to_35_no_overflow_and_tier_equivalence() {
+        let mut tiers = vec![SearchTier::Scalar];
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("sse4.2") {
+                tiers.push(SearchTier::Sse42);
+            }
+            if is_x86_feature_detected!("avx2") {
+                tiers.push(SearchTier::Avx2);
+            }
+            #[cfg(feature = "avx512")]
+            if !cfg!(miri)
+                && is_x86_feature_detected!("avx512f")
+                && is_x86_feature_detected!("avx512vl")
+                && is_x86_feature_detected!("avx512bw")
+            {
+                tiers.push(SearchTier::Avx512);
+            }
+        }
+
+        let scalar = SimdStringSearch {
+            impl_tier: SearchTier::Scalar,
+        };
+
+        // 1. Specifically test lengths 33..=35 with needle at offsets 32..len (and absent),
+        // which previously overflowed the 16-byte stack buffer in sse42_strchr_max_16 and
+        // missed matches at indices 32..=34 in SearchTier::Sse42.
+        for len in 33..=35 {
+            let positions: Vec<usize> = if cfg!(miri) {
+                vec![0, 15, 16, 31, 32, len - 1]
+            } else {
+                (0..len).collect()
+            };
+            for pos in positions {
+                let mut hay = vec![b'a'; len];
+                hay[pos] = b'x';
+                for &tier in &tiers {
+                    let s = SimdStringSearch { impl_tier: tier };
+                    assert_eq!(
+                        s.sse42_strchr(&hay, b'x'),
+                        Some(pos),
+                        "tier {tier:?} failed at len={len}, pos={pos}"
+                    );
+                    assert_eq!(
+                        s.sse42_strchr(&hay, b'z'),
+                        None,
+                        "tier {tier:?} false positive at len={len}"
+                    );
+                }
+            }
+        }
+
+        // 2. Differential test across all tiers for lengths 0..=64, needle at every offset,
+        // all-equal bytes, and embedded 0x00 bytes.
+        let lengths: Vec<usize> = if cfg!(miri) {
+            vec![0, 1, 3, 7, 8, 15, 16, 17, 31, 32, 33, 35, 36, 48, 63, 64]
+        } else {
+            (0..=64).collect()
+        };
+        for len in lengths {
+            let mut base: Vec<u8> = (0..len).map(|i| ((i * 7 + 1) % 251) as u8).collect();
+            if len > 0 {
+                base[len / 2] = 0x00;
+            }
+            for &tier in &tiers {
+                let s = SimdStringSearch { impl_tier: tier };
+                assert_eq!(s.sse42_strchr(&base, 0x00), scalar.sse42_strchr(&base, 0x00));
+                assert_eq!(s.sse42_strchr(&base, 0xFF), scalar.sse42_strchr(&base, 0xFF));
+                assert_eq!(
+                    s.sse42_multi_search(&base, b"\x00\x01\x08\x0f\x10"),
+                    scalar.sse42_multi_search(&base, b"\x00\x01\x08\x0f\x10"),
+                    "multi_search mismatch on tier {tier:?} at len={len}"
+                );
+                let all_eq = vec![b'q'; len];
+                assert_eq!(s.sse42_strchr(&all_eq, b'q'), scalar.sse42_strchr(&all_eq, b'q'));
+                assert_eq!(s.sse42_strstr(&all_eq, b"qqq"), scalar.sse42_strstr(&all_eq, b"qqq"));
+                assert_eq!(s.sse42_strcmp(&base, &all_eq), scalar.sse42_strcmp(&base, &all_eq));
+            }
+            let positions: Vec<usize> = if cfg!(miri) {
+                if len == 0 {
+                    vec![]
+                } else {
+                    vec![0, len / 2, len.saturating_sub(3), len - 1]
+                }
+            } else {
+                (0..len).collect()
+            };
+            for pos in positions {
+                let mut hay = vec![b'.'; len];
+                hay[pos] = 0x00;
+                for &tier in &tiers {
+                    let s = SimdStringSearch { impl_tier: tier };
+                    assert_eq!(s.sse42_strchr(&hay, 0x00), Some(pos));
+                }
+                if pos + 3 <= len {
+                    hay[pos..pos + 3].copy_from_slice(b"a\x00b");
+                    for &tier in &tiers {
+                        let s = SimdStringSearch { impl_tier: tier };
+                        assert_eq!(
+                            s.sse42_strstr(&hay, b"a\x00b"),
+                            scalar.sse42_strstr(&hay, b"a\x00b"),
+                            "strstr 0x00 mismatch on tier {tier:?} at len={len}, pos={pos}"
+                        );
+                    }
+                }
+            }
         }
     }
 

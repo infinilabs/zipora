@@ -39,8 +39,12 @@ pub trait LexicographicIterator {
     fn seek_upper_bound(&mut self, target: &str) -> std::result::Result<bool, Self::Error> {
         let exact_match = self.seek_lower_bound(target)?;
         if exact_match {
-            // Move to next string after exact match
-            self.next()?;
+            // Advance past all equal duplicates to the first string > target
+            while self.current() == Some(target) {
+                if !self.next()? {
+                    break;
+                }
+            }
         }
         Ok(false) // Never an exact match by definition
     }
@@ -86,23 +90,31 @@ impl<'a> SortedVecLexIterator<'a> {
         Self { strings, position }
     }
 
-    /// Binary search implementation optimized for string comparison
+    /// Binary search implementation finding the leftmost match
     fn binary_search_by<F>(&self, mut compare: F) -> std::result::Result<usize, usize>
     where
         F: FnMut(&str) -> Ordering,
     {
         let mut left = 0;
         let mut right = self.strings.len();
+        let mut found = false;
 
         while left < right {
             let mid = left + (right - left) / 2;
             match compare(&self.strings[mid]) {
                 Ordering::Less => left = mid + 1,
                 Ordering::Greater => right = mid,
-                Ordering::Equal => return Ok(mid),
+                Ordering::Equal => {
+                    found = true;
+                    right = mid;
+                }
             }
         }
-        Err(left)
+        if found {
+            Ok(left)
+        } else {
+            Err(left)
+        }
     }
 }
 
@@ -132,13 +144,17 @@ impl<'a> LexicographicIterator for SortedVecLexIterator<'a> {
                 self.position = Some(pos - 1);
                 Ok(true)
             }
-            _ => {
-                self.position = if self.strings.is_empty() {
-                    None
-                } else {
-                    Some(0)
-                };
+            Some(_) => {
+                self.position = Some(0);
                 Ok(false)
+            }
+            None => {
+                if self.strings.is_empty() {
+                    Ok(false)
+                } else {
+                    self.position = Some(self.strings.len() - 1);
+                    Ok(true)
+                }
             }
         }
     }
@@ -245,7 +261,7 @@ impl<R: std::io::Read> LexicographicIterator for StreamingLexIterator<R> {
     type Error = ZiporaError;
 
     fn current(&self) -> Option<&str> {
-        if self.finished || self.current_line.is_empty() {
+        if self.finished || self.line_number == 0 {
             None
         } else {
             Some(&self.current_line)
@@ -270,10 +286,14 @@ impl<R: std::io::Read> LexicographicIterator for StreamingLexIterator<R> {
     }
 
     fn seek_start(&mut self) -> std::result::Result<bool, Self::Error> {
-        // Would require re-opening the stream - not supported for general readers
-        Err(ZiporaError::not_supported(
-            "Streaming iterator does not support seeking",
-        ))
+        if self.line_number == 0 && !self.finished {
+            self.next()
+        } else {
+            // Would require re-opening the stream - not supported for general readers
+            Err(ZiporaError::not_supported(
+                "Streaming iterator does not support seeking",
+            ))
+        }
     }
 
     fn seek_end(&mut self) -> std::result::Result<bool, Self::Error> {
@@ -566,5 +586,47 @@ mod tests {
             .build_sorted_vec(&strings);
 
         assert_eq!(iter.current(), Some("a"));
+    }
+
+    #[test]
+    fn test_c8_5_lex_iterator_duplicates_prev_from_end_and_streaming_empty_line() {
+        let strings = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "b".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+        ];
+        let mut iter = SortedVecLexIterator::new(&strings);
+
+        // 1. seek_lower_bound("b") must position at the first "b" (index 1), so 3 "b"s are visited.
+        assert!(iter.seek_lower_bound("b").unwrap());
+        let mut count_b = 0;
+        while iter.current() == Some("b") {
+            count_b += 1;
+            if !iter.next().unwrap() {
+                break;
+            }
+        }
+        assert_eq!(count_b, 3);
+        assert_eq!(iter.current(), Some("c"));
+
+        // 2. seek_upper_bound("b") must skip all duplicates of "b" and land on "c".
+        assert!(!iter.seek_upper_bound("b").unwrap());
+        assert_eq!(iter.current(), Some("c"));
+
+        // 3. Advancing past the end sets position = None; prev() must step back to the last element ("c").
+        assert!(!iter.next().unwrap());
+        assert!(iter.is_at_end());
+        assert!(iter.prev().unwrap());
+        assert_eq!(iter.current(), Some("c"));
+
+        // 4. StreamingLexIterator must return Some("") on an empty line rather than None.
+        let mut stream = StreamingLexIterator::new(std::io::Cursor::new(b"\napple\n"));
+        assert!(stream.next().unwrap());
+        assert!(!stream.is_at_end());
+        assert_eq!(stream.current(), Some(""));
+        assert!(stream.next().unwrap());
+        assert_eq!(stream.current(), Some("apple"));
     }
 }

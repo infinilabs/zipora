@@ -173,24 +173,27 @@ fn parse_sign(s: &str) -> Option<(&str, bool)> {
     }
 }
 
-// Helper: validate real number string (digits and at most one dot)
+// Helper: validate real number string (at least one digit and at most one dot)
 fn validate_realnum(s: &str) -> bool {
     if s.is_empty() {
         return false;
     }
 
     let mut dot_count = 0;
+    let mut has_digit = false;
     for c in s.bytes() {
         if c == b'.' {
             dot_count += 1;
             if dot_count > 1 {
                 return false;
             }
-        } else if !c.is_ascii_digit() {
+        } else if c.is_ascii_digit() {
+            has_digit = true;
+        } else {
             return false;
         }
     }
-    true
+    has_digit
 }
 
 // Helper: compare decimal magnitude (same-sign comparison)
@@ -298,5 +301,14 @@ mod tests {
         assert_eq!(realnum_strcmp("1.5", "1.50"), Some(Ordering::Less));
         assert_eq!(realnum_strcmp("01.5", "1.5"), Some(Ordering::Greater));
         assert_eq!(realnum_strcmp("-0.0", "0.0"), Some(Ordering::Less));
+    }
+
+    #[test]
+    fn test_c8_6_validate_realnum_rejects_lone_decimal_point() {
+        assert_eq!(realnum_strcmp(".", "1.0"), None);
+        assert_eq!(realnum_strcmp("1.0", "."), None);
+        assert_eq!(realnum_strcmp("+.", "1.0"), None);
+        assert_eq!(realnum_strcmp("-.", "1.0"), None);
+        assert_eq!(realnum_strcmp(".", "."), None);
     }
 }
