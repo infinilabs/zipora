@@ -472,26 +472,41 @@ impl SimdComparator {
         let mut left_idx = 0;
         let mut right_idx = 0;
 
-        // Use AVX2 8-element block copy when an entire 8-element run precedes the other stream's head
+        // Use AVX2 8-element block copy when an entire 8-element run precedes
+        // the other stream's head (the right-side check runs only when the
+        // left one fails). When neither block qualifies and both streams still
+        // have at least 8 elements, the next 8 outputs are taken one at a time
+        // with a branchless select and no further block checks: testing both
+        // block conditions before every element made random input about 13%
+        // slower than a plain merge (S20-R5). Each of those steps consumes one
+        // element, so 8 of them stay within the 8 elements known to remain on
+        // each side.
         while left_idx < left.len() && right_idx < right.len() {
-            if left_idx + 8 <= left.len() && left[left_idx + 7] <= right[right_idx] {
+            let left_has_8 = left_idx + 8 <= left.len();
+            if left_has_8 && left[left_idx + 7] <= right[right_idx] {
                 // SAFETY: AVX2 is verified above and slice is in bounds.
                 unsafe {
                     self.simd_copy_i32(&left[left_idx..left_idx + 8], &mut result);
                 }
                 left_idx += 8;
-            } else if right_idx + 8 <= right.len() && right[right_idx + 7] < left[left_idx] {
+                continue;
+            }
+            let right_has_8 = right_idx + 8 <= right.len();
+            if right_has_8 && right[right_idx + 7] < left[left_idx] {
                 // SAFETY: AVX2 is verified above and slice is in bounds.
                 unsafe {
                     self.simd_copy_i32(&right[right_idx..right_idx + 8], &mut result);
                 }
                 right_idx += 8;
-            } else if left[left_idx] <= right[right_idx] {
-                result.push(left[left_idx]);
-                left_idx += 1;
             } else {
-                result.push(right[right_idx]);
-                right_idx += 1;
+                let steps = if left_has_8 && right_has_8 { 8 } else { 1 };
+                for _ in 0..steps {
+                    let (l, r) = (left[left_idx], right[right_idx]);
+                    let take_right = r < l;
+                    result.push(if take_right { r } else { l });
+                    right_idx += usize::from(take_right);
+                    left_idx += usize::from(!take_right);
+                }
             }
         }
 
@@ -882,5 +897,72 @@ mod tests {
             forced.merge_sorted_i32(&left, &right),
             scalar.merge_sorted_i32(&left, &right)
         );
+    }
+
+    #[test]
+    fn test_s20_r5_avx2_merge_matches_scalar_around_block_boundaries() {
+        // Guard for the S20-R5 merge-loop restructure (block checks once per 8
+        // outputs, branchless steps in between): the AVX2 path against the
+        // scalar merge and a sorted concatenation, for every length pair up to
+        // 40 (Miri: 12) and patterns that put block decisions on and around
+        // each 8-element boundary.
+        let avx2 = SimdComparator::with_config(SimdConfig {
+            use_avx512: false,
+            use_avx2: true,
+            use_bmi2: false,
+            min_vector_size: 1,
+            prefetch_distance: 0,
+        });
+        let scalar = SimdComparator::with_config(SimdConfig {
+            use_avx512: false,
+            use_avx2: false,
+            use_bmi2: false,
+            min_vector_size: usize::MAX,
+            prefetch_distance: 0,
+        });
+        // (left[i], right[i]) generators; each side is non-decreasing in i.
+        type Gen = fn(i32) -> i32;
+        let patterns: [(Gen, Gen); 8] = [
+            (|i| 2 * i, |i| 2 * i + 1),                           // interleaved
+            (|i| i, |i| 1000 + i),                                // left below right
+            (|i| 1000 + i, |i| i),                                // right below left
+            (|i| i / 3, |i| i / 2),                               // duplicates
+            (|i| i / 8 * 16 + i % 8, |i| i / 8 * 16 + 8 + i % 8), // alternating 8-blocks
+            (|i| i / 7 * 16 + i % 7, |i| i / 9 * 16 + 7 + i % 9), // 7- vs 9-blocks
+            (|_| 5, |_| 5),                                       // all equal
+            (|i| i32::MIN + i, |i| i32::MAX - 100 + i),           // extremes
+        ];
+        let max_len: i32 = if cfg!(miri) { 12 } else { 40 };
+        for (p, (gl, gr)) in patterns.iter().enumerate() {
+            for ll in 0..=max_len {
+                for rl in 0..=max_len {
+                    let left: Vec<i32> = (0..ll).map(gl).collect();
+                    let right: Vec<i32> = (0..rl).map(gr).collect();
+                    let mut want: Vec<i32> = left.iter().chain(&right).copied().collect();
+                    want.sort_unstable();
+                    let got = avx2.merge_sorted_i32(&left, &right);
+                    assert_eq!(got, want, "pattern={p} ll={ll} rl={rl}");
+                    assert_eq!(got, scalar.merge_sorted_i32(&left, &right));
+                }
+            }
+        }
+
+        // Longer random inputs with duplicates.
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % 5_000) as i32 - 2_500
+        };
+        let n = if cfg!(miri) { 100 } else { 10_000 };
+        let mut left: Vec<i32> = (0..n).map(|_| next()).collect();
+        let mut right: Vec<i32> = (0..n + 37).map(|_| next()).collect();
+        left.sort_unstable();
+        right.sort_unstable();
+        let mut want: Vec<i32> = left.iter().chain(&right).copied().collect();
+        want.sort_unstable();
+        assert_eq!(avx2.merge_sorted_i32(&left, &right), want);
+        assert_eq!(avx2.merge_sorted_i32(&right, &left), want);
     }
 }
