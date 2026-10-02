@@ -1,11 +1,13 @@
 //! Parallel merge of the sorted runs left behind by the chunked radix sorts.
 //!
-//! The parallel LSD path of `AdvancedRadixSort` sorts `num_threads`
-//! contiguous chunks independently and then has to merge them. Until S20-R3
-//! that merge was a single-threaded k-way heap merge, which made the parallel
-//! sort slower than the sequential one and was not stable. The runs are now
-//! merged as a balanced binary tree whose levels and individual pairwise
-//! merges are split across rayon tasks, and the merge is stable.
+//! The parallel LSD paths of `AdvancedRadixSort` and of `RadixSort::sort_u32`
+//! / `sort_u64` sort contiguous chunks independently and then have to merge
+//! them. Until S20-R3 (`AdvancedRadixSort`) and S20-R3b (`RadixSort`) that
+//! merge was a single-threaded k-way heap merge, which made the parallel sorts
+//! slower than the sequential ones, and for `AdvancedRadixSort` reordered
+//! equal keys from different chunks. The runs are now merged as a balanced
+//! binary tree whose levels and individual pairwise merges are split across
+//! rayon tasks, and the merge is stable.
 
 /// Merge the sorted, contiguous `run_len`-long runs of `data` (the last run
 /// may be shorter) into one sorted sequence. Stable: equal elements keep their

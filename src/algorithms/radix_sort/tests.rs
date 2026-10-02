@@ -871,3 +871,79 @@ fn test_s20_r3_parallel_merge_tree_stable_and_matches_std() {
         }
     }
 }
+
+#[test]
+fn test_s20_r3b_radix_sort_parallel_path_and_used_parallel() {
+    // RadixSort::sort_u32 / sort_u64 inside rayon pools of 1..16 threads with
+    // parallel_threshold 64, at sizes on both sides of 2 * 64: the output must
+    // equal sort_unstable, and stats().used_parallel must report whether the
+    // chunked parallel sort ran. It used to be set from
+    // `len >= parallel_threshold` alone, while the parallel path sorted
+    // sequentially below 2 * parallel_threshold and ran a single chunk on a
+    // one-thread pool.
+    let threshold = 64;
+    let (thread_counts, sizes): (&[usize], &[usize]) = if cfg!(miri) {
+        (&[1, 3], &[100, 128, 300])
+    } else {
+        (
+            &[1, 2, 3, 5, 7, 16],
+            &[100, 127, 128, 1_000, 20_011, 100_003],
+        )
+    };
+    let config = RadixSortConfig {
+        use_parallel: true,
+        parallel_threshold: threshold,
+        ..Default::default()
+    };
+    for &threads in thread_counts {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            for &n in sizes {
+                let want_parallel = threads > 1 && n >= 2 * threshold;
+
+                // Wide values (radix passes) and a small range with many
+                // duplicates (small chunks take the counting-sort path).
+                let mut wide: Vec<u32> = (0..n as u32)
+                    .map(|i| i.wrapping_mul(0x9E37_79B9) ^ (i << 7))
+                    .collect();
+                for (slot, x) in wide.iter_mut().zip([u32::MAX, 0, 0x8000_0000]) {
+                    *slot = x;
+                }
+                let narrow: Vec<u32> = (0..n as u32).map(|i| i.wrapping_mul(7919) % 300).collect();
+                for (name, input) in [("wide", wide), ("narrow", narrow)] {
+                    let mut v = input.clone();
+                    let mut want = input;
+                    want.sort_unstable();
+                    let mut sorter = RadixSort::with_config(config.clone());
+                    sorter.sort_u32(&mut v).unwrap();
+                    assert_eq!(v, want, "u32 {name} threads={threads} n={n}");
+                    assert_eq!(
+                        sorter.stats().used_parallel,
+                        want_parallel,
+                        "u32 {name} used_parallel threads={threads} n={n}"
+                    );
+                }
+
+                let mut v64: Vec<u64> = (0..n as u64)
+                    .map(|i| i.wrapping_mul(0x517c_c1b7_2722_0a95) ^ (1u64 << (i % 64)))
+                    .collect();
+                for (slot, x) in v64.iter_mut().zip([u64::MAX, 0]) {
+                    *slot = x;
+                }
+                let mut want64 = v64.clone();
+                want64.sort_unstable();
+                let mut sorter = RadixSort::with_config(config.clone());
+                sorter.sort_u64(&mut v64).unwrap();
+                assert_eq!(v64, want64, "u64 threads={threads} n={n}");
+                assert_eq!(
+                    sorter.stats().used_parallel,
+                    want_parallel,
+                    "u64 used_parallel threads={threads} n={n}"
+                );
+            }
+        });
+    }
+}

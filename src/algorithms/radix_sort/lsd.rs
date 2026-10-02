@@ -62,13 +62,12 @@ impl RadixSort {
         }
 
         let used_parallel =
-            data.len() >= self.config.parallel_threshold && self.config.use_parallel;
-
-        if used_parallel {
-            self.sort_u32_parallel(data)?;
-        } else {
-            self.sort_u32_sequential(data)?;
-        }
+            if self.config.use_parallel && data.len() >= self.config.parallel_threshold {
+                self.sort_u32_parallel(data)?
+            } else {
+                self.sort_u32_sequential(data)?;
+                false
+            };
 
         let elapsed = start_time.elapsed();
         self.stats = AlgorithmStats {
@@ -97,13 +96,12 @@ impl RadixSort {
         }
 
         let used_parallel =
-            data.len() >= self.config.parallel_threshold && self.config.use_parallel;
-
-        if used_parallel {
-            self.sort_u64_parallel(data)?;
-        } else {
-            self.sort_u64_sequential(data)?;
-        }
+            if self.config.use_parallel && data.len() >= self.config.parallel_threshold {
+                self.sort_u64_parallel(data)?
+            } else {
+                self.sort_u64_sequential(data)?;
+                false
+            };
 
         let elapsed = start_time.elapsed();
         self.stats = AlgorithmStats {
@@ -241,29 +239,40 @@ impl RadixSort {
         Ok(())
     }
 
-    fn sort_u32_parallel(&self, data: &mut [u32]) -> Result<()> {
-        // Partition into thread-local chunks, radix-sort each chunk in parallel, then k-way merge
-        if data.len() < 2 * self.config.parallel_threshold {
-            return self.sort_u32_sequential(data);
+    fn sort_u32_parallel(&self, data: &mut [u32]) -> Result<bool> {
+        self.sort_chunks_parallel(data, Self::sort_u32_sequential)
+    }
+
+    /// Chunked parallel driver shared by `sort_u32` and `sort_u64`: sorts
+    /// `rayon::current_num_threads()` contiguous chunks with `sort_seq` in
+    /// parallel, then merges the sorted runs with the parallel merge tree in
+    /// `super::merge`.
+    ///
+    /// Returns whether that chunked path ran. Below `2 * parallel_threshold`
+    /// elements, or when there would be a single chunk (one rayon thread), the
+    /// whole slice is sorted by `sort_seq` instead and `Ok(false)` is returned,
+    /// so `stats().used_parallel` reports the path that actually ran.
+    ///
+    /// Until S20-R3b the runs were combined by a single-threaded k-way heap
+    /// merge (`MultiWayMerge`) followed by a full copy back, which made this
+    /// path slower than the sequential sort.
+    fn sort_chunks_parallel<T: Copy + Ord + Send + Sync>(
+        &self,
+        data: &mut [T],
+        sort_seq: fn(&Self, &mut [T]) -> Result<()>,
+    ) -> Result<bool> {
+        let num_threads = rayon::current_num_threads().max(1);
+        let chunk_size = data.len().div_ceil(num_threads);
+        if chunk_size >= data.len() || data.len() < self.config.parallel_threshold.saturating_mul(2)
+        {
+            sort_seq(self, data)?;
+            return Ok(false);
         }
 
-        // Split into chunks and sort in parallel
-        let num_threads = rayon::current_num_threads().max(1);
-        let chunk_size = data.len().div_ceil(num_threads); // Round up
-
         data.par_chunks_mut(chunk_size)
-            .try_for_each(|chunk| -> Result<()> {
-                let temp_sorter = RadixSort::with_config(RadixSortConfig {
-                    use_parallel: false,
-                    ..self.config.clone()
-                });
-                temp_sorter.sort_u32_sequential(chunk)
-            })?;
-
-        // Use proper multi-way merge instead of sort_unstable()
-        self.multiway_merge_u32_chunks(data, chunk_size)?;
-
-        Ok(())
+            .try_for_each(|chunk| sort_seq(self, chunk))?;
+        super::merge::merge_sorted_runs(data, chunk_size);
+        Ok(true)
     }
 
     fn sort_u64_sequential(&self, data: &mut [u64]) -> Result<()> {
@@ -318,28 +327,8 @@ impl RadixSort {
         Ok(())
     }
 
-    fn sort_u64_parallel(&self, data: &mut [u64]) -> Result<()> {
-        // Similar to u32 parallel sort
-        if data.len() < 2 * self.config.parallel_threshold {
-            return self.sort_u64_sequential(data);
-        }
-
-        let num_threads = rayon::current_num_threads().max(1);
-        let chunk_size = data.len().div_ceil(num_threads); // Round up
-
-        data.par_chunks_mut(chunk_size)
-            .try_for_each(|chunk| -> Result<()> {
-                let temp_sorter = RadixSort::with_config(RadixSortConfig {
-                    use_parallel: false,
-                    ..self.config.clone()
-                });
-                temp_sorter.sort_u64_sequential(chunk)
-            })?;
-
-        // Use proper multi-way merge instead of sort_unstable()
-        self.multiway_merge_u64_chunks(data, chunk_size)?;
-
-        Ok(())
+    fn sort_u64_parallel(&self, data: &mut [u64]) -> Result<bool> {
+        self.sort_chunks_parallel(data, Self::sort_u64_sequential)
     }
 
     fn counting_sort_u32(&self, data: &mut [u32]) {
@@ -436,49 +425,6 @@ impl RadixSort {
             .unwrap_or(256);
         len * std::mem::size_of::<u64>() + // buffer
         radix * std::mem::size_of::<usize>() // counts
-    }
-
-    /// Multi-way merge for u32 chunks
-    fn multiway_merge_u32_chunks(&self, data: &mut [u32], chunk_size: usize) -> Result<()> {
-        use crate::algorithms::multiway_merge::{MultiWayMerge, SliceSource};
-
-        // If no merging needed
-        if data.is_empty() || chunk_size >= data.len() {
-            return Ok(());
-        }
-
-        let mut sources = Vec::new();
-        for chunk in data.chunks(chunk_size) {
-            sources.push(SliceSource::new(chunk));
-        }
-
-        let mut merger = MultiWayMerge::new();
-        let merged = merger.merge(sources)?;
-
-        data.copy_from_slice(&merged);
-
-        Ok(())
-    }
-
-    /// Multi-way merge for u64 chunks
-    fn multiway_merge_u64_chunks(&self, data: &mut [u64], chunk_size: usize) -> Result<()> {
-        use crate::algorithms::multiway_merge::{MultiWayMerge, SliceSource};
-
-        if data.is_empty() || chunk_size >= data.len() {
-            return Ok(());
-        }
-
-        let mut sources = Vec::new();
-        for chunk in data.chunks(chunk_size) {
-            sources.push(SliceSource::new(chunk));
-        }
-
-        let mut merger = MultiWayMerge::new();
-        let merged = merger.merge(sources)?;
-
-        data.copy_from_slice(&merged);
-
-        Ok(())
     }
 
     /// AVX-512 accelerated digit counting for radix sort.
