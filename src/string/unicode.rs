@@ -1,8 +1,11 @@
 //! Unicode String Processing
 //!
-//! High-performance Unicode processing with hardware acceleration where available.
-//! Provides efficient UTF-8/UTF-16/UTF-32 conversions, normalization, and analysis
-//! with SIMD optimizations for batch operations.
+//! UTF-8 validation and character counting (with an AVX2 all-ASCII fast
+//! path), a bidirectional UTF-8 to UTF-32 iterator, lowercasing, and string
+//! analysis. Two functions are approximations, and each documents its
+//! limitation: [`UnicodeProcessor::with_normalization`] composes a small
+//! subset of NFC, and [`utils::display_width`] uses a fixed list of Unicode
+//! blocks.
 
 use crate::error::{Result, ZiporaError};
 use crate::succinct::rank_select::simd::SimdCapabilities;
@@ -137,13 +140,35 @@ impl UnicodeProcessor {
         }
     }
 
-    /// Enable Unicode normalization (NFC by default)
+    /// Enable partial canonical composition in [`process`](Self::process)
+    /// (off by default).
+    ///
+    /// Limitation: this is a small subset of NFC. Only these pairs are
+    /// composed, and only when the second character directly follows the
+    /// first:
+    /// - Hangul jamo: L (U+1100..=U+1112) + V (U+1161..=U+1175) into an LV
+    ///   syllable, and an LV syllable + T (U+11A8..=U+11C2) into an LVT
+    ///   syllable.
+    /// - 54 Latin pairs: A, E, I, O, U and a, e, i, o, u with grave (U+0300)
+    ///   or circumflex (U+0302); the same plus Y and y with acute (U+0301)
+    ///   or diaeresis (U+0308); A, N, O and a, n, o with tilde (U+0303); A
+    ///   and a with ring above (U+030A); C and c with cedilla (U+0327).
+    ///
+    /// Nothing is decomposed first, combining marks are not put in canonical
+    /// order, a Latin base takes at most one mark, and singletons are left
+    /// alone. So `"z\u{030C}"`, `"a\u{0328}"`, `"a\u{0323}\u{0302}"` and
+    /// `"\u{212B}"` come out unchanged (NFC: `"\u{017E}"`, `"\u{0105}"`,
+    /// `"\u{1EAD}"`, `"\u{00C5}"`), and the output can differ from NFC
+    /// even where a pair is composed: `"a\u{0301}\u{0323}"` becomes
+    /// `"\u{00E1}\u{0323}"`, while NFC gives `"\u{1EA1}\u{0301}"`.
     pub fn with_normalization(mut self, enable: bool) -> Self {
         self.normalize = enable;
         self
     }
 
-    /// Enable case folding for case-insensitive processing
+    /// Enable lowercasing (with `str::to_lowercase`) before normalization,
+    /// for case-insensitive processing. This is not full Unicode case
+    /// folding: for example `"ß"` stays `"ß"` rather than becoming `"ss"`.
     pub fn with_case_folding(mut self, enable: bool) -> Self {
         self.case_fold = enable;
         self
@@ -164,7 +189,9 @@ impl UnicodeProcessor {
         Ok(result)
     }
 
-    /// Canonical NFC composition for Hangul Jamo and Latin combining sequences
+    /// Partial canonical composition, not NFC: composes each character with
+    /// the one before it when `compose_pair` knows the pair (see the
+    /// limitation on `with_normalization`)
     fn normalize_basic(&self, input: &str) -> Result<String> {
         let mut out: Vec<char> = Vec::with_capacity(input.len());
 
@@ -504,8 +531,28 @@ pub mod utils {
         input.to_uppercase()
     }
 
-    /// Calculate the display width of a Unicode string
-    /// (accounting for wide characters, combining marks, etc.)
+    /// Approximate terminal display width of `input`: the sum, over its
+    /// characters, of
+    /// - 0 for control characters (general category Cc) and for characters
+    ///   in the combining-mark blocks U+0300..=U+036F, U+1AB0..=U+1AFF,
+    ///   U+1DC0..=U+1DFF, U+20D0..=U+20FF and U+FE20..=U+FE2F;
+    /// - 2 for characters in U+1100..=U+115F, U+2E80..=U+2FDF,
+    ///   U+3000..=U+4DBF, U+4E00..=U+A4CF, U+AC00..=U+D7AF,
+    ///   U+F900..=U+FAFF, U+FE10..=U+FE1F, U+FE30..=U+FE6F,
+    ///   U+FF00..=U+FFEF, U+20000..=U+2A6DF, U+2A700..=U+2B81F and
+    ///   U+2F800..=U+2FA1F;
+    /// - 1 for everything else.
+    ///
+    /// Limitation: these are fixed ranges, not the Unicode East Asian Width
+    /// and general category data, so some widths are wrong, for example:
+    /// - nonspacing marks and format characters outside those blocks count
+    ///   as 1 (U+05B0, U+0E31, U+FE0F, U+200B, U+200D);
+    /// - wide characters outside the ranges count as 1 (the emoji U+1F600,
+    ///   and the CJK ideographs from Extension E on, such as U+2B820 and
+    ///   U+30000);
+    /// - narrow characters inside them count as 2 (the halfwidth forms in
+    ///   U+FF61..=U+FFDC and U+FFE8..=U+FFEE, and U+303F), and so do the
+    ///   combining marks U+302A..=U+302D, U+3099 and U+309A.
     pub fn display_width(input: &str) -> usize {
         input
             .chars()
@@ -521,7 +568,9 @@ pub mod utils {
             .sum()
     }
 
-    /// Check if a character is a zero-width combining mark
+    /// Whether `ch` is in one of the five combining-mark blocks listed on
+    /// `display_width`. Nonspacing marks in other blocks, such as U+05B0 or
+    /// U+0E31, are not included.
     fn is_combining_mark(ch: char) -> bool {
         let cp = ch as u32;
         (0x0300..=0x036F).contains(&cp)
@@ -531,7 +580,8 @@ pub mod utils {
             || (0xFE20..=0xFE2F).contains(&cp)
     }
 
-    /// Check if a character is wide (occupies 2 terminal columns per UAX #11 East Asian Width)
+    /// Whether `ch` is in the block list below, which approximates East
+    /// Asian Width W and F (UAX #11); see the limitation on `display_width`
     fn is_wide_char(ch: char) -> bool {
         let codepoint = ch as u32;
 
@@ -722,5 +772,40 @@ mod tests {
         // 4. display_width includes U+1100 as width 2 and combining marks as width 0.
         assert_eq!(utils::display_width("\u{1100}"), 2);
         assert_eq!(utils::display_width("e\u{0301}"), 1);
+    }
+
+    #[test]
+    fn test_s20_r7_documented_limitations_hold() {
+        // Every example given in the limitations on `with_normalization`,
+        // `with_case_folding` and `utils::display_width`. If a table is
+        // extended, change those docs and this test together.
+        let mut p = UnicodeProcessor::new().with_normalization(true);
+        // Composed: a Latin pair from the table and Hangul L + V + T.
+        assert_eq!(p.process("e\u{0301}").unwrap(), "\u{00E9}");
+        assert_eq!(p.process("\u{1100}\u{1161}\u{11A8}").unwrap(), "\u{AC01}");
+        // Left unchanged, though NFC composes them.
+        for s in ["z\u{030C}", "a\u{0328}", "a\u{0323}\u{0302}", "\u{212B}"] {
+            assert_eq!(p.process(s).unwrap(), s, "{s:?}");
+        }
+        // Composed differently from NFC (U+1EA1 U+0301), as marks are not
+        // reordered.
+        assert_eq!(p.process("a\u{0301}\u{0323}").unwrap(), "\u{00E1}\u{0323}");
+
+        let mut lower = UnicodeProcessor::new().with_case_folding(true);
+        assert_eq!(lower.process("\u{00DF}").unwrap(), "\u{00DF}");
+
+        let width = |c: char| utils::display_width(c.encode_utf8(&mut [0; 4]));
+        for c in ['\u{05B0}', '\u{0E31}', '\u{FE0F}', '\u{200B}', '\u{200D}'] {
+            assert_eq!(width(c), 1, "U+{:04X}", c as u32);
+        }
+        for c in ['\u{1F600}', '\u{2B820}', '\u{30000}'] {
+            assert_eq!(width(c), 1, "U+{:04X}", c as u32);
+        }
+        for c in [
+            '\u{FF61}', '\u{FFDC}', '\u{FFE8}', '\u{FFEE}', '\u{303F}', '\u{302A}', '\u{302D}',
+            '\u{3099}', '\u{309A}',
+        ] {
+            assert_eq!(width(c), 2, "U+{:04X}", c as u32);
+        }
     }
 }

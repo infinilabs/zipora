@@ -9,7 +9,11 @@
 //! - **SIMD Search**: SSE4.2 PCMPESTRI-based string search operations with hybrid strategies
 //! - **BMI2 String Operations**: Hardware-accelerated string processing with BMI2 instructions
 //! - **Lexicographic Iterators**: Efficient iteration over sorted string collections
-//! - **Unicode Processing**: Full Unicode support with proper handling
+//! - **Unicode Processing**: UTF-8 validation and character counting, a
+//!   UTF-8 to UTF-32 iterator, lowercasing and analysis. Normalization
+//!   ([`UnicodeProcessor::with_normalization`]) and display width
+//!   ([`utils::unicode_utils::display_width`]) are approximations; see their
+//!   limitations.
 //! - **Line Processing**: Utilities for processing large text files line by line
 //! - **Numeric Comparison**: `decimal_strcmp` and `realnum_strcmp` for numeric string comparison
 //! - **String Joining**: Efficient `join`, `join_str`, `JoinBuilder` utilities
