@@ -15,6 +15,7 @@
 mod advanced;
 mod config;
 mod lsd;
+mod merge;
 #[cfg(test)]
 mod tests;
 

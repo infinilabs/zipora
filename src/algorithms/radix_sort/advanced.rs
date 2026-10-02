@@ -518,8 +518,8 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             return Err(e);
         }
 
-        // Use multi-way merge to combine sorted chunks
-        self.multiway_merge_chunks(data, chunk_size)?;
+        // Merge the sorted chunks with a parallel pairwise merge tree
+        self.merge_sorted_chunks(data, chunk_size)?;
 
         self.stats.basic_stats.used_parallel = true;
         self.stats.basic_stats.used_simd =
@@ -660,24 +660,19 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         Ok(())
     }
 
-    /// Multi-way merge for combining parallel sorted chunks
-    fn multiway_merge_chunks(&mut self, data: &mut [T], chunk_size: usize) -> Result<()> {
-        use crate::algorithms::multiway_merge::{MultiWayMerge, SliceSource};
-
-        if data.is_empty() || chunk_size == 0 || chunk_size >= data.len() {
-            return Ok(());
-        }
-
+    /// Merge the sorted, contiguous `chunk_size`-long runs of `data` (the last
+    /// run may be shorter) left behind by the parallel chunk sort.
+    ///
+    /// The runs are merged as a balanced binary tree whose levels and
+    /// pairwise merges run as rayon tasks (see `super::merge`). The merge is
+    /// stable, so the parallel LSD path is now stable like the sequential one.
+    /// Until S20-R3 this was a single-threaded k-way heap merge (before C8, a
+    /// `sort_unstable` of the whole slice): slower than the sequential sort,
+    /// and equal keys from different chunks could come out reordered.
+    fn merge_sorted_chunks(&mut self, data: &mut [T], chunk_size: usize) -> Result<()> {
         let merge_start = Instant::now();
-        let merged = {
-            let sources: Vec<SliceSource<'_, T>> =
-                data.chunks(chunk_size).map(SliceSource::new).collect();
-            let mut merger = MultiWayMerge::new();
-            merger.merge(sources)?
-        };
-        data.copy_from_slice(&merged);
+        super::merge::merge_sorted_runs(data, chunk_size);
         self.stats.phase_times.merging_time_us = merge_start.elapsed().as_micros() as u64;
-
         Ok(())
     }
 }

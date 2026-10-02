@@ -705,3 +705,169 @@ fn test_c8_10_radix_sort_invalid_radix_bits_and_differential_vs_std() {
     assert_eq!(kv_data, kv_expected);
 }
 
+/// Ordered by `key` only, so equal keys with different `tag`s expose whether a
+/// merge or sort is stable.
+#[derive(Debug, Clone, Copy)]
+struct Tagged {
+    key: u8,
+    tag: u32,
+}
+
+impl PartialEq for Tagged {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for Tagged {}
+
+impl PartialOrd for Tagged {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Tagged {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
+impl RadixSortable for Tagged {
+    fn extract_key(&self) -> u64 {
+        self.key as u64
+    }
+
+    fn get_byte(&self, position: usize) -> Option<u8> {
+        (position == 0).then_some(self.key)
+    }
+
+    fn max_bytes(&self) -> usize {
+        1
+    }
+}
+
+fn key_tag(v: &[Tagged]) -> Vec<(u8, u32)> {
+    v.iter().map(|t| (t.key, t.tag)).collect()
+}
+
+#[test]
+fn test_s20_r3_parallel_merge_tree_stable_and_matches_std() {
+    // 1. par_merge split logic, exhaustively: every pair of non-decreasing key
+    //    sequences over {0, 1, 2} up to length 5 (Miri: 3), with cutoffs small
+    //    enough to split down to single elements. The output must equal the
+    //    stable merge (ties from `left` first).
+    let max_len = if cfg!(miri) { 3 } else { 5 };
+    let mut seqs: Vec<Vec<u8>> = vec![Vec::new()];
+    let mut frontier: Vec<Vec<u8>> = vec![Vec::new()];
+    for _ in 0..max_len {
+        let mut next = Vec::new();
+        for s in &frontier {
+            for k in s.last().copied().unwrap_or(0)..=2 {
+                let mut t = s.clone();
+                t.push(k);
+                next.push(t);
+            }
+        }
+        seqs.extend(next.iter().cloned());
+        frontier = next;
+    }
+    for l in &seqs {
+        for r in &seqs {
+            let left: Vec<Tagged> = l
+                .iter()
+                .enumerate()
+                .map(|(i, &key)| Tagged { key, tag: i as u32 })
+                .collect();
+            let right: Vec<Tagged> = r
+                .iter()
+                .enumerate()
+                .map(|(i, &key)| Tagged {
+                    key,
+                    tag: 1000 + i as u32,
+                })
+                .collect();
+            let mut expected: Vec<Tagged> = left.iter().chain(&right).copied().collect();
+            expected.sort_by_key(|t| t.key); // stable: left's equal keys stay first
+            for cutoff in [0, 1, 2, 3, 4] {
+                let mut out = vec![
+                    Tagged {
+                        key: 0,
+                        tag: u32::MAX
+                    };
+                    left.len() + right.len()
+                ];
+                super::merge::par_merge_with_cutoff(&left, &right, &mut out, cutoff);
+                assert_eq!(
+                    key_tag(&out),
+                    key_tag(&expected),
+                    "par_merge cutoff={cutoff} left={l:?} right={r:?}"
+                );
+            }
+        }
+    }
+
+    // 2. Parallel LSD path end to end: forced chunk counts (odd and even merge
+    //    trees) and sizes straddling 2 * parallel_threshold.
+    let sizes: &[usize] = if cfg!(miri) {
+        &[129, 300]
+    } else {
+        &[129, 1_000, 20_011, 100_003]
+    };
+    for &threads in &[2usize, 3, 5, 7, 16, 64] {
+        let cfg = AdvancedRadixSortConfig {
+            force_strategy: Some(SortingStrategy::LsdRadix),
+            use_parallel: true,
+            parallel_threshold: 64,
+            num_threads: threads,
+            use_secure_memory: false,
+            ..Default::default()
+        };
+        for &n in sizes {
+            let mut v32: Vec<u32> = (0..n as u32)
+                .map(|i| i.wrapping_mul(0x9E37_79B9) ^ (i << 7))
+                .collect();
+            v32.extend([0, u32::MAX, 0x8000_0000]);
+            let mut want32 = v32.clone();
+            want32.sort_unstable();
+            AdvancedU32RadixSort::with_config(cfg.clone())
+                .unwrap()
+                .sort(&mut v32)
+                .unwrap();
+            assert_eq!(v32, want32, "u32 threads={threads} n={n}");
+
+            let mut v64: Vec<u64> = (0..n as u64)
+                .map(|i| i.wrapping_mul(0x517c_c1b7_2722_0a95) ^ (1u64 << (i % 64)))
+                .collect();
+            v64.extend([0, u64::MAX]);
+            let mut want64 = v64.clone();
+            want64.sort_unstable();
+            let mut sorter = AdvancedU64RadixSort::with_config(cfg.clone()).unwrap();
+            sorter.sort(&mut v64).unwrap();
+            assert_eq!(v64, want64, "u64 threads={threads} n={n}");
+            assert!(
+                sorter.stats().basic_stats.used_parallel,
+                "threads={threads} n={n}"
+            );
+
+            // Many duplicate keys: the parallel path must be stable end to end.
+            let mut tagged: Vec<Tagged> = (0..n as u32)
+                .map(|i| Tagged {
+                    key: (i.wrapping_mul(7919) % 13) as u8,
+                    tag: i,
+                })
+                .collect();
+            let mut want_tagged = tagged.clone();
+            want_tagged.sort_by_key(|t| t.key);
+            AdvancedRadixSort::<Tagged>::with_config(cfg.clone())
+                .unwrap()
+                .sort(&mut tagged)
+                .unwrap();
+            assert_eq!(
+                key_tag(&tagged),
+                key_tag(&want_tagged),
+                "tagged threads={threads} n={n}"
+            );
+        }
+    }
+}
