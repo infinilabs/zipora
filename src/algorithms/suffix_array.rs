@@ -9,17 +9,23 @@ use std::cmp::Ordering;
 use std::time::Instant;
 
 /// Suffix array construction algorithms
+///
+/// Limitation: only SA-IS is implemented. `DivSufSort`, `DC3` and
+/// `LarssonSadakane` are kept for API compatibility and run SA-IS, so every
+/// variant builds the same suffix array with the same algorithm; `Adaptive`
+/// only adds the pass that picks a variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SuffixArrayAlgorithm {
-    /// SA-IS (Suffix Array by Induced Sorting) - linear time, good for general use
+    /// SA-IS (Suffix Array by Induced Sorting) - linear time
     SAIS,
-    /// DivSufSort-style algorithm - optimized for practical performance
+    /// Runs SA-IS; there is no DivSufSort implementation
     DivSufSort,
-    /// DC3 (Divide-and-Conquer-3) algorithm - simple divide-and-conquer approach
+    /// Runs SA-IS; there is no DC3 implementation
     DC3,
-    /// Larsson-Sadakane algorithm - optimized for repetitive data
+    /// Runs SA-IS; there is no Larsson-Sadakane implementation
     LarssonSadakane,
-    /// Adaptive selection based on data characteristics
+    /// Picks one of the variants above from data characteristics; all of
+    /// them run SA-IS, so the choice only costs the analysis pass
     #[default]
     Adaptive,
 }
@@ -29,12 +35,12 @@ impl SuffixArrayAlgorithm {
     pub fn description(&self) -> &'static str {
         match self {
             Self::SAIS => "SA-IS: Linear-time induced sorting algorithm",
-            Self::DivSufSort => "DivSufSort: Practical performance optimized algorithm",
-            Self::DC3 => "DC3: Simple divide-and-conquer algorithm",
-            Self::LarssonSadakane => "Larsson-Sadakane: Optimized for repetitive data",
-            Self::Adaptive => {
-                "Adaptive: Automatic algorithm selection based on data characteristics"
+            Self::DivSufSort => "DivSufSort: runs SA-IS (no DivSufSort implementation)",
+            Self::DC3 => "DC3: runs SA-IS (no DC3 implementation)",
+            Self::LarssonSadakane => {
+                "Larsson-Sadakane: runs SA-IS (no Larsson-Sadakane implementation)"
             }
+            Self::Adaptive => "Adaptive: picks a variant by data characteristics; all run SA-IS",
         }
     }
 }
@@ -59,13 +65,15 @@ pub struct DataCharacteristics {
 pub struct SuffixArrayConfig {
     /// Algorithm to use for suffix array construction
     pub algorithm: SuffixArrayAlgorithm,
-    /// Use parallel processing for large inputs
+    /// Limitation: has no effect. Construction is always sequential (there is
+    /// no parallel SA-IS), and `stats().used_parallel` is always false.
     pub use_parallel: bool,
-    /// Threshold for parallel processing
+    /// Limitation: has no effect, see `use_parallel`.
     pub parallel_threshold: usize,
-    /// Compute LCP array along with suffix array
+    /// Limitation: has no effect. Construction never computes an LCP array;
+    /// use `LcpArray::new` or `EnhancedSuffixArray::with_lcp`.
     pub compute_lcp: bool,
-    /// Use optimized algorithm for small alphabets
+    /// Limitation: has no effect; every alphabet size runs the same SA-IS.
     pub optimize_small_alphabet: bool,
     /// Threshold for adaptive algorithm selection
     pub adaptive_threshold: usize,
@@ -299,7 +307,10 @@ impl SuffixArrayBuilder {
         Self { config }
     }
 
-    /// Select the optimal algorithm based on data characteristics
+    /// Select an algorithm variant based on data characteristics
+    ///
+    /// Limitation: every variant runs SA-IS, so the choice does not change
+    /// how the suffix array is built.
     pub fn select_algorithm(&self, text: &[u8]) -> SuffixArrayAlgorithm {
         if self.config.algorithm != SuffixArrayAlgorithm::Adaptive {
             return self.config.algorithm;
@@ -312,7 +323,8 @@ impl SuffixArrayBuilder {
 
         let characteristics = SuffixArray::analyze_text_characteristics(text);
 
-        // Decision logic based on data characteristics
+        // Decision logic based on data characteristics. The comments give the
+        // use each variant was meant for; all of them run SA-IS.
         if characteristics.alphabet_size <= 4 {
             // Very small alphabet - SA-IS handles this well
             SuffixArrayAlgorithm::SAIS
@@ -352,11 +364,8 @@ impl SuffixArrayBuilder {
             });
         }
 
-        let sa = if text.len() >= self.config.parallel_threshold && self.config.use_parallel {
-            self.build_parallel(text)?
-        } else {
-            self.build_sequential(text)?
-        };
+        // There is no parallel construction: `use_parallel` has no effect.
+        let sa = self.build_sequential(text)?;
 
         let elapsed = start_time.elapsed();
         let memory_used = sa.len() * std::mem::size_of::<usize>();
@@ -367,8 +376,7 @@ impl SuffixArrayBuilder {
                 items_processed: text.len(),
                 processing_time_us: elapsed.as_micros() as u64,
                 memory_used,
-                used_parallel: text.len() >= self.config.parallel_threshold
-                    && self.config.use_parallel,
+                used_parallel: false,
                 used_simd: false,
             },
             sa,
@@ -447,7 +455,8 @@ impl SuffixArrayBuilder {
         self.sais_construct(text)
     }
 
-    /// DivSufSort-style algorithm implementation
+    /// DivSufSort entry point; construction is delegated to SA-IS (there is
+    /// no DivSufSort implementation).
     fn divsufsort_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
         let n = text.len();
         if n == 0 {
@@ -460,7 +469,8 @@ impl SuffixArrayBuilder {
         self.sais_construct(text)
     }
 
-    /// Larsson-Sadakane algorithm implementation
+    /// Larsson-Sadakane entry point; construction is delegated to SA-IS
+    /// (there is no Larsson-Sadakane implementation).
     fn larsson_sadakane_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
         let n = text.len();
         if n == 0 {
@@ -471,10 +481,6 @@ impl SuffixArrayBuilder {
         }
 
         self.sais_construct(text)
-    }
-
-    fn build_parallel(&self, text: &[u8]) -> Result<Vec<usize>> {
-        self.build_sequential(text)
     }
 }
 
@@ -710,7 +716,8 @@ impl Algorithm for SuffixArrayBuilder {
     }
 
     fn supports_parallel(&self) -> bool {
-        true
+        // Construction is sequential; `use_parallel` has no effect.
+        false
     }
 }
 
@@ -970,7 +977,8 @@ mod tests {
     fn test_algorithm_trait() {
         let builder = SuffixArrayBuilder::new(SuffixArrayConfig::default());
 
-        assert!(builder.supports_parallel());
+        // Construction is sequential (S20-R6).
+        assert!(!builder.supports_parallel());
         assert!(!builder.supports_simd());
 
         let memory_estimate = builder.estimate_memory(1000);
@@ -1828,5 +1836,34 @@ mod tests {
             "S20-R2: {} wrong results over {texts_checked} texts, per path: {wrong:#?}; first: {first:#?}",
             wrong.values().sum::<usize>()
         );
+    }
+
+    #[test]
+    fn test_s20_r6_suffix_array_reports_sequential_construction() {
+        // There is no parallel construction (the former `build_parallel` only
+        // called `build_sequential`), yet `stats().used_parallel` echoed
+        // `use_parallel && len >= parallel_threshold` and `supports_parallel()`
+        // returned true.
+        let text = b"mississippi$banana";
+        let config = SuffixArrayConfig {
+            use_parallel: true,
+            parallel_threshold: 1,
+            ..Default::default()
+        };
+        let sa = SuffixArray::with_config(text, &config).unwrap();
+        let sequential = SuffixArray::with_config(
+            text,
+            &SuffixArrayConfig {
+                use_parallel: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(sa.as_slice(), sequential.as_slice());
+        assert!(
+            !sa.stats().used_parallel,
+            "used_parallel with use_parallel = true, parallel_threshold = 1"
+        );
+        assert!(!SuffixArrayBuilder::new(config).supports_parallel());
     }
 }
