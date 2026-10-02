@@ -31,9 +31,11 @@ pub struct ReplaceSelectSortConfig {
     pub memory_buffer_size: usize,
     /// Directory for temporary files
     pub temp_dir: PathBuf,
-    /// Whether to use secure memory pool
+    /// Limitation: has no effect. The run buffer and the merge tree use the
+    /// global allocator; the flag is only passed on to
+    /// `LoserTreeConfig::use_secure_memory`, which has no effect either.
     pub use_secure_memory: bool,
-    /// Compression for temporary files
+    /// Limitation: has no effect; temporary files are never compressed.
     pub compress_temp_files: bool,
     /// Maximum number of runs merged at once (values below 2 count as 2).
     /// With more runs than this, intermediate passes merge groups of runs
@@ -61,21 +63,26 @@ impl Default for ReplaceSelectSortConfig {
     }
 }
 
-/// Statistics for external sort operations
+/// Statistics for external sort operations.
+///
+/// `items_sorted`, `runs_generated` and `temp_bytes_written` add up over
+/// all `sort` calls on a sorter; `merge_passes` and `processing_time_us`
+/// describe the last call.
 #[derive(Debug, Clone)]
 pub struct ExternalSortStats {
-    /// Total number of items sorted
+    /// Number of items sorted
     pub items_sorted: usize,
-    /// Number of runs generated
+    /// Number of runs generated (runs written by intermediate merge passes
+    /// are not counted)
     pub runs_generated: usize,
-    /// Total bytes written to temporary files
+    /// Bytes written to temporary files, including intermediate merge passes
     pub temp_bytes_written: usize,
-    /// Total bytes read from temporary files
+    /// Limitation: not tracked; always 0.
     pub temp_bytes_read: usize,
     /// Number of merge passes in the last `sort`: intermediate passes plus
     /// the final merge (0 when there was at most one run)
     pub merge_passes: usize,
-    /// Total processing time in microseconds
+    /// Wall time of the last `sort`, in microseconds
     pub processing_time_us: u64,
 }
 
@@ -89,7 +96,10 @@ impl ExternalSortStats {
         }
     }
 
-    /// Calculate I/O efficiency (ratio of logical to physical I/O)
+    /// Estimated I/O efficiency: `items_sorted * 8` bytes (as if every item
+    /// were a `u64`) divided by `temp_bytes_written`, which includes each
+    /// record's `usize` length prefix and every intermediate merge pass; 1.0
+    /// when nothing was written.
     pub fn io_efficiency(&self) -> f64 {
         if self.temp_bytes_written == 0 {
             1.0
@@ -1326,5 +1336,35 @@ mod tests {
             std::fs::remove_dir_all(&dir).unwrap();
         }
         assert_eq!(left, [(14, 0), (40, 0)]);
+    }
+
+    #[test]
+    fn test_s20_r6d_documented_stats_hold() -> Result<()> {
+        // Guard for the S20-R6d docs: the counters add up over `sort` calls,
+        // `merge_passes` describes the last call, `temp_bytes_read` stays 0,
+        // and `compress_temp_files` does not change what is written.
+        let record = std::mem::size_of::<usize>() + std::mem::size_of::<u64>();
+        let sort_twice = |compress: bool| -> Result<ExternalSortStats> {
+            let config = ReplaceSelectSortConfig {
+                memory_buffer_size: 4 * std::mem::size_of::<u64>(),
+                temp_dir: test_temp_dir(),
+                compress_temp_files: compress,
+                ..Default::default()
+            };
+            let mut sorter = ReplaceSelectSort::new(config);
+            sorter.sort((0..40u64).rev())?; // 10 runs, one merge pass
+            assert_eq!(sorter.stats().merge_passes, 1);
+            sorter.sort([3u64, 1, 2])?; // fits the buffer: one run, no merge
+            Ok(sorter.stats().clone())
+        };
+        let plain = sort_twice(false)?;
+        assert_eq!(plain.items_sorted, 43);
+        assert_eq!(plain.runs_generated, 11);
+        assert_eq!(plain.temp_bytes_written, 43 * record);
+        assert_eq!(plain.merge_passes, 0);
+        assert_eq!(plain.temp_bytes_read, 0);
+        let compressed = sort_twice(true)?;
+        assert_eq!(compressed.temp_bytes_written, plain.temp_bytes_written);
+        Ok(())
     }
 }
