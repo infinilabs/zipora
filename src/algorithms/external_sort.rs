@@ -42,7 +42,9 @@ pub struct ReplaceSelectSortConfig {
     /// output file of an intermediate pass). Runs merged by an intermediate
     /// pass are deleted right away, whatever `cleanup_temp_files` says.
     pub merge_ways: usize,
-    /// Clean up temporary files automatically
+    /// Delete the run files at the end of a successful `sort`. When false,
+    /// the runs of the last `sort` stay on disk until the next `sort`,
+    /// [`cleanup`](ReplaceSelectSort::cleanup), or drop of the sorter.
     pub cleanup_temp_files: bool,
 }
 
@@ -354,12 +356,19 @@ where
         }
     }
 
-    /// Sort the input data using external sorting
+    /// Sort the input data using external sorting.
+    ///
+    /// Runs left on disk by an earlier call (`cleanup_temp_files: false`, or
+    /// an error) are deleted first.
     pub fn sort<I>(&mut self, input: I) -> Result<Vec<T>>
     where
         I: IntoIterator<Item = T>,
     {
         let start_time = std::time::Instant::now();
+
+        // Earlier runs would be merged into this result, and this call's run
+        // files reuse their names.
+        self.cleanup()?;
 
         // Phase 1: Generate sorted runs using replacement selection
         self.generate_runs(input)?;
@@ -451,8 +460,11 @@ where
         let mut input_iter = input.into_iter().peekable();
         let mut current_run = 0;
         let mut run_items = 0;
+        // The run being written owns its file from creation, so an error
+        // deletes it. Bound before the writer so that the writer is dropped
+        // (closed) first.
+        let mut current_run_file: Option<TempRun> = None;
         let mut temp_writer: Option<BufWriter<File>> = None;
-        let mut current_temp_path: Option<PathBuf> = None;
 
         // Fill the buffer. An exact upper size hint avoids reserving the whole
         // buffer for a small input; without one, reserve the buffer as before.
@@ -474,11 +486,13 @@ where
                 return Ok(());
             }
             heap.sort_by(|a, b| (self.comparator)(&a.value, &b.value));
-            let (mut writer, temp_path) = self.create_run_file(current_run)?;
+            let (writer, temp_path) = self.create_run_file(current_run)?;
+            let run_file = TempRun::new(temp_path, 0);
+            let mut writer = writer;
             for element in &heap {
                 self.write_element(&mut writer, &element.value)?;
             }
-            return self.finish_run(&mut Some(writer), temp_path, heap.len());
+            return self.finish_run(&mut Some(writer), run_file, heap.len());
         }
 
         // Bottom-up heap construction, O(n) instead of n pushes.
@@ -491,7 +505,7 @@ where
                 if temp_writer.is_some() {
                     self.finish_run(
                         &mut temp_writer,
-                        current_temp_path.take().ok_or_else(|| {
+                        current_run_file.take().ok_or_else(|| {
                             ZiporaError::invalid_state(
                                 "external sort: temp path missing at run boundary",
                             )
@@ -505,8 +519,8 @@ where
             // Start new run file if needed
             if temp_writer.is_none() {
                 let (writer, temp_path) = self.create_run_file(current_run)?;
+                current_run_file = Some(TempRun::new(temp_path, 0));
                 temp_writer = Some(writer);
-                current_temp_path = Some(temp_path);
                 run_items = 0;
             }
 
@@ -539,7 +553,7 @@ where
         if temp_writer.is_some() {
             self.finish_run(
                 &mut temp_writer,
-                current_temp_path.take().ok_or_else(|| {
+                current_run_file.take().ok_or_else(|| {
                     ZiporaError::invalid_state("external sort: temp path missing at final run")
                 })?,
                 run_items,
@@ -612,7 +626,7 @@ where
     fn finish_run(
         &mut self,
         writer: &mut Option<BufWriter<File>>,
-        temp_path: PathBuf,
+        mut run: TempRun,
         items_count: usize,
     ) -> Result<()> {
         if let Some(w) = writer.take() {
@@ -620,14 +634,15 @@ where
         }
 
         // Verify file exists and has the expected size before adding to temp files
-        if !temp_path.exists() {
+        if !run.file_path.exists() {
             return Err(ZiporaError::io_error(format!(
                 "Temp file was not created: {:?}",
-                temp_path
+                run.file_path
             )));
         }
 
-        self.temp_files.push(TempRun::new(temp_path, items_count));
+        run.items_count = items_count;
+        self.temp_files.push(run);
         self.stats.runs_generated += 1;
         Ok(())
     }
@@ -1234,5 +1249,82 @@ mod tests {
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
         std::fs::remove_dir(&dir).unwrap();
         Ok(())
+    }
+
+    #[test]
+    fn test_s20_r9b_sort_again_without_cleanup() -> Result<()> {
+        // S20-R9b: with `cleanup_temp_files: false` the runs of one `sort`
+        // stayed in the run list, so the next `sort` on the same sorter
+        // merged them into its own result (and had truncated some of their
+        // files by reusing the run file names).
+        for ways in [16, 2] {
+            let dir = test_temp_dir();
+            let config = ReplaceSelectSortConfig {
+                memory_buffer_size: 4 * std::mem::size_of::<u64>(),
+                temp_dir: dir.clone(),
+                merge_ways: ways,
+                cleanup_temp_files: false,
+                ..Default::default()
+            };
+            let mut sorter = ReplaceSelectSort::new(config);
+            let ctx = format!("merge_ways={ways}");
+            let first = sorter.sort((0..40u64).rev())?;
+            assert_eq!(first, (0..40).collect::<Vec<_>>(), "{ctx}");
+            let second = sorter.sort((100..120u64).rev())?;
+            assert_eq!(second, (100..120).collect::<Vec<_>>(), "{ctx}");
+            // Only the second sort's runs are left on disk until the sorter
+            // is dropped: its 5 runs, or the 2 merged runs that the final
+            // 2-way merge read.
+            let left = std::fs::read_dir(&dir).unwrap().count();
+            assert_eq!(left, if ways == 2 { 2 } else { 5 }, "{ctx}");
+            drop(sorter);
+            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "{ctx}");
+            std::fs::remove_dir(&dir).unwrap();
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_s20_r9b_failed_sort_leaves_no_run_file() {
+        // S20-R9b: a write error in the middle of a run (here an item that
+        // fails to serialize) left that run's file behind for good: it was
+        // not in the run list yet, so neither the next `sort`, `cleanup` nor
+        // drop deleted it. n = 14 takes the in-memory path (one run); n = 40
+        // with a 4-item buffer takes the heap path (runs 0..=5 complete, run
+        // 6 being written when 13 fails).
+
+        /// Serializes like a `u32`, except that 13 fails to serialize.
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize)]
+        struct FailOn13(u32);
+
+        impl serde::Serialize for FailOn13 {
+            fn serialize<S: serde::Serializer>(
+                &self,
+                serializer: S,
+            ) -> std::result::Result<S::Ok, S::Error> {
+                if self.0 == 13 {
+                    return Err(serde::ser::Error::custom("FailOn13"));
+                }
+                serializer.serialize_u32(self.0)
+            }
+        }
+
+        // (n, files left in the temp dir after the failed sort and drop)
+        let mut left = Vec::new();
+        for (n, buffer_items) in [(14u32, 256), (40, 4)] {
+            let dir = test_temp_dir();
+            let config = ReplaceSelectSortConfig {
+                memory_buffer_size: buffer_items * std::mem::size_of::<FailOn13>(),
+                temp_dir: dir.clone(),
+                ..Default::default()
+            };
+            let mut sorter = ReplaceSelectSort::new(config);
+            let err = sorter.sort((0..n).rev().map(FailOn13)).unwrap_err();
+            assert!(err.to_string().contains("FailOn13"), "n={n}: {err}");
+            drop(sorter);
+            left.push((n, std::fs::read_dir(&dir).unwrap().count()));
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        assert_eq!(left, [(14, 0), (40, 0)]);
     }
 }
