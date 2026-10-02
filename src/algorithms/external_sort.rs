@@ -7,16 +7,22 @@
 
 use crate::algorithms::tournament_tree::{EnhancedLoserTree, LoserTreeConfig};
 use crate::error::{Result, ZiporaError};
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fs::{File, remove_file};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::marker::PhantomData;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+/// Where a merge's run iterators store a read or deserialization error; the
+/// merge checks it once the loser tree is drained.
+type ReadErrorSlot = Rc<RefCell<Option<ZiporaError>>>;
 
 /// Configuration for external sorting operations
 #[derive(Debug, Clone)]
@@ -29,7 +35,12 @@ pub struct ReplaceSelectSortConfig {
     pub use_secure_memory: bool,
     /// Compression for temporary files
     pub compress_temp_files: bool,
-    /// Number of merge ways for final merge
+    /// Maximum number of runs merged at once (values below 2 count as 2).
+    /// With more runs than this, intermediate passes merge groups of runs
+    /// into new temporary runs until at most `merge_ways` remain, so at most
+    /// `merge_ways` run files are open for reading at a time (plus the
+    /// output file of an intermediate pass). Runs merged by an intermediate
+    /// pass are deleted right away, whatever `cleanup_temp_files` says.
     pub merge_ways: usize,
     /// Clean up temporary files automatically
     pub cleanup_temp_files: bool,
@@ -59,7 +70,8 @@ pub struct ExternalSortStats {
     pub temp_bytes_written: usize,
     /// Total bytes read from temporary files
     pub temp_bytes_read: usize,
-    /// Number of merge passes
+    /// Number of merge passes in the last `sort`: intermediate passes plus
+    /// the final merge (0 when there was at most one run)
     pub merge_passes: usize,
     /// Total processing time in microseconds
     pub processing_time_us: u64,
@@ -257,7 +269,9 @@ where
 /// External sorting algorithm using replacement selection
 ///
 /// This implementation uses replacement selection to generate long runs,
-/// followed by k-way merging to produce the final sorted output.
+/// followed by k-way merges of at most
+/// [`merge_ways`](ReplaceSelectSortConfig::merge_ways) runs at a time to
+/// produce the final sorted output.
 ///
 /// # Example
 /// ```
@@ -284,6 +298,8 @@ pub struct ReplaceSelectSort<T, F = fn(&T, &T) -> Ordering> {
     stats: ExternalSortStats,
     temp_files: Vec<TempRun>,
     instance_id: String,
+    /// Intermediate merge files created so far; numbers the next one.
+    merge_files_created: usize,
     _phantom: PhantomData<T>,
 }
 
@@ -333,6 +349,7 @@ where
             },
             temp_files: Vec::new(),
             instance_id,
+            merge_files_created: 0,
             _phantom: PhantomData,
         }
     }
@@ -538,6 +555,23 @@ where
             .config
             .temp_dir
             .join(format!("{}_{}.tmp", self.instance_id, run_id));
+        Self::create_temp_file(temp_path)
+    }
+
+    /// Create the temporary file for the next intermediate merge output.
+    /// Merge files are numbered separately (`{instance_id}_m{n}.tmp`), so
+    /// their names never collide with run files or with each other.
+    fn create_merge_file(&mut self) -> Result<(BufWriter<File>, PathBuf)> {
+        let temp_path = self.config.temp_dir.join(format!(
+            "{}_m{}.tmp",
+            self.instance_id, self.merge_files_created
+        ));
+        self.merge_files_created += 1;
+        Self::create_temp_file(temp_path)
+    }
+
+    /// Create (or truncate) the temporary file at `temp_path`.
+    fn create_temp_file(temp_path: PathBuf) -> Result<(BufWriter<File>, PathBuf)> {
         let file = File::create(&temp_path)
             .map_err(|e| ZiporaError::io_error(format!("Failed to create temp file: {}", e)))?;
         Ok((BufWriter::new(file), temp_path))
@@ -561,6 +595,19 @@ where
         Ok(())
     }
 
+    /// Flush a run file's buffer and sync the file to disk.
+    fn sync_run_file(mut writer: BufWriter<File>) -> Result<()> {
+        writer
+            .flush()
+            .map_err(|e| ZiporaError::io_error(format!("Failed to flush temp file: {}", e)))?;
+        // Ensure data is synced to disk
+        writer
+            .into_inner()
+            .map_err(|e| ZiporaError::io_error(format!("Failed to unwrap buffered writer: {}", e)))?
+            .sync_all()
+            .map_err(|e| ZiporaError::io_error(format!("Failed to sync temp file: {}", e)))
+    }
+
     /// Finish the current run and add it to the temp files list
     fn finish_run(
         &mut self,
@@ -568,16 +615,8 @@ where
         temp_path: PathBuf,
         items_count: usize,
     ) -> Result<()> {
-        if let Some(mut w) = writer.take() {
-            w.flush()
-                .map_err(|e| ZiporaError::io_error(format!("Failed to flush temp file: {}", e)))?;
-            // Ensure data is synced to disk
-            w.into_inner()
-                .map_err(|e| {
-                    ZiporaError::io_error(format!("Failed to unwrap buffered writer: {}", e))
-                })?
-                .sync_all()
-                .map_err(|e| ZiporaError::io_error(format!("Failed to sync temp file: {}", e)))?;
+        if let Some(w) = writer.take() {
+            Self::sync_run_file(w)?;
         }
 
         // Verify file exists and has the expected size before adding to temp files
@@ -593,20 +632,109 @@ where
         Ok(())
     }
 
-    /// Merge all runs using k-way merge
+    /// Merge all runs into the sorted output, at most `merge_ways` (at
+    /// least 2) runs at a time.
+    ///
+    /// While there are more runs than that, intermediate passes merge
+    /// contiguous groups of runs into new temporary runs, each taking the
+    /// place of its group; the final merge then reads the remaining runs.
+    /// Every merge gives ties to the earlier run, so the output is the same
+    /// as merging all runs at once.
     fn merge_runs(&mut self) -> Result<Vec<T>> {
-        if self.temp_files.is_empty() {
-            return Ok(Vec::new());
+        let ways = self.config.merge_ways.max(2);
+        let mut passes = 0;
+        while self.temp_files.len() > ways {
+            self.merge_pass(ways)?;
+            passes += 1;
         }
 
-        if self.temp_files.len() == 1 {
+        let result = match self.temp_files.len() {
+            0 => Vec::new(),
             // Only one run, just read it back
-            return self.read_single_run();
+            1 => self.read_single_run()?,
+            _ => {
+                let (mut tree, read_error) = self.open_merge_tree(&self.temp_files)?;
+                let total = self.temp_files.iter().map(|run| run.items_count).sum();
+                let mut result = Vec::with_capacity(total);
+                while let Some(value) = tree.pop()? {
+                    result.push(value);
+                }
+                if let Some(err) = read_error.borrow_mut().take() {
+                    return Err(err);
+                }
+                passes += 1;
+                result
+            }
+        };
+        self.stats.merge_passes = passes;
+        Ok(result)
+    }
+
+    /// One intermediate pass over more than `ways` runs: merge contiguous
+    /// groups of at most `ways` runs from the front, each into a new run
+    /// that takes the group's place, until the run count is the largest
+    /// power of `ways` below it. Every later pass is then a full `ways`-way
+    /// merge, which keeps the data rewritten to a minimum for runs of equal
+    /// length.
+    fn merge_pass(&mut self, ways: usize) -> Result<()> {
+        let len = self.temp_files.len();
+        // Largest power of `ways` below `len`; at least `ways`, as `len > ways`.
+        let mut target = ways;
+        while let Some(next) = target.checked_mul(ways) {
+            if next >= len {
+                break;
+            }
+            target = next;
         }
 
-        // Multi-way merge
+        let mut to_remove = len - target;
+        let mut runs = std::mem::take(&mut self.temp_files).into_iter();
+        let mut merged = Vec::with_capacity(target);
+        while to_remove > 0 {
+            let group: Vec<TempRun> = runs.by_ref().take(ways.min(to_remove + 1)).collect();
+            if group.len() < 2 {
+                merged.extend(group);
+                break;
+            }
+            to_remove -= group.len() - 1;
+            merged.push(self.merge_group_to_run(&group)?);
+            // `group` is dropped here, which deletes its files.
+        }
+        merged.extend(runs);
+        self.temp_files = merged;
+        Ok(())
+    }
+
+    /// Merge `group` into a new temporary run, with `group.len()` run files
+    /// open for reading plus the new run's file.
+    fn merge_group_to_run(&mut self, group: &[TempRun]) -> Result<TempRun> {
+        let (mut tree, read_error) = self.open_merge_tree(group)?;
+        let (writer, path) = self.create_merge_file()?;
+        // `run` owns the new file, so the file is deleted if the merge fails;
+        // `writer` is bound after `run` so that it is dropped (closed) first.
+        let mut run = TempRun::new(path, 0);
+        let mut writer = writer;
+        while let Some(value) = tree.pop()? {
+            self.write_element(&mut writer, &value)?;
+            run.items_count += 1;
+        }
+        if let Some(err) = read_error.borrow_mut().take() {
+            return Err(err);
+        }
+        Self::sync_run_file(writer)?;
+        Ok(run)
+    }
+
+    /// Open `runs` and build a stable loser tree over them (ties go to the
+    /// earlier run). A run's iterator stops at a read or deserialization
+    /// error and stores it in the returned slot, which the caller checks
+    /// after draining the tree.
+    fn open_merge_tree(
+        &self,
+        runs: &[TempRun],
+    ) -> Result<(EnhancedLoserTree<T, F>, ReadErrorSlot)> {
         let tree_config = LoserTreeConfig {
-            initial_capacity: self.temp_files.len(),
+            initial_capacity: runs.len(),
             use_secure_memory: self.config.use_secure_memory,
             stable_sort: true,
             cache_optimized: true,
@@ -618,12 +746,11 @@ where
         let mut tournament_tree =
             EnhancedLoserTree::with_comparator(tree_config, self.comparator.clone());
 
-        let read_error: std::rc::Rc<std::cell::RefCell<Option<ZiporaError>>> =
-            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let read_error: ReadErrorSlot = Rc::new(RefCell::new(None));
 
-        // Add all runs to the tournament tree while capturing any I/O or deserialization error
-        for run in &self.temp_files {
-            let err_slot = std::rc::Rc::clone(&read_error);
+        // Add the runs to the tournament tree while capturing any I/O or deserialization error
+        for run in runs {
+            let err_slot = Rc::clone(&read_error);
             let iter = run.iter::<T>()?.scan(err_slot, |slot, item_res| match item_res {
                 Ok(val) => Some(val),
                 Err(e) => {
@@ -634,13 +761,7 @@ where
             tournament_tree.add_way(iter)?;
         }
 
-        let result = tournament_tree.merge_to_vec()?;
-        if let Some(err) = read_error.borrow_mut().take() {
-            return Err(err);
-        }
-        self.stats.merge_passes = 1;
-
-        Ok(result)
+        Ok((tournament_tree, read_error))
     }
 
     /// Read a single run back into memory
@@ -989,6 +1110,129 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_s20_r9_merge_passes_bounded_by_merge_ways() -> Result<()> {
+        // S20-R9: `merge_ways` was never read and every run was merged at
+        // once, so `merge_passes` was always 1. 256 descending items with a
+        // 4-item buffer give exactly 64 runs; merging at most `ways` runs at
+        // a time takes ceil(log_ways(64)) passes (`merge_ways` < 2 counts as
+        // 2), and no temporary file is left after the sort.
+        let data: Vec<u64> = (0..256).rev().collect();
+        let want: Vec<u64> = (0..256).collect();
+        for (ways, passes) in [
+            (0, 6),
+            (1, 6),
+            (2, 6),
+            (3, 4),
+            (4, 3),
+            (8, 2),
+            (16, 2),
+            (63, 2),
+            (64, 1),
+            (usize::MAX, 1),
+        ] {
+            let dir = test_temp_dir();
+            let config = ReplaceSelectSortConfig {
+                memory_buffer_size: 4 * std::mem::size_of::<u64>(),
+                temp_dir: dir.clone(),
+                merge_ways: ways,
+                ..Default::default()
+            };
+            let mut sorter = ReplaceSelectSort::new(config);
+            let got = sorter.sort(data.clone())?;
+            let ctx = format!("merge_ways={ways}");
+            assert_eq!(got, want, "{ctx}");
+            assert_eq!(sorter.stats().runs_generated, 64, "{ctx}");
+            assert_eq!(sorter.stats().merge_passes, passes, "{ctx}");
+            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "{ctx}");
+            std::fs::remove_dir(&dir).unwrap();
+        }
+
+        // Comparator-equal items spread over many runs: every grouping must
+        // give the order of the single all-run merge (ties go to the earlier
+        // run), which is sorted by key and a permutation of the input.
+        let tied: Vec<u64> = (0..256).map(|i| ((i * 7 % 5) << 32) | i).collect();
+        let sort_tied = |ways: usize| -> Result<(Vec<u64>, ExternalSortStats)> {
+            let config = ReplaceSelectSortConfig {
+                memory_buffer_size: 4 * std::mem::size_of::<u64>(),
+                temp_dir: test_temp_dir(),
+                merge_ways: ways,
+                ..Default::default()
+            };
+            let by_key = |a: &u64, b: &u64| (a >> 32).cmp(&(b >> 32));
+            let mut sorter = ReplaceSelectSort::with_comparator(config, by_key);
+            let out = sorter.sort(tied.clone())?;
+            Ok((out, sorter.stats().clone()))
+        };
+        let (single, stats) = sort_tied(usize::MAX)?;
+        assert_eq!(stats.merge_passes, 1);
+        assert!(
+            stats.runs_generated > 16,
+            "runs_generated={}",
+            stats.runs_generated
+        );
+        assert!(single.windows(2).all(|w| w[0] >> 32 <= w[1] >> 32));
+        let (mut got_items, mut want_items) = (single.clone(), tied.clone());
+        got_items.sort_unstable();
+        want_items.sort_unstable();
+        assert_eq!(got_items, want_items);
+        for ways in [2, 3, 5, 16] {
+            let (got, stats) = sort_tied(ways)?;
+            assert!(stats.merge_passes > 1, "merge_ways={ways}: {stats:?}");
+            assert_eq!(got, single, "merge_ways={ways}");
+        }
+        Ok(())
+    }
+
+    /// S20-R9: every run used to be opened at once, so with a limit of 64
+    /// open files, sorting 200 runs failed with "Too many open files". The
+    /// limit is set in a child process (the ignored test below) so that it
+    /// does not affect other tests.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "spawns a process")]
+    fn test_s20_r9_merge_respects_open_file_limit() {
+        let exe = std::env::current_exe().unwrap();
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(
+                "ulimit -n 64 && exec \"$0\" --exact \
+                 algorithms::external_sort::tests::test_s20_r9_open_file_limit_child \
+                 --ignored --test-threads=1",
+            )
+            .arg(&exe)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success() && stdout.contains("test result: ok. 1 passed"),
+            "child: {}\n--- stdout\n{stdout}\n--- stderr\n{stderr}",
+            out.status
+        );
+    }
+
+    /// Child of `test_s20_r9_merge_respects_open_file_limit`, which runs it
+    /// under `ulimit -n 64`: 1600 descending items with an 8-item buffer give
+    /// 200 runs, merged with the default `merge_ways` (16).
+    #[test]
+    #[ignore = "run by test_s20_r9_merge_respects_open_file_limit under ulimit -n 64"]
+    fn test_s20_r9_open_file_limit_child() -> Result<()> {
+        let dir = test_temp_dir();
+        let config = ReplaceSelectSortConfig {
+            memory_buffer_size: 8 * std::mem::size_of::<u64>(),
+            temp_dir: dir.clone(),
+            ..Default::default()
+        };
+        let mut sorter = ReplaceSelectSort::new(config);
+        let sorted = sorter.sort((0..1600u64).rev())?;
+        assert_eq!(sorted, (0..1600u64).collect::<Vec<_>>());
+        assert_eq!(sorter.stats().runs_generated, 200);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir(&dir).unwrap();
         Ok(())
     }
 }
