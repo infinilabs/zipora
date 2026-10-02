@@ -904,8 +904,8 @@ mod tests {
         // Guard for the S20-R5 merge-loop restructure (block checks once per 8
         // outputs, branchless steps in between): the AVX2 path against the
         // scalar merge and a sorted concatenation, for every length pair up to
-        // 40 (Miri: 12) and patterns that put block decisions on and around
-        // each 8-element boundary.
+        // 40 (Miri: 9, one past the 8-element block) and patterns that put
+        // block decisions on and around each 8-element boundary.
         let avx2 = SimdComparator::with_config(SimdConfig {
             use_avx512: false,
             use_avx2: true,
@@ -932,7 +932,7 @@ mod tests {
             (|_| 5, |_| 5),                                       // all equal
             (|i| i32::MIN + i, |i| i32::MAX - 100 + i),           // extremes
         ];
-        let max_len: i32 = if cfg!(miri) { 12 } else { 40 };
+        let max_len: i32 = if cfg!(miri) { 9 } else { 40 };
         for (p, (gl, gr)) in patterns.iter().enumerate() {
             for ll in 0..=max_len {
                 for rl in 0..=max_len {

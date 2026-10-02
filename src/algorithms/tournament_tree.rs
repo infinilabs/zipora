@@ -627,13 +627,15 @@ mod tests {
     fn test_many_ways_interleaved_merge() -> Result<()> {
         // Guards the O(log k) loser-tree implementation: 64 ways with
         // interleaved, duplicated, unevenly-exhausted (including empty)
-        // streams must merge to the exact globally sorted multiset.
+        // streams must merge to the exact globally sorted multiset. Miri keeps
+        // the 64 ways with 4x shorter streams (945 items instead of 3,780).
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<u64>::new(config);
+        let step: u64 = if cfg!(miri) { 5 } else { 20 };
 
         let mut expected = Vec::new();
         for way in 0..64u64 {
-            let len = (way % 7) * 20; // ways 0, 7, 14, ... are empty
+            let len = (way % 7) * step; // ways 0, 7, 14, ... are empty
             let mut values: Vec<u64> = (0..len).map(|i| (i * 13 + way * 3) % 500).collect();
             values.sort_unstable();
             expected.extend_from_slice(&values);

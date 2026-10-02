@@ -232,9 +232,11 @@ fn test_algorithm_trait() {
 
 #[test]
 fn test_msd_sort_bytes_large_dataset() {
+    // A permutation of key_000000..key_{n-1}; Miri sorts 200 keys.
+    let n: u32 = if cfg!(miri) { 200 } else { 1000 };
     let mut sorter = RadixSort::new();
-    let mut data: Vec<Vec<u8>> = (0..1000u32)
-        .map(|i| format!("key_{:06}", (i * 997) % 1000).into_bytes())
+    let mut data: Vec<Vec<u8>> = (0..n)
+        .map(|i| format!("key_{:06}", (i * 997) % n).into_bytes())
         .collect();
 
     sorter.sort_bytes(&mut data).unwrap();
@@ -564,22 +566,27 @@ fn test_memory_pool_integration() {
 /// instead of copying back after every pass; an odd pass count leaves the
 /// result in the buffer and needs one final copy. radix_bits=11 gives
 /// ceil(32/11)=3 passes (odd) for u32 and ceil(64/11)=6 (even) for u64,
-/// covering both endings.
+/// covering both endings. The pass count does not depend on the length,
+/// so Miri sorts 300 keys instead of 5,000.
 #[test]
 fn test_ping_pong_odd_and_even_pass_counts() {
     let config = RadixSortConfig {
         radix_bits: 11,
         ..Default::default()
     };
+    let n: u32 = if cfg!(miri) { 300 } else { 5000 };
 
-    let mut data: Vec<u32> = (0..5000u32).rev().map(|i| i.wrapping_mul(2654435761)).collect();
+    let mut data: Vec<u32> = (0..n).rev().map(|i| i.wrapping_mul(2654435761)).collect();
     let mut expected = data.clone();
     expected.sort_unstable();
     let mut sorter = RadixSort::with_config(config.clone());
     sorter.sort_u32(&mut data).unwrap();
     assert_eq!(data, expected);
 
-    let mut data: Vec<u64> = (0..5000u64).rev().map(|i| i.wrapping_mul(0x9E3779B97F4A7C15)).collect();
+    let mut data: Vec<u64> = (0..u64::from(n))
+        .rev()
+        .map(|i| i.wrapping_mul(0x9E3779B97F4A7C15))
+        .collect();
     let mut expected = data.clone();
     expected.sort_unstable();
     let mut sorter = RadixSort::with_config(config);
@@ -597,9 +604,9 @@ fn test_advanced_radix_sort_u64_random_simd() {
         ..Default::default()
     };
     let mut sorter = AdvancedU64RadixSort::with_config(config).unwrap();
-    let mut data: Vec<u64> = (0..1000u64)
-        .map(|i| i.wrapping_mul(0x517cc1b727220a95))
-        .collect();
+    // Miri: 200 keys (the largest key still needs all 8 byte passes).
+    let n: u64 = if cfg!(miri) { 200 } else { 1000 };
+    let mut data: Vec<u64> = (0..n).map(|i| i.wrapping_mul(0x517cc1b727220a95)).collect();
     let mut expected = data.clone();
     expected.sort_unstable();
 
@@ -753,6 +760,24 @@ fn key_tag(v: &[Tagged]) -> Vec<(u8, u32)> {
 
 #[test]
 fn test_s20_r3_parallel_merge_tree_stable_and_matches_std() {
+    if cfg!(miri) {
+        // A rayon::join issued outside any pool injects its job into the
+        // global pool and blocks until a pool thread has run it. Under Miri
+        // with Tree Borrows that round trip dominated: 1,592 of part 1's
+        // 2,000 par_merge calls start with one. On a pool thread the joins
+        // take the in-worker path. The split points, chunk counts and merge
+        // tree are unchanged; with one thread nothing is stolen.
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap()
+            .install(s20_r3_merge_tree_cases);
+    } else {
+        s20_r3_merge_tree_cases();
+    }
+}
+
+fn s20_r3_merge_tree_cases() {
     // 1. par_merge split logic, exhaustively: every pair of non-decreasing key
     //    sequences over {0, 1, 2} up to length 5 (Miri: 3), with cutoffs small
     //    enough to split down to single elements. The output must equal the
@@ -808,9 +833,10 @@ fn test_s20_r3_parallel_merge_tree_stable_and_matches_std() {
     }
 
     // 2. Parallel LSD path end to end: forced chunk counts (odd and even merge
-    //    trees) and sizes straddling 2 * parallel_threshold.
+    //    trees) and sizes straddling 2 * parallel_threshold. Miri sorts only
+    //    n = 129, which still splits into 2, 3, 5, 7, 15 and 43 or 44 chunks.
     let sizes: &[usize] = if cfg!(miri) {
-        &[129, 300]
+        &[129]
     } else {
         &[129, 1_000, 20_011, 100_003]
     };
@@ -953,6 +979,11 @@ fn test_s20_r3b_radix_sort_parallel_path_and_used_parallel() {
 /// `use_simd` on and off (without AVX-512 these take the two sequential
 /// counting loops); the test profile has overflow checks, so a shift of 32
 /// or more would panic here.
+///
+/// Under Miri only widths 1..=12 run. Every pass walks all 2^radix_bits
+/// buckets twice (reset, prefix sum), and widths 13..=16 account for 303,104
+/// of the 330,296 (bucket, pass) pairs across the 16 widths (91.8%); under
+/// Tree Borrows the full sweep took 166 s.
 #[test]
 fn test_s20_r5_sort_u32_every_radix_width() {
     let n: u32 = if cfg!(miri) { 40 } else { 2_000 };
@@ -964,7 +995,8 @@ fn test_s20_r5_sort_u32_every_radix_width() {
     want.sort_unstable();
     // Under Miri both settings take the same loop (SIMD is gated off).
     let simd_settings: &[bool] = if cfg!(miri) { &[false] } else { &[false, true] };
-    for radix_bits in 1..=16 {
+    let max_radix_bits = if cfg!(miri) { 12 } else { 16 };
+    for radix_bits in 1..=max_radix_bits {
         for &use_simd in simd_settings {
             let mut sorter = RadixSort::with_config(RadixSortConfig {
                 radix_bits,

@@ -1163,9 +1163,16 @@ mod tests {
         ];
 
         // Pseudo-random varied data (LCG) across several sizes — exercises the
-        // recursion and >256 distinct LMS substrings.
+        // recursion and >256 distinct LMS substrings. Miri stops at 1,000
+        // bytes (343 LMS substrings, all distinct) and uses shorter
+        // repetitive and sweep inputs.
+        let (lcg_sizes, ab_reps, sweep_len): (&[usize], usize, u32) = if cfg!(miri) {
+            (&[50, 200, 1000], 200, 512)
+        } else {
+            (&[50, 200, 1000, 5000], 2000, 4000)
+        };
         let mut x: u32 = 0x1234_5678;
-        for &n in &[50usize, 200, 1000, 5000] {
+        for &n in lcg_sizes {
             let v: Vec<u8> = (0..n)
                 .map(|_| {
                     x = x.wrapping_mul(1664525).wrapping_add(1013904223);
@@ -1175,9 +1182,9 @@ mod tests {
             cases.push(v);
         }
         // Highly repetitive, small alphabet.
-        cases.push((0..2000).flat_map(|_| *b"ab").collect());
+        cases.push((0..ab_reps).flat_map(|_| *b"ab").collect());
         // Full-alphabet sweep (256 distinct bytes repeated).
-        cases.push((0..4000u32).map(|i| (i % 256) as u8).collect());
+        cases.push((0..sweep_len).map(|i| (i % 256) as u8).collect());
 
         for text in &cases {
             let sa = SuffixArray::with_config(text, &cfg).unwrap();
@@ -1212,9 +1219,11 @@ mod tests {
             (x >> 16) % modulo
         };
 
-        // Many trials across alphabet sizes {2,3,4} and lengths up to 300.
+        // Many trials across alphabet sizes {2,3,4} and lengths up to 300
+        // (Miri: 10 trials per alphabet instead of 200).
+        let trials = if cfg!(miri) { 10 } else { 200 };
         for alphabet in [2u32, 3, 4] {
-            for _ in 0..200 {
+            for _ in 0..trials {
                 let len = (next(300) + 1) as usize;
                 let data: Vec<u8> = (0..len).map(|_| next(alphabet) as u8).collect();
                 let sa = SuffixArray::with_config(&data, &cfg).unwrap();
@@ -1535,13 +1544,22 @@ mod tests {
                 || algorithm == SuffixArrayAlgorithm::SAIS
         );
 
+        // Large and medium inputs select DivSufSort (`text_length > 50_000`).
+        // Miri interprets every byte of the characteristics scan, so it
+        // checks both at 50,001, the smallest length that selects it.
+        let (large, medium) = if cfg!(miri) {
+            (50_001, 50_001)
+        } else {
+            (100_000, 60_000)
+        };
+
         // Large input should select DivSufSort
-        let large_diverse: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
+        let large_diverse: Vec<u8> = (0..large).map(|i| (i % 256) as u8).collect();
         let algorithm = builder.select_algorithm(&large_diverse);
         assert_eq!(algorithm, SuffixArrayAlgorithm::DivSufSort);
 
         // Medium size should select DivSufSort
-        let medium_diverse: Vec<u8> = (0..60_000).map(|i| (i % 256) as u8).collect();
+        let medium_diverse: Vec<u8> = (0..medium).map(|i| (i % 256) as u8).collect();
         let algorithm = builder.select_algorithm(&medium_diverse);
         assert_eq!(algorithm, SuffixArrayAlgorithm::DivSufSort);
     }
@@ -1678,9 +1696,14 @@ mod tests {
     #[test]
     fn test_s20_r2_suffix_array_exhaustive_short_texts_all_paths() {
         // Every text of length 0..=10 over {a,b}, 0..=7 over {a,b,c}, and
-        // 0..=6 over {0x00,0x01,0xFF} (Miri: 3 / 2 / 2), so every length-2
-        // input with equal bytes is covered.
-        let (ab, abc, bin) = if cfg!(miri) { (3, 2, 2) } else { (10, 7, 6) };
+        // 0..=6 over {0x00,0x01,0xFF}, so every length-2 input with equal
+        // bytes is covered. Each text of length 2 or more costs 33 SA-IS
+        // constructions, about 0.65 s each under Miri, so Miri checks
+        // lengths 0..=2 over {a,b} ("aa" and "bb" included) and 0..=1 over
+        // the other two alphabets. Under Miri, 0x00 and 0xFF reach SA-IS in
+        // the byte sweep of test_sais_correctness_vs_reference (0x00 also
+        // in test_c8_13).
+        let (ab, abc, bin) = if cfg!(miri) { (2, 1, 1) } else { (10, 7, 6) };
         let mut corpora: Vec<(&[u8], Vec<Vec<u8>>)> = vec![
             (b"ab", all_byte_strings_up_to(b"ab", ab)),
             (b"abc", all_byte_strings_up_to(b"abc", abc)),

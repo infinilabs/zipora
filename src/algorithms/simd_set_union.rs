@@ -306,25 +306,30 @@ mod tests {
     #[test]
     fn test_count_matches_materialize() {
         // Verify count-only matches materialized union length at various sizes
+        // (every bound divided by 4 under Miri).
+        let d: u32 = if cfg!(miri) { 4 } else { 1 };
         let test_cases: Vec<(Vec<u32>, Vec<u32>)> = vec![
             // Small
-            ((0..100).step_by(2).collect(), (0..100).step_by(3).collect()),
+            (
+                (0..100 / d).step_by(2).collect(),
+                (0..100 / d).step_by(3).collect(),
+            ),
             // Medium (1K-5K range)
             (
-                (0..5000).step_by(2).collect(),
-                (0..5000).step_by(3).collect(),
+                (0..5000 / d).step_by(2).collect(),
+                (0..5000 / d).step_by(3).collect(),
             ),
             // Large (10K+)
             (
-                (0..20000).step_by(2).collect(),
-                (0..20000).step_by(3).collect(),
+                (0..20000 / d).step_by(2).collect(),
+                (0..20000 / d).step_by(3).collect(),
             ),
             // Skewed
-            ((0..100).collect(), (0..10000).step_by(7).collect()),
+            ((0..100 / d).collect(), (0..10000 / d).step_by(7).collect()),
             // High overlap
-            ((0..5000).collect(), (0..5000).collect()),
+            ((0..5000 / d).collect(), (0..5000 / d).collect()),
             // No overlap
-            ((0..5000).collect(), (5000..10000).collect()),
+            ((0..5000 / d).collect(), (5000 / d..10000 / d).collect()),
         ];
 
         for (a, b) in &test_cases {
@@ -345,8 +350,9 @@ mod tests {
 
     #[test]
     fn test_large_balanced() {
-        let a: Vec<u32> = (0..10000).step_by(2).collect(); // evens
-        let b: Vec<u32> = (0..10000).step_by(3).collect(); // multiples of 3
+        let n: u32 = if cfg!(miri) { 2_000 } else { 10_000 };
+        let a: Vec<u32> = (0..n).step_by(2).collect(); // evens
+        let b: Vec<u32> = (0..n).step_by(3).collect(); // multiples of 3
         let mut out = Vec::new();
         sorted_union_adaptive(&a, &b, &mut out);
 
@@ -476,19 +482,25 @@ mod tests {
 
     #[test]
     fn test_performance_10k_balanced() {
-        let a: Vec<u32> = (0..10000).step_by(2).collect();
-        let b: Vec<u32> = (0..10000).step_by(3).collect();
+        // Miri: one iteration over 2K.
+        let (n, iters): (u32, u32) = if cfg!(miri) {
+            (2_000, 1)
+        } else {
+            (10_000, 1000)
+        };
+        let a: Vec<u32> = (0..n).step_by(2).collect();
+        let b: Vec<u32> = (0..n).step_by(3).collect();
         let mut out = Vec::new();
 
         let start = std::time::Instant::now();
-        for _ in 0..1000 {
+        for _ in 0..iters {
             sorted_union_adaptive(&a, &b, &mut out);
         }
         let _elapsed = start.elapsed();
 
         #[cfg(not(debug_assertions))]
         {
-            let per_call = _elapsed / 1000;
+            let per_call = _elapsed / iters;
             eprintln!("Union 5K+3.3K: {:?}/call, {} output", per_call, out.len());
             assert!(per_call.as_micros() < 200, "Too slow: {:?}", per_call);
         }

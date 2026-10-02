@@ -762,9 +762,13 @@ mod tests {
 
     #[test]
     fn test_cache_oblivious_sort_large() {
+        // Miri: 4,100 elements. Miri uses the default cache sizes (L1 32 KiB),
+        // so `sort` still picks the CacheOblivious strategy (above 4,096
+        // elements, 32 KiB / 8).
+        let n: i32 = if cfg!(miri) { 4_100 } else { 10_000 };
         let mut sorter = CacheObliviousSort::new();
-        let mut data: Vec<i32> = (0..10000).rev().collect();
-        let expected: Vec<i32> = (0..10000).collect();
+        let mut data: Vec<i32> = (0..n).rev().collect();
+        let expected: Vec<i32> = (0..n).collect();
 
         assert!(sorter.sort(&mut data).is_ok());
         assert_eq!(data, expected);
@@ -775,8 +779,10 @@ mod tests {
         // Calls cache_oblivious_sort directly (bypassing the adaptive
         // selector) so funnel_sort_recursive + cache_oblivious_merge run
         // over many chunks, with duplicates and an uneven final chunk.
+        // Miri: 2,001 elements, still 64 chunks.
+        let n: u32 = if cfg!(miri) { 2_001 } else { 20_001 };
         let mut sorter = CacheObliviousSort::new();
-        let mut data: Vec<u32> = (0..20_001u32)
+        let mut data: Vec<u32> = (0..n)
             .map(|i| i.wrapping_mul(2_654_435_761) % 1_000)
             .collect();
         let mut expected = data.clone();
@@ -872,9 +878,10 @@ mod tests {
             use_simd: true,
             ..Default::default()
         });
-        let mut data: Vec<u32> = (0..10_001u32)
-            .map(|i| i.wrapping_mul(2_654_435_761))
-            .collect();
+        // Natively 10,001 elements, above the old `len > 10000`. The flags no
+        // longer depend on the size, so Miri sorts 101.
+        let n: u32 = if cfg!(miri) { 101 } else { 10_001 };
+        let mut data: Vec<u32> = (0..n).map(|i| i.wrapping_mul(2_654_435_761)).collect();
         let mut want = data.clone();
         want.sort_unstable();
         sorter.sort(&mut data).unwrap();
@@ -882,7 +889,7 @@ mod tests {
         let stats = Algorithm::stats(&sorter);
         assert!(
             !stats.used_parallel,
-            "used_parallel after sorting 10,001 elements"
+            "used_parallel after sorting {n} elements"
         );
         assert!(!stats.used_simd, "used_simd with use_simd = true");
         assert!(!sorter.supports_parallel());
@@ -961,7 +968,9 @@ mod tests {
             }
         }
 
-        let n: u32 = if cfg!(miri) { 3_000 } else { 50_000 };
+        // Miri: 1,100, so the default leaf size still splits the input (64
+        // chunks of 17 or 18) and leaf size 16 still recurses below them.
+        let n: u32 = if cfg!(miri) { 1_100 } else { 50_000 };
         let input: Vec<Rec> = (0..n)
             .map(|i| Rec {
                 key: ((i.wrapping_mul(2_654_435_761) >> 16) % 500) as u16,

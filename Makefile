@@ -11,7 +11,7 @@
 .PHONY: all build build_debug build_release
 .PHONY: test test_debug test_release test_simd_base64
 .PHONY: bench bench_all bench_avx512 bench_fsa bench_io bench_serialization
-.PHONY: safety_tests miri_tests miri_full miri_pool
+.PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity
 .PHONY: unsafe_audit api_honesty index_audit unwrap_audit
@@ -181,6 +181,45 @@ miri_simd:
 	$(CARGO_MIRI) test --lib compression::stream_vbyte
 	$(CARGO_MIRI) test --lib algorithms::simd_search
 
+# src/algorithms under Miri (plan.md S20-R10). Two Miri runs, and make stops at
+# the first failing one: read the output for two `test result:` lines before
+# calling the target green. Tests with large inputs run smaller under
+# cfg(miri).
+#
+# Run 1, Stacked Borrows: every algorithms:: test except radix_sort.
+# -Zmiri-disable-isolation: the external_sort tests write their runs to a temp
+# directory named after SystemTime::now(), and isolation blocks both the clock
+# (the first error is clock_gettime with REALTIME) and the file system.
+#
+# Run 2, Tree Borrows: radix_sort. Under Stacked Borrows its first test stops
+# inside crossbeam-epoch (internal.rs, Local::element_of), the violation
+# miri_cspp also avoids with Tree Borrows: AdvancedRadixSort's default config
+# owns a SecureMemoryPool, whose Drop pins an epoch. -Zmiri-ignore-leaks:
+# rayon's global-pool threads are never joined, and crossbeam-epoch's global
+# collector keeps each thread's Local and its sealed bags, so without the flag
+# the run fails after every test has passed. It also turns off Miri's leak
+# check for run 2. The `integer-to-pointer cast` warnings point into
+# crossbeam-epoch's atomic.rs.
+#
+# Which SIMD code runs depends on the build's target features: under Miri,
+# is_x86_feature_detected! reports only the features enabled at compile time.
+# This checkout's .cargo/config.toml (gitignored) sets target-cpu=haswell and
+# +avx2,+bmi2,+popcnt, so the AVX2 kernels in simd_merge and the SSE4.1
+# kernels in simd_set_intersect / simd_set_union run in run 1, and
+# count_digits_avx2_bmi2 in radix_sort/advanced.rs runs in run 2 (so it is
+# checked under Tree Borrows only). Without that file those dispatchers take
+# their scalar code. No AVX-512 code runs: it is gated off under cfg(miri),
+# and haswell has none.
+#
+# Measured on this checkout (S20-R10, AMD EPYC 7B13): real 18m15s. Run 1: 255
+# passed, 2 ignored, 605 s. Run 2: 41 passed in about 8 min of wall time; its
+# "finished in 194s" is Miri's virtual clock, because run 2 keeps isolation on.
+miri_algorithms:
+	MIRIFLAGS="-Zmiri-disable-isolation" \
+	$(CARGO_MIRI) test --lib algorithms:: -- --skip algorithms::radix_sort:: --test-threads=1
+	MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" \
+	$(CARGO_MIRI) test --lib algorithms::radix_sort:: -- --test-threads=1
+
 # =============================================================================
 # FUZZING (plan.md 6.1) — requires: cargo install cargo-fuzz; nightly toolchain
 # =============================================================================
@@ -323,6 +362,7 @@ help:
 	@echo "  miri_tests       Miri memory safety (needs nightly)"
 	@echo "  miri_cspp        Miri on ConcurrentCsppTrie (races/UB, small scale)"
 	@echo "  miri_pool        Miri on the memory pools (layout/provenance UB)"
+	@echo "  miri_algorithms  Miri on src/algorithms (Tree Borrows for radix_sort)"
 	@echo "  tsan_cspp        TSAN stress on ConcurrentCsppTrie (needs nightly + rust-src)"
 	@echo ""
 	@echo "  format           rustfmt"

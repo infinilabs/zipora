@@ -1111,8 +1111,14 @@ mod tests {
         // above the buffer size take the sort-once path or the heap path. With
         // a descending comparator (not `T::cmp`) all must come out in the
         // comparator's order, with every item counted and, when the input
-        // fits, exactly one run (none for an empty input).
-        for b in [1usize, 2, 16, 100] {
+        // fits, exactly one run (none for an empty input). Miri skips the
+        // 100-item buffer.
+        let buffers: &[usize] = if cfg!(miri) {
+            &[1, 2, 16]
+        } else {
+            &[1, 2, 16, 100]
+        };
+        for &b in buffers {
             for n in [b - 1, b, b + 1, 3 * b + 5] {
                 let config = ReplaceSelectSortConfig {
                     memory_buffer_size: b * std::mem::size_of::<i32>(),
@@ -1145,23 +1151,46 @@ mod tests {
         // 4-item buffer give exactly 64 runs; merging at most `ways` runs at
         // a time takes ceil(log_ways(64)) passes (`merge_ways` < 2 counts as
         // 2), and no temporary file is left after the sort.
-        let data: Vec<u64> = (0..256).rev().collect();
-        let want: Vec<u64> = (0..256).collect();
-        for (ways, passes) in [
-            (0, 6),
-            (1, 6),
-            (2, 6),
-            (3, 4),
-            (4, 3),
-            (8, 2),
-            (16, 2),
-            (63, 2),
-            (64, 1),
-            (usize::MAX, 1),
-        ] {
+        //
+        // Miri pays for every run file, so it sorts 16 descending items with
+        // a 1-item buffer: 16 runs, with the pass counts for 16 runs.
+        let (items, buffer_items, runs) = if cfg!(miri) {
+            (16u64, 1, 16)
+        } else {
+            (256, 4, 64)
+        };
+        let table: &[(usize, usize)] = if cfg!(miri) {
+            &[
+                (0, 4),
+                (1, 4),
+                (2, 4),
+                (3, 3),
+                (4, 2),
+                (8, 2),
+                (15, 2),
+                (16, 1),
+                (usize::MAX, 1),
+            ]
+        } else {
+            &[
+                (0, 6),
+                (1, 6),
+                (2, 6),
+                (3, 4),
+                (4, 3),
+                (8, 2),
+                (16, 2),
+                (63, 2),
+                (64, 1),
+                (usize::MAX, 1),
+            ]
+        };
+        let data: Vec<u64> = (0..items).rev().collect();
+        let want: Vec<u64> = (0..items).collect();
+        for &(ways, passes) in table {
             let dir = test_temp_dir();
             let config = ReplaceSelectSortConfig {
-                memory_buffer_size: 4 * std::mem::size_of::<u64>(),
+                memory_buffer_size: buffer_items * std::mem::size_of::<u64>(),
                 temp_dir: dir.clone(),
                 merge_ways: ways,
                 ..Default::default()
@@ -1170,7 +1199,7 @@ mod tests {
             let got = sorter.sort(data.clone())?;
             let ctx = format!("merge_ways={ways}");
             assert_eq!(got, want, "{ctx}");
-            assert_eq!(sorter.stats().runs_generated, 64, "{ctx}");
+            assert_eq!(sorter.stats().runs_generated, runs, "{ctx}");
             assert_eq!(sorter.stats().merge_passes, passes, "{ctx}");
             assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "{ctx}");
             std::fs::remove_dir(&dir).unwrap();
@@ -1178,11 +1207,13 @@ mod tests {
 
         // Comparator-equal items spread over many runs: every grouping must
         // give the order of the single all-run merge (ties go to the earlier
-        // run), which is sorted by key and a permutation of the input.
-        let tied: Vec<u64> = (0..256).map(|i| ((i * 7 % 5) << 32) | i).collect();
+        // run), which is sorted by key and a permutation of the input. Miri:
+        // 45 items with a 1-item buffer, 18 runs (keys 0, 2, 4 | 1, 3 | ...).
+        let (tied_items, tied_buffer) = if cfg!(miri) { (45u64, 1) } else { (256, 4) };
+        let tied: Vec<u64> = (0..tied_items).map(|i| ((i * 7 % 5) << 32) | i).collect();
         let sort_tied = |ways: usize| -> Result<(Vec<u64>, ExternalSortStats)> {
             let config = ReplaceSelectSortConfig {
-                memory_buffer_size: 4 * std::mem::size_of::<u64>(),
+                memory_buffer_size: tied_buffer * std::mem::size_of::<u64>(),
                 temp_dir: test_temp_dir(),
                 merge_ways: ways,
                 ..Default::default()

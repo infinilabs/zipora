@@ -684,22 +684,24 @@ mod tests {
         assert_eq!(sorted_intersect_adaptive(&a, &b, &mut out), 3);
     }
 
-    /// Performance test — only meaningful in release mode.
+    /// Performance test — only meaningful in release mode. Miri runs one
+    /// iteration.
     #[test]
     fn test_performance_10k_balanced() {
         let a: Vec<u32> = (0..10000).step_by(2).collect();
         let b: Vec<u32> = (0..10000).step_by(3).collect();
         let mut out = Vec::new();
+        let iters: u32 = if cfg!(miri) { 1 } else { 1000 };
 
         let start = std::time::Instant::now();
-        for _ in 0..1000 {
+        for _ in 0..iters {
             sorted_intersect_adaptive(&a, &b, &mut out);
         }
         let _elapsed = start.elapsed();
 
         #[cfg(not(debug_assertions))]
         {
-            let per_call = _elapsed / 1000;
+            let per_call = _elapsed / iters;
             eprintln!(
                 "SIMD intersect 5K×3.3K: {:?}/call, {} matches",
                 per_call,
@@ -712,19 +714,25 @@ mod tests {
 
     #[test]
     fn test_performance_skewed() {
+        // Miri: one iteration over 10K (still galloping: 10K / 100 > 32).
+        let (large_n, iters): (u32, u32) = if cfg!(miri) {
+            (10_000, 1)
+        } else {
+            (100_000, 1000)
+        };
         let small: Vec<u32> = (0..100).map(|i| i * 100).collect();
-        let large: Vec<u32> = (0..100000).collect();
+        let large: Vec<u32> = (0..large_n).collect();
         let mut out = Vec::new();
 
         let start = std::time::Instant::now();
-        for _ in 0..1000 {
+        for _ in 0..iters {
             sorted_intersect_adaptive(&small, &large, &mut out);
         }
         let _elapsed = start.elapsed();
 
         #[cfg(not(debug_assertions))]
         {
-            let per_call = _elapsed / 1000;
+            let per_call = _elapsed / iters;
             eprintln!(
                 "Galloping intersect 100×100K: {:?}/call, {} matches",
                 per_call,

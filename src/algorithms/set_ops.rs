@@ -913,22 +913,25 @@ mod tests {
         assert_eq!(result, vec![1, 2, 4]); // Unique only
     }
 
-    // Large Dataset Tests
+    // Large Dataset Tests (smaller under Miri, which interprets every step;
+    // the branch taken does not depend on the size)
     #[test]
     fn test_large_datasets_intersection() {
         // Test with 1M elements
-        let a: Vec<i32> = (0..1_000_000).filter(|x| x % 2 == 0).collect();
-        let b: Vec<i32> = (0..1_000_000).filter(|x| x % 3 == 0).collect();
+        let n: i32 = if cfg!(miri) { 6_000 } else { 1_000_000 };
+        let a: Vec<i32> = (0..n).filter(|x| x % 2 == 0).collect();
+        let b: Vec<i32> = (0..n).filter(|x| x % 3 == 0).collect();
         let result = multiset_fast_intersection(&a, &b, cmp_i32, 32);
         // Elements divisible by both 2 and 3 (i.e., by 6)
-        let expected: Vec<i32> = (0..1_000_000).filter(|x| x % 6 == 0).collect();
+        let expected: Vec<i32> = (0..n).filter(|x| x % 6 == 0).collect();
         assert_eq!(result, expected);
     }
 
     #[test]
     fn test_large_datasets_union() {
-        let a: Vec<i32> = (0..10_000).filter(|x| x % 2 == 0).collect();
-        let b: Vec<i32> = (0..10_000).filter(|x| x % 3 == 0).collect();
+        let n: i32 = if cfg!(miri) { 2_000 } else { 10_000 };
+        let a: Vec<i32> = (0..n).filter(|x| x % 2 == 0).collect();
+        let b: Vec<i32> = (0..n).filter(|x| x % 3 == 0).collect();
         let result = multiset_union(&a, &b, cmp_i32);
 
         // Verify result is sorted
@@ -943,10 +946,11 @@ mod tests {
 
     #[test]
     fn test_large_datasets_difference() {
-        let a: Vec<i32> = (0..10_000).collect();
-        let b: Vec<i32> = (5_000..15_000).collect();
+        let n: i32 = if cfg!(miri) { 2_000 } else { 10_000 };
+        let a: Vec<i32> = (0..n).collect();
+        let b: Vec<i32> = (n / 2..n + n / 2).collect();
         let result = multiset_difference(&a, &b, cmp_i32);
-        let expected: Vec<i32> = (0..5_000).collect();
+        let expected: Vec<i32> = (0..n / 2).collect();
         assert_eq!(result, expected);
     }
 
@@ -954,8 +958,9 @@ mod tests {
     #[test]
     fn test_performance_comparison() {
         // Small first, large second - should use binary search
+        // (100 * 32 < large.len(), also at the Miri size)
         let small: Vec<i32> = (0..100).collect();
-        let large: Vec<i32> = (0..10_000).collect();
+        let large: Vec<i32> = (0..if cfg!(miri) { 4_000 } else { 10_000 }).collect();
 
         let result1 = multiset_1small_intersection(&small, &large, cmp_i32);
         let result2 = multiset_intersection(&small, &large, cmp_i32);
