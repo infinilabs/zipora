@@ -130,8 +130,7 @@ impl CacheObliviousSort {
     /// Cache-oblivious funnel sort implementation
     pub fn cache_oblivious_sort<T: Clone + Ord>(&mut self, data: &mut [T]) -> Result<()> {
         if data.len() <= self.config.small_threshold {
-            // Use optimized insertion sort for small arrays
-            self.insertion_sort(data);
+            Self::leaf_sort(data);
             return Ok(());
         }
 
@@ -147,7 +146,7 @@ impl CacheObliviousSort {
         let n = data.len();
 
         if n <= 1 || n <= self.config.small_threshold {
-            self.insertion_sort(data);
+            Self::leaf_sort(data);
             return Ok(());
         }
 
@@ -314,6 +313,19 @@ impl CacheObliviousSort {
 
         let k = ((cache_size / block_size) as f64).sqrt() as usize;
         cmp::max(k, 2).min(cmp::min(n.max(2), 64)) // Bounded between 2 and 64
+    }
+
+    /// Base case of the funnel sort: inputs of at most `small_threshold`
+    /// elements (1024 by default).
+    ///
+    /// Until S20-R4 this was the O(n^2) `insertion_sort`, and with the default
+    /// threshold its inner loop dominated: replacing it halves the time of a
+    /// 50k-element sort, and a shift in that loop's code alignment alone (no
+    /// instruction changed) had made the whole sort about 50% slower. The std
+    /// sort is stable like `insertion_sort`, so the output is unchanged, and it
+    /// is O(n log n).
+    fn leaf_sort<T: Ord>(data: &mut [T]) {
+        data.sort();
     }
 
     /// Optimized insertion sort for small arrays
@@ -853,5 +865,56 @@ mod tests {
 
         sorter.cache_oblivious_sort(&mut data).unwrap();
         assert_eq!(data, expected);
+    }
+
+    #[test]
+    fn test_s20_r4_funnel_leaf_sort_is_stable_and_matches_std() {
+        // Guard for the leaf-sort swap (insertion sort -> std stable sort):
+        // ordered by `key` only, so the `tag`s of equal keys show whether the
+        // whole funnel sort (leaves + heap merge) is still stable.
+        #[derive(Debug, Clone)]
+        struct Rec {
+            key: u16,
+            tag: u32,
+        }
+        impl PartialEq for Rec {
+            fn eq(&self, other: &Self) -> bool {
+                self.key == other.key
+            }
+        }
+        impl Eq for Rec {}
+        impl PartialOrd for Rec {
+            fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+        impl Ord for Rec {
+            fn cmp(&self, other: &Self) -> cmp::Ordering {
+                self.key.cmp(&other.key)
+            }
+        }
+
+        let n: u32 = if cfg!(miri) { 3_000 } else { 50_000 };
+        let input: Vec<Rec> = (0..n)
+            .map(|i| Rec {
+                key: ((i.wrapping_mul(2_654_435_761) >> 16) % 500) as u16,
+                tag: i,
+            })
+            .collect();
+        let mut want = input.clone();
+        want.sort_by_key(|r| r.key);
+        let want: Vec<(u16, u32)> = want.iter().map(|r| (r.key, r.tag)).collect();
+
+        // The default leaf size (1024) and a small one for deeper recursion.
+        for small_threshold in [1024, 16] {
+            let mut sorter = CacheObliviousSort::with_config(CacheObliviousConfig {
+                small_threshold,
+                ..Default::default()
+            });
+            let mut v = input.clone();
+            sorter.cache_oblivious_sort(&mut v).unwrap();
+            let got: Vec<(u16, u32)> = v.iter().map(|r| (r.key, r.tag)).collect();
+            assert!(got == want, "small_threshold={small_threshold}");
+        }
     }
 }
