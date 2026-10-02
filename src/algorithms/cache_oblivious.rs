@@ -1,31 +1,44 @@
-//! Cache-Oblivious Algorithms for Optimal Performance Without Cache Knowledge
+//! Cache-Oblivious Sorting
 //!
-//! This module implements cache-oblivious algorithms that achieve optimal performance
-//! across different cache hierarchies without explicit knowledge of cache parameters.
-//! These algorithms complement the existing cache-aware infrastructure in Zipora.
+//! [`CacheObliviousSort`] picks a strategy from the input length and the
+//! detected cache sizes, then sorts in place, sequentially.
 //!
 //! ## Key Features
 //!
-//! - **Cache-Oblivious Sorting**: Funnel sort with optimal cache complexity
+//! - **Recursive multiway merge sort** (the `CacheOblivious` strategy):
+//!   inputs of at most `small_threshold` elements (1024 by default) are
+//!   sorted with `slice::sort`; larger inputs are split into `k` parts that
+//!   are sorted recursively and then merged through a binary heap. At the
+//!   top level `k` is √(L2 size / L2 line size) clamped to 2..=64, one level
+//!   down it is ⌊√k⌋ (at least 2), and below that it is 2. This is not
+//!   funnelsort.
 //! - **Adaptive Algorithm Selection**: Choose between cache-aware and cache-oblivious
-//! - **Van Emde Boas Layout**: Cache-optimal data structure layouts
-//! - **SIMD Integration**: Full integration with Zipora's 6-tier SIMD framework
-//! - **Recursive Subdivision**: Optimal cache utilization through divide-and-conquer
+//! - **Van Emde Boas Layout**: Limitation: [`VanEmdeBoas`] does not reorder
+//!   its data (see its docs).
 //!
 //! ## Performance Characteristics
 //!
-//! - **Cache Complexity**: O(1 + N/B * log_{M/B}(N/B)) for cache-oblivious sort
-//! - **Memory Hierarchy**: Optimal across all cache levels simultaneously
-//! - **Adaptive Selection**: Intelligent choice based on data characteristics
-//! - **SIMD Acceleration**: Hardware acceleration with graceful fallbacks
+//! - **Cache complexity**: the O(1 + N/B * log_{M/B}(N/B)) bound of
+//!   funnelsort is not claimed: below the top two levels every merge is
+//!   2-way.
+//! - **Parallelism**: none; `use_parallel` has no effect.
+//! - **SIMD**: none. The only intrinsics are `_mm_prefetch` hints, issued on
+//!   x86-64 hosts with AVX2.
 //!
 //! ## Algorithm Selection Strategy
 //!
-//! - **Small data** (< L1 cache): Use cache-aware optimized algorithms
-//! - **Medium data** (L1-L3 cache): Use cache-oblivious algorithms
-//! - **Large data** (> L3 cache): Use external sorting with cache-oblivious merge
-//! - **String data**: Specialized cache-oblivious string algorithms
-//! - **Numeric data**: SIMD-accelerated cache-oblivious variants
+//! The strategy is chosen from `len * 8` bytes (8 bytes per element,
+//! whatever `T` is); the cache-aware paths then use the real size of the
+//! data:
+//!
+//! - **Up to L1**: cache-aware sort. For elements of at most 8 bytes that is
+//!   insertion sort; larger elements can take the L2 path (quicksort) or the
+//!   L3 path (merge sort).
+//! - **L1 to L3**: the recursive multiway merge sort.
+//! - **Above L3**: the cache-aware sort if the real size fits in L2,
+//!   otherwise the recursive multiway merge sort. Nothing is sorted on disk.
+//! - There are no type-specific paths: strings and numbers go through the
+//!   same generic code.
 
 use crate::algorithms::{Algorithm, AlgorithmStats};
 use crate::error::Result;
@@ -43,13 +56,15 @@ use std::time::Instant;
 pub struct CacheObliviousConfig {
     /// Cache hierarchy information for adaptive selection
     pub cache_hierarchy: CacheHierarchy,
-    /// Enable SIMD optimizations
+    /// For inputs that fit in L1 (with AVX2 and at least 16 elements, or
+    /// SSE4.2 and at least 8), run the insertion sort variant that adds
+    /// prefetch hints on AVX2 hosts. No SIMD instructions are used either way.
     pub use_simd: bool,
-    /// Use parallel processing for large datasets
+    /// Limitation: has no effect; the sort is sequential.
     pub use_parallel: bool,
     /// Threshold for switching between algorithms
     pub small_threshold: usize,
-    /// Memory pool for allocations
+    /// Limitation: has no effect; buffers come from the global allocator.
     pub memory_pool: Option<Arc<SecureMemoryPool>>,
     /// CPU features for optimization
     pub cpu_features: &'static CpuFeatures,
@@ -94,7 +109,8 @@ impl CacheObliviousSort {
         }
     }
 
-    /// Sort using cache-oblivious funnel sort
+    /// Sort `data` in place with the strategy that [`AdaptiveAlgorithmSelector`]
+    /// picks (see the module docs)
     pub fn sort<T: Clone + Ord>(&mut self, data: &mut [T]) -> Result<()> {
         let start_time = Instant::now();
 
@@ -121,13 +137,16 @@ impl CacheObliviousSort {
         // Update statistics
         self.stats.items_processed = data.len();
         self.stats.processing_time_us = start_time.elapsed().as_micros() as u64;
-        self.stats.used_simd = self.config.use_simd && self.config.cpu_features.has_avx2;
-        self.stats.used_parallel = self.config.use_parallel && data.len() > 10000;
+        // The sort is sequential and uses no SIMD instructions (only
+        // prefetch hints), whatever `use_parallel` and `use_simd` say.
+        self.stats.used_simd = false;
+        self.stats.used_parallel = false;
 
         Ok(())
     }
 
-    /// Cache-oblivious funnel sort implementation
+    /// Recursive multiway merge sort (the `CacheOblivious` strategy; see the
+    /// module docs). This is not funnelsort.
     pub fn cache_oblivious_sort<T: Clone + Ord>(&mut self, data: &mut [T]) -> Result<()> {
         if data.len() <= self.config.small_threshold {
             Self::leaf_sort(data);
@@ -141,7 +160,10 @@ impl CacheObliviousSort {
         Ok(())
     }
 
-    /// Recursive funnel sort with optimal cache complexity
+    /// Inputs of at most `small_threshold` elements go to `leaf_sort`.
+    /// Larger ones are split into `k` parts (`k` clamped to 2..=n), each
+    /// sorted recursively with ⌊√k⌋ parts (at least 2), and the parts are
+    /// merged with `cache_oblivious_merge`.
     fn funnel_sort_recursive<T: Clone + Ord>(&mut self, data: &mut [T], k: usize) -> Result<()> {
         let n = data.len();
 
@@ -170,7 +192,9 @@ impl CacheObliviousSort {
         Ok(())
     }
 
-    /// Cache-oblivious k-way merge with SIMD optimization and cache awareness
+    /// Merges the `k` sorted parts of `data` through a binary heap into a
+    /// temporary buffer, then copies it back. On AVX2 hosts with more than 64
+    /// elements it first issues a prefetch hint for the start of each part.
     fn cache_oblivious_merge<T: Clone + Ord>(&mut self, data: &mut [T], k: usize) -> Result<()> {
         let n = data.len();
         if k <= 1 || n <= 1 {
@@ -232,7 +256,9 @@ impl CacheObliviousSort {
         Ok(())
     }
 
-    /// Cache-optimized data copying with SIMD acceleration
+    /// Copies `src` into `dst` with `clone_from_slice`. On AVX2 hosts with
+    /// more than 256 elements it copies 64 elements at a time and issues
+    /// prefetch hints ahead of the copy.
     fn cache_optimized_copy<T: Clone>(&self, src: &[T], dst: &mut [T]) {
         if src.len() != dst.len() {
             dst.clone_from_slice(src);
@@ -315,7 +341,7 @@ impl CacheObliviousSort {
         cmp::max(k, 2).min(cmp::min(n.max(2), 64)) // Bounded between 2 and 64
     }
 
-    /// Base case of the funnel sort: inputs of at most `small_threshold`
+    /// Base case of the recursive merge sort: inputs of at most `small_threshold`
     /// elements (1024 by default).
     ///
     /// Until S20-R4 this was the O(n^2) `insertion_sort`, and with the default
@@ -343,10 +369,12 @@ impl CacheObliviousSort {
         }
     }
 
-    /// L1 cache-optimized sorting with enhanced SIMD integration
+    /// Insertion sort for inputs that fit in L1. With `use_simd`, and AVX2 with
+    /// at least 16 elements or SSE4.2 with at least 8, it runs
+    /// `simd_insertion_sort`, which adds prefetch hints on AVX2 hosts. No SIMD
+    /// instructions either way.
     fn l1_optimized_sort<T: Clone + Ord>(&mut self, data: &mut [T]) {
         // Use insertion sort with prefetching for L1 cache
-        // Enhanced SIMD integration following Zipora's 6-tier framework
         if self.config.use_simd
             && ((self.config.cpu_features.has_avx2 && data.len() >= 16)
                 || (self.config.cpu_features.has_sse42 && data.len() >= 8))
@@ -377,11 +405,11 @@ impl CacheObliviousSort {
         }
     }
 
-    /// SIMD-accelerated insertion sort with cache optimization
+    /// Insertion sort with prefetch hints. Despite the name it uses no SIMD
+    /// instructions: on AVX2 hosts with more than 64 elements it issues a
+    /// prefetch hint for every 8th element, then runs
+    /// `cache_aware_insertion_sort`.
     fn simd_insertion_sort<T: Clone + Ord>(&mut self, data: &mut [T]) {
-        // Enhanced SIMD insertion sort with cache prefetching
-        // Following Zipora's 6-tier SIMD framework patterns
-
         // Prefetch data for cache optimization
         if data.len() > 64 {
             // Prefetch cache lines ahead for better memory access patterns
@@ -562,7 +590,7 @@ impl AdaptiveAlgorithmSelector {
 pub enum CacheObliviousSortingStrategy {
     /// Use cache-aware algorithms with explicit cache knowledge
     CacheAware,
-    /// Use cache-oblivious algorithms that work optimally across cache levels
+    /// Use the recursive multiway merge sort (see the module docs)
     CacheOblivious,
     /// Use hybrid approach combining both strategies
     Hybrid,
@@ -685,11 +713,13 @@ impl Algorithm for CacheObliviousSort {
     }
 
     fn supports_parallel(&self) -> bool {
-        true
+        // Sequential only; `use_parallel` has no effect.
+        false
     }
 
     fn supports_simd(&self) -> bool {
-        true
+        // No SIMD instructions; `use_simd` only selects prefetch hints.
+        false
     }
 }
 
@@ -824,9 +854,39 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), vec![1, 1, 3, 4, 5]);
 
-        assert!(sorter.supports_parallel());
-        assert!(sorter.supports_simd());
+        // Sequential, no SIMD instructions (S20-R6).
+        assert!(!sorter.supports_parallel());
+        assert!(!sorter.supports_simd());
         assert!(sorter.estimate_memory(1000) > 0);
+    }
+
+    #[test]
+    fn test_s20_r6_cache_oblivious_reports_sequential_scalar_sort() {
+        // CacheObliviousSort has no parallel code and no SIMD instructions
+        // (only prefetch hints), yet `sort` reported
+        // `used_parallel = use_parallel && len > 10000` and
+        // `used_simd = use_simd && has_avx2`, and `supports_parallel()` and
+        // `supports_simd()` returned true.
+        let mut sorter = CacheObliviousSort::with_config(CacheObliviousConfig {
+            use_parallel: true,
+            use_simd: true,
+            ..Default::default()
+        });
+        let mut data: Vec<u32> = (0..10_001u32)
+            .map(|i| i.wrapping_mul(2_654_435_761))
+            .collect();
+        let mut want = data.clone();
+        want.sort_unstable();
+        sorter.sort(&mut data).unwrap();
+        assert_eq!(data, want);
+        let stats = Algorithm::stats(&sorter);
+        assert!(
+            !stats.used_parallel,
+            "used_parallel after sorting 10,001 elements"
+        );
+        assert!(!stats.used_simd, "used_simd with use_simd = true");
+        assert!(!sorter.supports_parallel());
+        assert!(!sorter.supports_simd());
     }
 
     #[test]
