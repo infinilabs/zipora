@@ -431,7 +431,10 @@ impl SuffixArrayBuilder {
         Ok(sa.into_iter().skip(1).map(|x| x as usize).collect())
     }
 
-    /// DC3 (Divide-and-Conquer-3) algorithm implementation
+    /// DC3 entry point; construction is delegated to SA-IS for every length.
+    ///
+    /// The former `n == 2` shortcut returned `[0, 1]` when `text[0] == text[1]`,
+    /// but the shorter suffix sorts first, so the answer is `[1, 0]` (S20-R2).
     fn dc3_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
         if text.is_empty() {
             return Ok(Vec::new());
@@ -439,14 +442,6 @@ impl SuffixArrayBuilder {
 
         if text.len() == 1 {
             return Ok(vec![0]);
-        }
-
-        if text.len() == 2 {
-            return Ok(if text[0] <= text[1] {
-                vec![0, 1]
-            } else {
-                vec![1, 0]
-            });
         }
 
         self.sais_construct(text)
@@ -1652,5 +1647,186 @@ mod tests {
             }
         }
     }
-}
 
+    /// Every byte string of length `0..=max_len` over `alphabet`.
+    fn all_byte_strings_up_to(alphabet: &[u8], max_len: usize) -> Vec<Vec<u8>> {
+        let mut out = vec![Vec::new()];
+        let mut frontier: Vec<Vec<u8>> = vec![Vec::new()];
+        for _ in 0..max_len {
+            let mut next = Vec::with_capacity(frontier.len() * alphabet.len());
+            for s in &frontier {
+                for &c in alphabet {
+                    let mut t = s.clone();
+                    t.push(c);
+                    next.push(t);
+                }
+            }
+            out.extend(next.iter().cloned());
+            frontier = next;
+        }
+        out
+    }
+
+    #[test]
+    fn test_s20_r2_suffix_array_exhaustive_short_texts_all_paths() {
+        // Every text of length 0..=10 over {a,b}, 0..=7 over {a,b,c}, and
+        // 0..=6 over {0x00,0x01,0xFF} (Miri: 3 / 2 / 2), so every length-2
+        // input with equal bytes is covered.
+        let (ab, abc, bin) = if cfg!(miri) { (3, 2, 2) } else { (10, 7, 6) };
+        let mut corpora: Vec<(&[u8], Vec<Vec<u8>>)> = vec![
+            (b"ab", all_byte_strings_up_to(b"ab", ab)),
+            (b"abc", all_byte_strings_up_to(b"abc", abc)),
+            (
+                &[0x00, 0x01, 0xFF],
+                all_byte_strings_up_to(&[0x00, 0x01, 0xFF], bin),
+            ),
+        ];
+
+        let mut wrong: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut first: Vec<String> = Vec::new();
+        let mut fail = |path: String, detail: String| {
+            if first.len() < 8 {
+                first.push(format!("{path}: {detail}"));
+            }
+            *wrong.entry(path).or_default() += 1;
+        };
+        let mut texts_checked = 0usize;
+
+        for (alphabet, texts) in corpora.iter_mut() {
+            let patterns = all_byte_strings_up_to(alphabet, 2);
+            for text in texts.iter() {
+                texts_checked += 1;
+                let text = text.as_slice();
+                let mut naive_sa: Vec<usize> = (0..text.len()).collect();
+                naive_sa.sort_by(|&a, &b| text[a..].cmp(&text[b..]));
+                let naive_lcp: Vec<usize> = (0..text.len())
+                    .map(|i| {
+                        if i == 0 {
+                            return 0;
+                        }
+                        let (s1, s2) = (&text[naive_sa[i - 1]..], &text[naive_sa[i]..]);
+                        s1.iter().zip(s2).take_while(|(x, y)| x == y).count()
+                    })
+                    .collect();
+                let naive_bwt: Vec<u8> = naive_sa
+                    .iter()
+                    .map(|&p| text[if p == 0 { text.len() - 1 } else { p - 1 }])
+                    .collect();
+
+                for alg in [
+                    SuffixArrayAlgorithm::SAIS,
+                    SuffixArrayAlgorithm::DC3,
+                    SuffixArrayAlgorithm::DivSufSort,
+                    SuffixArrayAlgorithm::LarssonSadakane,
+                    SuffixArrayAlgorithm::Adaptive,
+                ] {
+                    for (label, cfg) in [
+                        (
+                            "sequential",
+                            SuffixArrayConfig {
+                                algorithm: alg,
+                                use_parallel: false,
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "parallel-entry",
+                            SuffixArrayConfig {
+                                algorithm: alg,
+                                use_parallel: true,
+                                parallel_threshold: 1,
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "adaptive_threshold=0",
+                            SuffixArrayConfig {
+                                algorithm: alg,
+                                use_parallel: false,
+                                adaptive_threshold: 0,
+                                ..Default::default()
+                            },
+                        ),
+                    ] {
+                        let sa = SuffixArray::with_config(text, &cfg).unwrap();
+                        if sa.as_slice() != naive_sa.as_slice() {
+                            fail(
+                                format!("{alg:?}/{label}/with_config"),
+                                format!("text={text:?} got {:?} want {naive_sa:?}", sa.as_slice()),
+                            );
+                        }
+                        let built = SuffixArrayBuilder::new(cfg.clone()).build(text).unwrap();
+                        if built.as_slice() != naive_sa.as_slice() {
+                            fail(
+                                format!("{alg:?}/{label}/builder"),
+                                format!(
+                                    "text={text:?} got {:?} want {naive_sa:?}",
+                                    built.as_slice()
+                                ),
+                            );
+                        }
+                        let lcp = LcpArray::new(text, &sa).unwrap();
+                        if lcp.as_slice() != naive_lcp.as_slice() {
+                            fail(
+                                format!("{alg:?}/{label}/kasai"),
+                                format!(
+                                    "text={text:?} got {:?} want {naive_lcp:?}",
+                                    lcp.as_slice()
+                                ),
+                            );
+                        }
+                    }
+                }
+
+                // Default entry points (Adaptive, n < 10,000 -> DC3 before the fix).
+                let sa = SuffixArray::new(text).unwrap();
+                if sa.as_slice() != naive_sa.as_slice() {
+                    fail(
+                        "SuffixArray::new".into(),
+                        format!("text={text:?} got {:?} want {naive_sa:?}", sa.as_slice()),
+                    );
+                }
+                let esa = EnhancedSuffixArray::with_lcp(text).unwrap();
+                if esa.suffix_array().as_slice() != naive_sa.as_slice()
+                    || esa.lcp_array().map(|l| l.as_slice()) != Some(naive_lcp.as_slice())
+                {
+                    fail(
+                        "EnhancedSuffixArray::with_lcp".into(),
+                        format!("text={text:?}"),
+                    );
+                }
+                let esa = EnhancedSuffixArray::with_bwt(text).unwrap();
+                if esa.bwt() != Some(naive_bwt.as_slice()) {
+                    fail(
+                        "EnhancedSuffixArray::with_bwt".into(),
+                        format!("text={text:?} got {:?} want {naive_bwt:?}", esa.bwt()),
+                    );
+                }
+
+                // search / search_range against a naive scan, patterns of length 1..=2.
+                for pattern in patterns.iter().filter(|p| !p.is_empty()) {
+                    let (lo, hi) = sa.search_range(text, pattern);
+                    let mut found: Vec<usize> = sa.as_slice()[lo..hi].to_vec();
+                    found.sort_unstable();
+                    let expected: Vec<usize> = (0..text.len())
+                        .filter(|&i| text[i..].starts_with(pattern))
+                        .collect();
+                    if found != expected || sa.search(text, pattern) != (lo, hi - lo) {
+                        fail(
+                            "SuffixArray::search_range".into(),
+                            format!(
+                                "text={text:?} pattern={pattern:?} got {found:?} want {expected:?}"
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+
+        assert!(
+            wrong.is_empty(),
+            "S20-R2: {} wrong results over {texts_checked} texts, per path: {wrong:#?}; first: {first:#?}",
+            wrong.values().sum::<usize>()
+        );
+    }
+}
