@@ -947,3 +947,35 @@ fn test_s20_r3b_radix_sort_parallel_path_and_used_parallel() {
         });
     }
 }
+
+/// S20-R5 guard: `sort_u32` extracts digits with u32 shifts, which needs
+/// `shift < 32` on every pass. Sort with every accepted radix width and with
+/// `use_simd` on and off (without AVX-512 these take the two sequential
+/// counting loops); the test profile has overflow checks, so a shift of 32
+/// or more would panic here.
+#[test]
+fn test_s20_r5_sort_u32_every_radix_width() {
+    let n: u32 = if cfg!(miri) { 40 } else { 2_000 };
+    let mut input: Vec<u32> = (0..n)
+        .map(|i| i.wrapping_mul(0x9E37_79B9) ^ (i << 7))
+        .collect();
+    input.extend([0, 1, 0x7FFF_FFFF, 0x8000_0000, u32::MAX - 1, u32::MAX]);
+    let mut want = input.clone();
+    want.sort_unstable();
+    // Under Miri both settings take the same loop (SIMD is gated off).
+    let simd_settings: &[bool] = if cfg!(miri) { &[false] } else { &[false, true] };
+    for radix_bits in 1..=16 {
+        for &use_simd in simd_settings {
+            let mut sorter = RadixSort::with_config(RadixSortConfig {
+                radix_bits,
+                use_parallel: false,
+                use_counting_sort_threshold: 0,
+                use_simd,
+                ..Default::default()
+            });
+            let mut v = input.clone();
+            sorter.sort_u32(&mut v).unwrap();
+            assert_eq!(v, want, "radix_bits={radix_bits} use_simd={use_simd}");
+        }
+    }
+}

@@ -167,6 +167,10 @@ impl RadixSort {
         // instead of copying the buffer back after every pass.
         let mut in_data = true;
         for pass in 0..max_passes {
+            // shift < 32, so the u32 shifts below cannot overflow: sort_u32
+            // (the only caller, directly or through sort_chunks_parallel)
+            // rejects radix_bits outside 1..=16, and the last pass has
+            // shift = (ceil(32 / r) - 1) * r < 32.
             let shift = pass * self.config.radix_bits;
             let (src, dst): (&[u32], &mut [u32]) = if in_data {
                 (&*data, &mut buffer[..])
@@ -191,14 +195,14 @@ impl RadixSort {
                     } else {
                         // Fallback to sequential counting
                         for &value in src.iter() {
-                            let digit = (((value as u64) >> shift) & (mask as u64)) as usize;
+                            let digit = ((value >> shift) & mask) as usize;
                             counts[digit] += 1;
                         }
                     }
                 } else {
                     // Sequential counting for small data or high shifts
                     for &value in src.iter() {
-                        let digit = (((value as u64) >> shift) & (mask as u64)) as usize;
+                        let digit = ((value >> shift) & mask) as usize;
                         counts[digit] += 1;
                     }
                 }
@@ -208,7 +212,7 @@ impl RadixSort {
             {
                 // Standard sequential counting
                 for &value in src.iter() {
-                    let digit = (((value as u64) >> shift) & (mask as u64)) as usize;
+                    let digit = ((value >> shift) & mask) as usize;
                     counts[digit] += 1;
                 }
             }
@@ -223,7 +227,7 @@ impl RadixSort {
 
             // Distribute elements
             for &value in src.iter() {
-                let digit = (((value as u64) >> shift) & (mask as u64)) as usize;
+                let digit = ((value >> shift) & mask) as usize;
                 dst[counts[digit]] = value;
                 counts[digit] += 1;
             }
