@@ -4,10 +4,13 @@
 //! optimized for merging multiple sorted sequences. The enhanced loser tree features:
 //!
 //! - **True O(log k) complexity**: Proper tree traversal instead of linear scans
-//! - **Cache-friendly layout**: 64-byte aligned structures with memory prefetching
-//! - **SIMD acceleration**: Hardware-optimized comparisons for integer types
-//! - **Secure memory management**: Integration with zipora's SecureMemoryPool
+//! - **Cache-friendly layout**: each tree node is padded to its own 64-byte cache line
 //! - **Advanced set operations**: Intersection, union with bit mask optimizations
+//!
+//! Limitation: comparisons always call the comparator (no SIMD), the tree does
+//! not prefetch, and nodes come from the global allocator. The
+//! `LoserTreeConfig` fields `use_simd`, `prefetch_distance`,
+//! `use_secure_memory`, `cache_optimized` and `alignment` have no effect.
 
 use crate::error::{Result, ZiporaError};
 use std::cmp::Ordering;
@@ -21,17 +24,17 @@ const CACHE_LINE_SIZE: usize = 64;
 pub struct LoserTreeConfig {
     /// Initial capacity for the tree
     pub initial_capacity: usize,
-    /// Whether to use secure memory pool for allocations
+    /// Limitation: has no effect; the tree allocates from the global allocator.
     pub use_secure_memory: bool,
     /// Enable stable sorting (preserve order of equal elements)
     pub stable_sort: bool,
-    /// Cache-friendly memory layout optimization
+    /// Limitation: has no effect; nodes are always padded to 64 bytes.
     pub cache_optimized: bool,
-    /// Enable SIMD acceleration for comparisons
+    /// Limitation: has no effect; comparisons always call the comparator.
     pub use_simd: bool,
-    /// Memory prefetching strategy
+    /// Limitation: has no effect; the tree does not prefetch.
     pub prefetch_distance: usize,
-    /// Alignment requirement for cache-friendly access
+    /// Limitation: has no effect; node alignment is fixed at 64 bytes.
     pub alignment: usize,
 }
 
@@ -155,10 +158,11 @@ where
 /// propagate up the tree. Features include:
 ///
 /// - **True O(log k) winner selection**: Efficient tree-based updates
-/// - **Cache-friendly memory layout**: 64-byte aligned nodes with prefetching
-/// - **SIMD acceleration**: Hardware-optimized comparisons for supported types
-/// - **Secure memory management**: Integration with zipora's memory pools
+/// - **Cache-friendly memory layout**: each node padded to a 64-byte cache line
 /// - **Advanced set operations**: Intersection and union with bit mask optimizations
+///
+/// Limitation: no SIMD comparisons, prefetching or memory-pool allocation;
+/// see the module documentation.
 ///
 /// # Example
 /// ```
@@ -290,7 +294,8 @@ where
         Ok(winner)
     }
 
-    /// Element comparison function
+    /// Element comparison: always the comparator. There are no SIMD
+    /// comparisons, so `LoserTreeConfig::use_simd` has no effect.
     #[inline]
     fn compare_optimized(&self, a: &T, b: &T) -> Ordering {
         (self.comparator)(a, b)

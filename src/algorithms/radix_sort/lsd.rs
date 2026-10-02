@@ -431,10 +431,12 @@ impl RadixSort {
         radix * std::mem::size_of::<usize>() // counts
     }
 
-    /// AVX-512 accelerated digit counting for radix sort.
+    /// AVX-512 digit extraction for the radix-sort counting pass.
     ///
-    /// Processes multiple integers simultaneously to count digit occurrences,
-    /// providing significant speedup for the counting phase of radix sort.
+    /// Limitation: only the shift and mask run 16 lanes at a time. The digits
+    /// are stored to a stack array and the histogram is incremented one digit
+    /// at a time, as in the scalar loop; no speedup over that loop has been
+    /// measured.
     ///
     /// # Safety
     /// Caller must ensure the CPU supports `avx512f` and that `counts.len() > mask as usize`.

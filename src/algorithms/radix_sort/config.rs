@@ -191,7 +191,11 @@ impl DataCharacteristics {
 /// Advanced configuration for sophisticated radix sort variants
 #[derive(Debug, Clone)]
 pub struct AdvancedRadixSortConfig {
-    /// Whether to use secure memory pool for allocations
+    /// Whether to create a `SecureMemoryPool` for the sorter.
+    ///
+    /// Limitation: no sort allocates from the pool; buffers always come from
+    /// the global allocator. With the default (`true`), construction creates a
+    /// pool that is never used, and fails if the pool cannot be created.
     pub use_secure_memory: bool,
     /// Enable adaptive strategy selection based on data characteristics
     pub adaptive_strategy: bool,

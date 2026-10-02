@@ -585,6 +585,11 @@ pub struct DataCharacteristics {
 
 /// Van Emde Boas layout optimization for cache-optimal data structures
 /// Enhanced with Zipora's cache optimization infrastructure
+///
+/// Limitation: no Van Emde Boas reordering is done. `data` is stored in its
+/// original order and `cache_optimal_index` is the identity, so `get` is a
+/// bounds-checked index plus, on x86-64 with AVX2, more than 64 elements and
+/// a non-ZST `T`, a prefetch hint one cache line ahead.
 pub struct VanEmdeBoas<T> {
     data: Vec<T>,
     cpu_features: &'static CpuFeatures,
@@ -617,7 +622,8 @@ impl<T: Clone> VanEmdeBoas<T> {
         }
     }
 
-    /// Get element with cache-optimal access pattern and SIMD prefetching
+    /// Get element `index` (see the limitation on [`VanEmdeBoas`]: plain
+    /// indexing plus a prefetch hint)
     pub fn get(&self, index: usize) -> Option<&T> {
         if index < self.data.len() {
             let physical_index = self.cache_optimal_index(index);
@@ -647,7 +653,8 @@ impl<T: Clone> VanEmdeBoas<T> {
         }
     }
 
-    /// Convert logical index to cache-optimal physical index
+    /// Convert logical index to physical index. This is the identity (clamped
+    /// to the last element): see the limitation on [`VanEmdeBoas`].
     fn cache_optimal_index(&self, logical_index: usize) -> usize {
         if logical_index < self.data.len() {
             logical_index

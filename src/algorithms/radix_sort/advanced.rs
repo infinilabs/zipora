@@ -182,6 +182,9 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     }
 
     /// Create an advanced radix sort instance with shared memory pool
+    ///
+    /// Limitation: the pool is stored but never allocated from; see
+    /// `AdvancedRadixSortConfig::use_secure_memory`.
     pub fn with_memory_pool(
         config: AdvancedRadixSortConfig,
         memory_pool: Arc<SecureMemoryPool>,
@@ -387,12 +390,11 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         let radix = 1usize << self.config.radix_bits;
         let mask = (radix - 1) as u64;
 
+        // Buffers come from the global allocator; `memory_pool` is not used
+        // (see `AdvancedRadixSortConfig::use_secure_memory`).
         let alloc_start = Instant::now();
         let mut buffer = vec![data[0]; data.len()];
         let mut counts = vec![0usize; radix];
-        if let Some(ref pool) = self.memory_pool {
-            let _ = pool.stats();
-        }
         self.stats.phase_times.allocation_time_us = alloc_start.elapsed().as_micros() as u64;
 
         // Determine maximum number of passes needed

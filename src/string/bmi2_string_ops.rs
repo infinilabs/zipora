@@ -310,8 +310,18 @@ impl Bmi2StringProcessor {
 
     /// BMI2-accelerated string hashing
     ///
-    /// Fast string hashing using BMI2 patterns for bit manipulation
-    /// and parallel processing. Performance: 2-3x faster hashing.
+    /// Starting from `hash = seed`, for each full 8-byte little-endian word `w`:
+    /// `hash = hash.rotate_left(5).wrapping_add(w); hash ^= (hash >> 13) & 0x7FFFF`.
+    /// The bytes of a final partial word are added one at a time
+    /// (`hash = hash.rotate_left(5).wrapping_add(byte)`). The BMI2 path (BEXTR)
+    /// and the portable path compute the same value, so the result does not
+    /// depend on the CPU.
+    ///
+    /// Compatibility: before C8 (cf7f4cf) the portable path, taken without
+    /// BMI2 and on non-x86-64 targets, added every byte one at a time. For
+    /// inputs of 8 bytes or more it returned different values from the BMI2
+    /// path, and from this version; hashes of such inputs stored by an older
+    /// version on those machines no longer match.
     pub fn hash_string_bmi2(&self, input: &str, seed: u64) -> u64 {
         #[cfg(target_arch = "x86_64")]
         {
