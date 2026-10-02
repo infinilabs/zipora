@@ -172,28 +172,25 @@ impl Bmi2StringProcessor {
         haystack.find(needle)
     }
 
-    /// BMI2-accelerated pattern matching with wildcards
+    /// Glob-style wildcard matching.
     ///
-    /// Supports glob-style pattern matching using PEXT for character
-    /// class operations. Performance: 3-5x faster than regex for simple patterns.
+    /// `*` in `pattern` matches any run of characters (including none) and
+    /// `?` matches exactly one Unicode scalar value. Every character of
+    /// `text` is a literal: a `*` or `?` in `text` is matched by a pattern
+    /// wildcard or by the same literal character, never treated as a wildcard.
+    ///
+    /// No BMI2 instructions are involved; the name is kept for API
+    /// compatibility. ASCII inputs are matched byte-wise and all other inputs
+    /// char-wise, both by the private `glob_match`: the pattern text before the first
+    /// `*` and after the last `*` is compared in place at the two ends of
+    /// `text`, and each `*`-separated segment in between is placed at its
+    /// leftmost match. Worst case O(text × pattern) comparisons.
     pub fn wildcard_match_bmi2(&self, text: &str, pattern: &str) -> bool {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if self.is_bmi2_available()
-                && text.len() >= 8
-                && pattern.len() >= 4
-                && text.is_ascii()
-                && pattern.is_ascii()
-            {
-                // SAFETY: bmi1+bmi2 guaranteed by is_bmi2_available(), text and pattern are valid slices from str
-                return unsafe {
-                    self.wildcard_match_bmi2_impl(text.as_bytes(), pattern.as_bytes())
-                };
-            }
+        if text.is_ascii() && pattern.is_ascii() {
+            glob_match(text.as_bytes(), pattern.as_bytes(), b'*', b'?')
+        } else {
+            self.wildcard_match_scalar(text, pattern)
         }
-
-        // Fallback to basic wildcard matching
-        self.wildcard_match_scalar(text, pattern)
     }
 
     /// BMI2-accelerated character class matching
@@ -642,63 +639,6 @@ impl Bmi2StringProcessor {
         }
 
         None
-    }
-
-    /// # Safety
-    ///
-    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
-    /// features (verified at runtime via CPU feature detection) before calling.
-    /// These are enabled via `#[target_feature]`; invoking on hardware without
-    /// BMI1/BMI2 support is undefined behavior.
-    #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "bmi1,bmi2")]
-    unsafe fn wildcard_match_bmi2_impl(&self, text: &[u8], pattern: &[u8]) -> bool {
-        let mut text_idx = 0;
-        let mut pattern_idx = 0;
-        let mut star_idx: Option<usize> = None;
-        let mut match_idx = 0;
-
-        let read_byte_bmi2 = |slice: &[u8], idx: usize| -> u8 {
-            if idx + 8 <= slice.len() {
-                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, idx + 8 <= len checked
-                let chunk =
-                    unsafe { std::ptr::read_unaligned(slice.as_ptr().add(idx) as *const u64) };
-                Bmi2BextrOps::extract_bits_bextr(chunk, 0, 8) as u8
-            } else {
-                slice[idx]
-            }
-        };
-
-        while text_idx < text.len() {
-            if pattern_idx < pattern.len() {
-                let pat_byte = read_byte_bmi2(pattern, pattern_idx);
-                if pat_byte == b'?' || pat_byte == read_byte_bmi2(text, text_idx) {
-                    text_idx += 1;
-                    pattern_idx += 1;
-                    continue;
-                }
-                if pat_byte == b'*' {
-                    star_idx = Some(pattern_idx);
-                    match_idx = text_idx;
-                    pattern_idx += 1;
-                    continue;
-                }
-            }
-
-            if let Some(s_idx) = star_idx {
-                pattern_idx = s_idx + 1;
-                match_idx += 1;
-                text_idx = match_idx;
-            } else {
-                return false;
-            }
-        }
-
-        while pattern_idx < pattern.len() && read_byte_bmi2(pattern, pattern_idx) == b'*' {
-            pattern_idx += 1;
-        }
-
-        pattern_idx == pattern.len()
     }
 
     /// # Safety
@@ -1320,40 +1260,12 @@ impl Bmi2StringProcessor {
     // SCALAR FALLBACK METHODS
     // =============================================================================
 
+    /// Char-wise wildcard matching for non-ASCII inputs, so `?` consumes one
+    /// Unicode scalar value rather than one UTF-8 byte.
     fn wildcard_match_scalar(&self, text: &str, pattern: &str) -> bool {
         let text_chars: Vec<char> = text.chars().collect();
         let pattern_chars: Vec<char> = pattern.chars().collect();
-
-        let mut text_idx = 0;
-        let mut pattern_idx = 0;
-        let mut star_idx: Option<usize> = None;
-        let mut match_idx = 0;
-
-        while text_idx < text_chars.len() {
-            if pattern_idx < pattern_chars.len()
-                && (pattern_chars[pattern_idx] == '?'
-                    || pattern_chars[pattern_idx] == text_chars[text_idx])
-            {
-                text_idx += 1;
-                pattern_idx += 1;
-            } else if pattern_idx < pattern_chars.len() && pattern_chars[pattern_idx] == '*' {
-                star_idx = Some(pattern_idx);
-                match_idx = text_idx;
-                pattern_idx += 1;
-            } else if let Some(s_idx) = star_idx {
-                pattern_idx = s_idx + 1;
-                match_idx += 1;
-                text_idx = match_idx;
-            } else {
-                return false;
-            }
-        }
-
-        while pattern_idx < pattern_chars.len() && pattern_chars[pattern_idx] == '*' {
-            pattern_idx += 1;
-        }
-
-        pattern_idx == pattern_chars.len()
+        glob_match(&text_chars, &pattern_chars, '*', '?')
     }
 
     fn detect_runs_scalar(&self, input: &str) -> Vec<CharRun> {
@@ -1642,6 +1554,72 @@ pub struct DictionaryMatch {
     pub length: usize,
     /// Index in the dictionary
     pub dictionary_index: usize,
+}
+
+/// Glob matching over a slice, shared by the byte (ASCII) and `char` paths of
+/// [`Bmi2StringProcessor::wildcard_match_bmi2`].
+///
+/// `star` in `pattern` matches any run of elements (including none), `any`
+/// matches exactly one element, and every element of `text` is a literal.
+///
+/// The pattern is split at its `star`s before any literal comparison, so a
+/// `star` can never be consumed as a literal (S20-R1). The segment before the
+/// first `star` must match at the start of `text`, the segment after the last
+/// `star` at the end, and each segment in between is placed at its leftmost
+/// match after the previous one. Leftmost placement is exact: if any placement
+/// of the middle segments fits, then by induction the leftmost placement of
+/// each segment lies at or before it, so the remaining segments still fit.
+/// Worst case O(text × pattern) comparisons; no allocation.
+fn glob_match<T: Copy + Eq>(text: &[T], pattern: &[T], star: T, any: T) -> bool {
+    // Branch-free (no early exit) so the byte instantiation vectorizes.
+    let seg_matches = |t: &[T], seg: &[T]| -> bool {
+        t.len() == seg.len()
+            && t.iter()
+                .zip(seg)
+                .fold(true, |ok, (&tc, &pc)| ok & ((pc == any) | (pc == tc)))
+    };
+
+    let Some(first_star) = pattern.iter().position(|&c| c == star) else {
+        return seg_matches(text, pattern);
+    };
+    // A star exists, so `rposition` finds one at or after `first_star`.
+    let last_star = pattern
+        .iter()
+        .rposition(|&c| c == star)
+        .unwrap_or(first_star);
+    let head = &pattern[..first_star];
+    let tail = &pattern[last_star + 1..];
+    if text.len() < head.len() + tail.len() {
+        return false;
+    }
+    let (text_head, rest) = text.split_at(head.len());
+    let (mut window, text_tail) = rest.split_at(rest.len() - tail.len());
+    if !seg_matches(text_head, head) || !seg_matches(text_tail, tail) {
+        return false;
+    }
+
+    let middle: &[T] = if last_star > first_star {
+        &pattern[first_star + 1..last_star]
+    } else {
+        &[]
+    };
+    for seg in middle.split(|&c| c == star) {
+        let Some((&lead, seg_rest)) = seg.split_first() else {
+            continue; // empty segment between adjacent stars
+        };
+        // `windows` yields nothing when `seg` is longer than `window`; the
+        // lead element rejects most candidate positions before the full compare.
+        let found = window.windows(seg.len()).position(|w| {
+            w.split_first().is_some_and(|(&c, w_rest)| {
+                (lead == any || c == lead) && seg_matches(w_rest, seg_rest)
+            })
+        });
+        match found {
+            Some(i) => window = &window[i + seg.len()..],
+            None => return false,
+        }
+    }
+    true
 }
 
 // =============================================================================
@@ -2058,5 +2036,179 @@ mod tests {
         assert!(bmi2
             .extract_substrings_bmi2("éaaaaaaa", &[(usize::MAX, 2)])
             .is_err());
+    }
+
+    /// Reference glob matcher for S20-R1: O(text * pattern) DP over Unicode
+    /// scalar values. `*` matches any run (including none), `?` exactly one
+    /// scalar; every character of `text` is a literal.
+    fn glob_dp_reference(text: &str, pattern: &str) -> bool {
+        let t: Vec<char> = text.chars().collect();
+        // prev[j] == "pattern consumed so far matches t[..j]"
+        let mut prev = vec![false; t.len() + 1];
+        prev[0] = true;
+        for pc in pattern.chars() {
+            let mut cur = vec![false; t.len() + 1];
+            if pc == '*' {
+                let mut acc = false;
+                for (c, &p) in cur.iter_mut().zip(prev.iter()) {
+                    acc = acc || p;
+                    *c = acc;
+                }
+            } else {
+                for (j, &tc) in t.iter().enumerate() {
+                    cur[j + 1] = prev[j] && (pc == '?' || pc == tc);
+                }
+            }
+            prev = cur;
+        }
+        prev[t.len()]
+    }
+
+    /// Every string of length `0..=max_len` over `alphabet`.
+    fn all_strings_up_to(alphabet: &[char], max_len: usize) -> Vec<String> {
+        let mut out = vec![String::new()];
+        let mut frontier = vec![String::new()];
+        for _ in 0..max_len {
+            let mut next = Vec::with_capacity(frontier.len() * alphabet.len());
+            for s in &frontier {
+                for &c in alphabet {
+                    let mut t = s.clone();
+                    t.push(c);
+                    next.push(t);
+                }
+            }
+            out.extend(next.iter().cloned());
+            frontier = next;
+        }
+        out
+    }
+
+    #[test]
+    fn test_s20_r1_wildcard_star_in_text_matches_dp_reference() {
+        let bmi2 = Bmi2StringProcessor::new();
+        let mut scalar = Bmi2StringProcessor::new();
+        scalar.capabilities.has_bmi1 = false;
+        scalar.capabilities.has_bmi2 = false;
+
+        // Returns the number of entry points (method, forced-scalar processor,
+        // free fn) that disagree with the DP reference, recording each failure.
+        let mut failures: Vec<String> = Vec::new();
+        let mut check = |text: &str, pattern: &str| -> usize {
+            let expected = glob_dp_reference(text, pattern);
+            let got = [
+                ("method", bmi2.wildcard_match_bmi2(text, pattern)),
+                ("forced-scalar", scalar.wildcard_match_bmi2(text, pattern)),
+                ("free-fn", wildcard_match_bmi2(text, pattern)),
+            ];
+            let mut wrong = 0;
+            for (path, g) in got {
+                if g != expected {
+                    wrong += 1;
+                    failures.push(format!(
+                        "{path}: text={text:?} pattern={pattern:?} expected {expected} got {g}"
+                    ));
+                }
+            }
+            wrong
+        };
+        let mut summary: Vec<String> = Vec::new();
+
+        // 1. Reviewer repros: the text holds a '*' where the pattern's '*' is.
+        //    ("x*abcdefgh", "x*?h") and ("x*abcdefgh", "x*gh") meet the old
+        //    BMI2-impl length gate (text >= 8, pattern >= 4, ASCII).
+        assert!(glob_dp_reference("*ab", "*b"));
+        assert!(glob_dp_reference("x*abcdefgh", "x*h"));
+        let repros = [
+            ("*ab", "*b"),
+            ("x*abcdefgh", "x*h"),
+            ("x*abcdefgh", "x*?h"),
+            ("x*abcdefgh", "x*gh"),
+            ("a?bcdefgh", "a?*h"),
+            ("**abcdefgh", "**gh"),
+        ];
+        let bad = repros.iter().filter(|(t, p)| check(t, p) > 0).count();
+        summary.push(format!("repros {bad}/{}", repros.len()));
+
+        // 2. Exhaustive: every text <= 5 and pattern <= 4 over {a, b, *, ?}.
+        let (max_t, max_p) = if cfg!(miri) { (2, 3) } else { (5, 4) };
+        let texts = all_strings_up_to(&['a', 'b', '*', '?'], max_t);
+        let patterns = all_strings_up_to(&['a', 'b', '*', '?'], max_p);
+        let (mut bad, mut pairs) = (0usize, 0usize);
+        for t in &texts {
+            for p in &patterns {
+                pairs += 1;
+                bad += usize::from(check(t, p) > 0);
+            }
+        }
+        summary.push(format!("exhaustive-ascii {bad}/{pairs}"));
+
+        // 3. Same, behind an 8-byte literal prefix so every pair meets the
+        //    old BMI2-impl length gate.
+        let max_tp = if cfg!(miri) { 2 } else { 4 };
+        let texts_p = all_strings_up_to(&['a', 'b', '*', '?'], max_tp);
+        let (mut bad, mut pairs) = (0usize, 0usize);
+        for t in &texts_p {
+            for p in &texts_p {
+                pairs += 1;
+                let (t, p) = (format!("xxxxxxxx{t}"), format!("xxxxxxxx{p}"));
+                bad += usize::from(check(&t, &p) > 0);
+            }
+        }
+        summary.push(format!("exhaustive-prefixed {bad}/{pairs}"));
+
+        // 4. Non-ASCII: '?' must consume one Unicode scalar, not one byte.
+        let (max_t, max_p) = if cfg!(miri) { (2, 2) } else { (4, 3) };
+        let texts_u = all_strings_up_to(&['é', 'a', '*', '?'], max_t);
+        let patterns_u = all_strings_up_to(&['é', 'a', '*', '?'], max_p);
+        let (mut bad, mut pairs) = (0usize, 0usize);
+        for t in &texts_u {
+            for p in &patterns_u {
+                pairs += 1;
+                bad += usize::from(check(t, p) > 0);
+            }
+        }
+        summary.push(format!("exhaustive-non-ascii {bad}/{pairs}"));
+
+        // 5. Random differential (splitmix64): texts up to 48, patterns up to 10.
+        let mut state: u64 = 0x5320_0001;
+        let mut next = move || {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+        let iters = if cfg!(miri) { 200 } else { 50_000 };
+        let mut bad = 0usize;
+        for _ in 0..iters {
+            let tlen = (next() % 49) as usize;
+            let text: String = (0..tlen)
+                .map(|_| match next() % 20 {
+                    0..=7 => 'a',
+                    8..=13 => 'b',
+                    14..=16 => '*',
+                    _ => '?',
+                })
+                .collect();
+            let plen = (next() % 11) as usize;
+            let pattern: String = (0..plen)
+                .map(|_| match next() % 10 {
+                    0..=2 => 'a',
+                    3..=4 => 'b',
+                    5..=7 => '*',
+                    _ => '?',
+                })
+                .collect();
+            bad += usize::from(check(&text, &pattern) > 0);
+        }
+        summary.push(format!("random {bad}/{iters}"));
+
+        assert!(
+            failures.is_empty(),
+            "S20-R1 wildcard vs DP reference, wrong pairs: {}; {} wrong results in total; first: {:#?}",
+            summary.join(", "),
+            failures.len(),
+            &failures[..failures.len().min(6)]
+        );
     }
 }
