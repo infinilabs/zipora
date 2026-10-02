@@ -385,8 +385,14 @@ where
             return None;
         }
         let min = heap.swap_remove(0);
+        Self::sift_down(heap, 0, comparator);
+        Some(min)
+    }
+
+    /// Restore the min-heap order (by `(run_id, comparator)`) of the subtree
+    /// rooted at `idx`, given that both of its child subtrees are heaps.
+    fn sift_down(heap: &mut [RunElement<T>], mut idx: usize, comparator: &F) {
         let len = heap.len();
-        let mut idx = 0;
         loop {
             let left = 2 * idx + 1;
             let right = 2 * idx + 2;
@@ -417,7 +423,6 @@ where
                 break;
             }
         }
-        Some(min)
     }
 
     /// Generate sorted runs using replacement selection
@@ -426,25 +431,42 @@ where
         I: IntoIterator<Item = T>,
     {
         let memory_items = (self.config.memory_buffer_size / std::mem::size_of::<T>().max(1)).max(1);
-        let mut heap = Vec::with_capacity(memory_items);
-        let mut input_iter = input.into_iter();
+        let mut input_iter = input.into_iter().peekable();
         let mut current_run = 0;
         let mut run_items = 0;
         let mut temp_writer: Option<BufWriter<File>> = None;
         let mut current_temp_path: Option<PathBuf> = None;
 
-        // Fill initial heap
-        for _ in 0..memory_items {
-            if let Some(item) = input_iter.next() {
-                Self::heap_push(
-                    &mut heap,
-                    RunElement::new(item, current_run),
-                    &self.comparator,
-                );
-                self.stats.items_sorted += 1;
-            } else {
-                break;
+        // Fill the buffer. An exact upper size hint avoids reserving the whole
+        // buffer for a small input; without one, reserve the buffer as before.
+        let capacity = memory_items.min(input_iter.size_hint().1.unwrap_or(memory_items));
+        let mut heap: Vec<RunElement<T>> = Vec::with_capacity(capacity);
+        heap.extend(
+            input_iter
+                .by_ref()
+                .take(memory_items)
+                .map(|item| RunElement::new(item, current_run)),
+        );
+        self.stats.items_sorted += heap.len();
+
+        // The whole input fits in the buffer: it all goes to one run, so one
+        // stable sort replaces the heap (S20-R5). Unlike the heap path, this
+        // keeps comparator-equal elements in input order.
+        if input_iter.peek().is_none() {
+            if heap.is_empty() {
+                return Ok(());
             }
+            heap.sort_by(|a, b| (self.comparator)(&a.value, &b.value));
+            let (mut writer, temp_path) = self.create_run_file(current_run)?;
+            for element in &heap {
+                self.write_element(&mut writer, &element.value)?;
+            }
+            return self.finish_run(&mut Some(writer), temp_path, heap.len());
+        }
+
+        // Bottom-up heap construction, O(n) instead of n pushes.
+        for idx in (0..heap.len() / 2).rev() {
+            Self::sift_down(&mut heap, idx, &self.comparator);
         }
 
         while let Some(min_element) = Self::heap_pop(&mut heap, &self.comparator) {
@@ -465,14 +487,8 @@ where
 
             // Start new run file if needed
             if temp_writer.is_none() {
-                let temp_path = self
-                    .config
-                    .temp_dir
-                    .join(format!("{}_{}.tmp", self.instance_id, current_run));
-                let file = File::create(&temp_path).map_err(|e| {
-                    ZiporaError::io_error(format!("Failed to create temp file: {}", e))
-                })?;
-                temp_writer = Some(BufWriter::new(file));
+                let (writer, temp_path) = self.create_run_file(current_run)?;
+                temp_writer = Some(writer);
                 current_temp_path = Some(temp_path);
                 run_items = 0;
             }
@@ -514,6 +530,17 @@ where
         }
 
         Ok(())
+    }
+
+    /// Create the temporary file for run `run_id`.
+    fn create_run_file(&self, run_id: usize) -> Result<(BufWriter<File>, PathBuf)> {
+        let temp_path = self
+            .config
+            .temp_dir
+            .join(format!("{}_{}.tmp", self.instance_id, run_id));
+        let file = File::create(&temp_path)
+            .map_err(|e| ZiporaError::io_error(format!("Failed to create temp file: {}", e)))?;
+        Ok((BufWriter::new(file), temp_path))
     }
 
     /// Write an element to the temporary file
@@ -929,6 +956,39 @@ mod tests {
         assert!(desc_sorter.stats().runs_generated > 1);
         assert_eq!(sorted, expected);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_s20_r5_in_memory_fast_path_matches_heap_path() -> Result<()> {
+        // Guard for the S20-R5 in-memory fast path: inputs just below, at and
+        // above the buffer size take the sort-once path or the heap path. With
+        // a descending comparator (not `T::cmp`) all must come out in the
+        // comparator's order, with every item counted and, when the input
+        // fits, exactly one run (none for an empty input).
+        for b in [1usize, 2, 16, 100] {
+            for n in [b - 1, b, b + 1, 3 * b + 5] {
+                let config = ReplaceSelectSortConfig {
+                    memory_buffer_size: b * std::mem::size_of::<i32>(),
+                    temp_dir: test_temp_dir(),
+                    use_secure_memory: false,
+                    ..Default::default()
+                };
+                let mut sorter =
+                    ReplaceSelectSort::with_comparator(config, |x: &i32, y: &i32| y.cmp(x));
+                let data: Vec<i32> = (0..n as i32).map(|i| (i * 37 + 11) % 23 - 11).collect();
+                let mut want = data.clone();
+                want.sort_by(|x, y| y.cmp(x));
+
+                let got = sorter.sort(data)?;
+                let ctx = format!("buffer_items={b} n={n}");
+                assert_eq!(got, want, "{ctx}");
+                assert_eq!(sorter.stats().items_sorted, n, "{ctx}");
+                if n <= b {
+                    assert_eq!(sorter.stats().runs_generated, usize::from(n > 0), "{ctx}");
+                }
+            }
+        }
         Ok(())
     }
 }
