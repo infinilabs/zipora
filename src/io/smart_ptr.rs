@@ -12,6 +12,14 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak as RcWeak};
 use std::sync::{Arc, Weak as ArcWeak};
 
+use std::any::Any;
+use std::cell::RefCell;
+
+thread_local! {
+    static ACTIVE_SER_CTX: RefCell<Option<SerializationContext>> = const { RefCell::new(None) };
+    static ACTIVE_DE_CTX: RefCell<Option<DeserializationContext>> = const { RefCell::new(None) };
+}
+
 /// Serialization context for tracking shared objects and preventing cycles
 #[derive(Debug)]
 pub struct SerializationContext {
@@ -19,8 +27,13 @@ pub struct SerializationContext {
     next_id: u32,
     /// Map from object pointer to assigned ID
     object_ids: HashMap<usize, u32>,
+    /// Cloned smart pointers kept alive so their addresses cannot be reused
+    /// by the allocator while this context is active.
+    retained_objects: Vec<Box<dyn Any>>,
     /// Enable circular reference detection
     detect_cycles: bool,
+    /// Encode object IDs with variable-length integers
+    compress_ids: bool,
 }
 
 impl SerializationContext {
@@ -29,7 +42,9 @@ impl SerializationContext {
         Self {
             next_id: 1, // Start from 1, reserve 0 for null
             object_ids: HashMap::new(),
+            retained_objects: Vec::new(),
             detect_cycles: true,
+            compress_ids: false,
         }
     }
 
@@ -38,7 +53,9 @@ impl SerializationContext {
         Self {
             next_id: 1,
             object_ids: HashMap::new(),
+            retained_objects: Vec::new(),
             detect_cycles: false,
+            compress_ids: false,
         }
     }
 
@@ -50,11 +67,20 @@ impl SerializationContext {
             id
         } else {
             let id = self.next_id;
-            self.next_id += 1;
+            self.next_id = self.next_id.saturating_add(1);
             if self.detect_cycles {
                 self.object_ids.insert(addr, id);
             }
             id
+        }
+    }
+
+    /// Keep a clone of a serialized smart pointer alive for the lifetime of
+    /// this context so its heap address cannot be recycled for an unrelated
+    /// allocation.
+    fn retain_object<P: 'static>(&mut self, ptr: P) {
+        if self.detect_cycles {
+            self.retained_objects.push(Box::new(ptr));
         }
     }
 
@@ -68,10 +94,42 @@ impl SerializationContext {
         self.object_ids.contains_key(&addr)
     }
 
+    fn write_id<O: DataOutput>(&self, output: &mut O, id: u32) -> Result<()> {
+        if self.compress_ids {
+            output.write_var_int(id as u64)
+        } else {
+            output.write_u32(id)
+        }
+    }
+
+    fn run_nested<R>(&mut self, f: impl FnOnce() -> Result<R>) -> Result<R> {
+        struct Guard<'a> {
+            caller: &'a mut SerializationContext,
+            prev: Option<SerializationContext>,
+        }
+        impl Drop for Guard<'_> {
+            fn drop(&mut self) {
+                ACTIVE_SER_CTX.with(|cell| {
+                    if let Some(active) = cell.borrow_mut().take() {
+                        *self.caller = active;
+                    }
+                    *cell.borrow_mut() = self.prev.take();
+                });
+            }
+        }
+        let prev = ACTIVE_SER_CTX.with(|cell| {
+            let taken = std::mem::take(self);
+            cell.borrow_mut().replace(taken)
+        });
+        let _guard = Guard { caller: self, prev };
+        f()
+    }
+
     /// Clear the context for reuse
     pub fn clear(&mut self) {
         self.next_id = 1;
         self.object_ids.clear();
+        self.retained_objects.clear();
     }
 }
 
@@ -83,27 +141,62 @@ impl Default for SerializationContext {
 
 /// Deserialization context for reconstructing shared objects
 #[derive(Debug)]
-pub struct DeserializationContext<T> {
-    /// Map from object ID to reconstructed object
-    objects: HashMap<u32, T>,
+pub struct DeserializationContext {
+    /// Map from object ID to reconstructed smart pointer
+    objects: HashMap<u32, Box<dyn Any>>,
+    /// Decode object IDs with variable-length integers
+    compress_ids: bool,
 }
 
-impl<T> DeserializationContext<T> {
+impl DeserializationContext {
     /// Create a new deserialization context
     pub fn new() -> Self {
         Self {
             objects: HashMap::new(),
+            compress_ids: false,
         }
     }
 
     /// Store an object with its ID
-    pub fn store_object(&mut self, id: u32, object: T) {
-        self.objects.insert(id, object);
+    pub fn store_object<T: 'static>(&mut self, id: u32, object: T) {
+        self.objects.insert(id, Box::new(object));
     }
 
     /// Get an object by its ID
-    pub fn get_object(&self, id: u32) -> Option<&T> {
-        self.objects.get(&id)
+    pub fn get_object<T: 'static>(&self, id: u32) -> Option<&T> {
+        self.objects.get(&id)?.downcast_ref::<T>()
+    }
+
+    fn read_id<I: DataInput>(&self, input: &mut I) -> Result<u32> {
+        if self.compress_ids {
+            u32::try_from(input.read_var_int()?)
+                .map_err(|_| ZiporaError::invalid_data("Compressed object ID overflows u32"))
+        } else {
+            input.read_u32()
+        }
+    }
+
+    fn run_nested<R>(&mut self, f: impl FnOnce() -> Result<R>) -> Result<R> {
+        struct Guard<'a> {
+            caller: &'a mut DeserializationContext,
+            prev: Option<DeserializationContext>,
+        }
+        impl Drop for Guard<'_> {
+            fn drop(&mut self) {
+                ACTIVE_DE_CTX.with(|cell| {
+                    if let Some(active) = cell.borrow_mut().take() {
+                        *self.caller = active;
+                    }
+                    *cell.borrow_mut() = self.prev.take();
+                });
+            }
+        }
+        let prev = ACTIVE_DE_CTX.with(|cell| {
+            let taken = std::mem::take(self);
+            cell.borrow_mut().replace(taken)
+        });
+        let _guard = Guard { caller: self, prev };
+        f()
     }
 
     /// Clear the context for reuse
@@ -112,9 +205,65 @@ impl<T> DeserializationContext<T> {
     }
 }
 
-impl<T> Default for DeserializationContext<T> {
+impl Default for DeserializationContext {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn with_active_ser_ctx<R>(f: impl FnOnce(&mut SerializationContext) -> Result<R>) -> Result<R> {
+    let existing = ACTIVE_SER_CTX.with(|cell| cell.borrow_mut().take());
+    match existing {
+        Some(ctx) => {
+            struct RestoreGuard(Option<SerializationContext>);
+            impl Drop for RestoreGuard {
+                fn drop(&mut self) {
+                    if let Some(ctx) = self.0.take() {
+                        ACTIVE_SER_CTX.with(|cell| {
+                            *cell.borrow_mut() = Some(ctx);
+                        });
+                    }
+                }
+            }
+            let mut guard = RestoreGuard(Some(ctx));
+            let ctx_ref = match guard.0.as_mut() {
+                Some(c) => c,
+                None => unreachable!(),
+            };
+            f(ctx_ref)
+        }
+        None => {
+            let mut fresh = SerializationContext::new();
+            f(&mut fresh)
+        }
+    }
+}
+
+fn with_active_de_ctx<R>(f: impl FnOnce(&mut DeserializationContext) -> Result<R>) -> Result<R> {
+    let existing = ACTIVE_DE_CTX.with(|cell| cell.borrow_mut().take());
+    match existing {
+        Some(ctx) => {
+            struct RestoreGuard(Option<DeserializationContext>);
+            impl Drop for RestoreGuard {
+                fn drop(&mut self) {
+                    if let Some(ctx) = self.0.take() {
+                        ACTIVE_DE_CTX.with(|cell| {
+                            *cell.borrow_mut() = Some(ctx);
+                        });
+                    }
+                }
+            }
+            let mut guard = RestoreGuard(Some(ctx));
+            let ctx_ref = match guard.0.as_mut() {
+                Some(c) => c,
+                None => unreachable!(),
+            };
+            f(ctx_ref)
+        }
+        None => {
+            let mut fresh = DeserializationContext::new();
+            f(&mut fresh)
+        }
     }
 }
 
@@ -130,29 +279,29 @@ pub trait SmartPtrSerialize<T> {
     /// Deserialize the smart pointer with context
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
-        _context: &mut DeserializationContext<Self>,
+        context: &mut DeserializationContext,
     ) -> Result<Self>
     where
         Self: Sized;
 
-    /// Serialize without context (simple case)
+    /// Serialize without an explicit context, reusing any active outer
+    /// [`SerializationContext`] on the current thread.
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
-        let mut context = SerializationContext::new();
-        self.serialize_with_context(output, &mut context)
+        with_active_ser_ctx(|context| self.serialize_with_context(output, context))
     }
 
-    /// Deserialize without context (simple case)
+    /// Deserialize without an explicit context, reusing any active outer
+    /// [`DeserializationContext`] on the current thread.
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self>
     where
         Self: Sized,
     {
-        let mut context = DeserializationContext::new();
-        Self::deserialize_with_context(input, &mut context)
+        with_active_de_ctx(|context| Self::deserialize_with_context(input, context))
     }
 }
 
 /// Marker trait for types that are serializable
-pub trait SerializableType {
+pub trait SerializableType: 'static {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()>;
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self>
     where
@@ -164,22 +313,22 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Box<T> {
     fn serialize_with_context<O: DataOutput>(
         &self,
         output: &mut O,
-        _context: &mut SerializationContext,
+        context: &mut SerializationContext,
     ) -> Result<()> {
         // Box is always unique, no need for reference tracking
         output.write_u8(1)?; // Non-null marker
-        self.as_ref().serialize(output)
+        context.run_nested(|| self.as_ref().serialize(output))
     }
 
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
-        _context: &mut DeserializationContext<Self>,
+        context: &mut DeserializationContext,
     ) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
             0 => Err(ZiporaError::invalid_data("Box cannot be null")),
             1 => {
-                let value = T::deserialize(input)?;
+                let value = context.run_nested(|| T::deserialize(input))?;
                 Ok(Box::new(value))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Box marker")),
@@ -208,14 +357,13 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Option<Box<T>> {
 
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
-        _context: &mut DeserializationContext<Self>,
+        context: &mut DeserializationContext,
     ) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
             0 => Ok(None),
             1 => {
-                let boxed =
-                    Box::<T>::deserialize_with_context(input, &mut DeserializationContext::new())?;
+                let boxed = Box::<T>::deserialize_with_context(input, context)?;
                 Ok(Some(boxed))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Option<Box> marker")),
@@ -236,13 +384,14 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Rc<T> {
             // Object already serialized, write reference
             let id = context.get_or_assign_id(obj_ref);
             output.write_u8(2)?; // Reference marker
-            output.write_u32(id)?;
+            context.write_id(output, id)?;
         } else {
             // First time seeing this object, serialize it
             let id = context.get_or_assign_id(obj_ref);
+            context.retain_object(self.clone());
             output.write_u8(1)?; // New object marker
-            output.write_u32(id)?;
-            obj_ref.serialize(output)?;
+            context.write_id(output, id)?;
+            context.run_nested(|| obj_ref.serialize(output))?;
         }
 
         Ok(())
@@ -250,24 +399,24 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Rc<T> {
 
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
-        context: &mut DeserializationContext<Self>,
+        context: &mut DeserializationContext,
     ) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
             0 => Err(ZiporaError::invalid_data("Rc cannot be null")),
             1 => {
                 // New object
-                let id = input.read_u32()?;
-                let value = T::deserialize(input)?;
+                let id = context.read_id(input)?;
+                let value = context.run_nested(|| T::deserialize(input))?;
                 let rc = Rc::new(value);
                 context.store_object(id, rc.clone());
                 Ok(rc)
             }
             2 => {
                 // Reference to existing object
-                let id = input.read_u32()?;
+                let id = context.read_id(input)?;
                 context
-                    .get_object(id)
+                    .get_object::<Self>(id)
                     .cloned()
                     .ok_or_else(|| ZiporaError::invalid_data("Referenced object not found"))
             }
@@ -289,13 +438,14 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for Arc<T> {
             // Object already serialized, write reference
             let id = context.get_or_assign_id(obj_ref);
             output.write_u8(2)?; // Reference marker
-            output.write_u32(id)?;
+            context.write_id(output, id)?;
         } else {
             // First time seeing this object, serialize it
             let id = context.get_or_assign_id(obj_ref);
+            context.retain_object(self.clone());
             output.write_u8(1)?; // New object marker
-            output.write_u32(id)?;
-            obj_ref.serialize(output)?;
+            context.write_id(output, id)?;
+            context.run_nested(|| obj_ref.serialize(output))?;
         }
 
         Ok(())
@@ -303,24 +453,24 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for Arc<T> {
 
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
-        context: &mut DeserializationContext<Self>,
+        context: &mut DeserializationContext,
     ) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
             0 => Err(ZiporaError::invalid_data("Arc cannot be null")),
             1 => {
                 // New object
-                let id = input.read_u32()?;
-                let value = T::deserialize(input)?;
+                let id = context.read_id(input)?;
+                let value = context.run_nested(|| T::deserialize(input))?;
                 let arc = Arc::new(value);
                 context.store_object(id, arc.clone());
                 Ok(arc)
             }
             2 => {
                 // Reference to existing object
-                let id = input.read_u32()?;
+                let id = context.read_id(input)?;
                 context
-                    .get_object(id)
+                    .get_object::<Self>(id)
                     .cloned()
                     .ok_or_else(|| ZiporaError::invalid_data("Referenced object not found"))
             }
@@ -350,19 +500,13 @@ impl<T: SerializableType> SmartPtrSerialize<T> for RcWeak<T> {
 
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
-        _context: &mut DeserializationContext<Self>,
+        context: &mut DeserializationContext,
     ) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
-            0 => {
-                // Dangling weak reference - create a weak that will never upgrade
-                let dummy = Rc::new(T::deserialize(input)?);
-                Ok(Rc::downgrade(&dummy))
-            }
+            0 => Ok(RcWeak::new()),
             1 => {
-                // Valid weak reference
-                let mut rc_context = DeserializationContext::new();
-                let rc = Rc::<T>::deserialize_with_context(input, &mut rc_context)?;
+                let rc = Rc::<T>::deserialize_with_context(input, context)?;
                 Ok(Rc::downgrade(&rc))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Weak<Rc> marker")),
@@ -391,19 +535,13 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for ArcWeak<T> {
 
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
-        _context: &mut DeserializationContext<Self>,
+        context: &mut DeserializationContext,
     ) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
-            0 => {
-                // Dangling weak reference - create a weak that will never upgrade
-                let dummy = Arc::new(T::deserialize(input)?);
-                Ok(Arc::downgrade(&dummy))
-            }
+            0 => Ok(ArcWeak::new()),
             1 => {
-                // Valid weak reference
-                let mut arc_context = DeserializationContext::new();
-                let arc = Arc::<T>::deserialize_with_context(input, &mut arc_context)?;
+                let arc = Arc::<T>::deserialize_with_context(input, context)?;
                 Ok(Arc::downgrade(&arc))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Weak<Arc> marker")),
@@ -495,6 +633,7 @@ impl SmartPtrSerializer {
         } else {
             SerializationContext::without_cycle_detection()
         };
+        context.compress_ids = self.config.compress_ids;
 
         ptr.serialize_with_context(&mut output, &mut context)?;
         Ok(output.into_vec())
@@ -508,6 +647,7 @@ impl SmartPtrSerializer {
     {
         let mut input = crate::io::SliceDataInput::new(bytes);
         let mut context = DeserializationContext::new();
+        context.compress_ids = self.config.compress_ids;
 
         P::deserialize_with_context(&mut input, &mut context)
     }
@@ -547,10 +687,14 @@ impl SerializableType for String {
 impl<T: SerializableType> SerializableType for Vec<T> {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(self.len() as u32)?;
-        for item in self {
-            item.serialize(output)?;
-        }
-        Ok(())
+        with_active_ser_ctx(|context| {
+            context.run_nested(|| {
+                for item in self {
+                    item.serialize(output)?;
+                }
+                Ok(())
+            })
+        })
     }
 
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
@@ -562,10 +706,14 @@ impl<T: SerializableType> SerializableType for Vec<T> {
             std::mem::size_of::<T>(),
             input.remaining_bytes(),
         ));
-        for _ in 0..len {
-            vec.push(T::deserialize(input)?);
-        }
-        Ok(vec)
+        with_active_de_ctx(|context| {
+            context.run_nested(|| {
+                for _ in 0..len {
+                    vec.push(T::deserialize(input)?);
+                }
+                Ok(vec)
+            })
+        })
     }
 }
 
@@ -582,6 +730,28 @@ impl<T: SerializableType> SerializableType for Rc<T> {
 
 // Bridge implementation for Arc<T> - requires Send + Sync for thread safety
 impl<T: SerializableType + Send + Sync> SerializableType for Arc<T> {
+    fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+        <Self as SmartPtrSerialize<T>>::serialize(self, output)
+    }
+
+    fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
+        <Self as SmartPtrSerialize<T>>::deserialize(input)
+    }
+}
+
+// Bridge implementation for RcWeak<T>
+impl<T: SerializableType> SerializableType for RcWeak<T> {
+    fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+        <Self as SmartPtrSerialize<T>>::serialize(self, output)
+    }
+
+    fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
+        <Self as SmartPtrSerialize<T>>::deserialize(input)
+    }
+}
+
+// Bridge implementation for ArcWeak<T>
+impl<T: SerializableType + Send + Sync> SerializableType for ArcWeak<T> {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
@@ -908,5 +1078,178 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn test_c9_sp2_dangling_weak_round_trips() {
+        let mut out = VecDataOutput::new();
+        let dangling_rc: RcWeak<u32> = RcWeak::new();
+        <RcWeak<u32> as SmartPtrSerialize<u32>>::serialize(&dangling_rc, &mut out).unwrap();
+        let dangling_arc: ArcWeak<u32> = ArcWeak::new();
+        <ArcWeak<u32> as SmartPtrSerialize<u32>>::serialize(&dangling_arc, &mut out).unwrap();
+        out.write_u32(99).unwrap();
+
+        let bytes = out.into_vec();
+        assert_eq!(bytes, [0, 0, 99, 0, 0, 0]);
+
+        let mut input = SliceDataInput::new(&bytes);
+        let back_rc = <RcWeak<u32> as SmartPtrSerialize<u32>>::deserialize(&mut input).unwrap();
+        assert!(back_rc.upgrade().is_none());
+        let back_arc = <ArcWeak<u32> as SmartPtrSerialize<u32>>::deserialize(&mut input).unwrap();
+        assert!(back_arc.upgrade().is_none());
+        assert_eq!(input.read_u32().unwrap(), 99);
+    }
+
+    struct StrongAndWeak {
+        strong: Rc<u32>,
+        weak: RcWeak<u32>,
+    }
+
+    impl SerializableType for StrongAndWeak {
+        fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+            <Rc<u32> as SmartPtrSerialize<u32>>::serialize(&self.strong, output)?;
+            <RcWeak<u32> as SmartPtrSerialize<u32>>::serialize(&self.weak, output)
+        }
+
+        fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
+            let strong = <Rc<u32> as SmartPtrSerialize<u32>>::deserialize(input)?;
+            let weak = <RcWeak<u32> as SmartPtrSerialize<u32>>::deserialize(input)?;
+            Ok(Self { strong, weak })
+        }
+    }
+
+    #[test]
+    fn test_c9_sp3_live_weak_and_shared_context_round_trip() {
+        let strong = Rc::new(5u32);
+        let weak = Rc::downgrade(&strong);
+        let mut out = VecDataOutput::new();
+        <RcWeak<u32> as SmartPtrSerialize<u32>>::serialize(&weak, &mut out).unwrap();
+        let bytes = out.into_vec();
+
+        let mut input = SliceDataInput::new(&bytes);
+        let mut ctx = DeserializationContext::new();
+        let back =
+            <RcWeak<u32> as SmartPtrSerialize<u32>>::deserialize_with_context(&mut input, &mut ctx)
+                .unwrap();
+        assert_eq!(back.upgrade().map(|r| *r), Some(5));
+
+        let pair = Box::new(StrongAndWeak {
+            strong: strong.clone(),
+            weak: Rc::downgrade(&strong),
+        });
+        let mut pair_out = VecDataOutput::new();
+        <Box<StrongAndWeak> as SmartPtrSerialize<StrongAndWeak>>::serialize(&pair, &mut pair_out)
+            .unwrap();
+        let pair_bytes = pair_out.into_vec();
+        let mut pair_in = SliceDataInput::new(&pair_bytes);
+        let pair_back =
+            <Box<StrongAndWeak> as SmartPtrSerialize<StrongAndWeak>>::deserialize(&mut pair_in)
+                .unwrap();
+        let upgraded = pair_back.weak.upgrade().expect("weak reference must upgrade");
+        assert_eq!(*upgraded, 5);
+        assert!(Rc::ptr_eq(&pair_back.strong, &upgraded));
+    }
+
+    #[test]
+    fn test_c9_sp4_temporary_rc_addresses_are_not_confused() {
+        let mut ctx = SerializationContext::new();
+        let mut out = VecDataOutput::new();
+        for i in 0..4u32 {
+            <Rc<u32> as SmartPtrSerialize<u32>>::serialize_with_context(
+                &Rc::new(i),
+                &mut out,
+                &mut ctx,
+            )
+            .unwrap();
+        }
+
+        let bytes = out.into_vec();
+        let mut input = SliceDataInput::new(&bytes);
+        let mut de_ctx = DeserializationContext::new();
+        let mut decoded = Vec::new();
+        for _ in 0..4 {
+            let rc = <Rc<u32> as SmartPtrSerialize<u32>>::deserialize_with_context(
+                &mut input,
+                &mut de_ctx,
+            )
+            .unwrap();
+            decoded.push(*rc);
+        }
+        assert_eq!(decoded, [0, 1, 2, 3]);
+    }
+
+    static CYCLE_DEPTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    struct CyclicNode {
+        val: u32,
+        next: std::cell::RefCell<Option<Rc<CyclicNode>>>,
+    }
+
+    impl SerializableType for CyclicNode {
+        fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+            use std::sync::atomic::Ordering;
+            let d = CYCLE_DEPTH.fetch_add(1, Ordering::Relaxed) + 1;
+            struct Reset;
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    CYCLE_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            let _reset = Reset;
+            if d >= 16 {
+                return Err(ZiporaError::invalid_data("cycle was not detected"));
+            }
+            self.val.serialize(output)?;
+            match self.next.borrow().as_ref() {
+                Some(rc) => {
+                    output.write_u8(1)?;
+                    <Rc<CyclicNode> as SerializableType>::serialize(rc, output)
+                }
+                None => output.write_u8(0),
+            }
+        }
+
+        fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
+            let val = u32::deserialize(input)?;
+            let next = match input.read_u8()? {
+                0 => None,
+                1 => Some(<Rc<CyclicNode> as SerializableType>::deserialize(input)?),
+                _ => return Err(ZiporaError::invalid_data("Invalid CyclicNode marker")),
+            };
+            Ok(Self {
+                val,
+                next: std::cell::RefCell::new(next),
+            })
+        }
+    }
+
+    #[test]
+    fn test_c9_sp5_nested_sharing_and_cycle_detection() {
+        let shared = Rc::new("shared-payload".to_string());
+        let vec = vec![shared.clone(), shared.clone(), shared];
+        let mut out = VecDataOutput::new();
+        <Vec<Rc<String>> as SerializableType>::serialize(&vec, &mut out).unwrap();
+        let bytes = out.into_vec();
+
+        let mut input = SliceDataInput::new(&bytes);
+        let back = <Vec<Rc<String>> as SerializableType>::deserialize(&mut input).unwrap();
+        assert_eq!(back.len(), 3);
+        assert!(Rc::ptr_eq(&back[0], &back[1]));
+        assert!(Rc::ptr_eq(&back[1], &back[2]));
+
+        // Self-referential node must emit a reference marker (2) rather than recursing.
+        CYCLE_DEPTH.store(0, std::sync::atomic::Ordering::Relaxed);
+        let node = Rc::new(CyclicNode {
+            val: 7,
+            next: std::cell::RefCell::new(None),
+        });
+        *node.next.borrow_mut() = Some(node.clone());
+        let mut cyc_out = VecDataOutput::new();
+        let res = <Rc<CyclicNode> as SmartPtrSerialize<CyclicNode>>::serialize(&node, &mut cyc_out);
+        *node.next.borrow_mut() = None;
+        res.expect("cycle detection must stop self-referential recursion");
+        let cyc_bytes = cyc_out.into_vec();
+        // [marker=1, id=1(le u32), val=7(le u32), Some=1, marker=2, id=1(le u32)]
+        assert_eq!(cyc_bytes, [1, 1, 0, 0, 0, 7, 0, 0, 0, 1, 2, 1, 0, 0, 0]);
     }
 }
