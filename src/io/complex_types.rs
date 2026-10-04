@@ -247,17 +247,27 @@ impl<K: SerializableType + Hash + Eq, V: SerializableType> ComplexSerialize for 
 
     fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(self.len() as u32)?;
-
-        for (key, value) in self {
-            key.serialize(output)?;
-            value.serialize(output)?;
+        if self.is_empty() {
+            return Ok(());
         }
-        Ok(())
+
+        crate::io::smart_ptr::with_active_ser_ctx(|context| {
+            context.run_nested(|| {
+                for (key, value) in self {
+                    key.serialize(output)?;
+                    value.serialize(output)?;
+                }
+                Ok(())
+            })
+        })
     }
 
     fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
         check_builtin_version("hashmap", version)?;
         let len = input.read_u32()? as usize;
+        if len == 0 {
+            return Ok(HashMap::new());
+        }
         // `len` is untrusted: reserve within the read-ahead budget and let
         // the map grow as entries arrive. hashbrown stores one control byte
         // per bucket next to each entry, hence the `+ 1`, and rounds the
@@ -269,13 +279,16 @@ impl<K: SerializableType + Hash + Eq, V: SerializableType> ComplexSerialize for 
             input.remaining_bytes(),
         ));
 
-        for _ in 0..len {
-            let key = K::deserialize(input)?;
-            let value = V::deserialize(input)?;
-            map.insert(key, value);
-        }
-
-        Ok(map)
+        crate::io::smart_ptr::with_active_de_ctx(|context| {
+            context.run_nested(|| {
+                for _ in 0..len {
+                    let key = K::deserialize(input)?;
+                    let value = V::deserialize(input)?;
+                    map.insert(key, value);
+                }
+                Ok(map)
+            })
+        })
     }
 }
 
@@ -287,16 +300,26 @@ impl<T: SerializableType + Hash + Eq> ComplexSerialize for HashSet<T> {
 
     fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(self.len() as u32)?;
-
-        for item in self {
-            item.serialize(output)?;
+        if self.is_empty() {
+            return Ok(());
         }
-        Ok(())
+
+        crate::io::smart_ptr::with_active_ser_ctx(|context| {
+            context.run_nested(|| {
+                for item in self {
+                    item.serialize(output)?;
+                }
+                Ok(())
+            })
+        })
     }
 
     fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
         check_builtin_version("hashset", version)?;
         let len = input.read_u32()? as usize;
+        if len == 0 {
+            return Ok(HashSet::new());
+        }
         // Untrusted `len`: see the HashMap impl above.
         let mut set = HashSet::with_capacity(prealloc_capacity(
             len,
@@ -304,11 +327,14 @@ impl<T: SerializableType + Hash + Eq> ComplexSerialize for HashSet<T> {
             input.remaining_bytes(),
         ));
 
-        for _ in 0..len {
-            set.insert(T::deserialize(input)?);
-        }
-
-        Ok(set)
+        crate::io::smart_ptr::with_active_de_ctx(|context| {
+            context.run_nested(|| {
+                for _ in 0..len {
+                    set.insert(T::deserialize(input)?);
+                }
+                Ok(set)
+            })
+        })
     }
 }
 
@@ -320,26 +346,39 @@ impl<K: SerializableType + Ord, V: SerializableType> ComplexSerialize for BTreeM
 
     fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(self.len() as u32)?;
-
-        for (key, value) in self {
-            key.serialize(output)?;
-            value.serialize(output)?;
+        if self.is_empty() {
+            return Ok(());
         }
-        Ok(())
+
+        crate::io::smart_ptr::with_active_ser_ctx(|context| {
+            context.run_nested(|| {
+                for (key, value) in self {
+                    key.serialize(output)?;
+                    value.serialize(output)?;
+                }
+                Ok(())
+            })
+        })
     }
 
     fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
         check_builtin_version("btreemap", version)?;
         let len = input.read_u32()? as usize;
+        if len == 0 {
+            return Ok(BTreeMap::new());
+        }
         let mut map = BTreeMap::new();
 
-        for _ in 0..len {
-            let key = K::deserialize(input)?;
-            let value = V::deserialize(input)?;
-            map.insert(key, value);
-        }
-
-        Ok(map)
+        crate::io::smart_ptr::with_active_de_ctx(|context| {
+            context.run_nested(|| {
+                for _ in 0..len {
+                    let key = K::deserialize(input)?;
+                    let value = V::deserialize(input)?;
+                    map.insert(key, value);
+                }
+                Ok(map)
+            })
+        })
     }
 }
 
@@ -351,23 +390,36 @@ impl<T: SerializableType + Ord> ComplexSerialize for BTreeSet<T> {
 
     fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(self.len() as u32)?;
-
-        for item in self {
-            item.serialize(output)?;
+        if self.is_empty() {
+            return Ok(());
         }
-        Ok(())
+
+        crate::io::smart_ptr::with_active_ser_ctx(|context| {
+            context.run_nested(|| {
+                for item in self {
+                    item.serialize(output)?;
+                }
+                Ok(())
+            })
+        })
     }
 
     fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
         check_builtin_version("btreeset", version)?;
         let len = input.read_u32()? as usize;
+        if len == 0 {
+            return Ok(BTreeSet::new());
+        }
         let mut set = BTreeSet::new();
 
-        for _ in 0..len {
-            set.insert(T::deserialize(input)?);
-        }
-
-        Ok(set)
+        crate::io::smart_ptr::with_active_de_ctx(|context| {
+            context.run_nested(|| {
+                for _ in 0..len {
+                    set.insert(T::deserialize(input)?);
+                }
+                Ok(set)
+            })
+        })
     }
 }
 
@@ -667,19 +719,15 @@ pub trait NestedSerialize {
 // Default implementation using ComplexSerialize
 impl<T: ComplexSerialize> NestedSerialize for T {
     fn serialize_nested<O: DataOutput>(&self, output: &mut O, depth: usize) -> Result<()> {
-        if depth > Self::max_depth() {
-            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
-        }
-
-        self.serialize_data(output)
+        crate::io::smart_ptr::with_nested_ser_depth(depth, Self::max_depth(), || {
+            self.serialize_data(output)
+        })
     }
 
     fn deserialize_nested<I: DataInput>(input: &mut I, depth: usize) -> Result<Self> {
-        if depth > Self::max_depth() {
-            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
-        }
-
-        Self::deserialize_with_version(input, Self::version())
+        crate::io::smart_ptr::with_nested_de_depth(depth, Self::max_depth(), || {
+            Self::deserialize_with_version(input, Self::version())
+        })
     }
 }
 
@@ -1167,6 +1215,61 @@ mod tests {
         assert_eq!(
             compatible.deserialize_batch::<Versioned>(&batch).unwrap(),
             vec![Versioned(5)]
+        );
+    }
+
+    #[test]
+    fn test_c9_ct5_nested_serialize_enforces_max_depth() {
+        #[derive(Debug, PartialEq)]
+        struct TreeNode {
+            children: Vec<TreeNode>,
+        }
+
+        impl SerializableType for TreeNode {
+            fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+                self.children.serialize(output)
+            }
+
+            fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
+                Ok(Self {
+                    children: Vec::<TreeNode>::deserialize(input)?,
+                })
+            }
+        }
+
+        impl_complex_serialize!(TreeNode {
+            children: Vec<TreeNode>,
+        });
+
+        // Depth-1100 input: 1100 single-child nodes (`1u32` LE) followed by a leaf (`0u32` LE).
+        let mut bytes = Vec::with_capacity(1101 * 4);
+        for _ in 0..1100 {
+            bytes.extend_from_slice(&1u32.to_le_bytes());
+        }
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+
+        let mut input = SliceDataInput::new(&bytes);
+        let res = TreeNode::deserialize_nested(&mut input, 0);
+        // Prevent recursive drop overflow if `deserialize_nested` erroneously succeeded on unpatched code.
+        if let Ok(mut root) = res {
+            while let Some(child) = root.children.pop() {
+                root = child;
+            }
+            panic!("depth-1100 input must be rejected by NestedSerialize::deserialize_nested");
+        }
+
+        // Also verify `serialize_nested` rejects when starting depth + child depth exceeds `max_depth()`.
+        let one_child = TreeNode {
+            children: vec![TreeNode {
+                children: Vec::new(),
+            }],
+        };
+        let mut out = VecDataOutput::new();
+        assert!(
+            one_child
+                .serialize_nested(&mut out, TreeNode::max_depth())
+                .is_err(),
+            "child at depth max_depth() + 1 must be rejected by serialize_nested"
         );
     }
 }
