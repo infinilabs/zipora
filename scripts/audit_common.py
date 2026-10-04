@@ -18,6 +18,39 @@ def is_test_file(filepath):
         return True
     return False
 
+_CFG_ALL_RE = re.compile(r'#\[cfg\(\s*all\s*\((.*)\)\s*\)\]')
+
+def _split_top_level_args(args):
+    """Split a cfg predicate list on the commas that are not inside parentheses."""
+    parts = []
+    depth = 0
+    current = []
+    for ch in args:
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        if ch == ',' and depth == 0:
+            parts.append(''.join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    parts.append(''.join(current).strip())
+    return parts
+
+def is_test_only_cfg(clean_line):
+    """True if the line has an attribute that compiles its item only under cfg(test).
+
+    That is `#[cfg(test)]`, or `#[cfg(all(..))]` with a bare `test` among its
+    top-level predicates, such as `#[cfg(all(test, not(miri)))]`. `any(test, ..)`
+    and `not(test)` do not qualify: items under them are compiled in non-test
+    builds.
+    """
+    if '#[cfg(test)]' in clean_line:
+        return True
+    m = _CFG_ALL_RE.search(clean_line)
+    return bool(m) and 'test' in _split_top_level_args(m.group(1))
+
 def scan_rust_file(filepath):
     """Scan a Rust file and yield parsed lines with test-scope and comment metadata.
 
@@ -152,7 +185,7 @@ def scan_rust_file(filepath):
             brace_stack = [True]
 
         # Check for test attributes on this item
-        if '#[cfg(test)]' in clean_line or '#[test]' in clean_line or '#[bench]' in clean_line:
+        if is_test_only_cfg(clean_line) or '#[test]' in clean_line or '#[bench]' in clean_line:
             pending_test = True
 
         # Check for test module declarations
