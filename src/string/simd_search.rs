@@ -1162,10 +1162,21 @@ mod tests {
             state ^= state << 17;
             state
         };
-        let haystack: Vec<u8> = (0..4096).map(|_| b'a' + (next() % 3) as u8).collect();
+        // Miri runs the SSE4.2 tier when the build enables `sse4.2`; at the
+        // native sizes it completed 332 of the 1,991 searches in 600 s. Miri
+        // checks a 96-byte haystack (six 16-byte windows), 2 samples per
+        // needle length and every 7th tail needle length.
+        let (haystack_len, samples, tail_step) = if cfg!(miri) {
+            (96, 2, 7)
+        } else {
+            (4096, 64, 1)
+        };
+        let haystack: Vec<u8> = (0..haystack_len)
+            .map(|_| b'a' + (next() % 3) as u8)
+            .collect();
 
         for needle_len in 2..=24usize {
-            for _ in 0..64 {
+            for _ in 0..samples {
                 let at = (next() as usize) % (haystack.len() - needle_len);
                 let needle = &haystack[at..at + needle_len];
                 assert_eq!(
@@ -1184,7 +1195,7 @@ mod tests {
         // window holds fewer than 16 valid bytes.
         for tail in 2..=32usize {
             let start = haystack.len() - tail;
-            for needle_len in 2..=tail {
+            for needle_len in (2..=tail).step_by(tail_step) {
                 let needle = &haystack[start..start + needle_len];
                 assert_eq!(
                     search.sse42_strstr(&haystack, needle),
