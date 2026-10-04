@@ -93,17 +93,26 @@ pub struct MemoryMappedInput {
 
 #[cfg(feature = "mmap")]
 impl MemoryMappedInput {
-    /// Creates a new memory-mapped input from a file with adaptive strategy
+    /// Creates a new memory-mapped input from a file with adaptive strategy.
+    ///
+    /// Limitation: when the file is memory-mapped (`StandardMmap`), `memmap2`
+    /// (`MmapOptions::map`, `memmap2` 0.9.9 `src/lib.rs:681-687`) requires that
+    /// no other handle or process modifies or truncates the underlying file
+    /// while the mapping is alive. Concurrent modification is undefined
+    /// behaviour because the mapped pages are exposed as `&[u8]`, and at the OS
+    /// level accessing pages past the new end of a truncated file raises
+    /// `SIGBUS`, which safe Rust cannot catch.
     pub fn new(file: File) -> Result<Self> {
         Self::new_with_pattern(file, AccessPattern::Unknown)
     }
 
-    /// Creates a new memory-mapped input with access pattern hint
+    /// Creates a new memory-mapped input with access pattern hint.
+    ///
+    /// Limitation: see [`MemoryMappedInput::new`] — the underlying file must
+    /// not be concurrently modified or truncated while mapped (`memmap2` 0.9.9
+    /// `src/lib.rs:681-687`; truncation of mapped pages raises `SIGBUS`).
     pub fn new_with_pattern(file: File, access_pattern: AccessPattern) -> Result<Self> {
-        let file_size = file
-            .metadata()
-            .map_err(|e| ZiporaError::io_error(format!("Failed to get file metadata: {}", e)))?
-            .len();
+        let file_size = file.metadata().map_err(ZiporaError::Io)?.len();
 
         let strategy = Self::select_strategy(file_size);
 
@@ -153,18 +162,21 @@ impl MemoryMappedInput {
             InputStrategy::BufferedIO => {
                 // For small files, use buffered I/O to avoid mmap overhead
                 let buf_size = std::cmp::min(self.file_size as usize, 8192); // Max 8KB buffer
-                file.seek(SeekFrom::Start(0))
-                    .map_err(|e| ZiporaError::io_error(format!("Failed to seek file: {}", e)))?;
+                file.seek(SeekFrom::Start(0)).map_err(ZiporaError::Io)?;
                 self.buffered_reader = Some(BufReader::with_capacity(buf_size, file));
             }
 
             InputStrategy::StandardMmap => {
-                // SAFETY: MmapOptions::map creates valid memory mapping from file descriptor
-                let mmap = unsafe {
-                    MmapOptions::new().map(&file).map_err(|e| {
-                        ZiporaError::io_error(format!("Failed to memory-map file: {}", e))
-                    })?
-                };
+                // SAFETY: `MmapOptions::map` requires that the underlying file
+                // is not concurrently modified or truncated while the `Mmap` is
+                // alive (`memmap2` 0.9.9 `src/lib.rs:681-687`); the caller
+                // upholds that external precondition as documented under
+                // `Limitation:` on `MemoryMappedInput::new`.
+                let mmap = unsafe { MmapOptions::new().map(&file).map_err(ZiporaError::Io)? };
+
+                // Synchronize `file_size` with the actual mapped length in case
+                // the file size changed between `metadata()` and `map(&file)`.
+                self.file_size = mmap.len() as u64;
 
                 // Apply advanced madvise hints
                 self.apply_madvise_hints(&mmap)?;
@@ -207,27 +219,30 @@ impl MemoryMappedInput {
 
     #[cfg(target_os = "linux")]
     fn copy_file_to_hugepage(&mut self, file: &mut File, hugepage: &mut HugePage) -> Result<()> {
-        file.seek(SeekFrom::Start(0))
-            .map_err(|e| ZiporaError::io_error(format!("Failed to seek file: {}", e)))?;
+        file.seek(SeekFrom::Start(0)).map_err(ZiporaError::Io)?;
 
-        let mut buffer = vec![0u8; 64 * 1024]; // 64KB read buffer
-        let mut total_read = 0;
         let hugepage_slice = hugepage.as_mut_slice();
+        let target_len = hugepage_slice.len();
+        let mut total_read = 0;
 
-        while total_read < self.file_size as usize {
-            let bytes_read = file
-                .read(&mut buffer)
-                .map_err(|e| ZiporaError::io_error(format!("Failed to read file: {}", e)))?;
-
-            if bytes_read == 0 {
-                break;
+        while total_read < target_len {
+            let chunk_end = (total_read + 64 * 1024).min(target_len);
+            match file.read(&mut hugepage_slice[total_read..chunk_end]) {
+                Ok(0) => {
+                    return Err(ZiporaError::Io(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "file shrank before hugepage copy completed",
+                    )));
+                }
+                Ok(bytes_read) => {
+                    total_read += bytes_read;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(ZiporaError::Io(e)),
             }
-
-            hugepage_slice[total_read..total_read + bytes_read]
-                .copy_from_slice(&buffer[..bytes_read]);
-            total_read += bytes_read;
         }
 
+        self.file_size = target_len as u64;
         Ok(())
     }
 
@@ -235,10 +250,16 @@ impl MemoryMappedInput {
     fn apply_madvise_hints(&self, mmap: &Mmap) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            let ptr = mmap.as_ptr() as *mut libc::c_void;
             let len = mmap.len();
+            if len == 0 {
+                return Ok(());
+            }
+            let ptr = mmap.as_ptr() as *mut libc::c_void;
 
-            // SAFETY: ptr is valid from mmap, len is the mapped size, madvise hints are safe
+            // SAFETY: `ptr` and `len` come from a live non-empty `Mmap`, so
+            // `[ptr, ptr + len)` is a valid mapped region in this process's
+            // address space. `madvise` and `mlock` are advisory kernel hints
+            // that do not alter memory contents or Rust aliasing invariants.
             unsafe {
                 // Set access pattern hint
                 match self.access_pattern {
@@ -293,7 +314,11 @@ impl MemoryMappedInput {
         const PREFETCH_WINDOW: usize = 2 * 1024 * 1024; // 2MB prefetch window
         const CACHE_LINE_SIZE: usize = 64;
 
-        // SAFETY: ptr is valid mmap pointer, offset calculations keep us within bounds
+        // SAFETY: `ptr` points to the start of a live `Mmap` of `len` bytes.
+        // In each loop iteration `offset < len` and `prefetch_size <= len - offset`,
+        // so `prefetch_ptr` and every `cache_line` address lie within
+        // `[ptr, ptr + len)`. `madvise` and `_mm_prefetch` are non-faulting
+        // advisory hints.
         unsafe {
             let mut offset = 0;
             while offset < len {
@@ -328,20 +353,26 @@ impl MemoryMappedInput {
         Ok(())
     }
 
-    /// Creates a new memory-mapped input from a file path
+    /// Creates a new memory-mapped input from a file path.
+    ///
+    /// Limitation: see [`MemoryMappedInput::new`] — the underlying file must
+    /// not be concurrently modified or truncated while mapped (`memmap2` 0.9.9
+    /// `src/lib.rs:681-687`; truncation of mapped pages raises `SIGBUS`).
     pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
+        let file = File::open(path).map_err(ZiporaError::Io)?;
         Self::new(file)
     }
 
-    /// Creates a new memory-mapped input from a file path with access pattern hint
+    /// Creates a new memory-mapped input from a file path with access pattern hint.
+    ///
+    /// Limitation: see [`MemoryMappedInput::new`] — the underlying file must
+    /// not be concurrently modified or truncated while mapped (`memmap2` 0.9.9
+    /// `src/lib.rs:681-687`; truncation of mapped pages raises `SIGBUS`).
     pub fn from_path_with_pattern<P: AsRef<Path>>(
         path: P,
         access_pattern: AccessPattern,
     ) -> Result<Self> {
-        let file = File::open(path)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
+        let file = File::open(path).map_err(ZiporaError::Io)?;
         Self::new_with_pattern(file, access_pattern)
     }
 
@@ -378,7 +409,7 @@ impl MemoryMappedInput {
                 if let Some(ref mut reader) = self.buffered_reader {
                     reader
                         .seek(SeekFrom::Start(pos as u64))
-                        .map_err(|e| ZiporaError::io_error(format!("Failed to seek: {}", e)))?;
+                        .map_err(ZiporaError::Io)?;
                 }
             }
             _ => {
@@ -397,18 +428,26 @@ impl MemoryMappedInput {
 
     /// Reads a slice of bytes (zero-copy when possible)
     pub fn read_slice(&mut self, len: usize) -> Result<Vec<u8>> {
-        let end_pos = self.position + len;
-        if end_pos > self.file_size as usize {
-            return Err(ZiporaError::out_of_bounds(end_pos, self.file_size as usize));
+        let file_len = self.len();
+        let end_pos = self
+            .position
+            .checked_add(len)
+            .ok_or_else(|| ZiporaError::out_of_bounds(usize::MAX, file_len))?;
+        if end_pos > file_len {
+            return Err(ZiporaError::out_of_bounds(end_pos, file_len));
         }
 
         let data = match self.strategy {
             InputStrategy::BufferedIO => {
                 if let Some(ref mut reader) = self.buffered_reader {
                     let mut buffer = vec![0u8; len];
-                    reader
-                        .read_exact(&mut buffer)
-                        .map_err(|e| ZiporaError::io_error(format!("Failed to read: {}", e)))?;
+                    if let Err(e) = reader.read_exact(&mut buffer) {
+                        // Restore the reader position to `self.position` so a
+                        // partial read before EOF/error does not desynchronize
+                        // `BufReader` from `self.position` (C9 I4).
+                        let _ = reader.seek(SeekFrom::Start(self.position as u64));
+                        return Err(ZiporaError::Io(e));
+                    }
                     buffer
                 } else {
                     return Err(ZiporaError::invalid_data("Buffered reader not initialized"));
@@ -417,6 +456,9 @@ impl MemoryMappedInput {
 
             InputStrategy::StandardMmap => {
                 if let Some(ref mmap) = self.mmap {
+                    if end_pos > mmap.len() {
+                        return Err(ZiporaError::out_of_bounds(end_pos, mmap.len()));
+                    }
                     mmap[self.position..end_pos].to_vec()
                 } else {
                     return Err(ZiporaError::invalid_data("Memory map not initialized"));
@@ -426,7 +468,11 @@ impl MemoryMappedInput {
             #[cfg(target_os = "linux")]
             InputStrategy::HugepageMmap => {
                 if let Some(ref hugepage) = self.hugepage {
-                    hugepage.as_slice()[self.position..end_pos].to_vec()
+                    let slice = hugepage.as_slice();
+                    if end_pos > slice.len() {
+                        return Err(ZiporaError::out_of_bounds(end_pos, slice.len()));
+                    }
+                    slice[self.position..end_pos].to_vec()
                 } else {
                     return Err(ZiporaError::invalid_data("Hugepage not initialized"));
                 }
@@ -446,9 +492,13 @@ impl MemoryMappedInput {
 
     /// Reads a slice of bytes without copying (zero-copy, memory-mapped only)
     pub fn read_slice_zero_copy(&mut self, len: usize) -> Result<&[u8]> {
-        let end_pos = self.position + len;
-        if end_pos > self.file_size as usize {
-            return Err(ZiporaError::out_of_bounds(end_pos, self.file_size as usize));
+        let file_len = self.len();
+        let end_pos = self
+            .position
+            .checked_add(len)
+            .ok_or_else(|| ZiporaError::out_of_bounds(usize::MAX, file_len))?;
+        if end_pos > file_len {
+            return Err(ZiporaError::out_of_bounds(end_pos, file_len));
         }
 
         let slice = match self.strategy {
@@ -460,6 +510,9 @@ impl MemoryMappedInput {
 
             InputStrategy::StandardMmap => {
                 if let Some(ref mmap) = self.mmap {
+                    if end_pos > mmap.len() {
+                        return Err(ZiporaError::out_of_bounds(end_pos, mmap.len()));
+                    }
                     &mmap[self.position..end_pos]
                 } else {
                     return Err(ZiporaError::invalid_data("Memory map not initialized"));
@@ -469,7 +522,11 @@ impl MemoryMappedInput {
             #[cfg(target_os = "linux")]
             InputStrategy::HugepageMmap => {
                 if let Some(ref hugepage) = self.hugepage {
-                    &hugepage.as_slice()[self.position..end_pos]
+                    let hp_slice = hugepage.as_slice();
+                    if end_pos > hp_slice.len() {
+                        return Err(ZiporaError::out_of_bounds(end_pos, hp_slice.len()));
+                    }
+                    &hp_slice[self.position..end_pos]
                 } else {
                     return Err(ZiporaError::invalid_data("Hugepage not initialized"));
                 }
@@ -489,9 +546,13 @@ impl MemoryMappedInput {
 
     /// Peeks at bytes without advancing the position (zero-copy when possible)
     pub fn peek_slice(&self, len: usize) -> Result<Vec<u8>> {
-        let end_pos = self.position + len;
-        if end_pos > self.file_size as usize {
-            return Err(ZiporaError::out_of_bounds(end_pos, self.file_size as usize));
+        let file_len = self.len();
+        let end_pos = self
+            .position
+            .checked_add(len)
+            .ok_or_else(|| ZiporaError::out_of_bounds(usize::MAX, file_len))?;
+        if end_pos > file_len {
+            return Err(ZiporaError::out_of_bounds(end_pos, file_len));
         }
 
         match self.strategy {
@@ -504,6 +565,9 @@ impl MemoryMappedInput {
 
             InputStrategy::StandardMmap => {
                 if let Some(ref mmap) = self.mmap {
+                    if end_pos > mmap.len() {
+                        return Err(ZiporaError::out_of_bounds(end_pos, mmap.len()));
+                    }
                     Ok(mmap[self.position..end_pos].to_vec())
                 } else {
                     Err(ZiporaError::invalid_data("Memory map not initialized"))
@@ -513,7 +577,11 @@ impl MemoryMappedInput {
             #[cfg(target_os = "linux")]
             InputStrategy::HugepageMmap => {
                 if let Some(ref hugepage) = self.hugepage {
-                    Ok(hugepage.as_slice()[self.position..end_pos].to_vec())
+                    let slice = hugepage.as_slice();
+                    if end_pos > slice.len() {
+                        return Err(ZiporaError::out_of_bounds(end_pos, slice.len()));
+                    }
+                    Ok(slice[self.position..end_pos].to_vec())
                 } else {
                     Err(ZiporaError::invalid_data("Hugepage not initialized"))
                 }
@@ -528,9 +596,13 @@ impl MemoryMappedInput {
 
     /// Peeks at bytes without advancing the position (zero-copy, memory-mapped only)
     pub fn peek_slice_zero_copy(&self, len: usize) -> Result<&[u8]> {
-        let end_pos = self.position + len;
-        if end_pos > self.file_size as usize {
-            return Err(ZiporaError::out_of_bounds(end_pos, self.file_size as usize));
+        let file_len = self.len();
+        let end_pos = self
+            .position
+            .checked_add(len)
+            .ok_or_else(|| ZiporaError::out_of_bounds(usize::MAX, file_len))?;
+        if end_pos > file_len {
+            return Err(ZiporaError::out_of_bounds(end_pos, file_len));
         }
 
         match self.strategy {
@@ -540,6 +612,9 @@ impl MemoryMappedInput {
 
             InputStrategy::StandardMmap => {
                 if let Some(ref mmap) = self.mmap {
+                    if end_pos > mmap.len() {
+                        return Err(ZiporaError::out_of_bounds(end_pos, mmap.len()));
+                    }
                     Ok(&mmap[self.position..end_pos])
                 } else {
                     Err(ZiporaError::invalid_data("Memory map not initialized"))
@@ -549,7 +624,11 @@ impl MemoryMappedInput {
             #[cfg(target_os = "linux")]
             InputStrategy::HugepageMmap => {
                 if let Some(ref hugepage) = self.hugepage {
-                    Ok(&hugepage.as_slice()[self.position..end_pos])
+                    let slice = hugepage.as_slice();
+                    if end_pos > slice.len() {
+                        return Err(ZiporaError::out_of_bounds(end_pos, slice.len()));
+                    }
+                    Ok(&slice[self.position..end_pos])
                 } else {
                     Err(ZiporaError::invalid_data("Hugepage not initialized"))
                 }
@@ -615,14 +694,19 @@ impl DataInput for MemoryMappedInput {
     }
 
     fn read_length_prefixed_string(&mut self) -> Result<String> {
-        let len = self.read_var_int()? as usize;
+        let raw_len = self.read_var_int()?;
+        let len = usize::try_from(raw_len)
+            .map_err(|_| ZiporaError::out_of_bounds(usize::MAX, self.len()))?;
         let data = self.read_slice(len)?;
         String::from_utf8(data)
             .map_err(|e| ZiporaError::invalid_data(format!("Invalid UTF-8 string: {}", e)))
     }
 
     fn skip(&mut self, n: usize) -> Result<()> {
-        let new_pos = self.position + n;
+        let new_pos = self
+            .position
+            .checked_add(n)
+            .ok_or_else(|| ZiporaError::out_of_bounds(usize::MAX, self.len()))?;
         self.seek(new_pos)
     }
 }
@@ -649,14 +733,20 @@ impl DataInput for MemoryMappedInput {
 #[cfg(feature = "mmap")]
 pub struct MemoryMappedOutput {
     file: File,
-    mmap: MmapMut,
+    mmap: Option<MmapMut>,
     position: usize,
-    capacity: usize,
 }
 
 #[cfg(feature = "mmap")]
 impl MemoryMappedOutput {
-    /// Creates a new memory-mapped output file with specified initial size
+    /// Creates a new memory-mapped output file with specified initial size.
+    ///
+    /// Limitation: `MmapOptions::map_mut` cannot prevent another handle or
+    /// process from concurrently modifying or truncating the underlying file
+    /// while this output mapping is alive (`memmap2` 0.9.9 `src/lib.rs:725-731`).
+    /// Concurrent access is undefined behaviour (`&mut [u8]` aliasing) and OS
+    /// file truncation beneath a live mapping raises `SIGBUS`, which safe Rust
+    /// cannot catch.
     pub fn create<P: AsRef<Path>>(path: P, initial_size: usize) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
@@ -664,52 +754,47 @@ impl MemoryMappedOutput {
             .create(true)
             .truncate(true)
             .open(path)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to create file: {}", e)))?;
+            .map_err(ZiporaError::Io)?;
 
         // Set the file size
-        file.set_len(initial_size as u64)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to set file size: {}", e)))?;
+        file.set_len(initial_size as u64).map_err(ZiporaError::Io)?;
 
-        // SAFETY: MmapOptions::map_mut creates valid mutable memory mapping from file
-        let mmap = unsafe {
-            MmapOptions::new()
-                .map_mut(&file)
-                .map_err(|e| ZiporaError::io_error(format!("Failed to memory-map file: {}", e)))?
-        };
+        // SAFETY: `MmapOptions::map_mut` requires that the underlying file is
+        // not concurrently modified or truncated out-of-band while the mapping
+        // is alive (`memmap2` 0.9.9 `src/lib.rs:725-731`); the caller upholds
+        // that external precondition as documented under `Limitation:` above.
+        let mmap = unsafe { MmapOptions::new().map_mut(&file).map_err(ZiporaError::Io)? };
 
         Ok(MemoryMappedOutput {
             file,
-            mmap,
+            mmap: Some(mmap),
             position: 0,
-            capacity: initial_size,
         })
     }
 
-    /// Opens an existing file for memory-mapped writing
+    /// Opens an existing file for memory-mapped writing.
+    ///
+    /// Limitation: see [`MemoryMappedOutput::create`] — the underlying file
+    /// must not be concurrently modified or truncated by another handle or
+    /// process while mapped (`memmap2` 0.9.9 `src/lib.rs:725-731`; accessing
+    /// truncated pages raises `SIGBUS`).
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(path)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
+            .map_err(ZiporaError::Io)?;
 
-        let file_size = file
-            .metadata()
-            .map_err(|e| ZiporaError::io_error(format!("Failed to get file metadata: {}", e)))?
-            .len() as usize;
-
-        // SAFETY: MmapOptions::map_mut creates valid mutable memory mapping from existing file
-        let mmap = unsafe {
-            MmapOptions::new()
-                .map_mut(&file)
-                .map_err(|e| ZiporaError::io_error(format!("Failed to memory-map file: {}", e)))?
-        };
+        // SAFETY: `MmapOptions::map_mut` requires that the underlying file is
+        // not concurrently modified or truncated out-of-band while the mapping
+        // is alive (`memmap2` 0.9.9 `src/lib.rs:725-731`); the caller upholds
+        // that external precondition as documented under `Limitation:` above.
+        let mmap = unsafe { MmapOptions::new().map_mut(&file).map_err(ZiporaError::Io)? };
 
         Ok(MemoryMappedOutput {
             file,
-            mmap,
+            mmap: Some(mmap),
             position: 0,
-            capacity: file_size,
         })
     }
 
@@ -721,18 +806,19 @@ impl MemoryMappedOutput {
     /// Returns the total capacity of the mapped region
     #[inline]
     pub fn capacity(&self) -> usize {
-        self.capacity
+        self.mmap.as_ref().map_or(0, |m| m.len())
     }
 
     /// Returns the remaining space available for writing
     pub fn remaining(&self) -> usize {
-        self.capacity.saturating_sub(self.position)
+        self.capacity().saturating_sub(self.position)
     }
 
     /// Seeks to a specific position in the mapped region
     pub fn seek(&mut self, pos: usize) -> Result<()> {
-        if pos > self.capacity {
-            return Err(ZiporaError::out_of_bounds(pos, self.capacity));
+        let cap = self.capacity();
+        if pos > cap {
+            return Err(ZiporaError::out_of_bounds(pos, cap));
         }
         self.position = pos;
         Ok(())
@@ -740,81 +826,86 @@ impl MemoryMappedOutput {
 
     /// Ensures the mapped region has at least the specified capacity
     fn ensure_capacity(&mut self, required: usize) -> Result<()> {
-        if required <= self.capacity {
+        let current_capacity = self.capacity();
+        if self.mmap.is_some() && required <= current_capacity {
             return Ok(());
         }
 
         // Grow by 50% or to required size, whichever is larger
-        let new_size = std::cmp::max(required, self.capacity + (self.capacity / 2));
+        let grown = current_capacity.saturating_add(current_capacity / 2);
+        let new_size = std::cmp::max(required, grown);
 
-        // Flush current mmap and grow the file
-        drop(std::mem::replace(
-            &mut self.mmap,
-            // SAFETY: MmapMut::map_anon(0) cannot fail because:
-            // 1. Zero-byte anonymous memory mappings don't require actual system resources
-            // 2. They're trivial operations that always succeed on all platforms (Linux/macOS/Windows)
-            // 3. This is used as a placeholder during mem::replace() to allow dropping the old mmap
-            // 4. The memmap2 library guarantees zero-byte anonymous mappings succeed
-            MmapMut::map_anon(0).expect("zero-length anonymous mmap"),
-        ));
+        // Drop the current mapping before resizing the file
+        self.mmap = None;
 
-        self.file
-            .set_len(new_size as u64)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to grow file: {}", e)))?;
+        if let Err(e) = self.file.set_len(new_size as u64) {
+            // SAFETY: `self.file` is the open file handle for this output. If
+            // remapping at the existing file size succeeds, we restore the
+            // mapping; otherwise `self.mmap` stays `None` (`capacity() == 0`).
+            // The caller upholds `memmap2`'s no-external-mutation contract.
+            self.mmap = unsafe { MmapOptions::new().map_mut(&self.file) }.ok();
+            return Err(ZiporaError::Io(e));
+        }
 
-        // SAFETY: File size set above, remapping with valid file descriptor
-        self.mmap = unsafe {
+        // SAFETY: `self.file` was resized to `new_size` above, and the caller
+        // upholds `memmap2`'s requirement (`memmap2` 0.9.9 `src/lib.rs:725-731`)
+        // that the file is not concurrently modified or truncated out-of-band.
+        let mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&self.file)
-                .map_err(|e| ZiporaError::io_error(format!("Failed to remap file: {}", e)))?
+                .map_err(ZiporaError::Io)?
         };
 
-        self.capacity = new_size;
+        self.mmap = Some(mmap);
         Ok(())
     }
 
     /// Writes a slice of bytes to the mapped region
     pub fn write_slice(&mut self, data: &[u8]) -> Result<()> {
-        let required_capacity = self.position + data.len();
+        let required_capacity = self
+            .position
+            .checked_add(data.len())
+            .ok_or_else(|| ZiporaError::out_of_bounds(usize::MAX, self.capacity()))?;
         self.ensure_capacity(required_capacity)?;
 
-        self.mmap[self.position..self.position + data.len()].copy_from_slice(data);
-        self.position += data.len();
+        let mmap = self
+            .mmap
+            .as_mut()
+            .ok_or_else(|| ZiporaError::invalid_data("Memory map not initialized"))?;
+        mmap[self.position..required_capacity].copy_from_slice(data);
+        self.position = required_capacity;
         Ok(())
     }
 
     /// Truncates the file to the current position
     pub fn truncate(&mut self) -> Result<()> {
-        // Flush to ensure all data is written
-        self.mmap
-            .flush()
-            .map_err(|e| ZiporaError::io_error(format!("Failed to flush mmap: {}", e)))?;
+        if let Some(ref mmap) = self.mmap {
+            mmap.flush().map_err(ZiporaError::Io)?;
+        }
 
-        // Unmap before truncating
-        drop(std::mem::replace(
-            &mut self.mmap,
-            // SAFETY: MmapMut::map_anon(0) cannot fail because:
-            // 1. Zero-byte anonymous memory mappings don't require actual system resources
-            // 2. They're trivial operations that always succeed on all platforms (Linux/macOS/Windows)
-            // 3. This is used as a placeholder during mem::replace() to allow dropping the old mmap
-            // 4. The memmap2 library guarantees zero-byte anonymous mappings succeed
-            MmapMut::map_anon(0).expect("zero-length anonymous mmap"),
-        ));
+        // Unmap before truncating the underlying file
+        self.mmap = None;
 
-        // Truncate the file
-        self.file
-            .set_len(self.position as u64)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to truncate file: {}", e)))?;
+        if let Err(e) = self.file.set_len(self.position as u64) {
+            // SAFETY: `self.file` is the open file handle for this output. If
+            // remapping at the existing file size succeeds, we restore the
+            // mapping; otherwise `self.mmap` stays `None` (`capacity() == 0`).
+            // The caller upholds `memmap2`'s no-external-mutation contract.
+            self.mmap = unsafe { MmapOptions::new().map_mut(&self.file) }.ok();
+            return Err(ZiporaError::Io(e));
+        }
 
-        // Remap with new size
-        // SAFETY: File truncated to position above, remapping with valid file descriptor
-        self.mmap = unsafe {
-            MmapOptions::new().map_mut(&self.file).map_err(|e| {
-                ZiporaError::io_error(format!("Failed to remap truncated file: {}", e))
-            })?
+        // SAFETY: `self.file` was truncated to `self.position` above, and the
+        // caller upholds `memmap2`'s requirement (`memmap2` 0.9.9
+        // `src/lib.rs:725-731`) that the file is not concurrently modified or
+        // truncated out-of-band while mapped.
+        let mmap = unsafe {
+            MmapOptions::new()
+                .map_mut(&self.file)
+                .map_err(ZiporaError::Io)?
         };
 
-        self.capacity = self.position;
+        self.mmap = Some(mmap);
         Ok(())
     }
 }
@@ -852,26 +943,28 @@ impl DataOutput for MemoryMappedOutput {
     }
 
     fn flush(&mut self) -> Result<()> {
-        self.mmap.flush().map_err(|e| {
-            ZiporaError::io_error(format!("Failed to flush memory-mapped file: {}", e))
-        })
+        let mmap = self
+            .mmap
+            .as_ref()
+            .ok_or_else(|| ZiporaError::invalid_data("Memory map not initialized"))?;
+        mmap.flush().map_err(ZiporaError::Io)
     }
 }
 
-// Provide stub implementations when mmap feature is disabled
+// Fallback definitions when the mmap feature is disabled
 #[cfg(not(feature = "mmap"))]
 pub struct MemoryMappedInput;
 
 #[cfg(not(feature = "mmap"))]
 impl MemoryMappedInput {
     pub fn new(_file: std::fs::File) -> Result<Self> {
-        Err(ZiporaError::invalid_data(
+        Err(ZiporaError::not_supported(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedInput.",
         ))
     }
 
     pub fn from_path<P: AsRef<std::path::Path>>(_path: P) -> Result<Self> {
-        Err(ZiporaError::invalid_data(
+        Err(ZiporaError::not_supported(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedInput.",
         ))
     }
@@ -883,13 +976,13 @@ pub struct MemoryMappedOutput;
 #[cfg(not(feature = "mmap"))]
 impl MemoryMappedOutput {
     pub fn create<P: AsRef<std::path::Path>>(_path: P, _initial_size: usize) -> Result<Self> {
-        Err(ZiporaError::invalid_data(
+        Err(ZiporaError::not_supported(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedOutput.",
         ))
     }
 
     pub fn open<P: AsRef<std::path::Path>>(_path: P) -> Result<Self> {
-        Err(ZiporaError::invalid_data(
+        Err(ZiporaError::not_supported(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedOutput.",
         ))
     }
@@ -977,6 +1070,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_memory_mapped_input_peek_and_skip() {
         let mut temp_file = NamedTempFile::new().unwrap();
         // Create a larger file to force standard mmap strategy
@@ -1006,6 +1100,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_memory_mapped_output_basic() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test_output.dat");
@@ -1034,6 +1129,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_memory_mapped_output_growth() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test_growth.dat");
@@ -1060,6 +1156,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_memory_mapped_output_operations() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test_ops.dat");
@@ -1090,6 +1187,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_memory_mapped_output_truncate() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test_truncate.dat");
@@ -1163,6 +1261,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_medium_file_uses_standard_mmap() {
         let mut temp_file = NamedTempFile::new().unwrap();
         let medium_data = vec![0x55u8; 64 * 1024]; // 64KB file - between 4KB and 1MB
@@ -1179,6 +1278,7 @@ mod tests {
 
     #[cfg(all(feature = "mmap", target_os = "linux"))]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_large_file_attempts_hugepages() {
         let mut temp_file = NamedTempFile::new().unwrap();
         let large_data = vec![0x77u8; 2 * 1024 * 1024]; // 2MB file - above hugepage threshold
@@ -1199,6 +1299,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_access_pattern_hints() {
         let mut temp_file = NamedTempFile::new().unwrap();
         let test_data = vec![0x88u8; 16 * 1024]; // 16KB file
@@ -1253,6 +1354,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_zero_copy_operations() {
         let mut temp_file = NamedTempFile::new().unwrap();
         let test_data = vec![0x99u8; 32 * 1024]; // 32KB file - uses standard mmap
@@ -1306,6 +1408,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_seek_and_position_adaptive() {
         let mut temp_file = NamedTempFile::new().unwrap();
         // Create a larger file to force standard mmap strategy for consistent behavior
@@ -1373,6 +1476,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_file_size_thresholds() {
         // Test exactly at threshold boundaries
         let threshold_tests = vec![
@@ -1410,6 +1514,7 @@ mod tests {
 
     #[cfg(all(feature = "mmap", target_os = "linux"))]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_hugepage_fallback() {
         // Create a large file that would normally use hugepages
         let mut temp_file = NamedTempFile::new().unwrap();
@@ -1429,5 +1534,298 @@ mod tests {
 
         // File should still be readable regardless of strategy
         assert_eq!(input.len(), 5 * 1024 * 1024);
+    }
+
+    // -----------------------------------------------------------------------
+    // C9 regression and guard tests (I1-I4, zero-length mmap, MAP_SHARED, madvise)
+    // -----------------------------------------------------------------------
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    fn test_c9_i1_buffered_read_and_skip_reject_position_plus_len_overflow() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        // 1 leading byte followed by a 10-byte varint encoding u64::MAX
+        let mut payload = vec![0xAAu8];
+        payload.extend_from_slice(&VarInt::encode(u64::MAX));
+        temp_file.write_all(&payload).unwrap();
+        temp_file.flush().unwrap();
+
+        let file = File::open(temp_file.path()).unwrap();
+        let mut input = MemoryMappedInput::new(file).unwrap();
+        assert_eq!(input.strategy(), InputStrategy::BufferedIO);
+
+        assert_eq!(input.read_u8().unwrap(), 0xAA);
+        assert_eq!(input.position(), 1);
+
+        assert!(matches!(
+            input.read_slice(usize::MAX),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+        assert_eq!(input.position(), 1);
+
+        assert!(matches!(
+            input.read_slice_zero_copy(usize::MAX),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+        assert_eq!(input.position(), 1);
+
+        assert!(matches!(
+            input.peek_slice(usize::MAX),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+        assert_eq!(input.position(), 1);
+
+        assert!(matches!(
+            input.peek_slice_zero_copy(usize::MAX),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+        assert_eq!(input.position(), 1);
+
+        assert!(matches!(
+            input.skip(usize::MAX),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+        assert_eq!(input.position(), 1);
+
+        // Reading a length-prefixed string whose varint is u64::MAX must fail
+        // with OutOfBounds instead of overflowing `position + len` or panicking.
+        assert!(matches!(
+            input.read_length_prefixed_string(),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_i1_mmap_read_and_output_write_reject_position_plus_len_overflow() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(&vec![0x5Au8; 8192]).unwrap();
+        temp_file.flush().unwrap();
+
+        let file = File::open(temp_file.path()).unwrap();
+        let mut input = MemoryMappedInput::new(file).unwrap();
+        assert_eq!(input.strategy(), InputStrategy::StandardMmap);
+
+        input.seek(1).unwrap();
+        assert!(matches!(
+            input.read_slice(usize::MAX),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+        assert_eq!(input.position(), 1);
+
+        assert!(matches!(
+            input.read_slice_zero_copy(usize::MAX),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+        assert_eq!(input.position(), 1);
+
+        assert!(matches!(
+            input.peek_slice(usize::MAX),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+        assert_eq!(input.position(), 1);
+
+        assert!(matches!(
+            input.peek_slice_zero_copy(usize::MAX),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+        assert_eq!(input.position(), 1);
+
+        assert!(matches!(
+            input.skip(usize::MAX),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+        assert_eq!(input.position(), 1);
+
+        let temp_dir = TempDir::new().unwrap();
+        let out_path = temp_dir.path().join("i1_out.dat");
+        let mut output = MemoryMappedOutput::create(&out_path, 16).unwrap();
+        output.position = usize::MAX;
+        assert!(matches!(
+            output.write_slice(&[1]),
+            Err(ZiporaError::OutOfBounds { .. })
+        ));
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_i2_failed_grow_and_truncate_do_not_leave_stale_capacity() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // 1. Failed grow in ensure_capacity must not leave capacity > mmap.len()
+        //    (which caused the next write within old capacity to panic by
+        //    indexing a 0-byte map_anon placeholder).
+        let grow_path = temp_dir.path().join("i2_grow.dat");
+        let mut output = MemoryMappedOutput::create(&grow_path, 64).unwrap();
+        output.write_slice(b"hello").unwrap();
+        assert_eq!(output.position(), 5);
+        assert_eq!(output.capacity(), 64);
+
+        // Replace `self.file` with a read-only handle so `set_len` fails.
+        output.file = File::open(&grow_path).unwrap();
+        assert!(output.write_slice(&[0xAB; 128]).is_err());
+        assert_eq!(output.position(), 5);
+        let _ = output.seek(0);
+        // Must either succeed (if the previous mapping was preserved) or return
+        // Err (if unmapped), never panic on a 0-length placeholder slice.
+        let _ = output.write_u8(b'H');
+
+        // 2. Failed truncate must likewise never leave stale capacity over a
+        //    0-length placeholder mapping.
+        let trunc_path = temp_dir.path().join("i2_trunc.dat");
+        let mut output2 = MemoryMappedOutput::create(&trunc_path, 64).unwrap();
+        output2.write_slice(b"hello").unwrap();
+        output2.file = File::open(&trunc_path).unwrap();
+        assert!(output2.truncate().is_err());
+        let _ = output2.seek(0);
+        let _ = output2.write_u8(b'H');
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_i3_mmap_tracks_actual_mapping_len_on_shrink() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(&vec![0x33u8; 8192]).unwrap();
+        temp_file.flush().unwrap();
+
+        let file = File::open(temp_file.path()).unwrap();
+        // Simulate the file shrinking between metadata() and initialize_strategy().
+        temp_file.as_file().set_len(4096).unwrap();
+
+        let mut input = MemoryMappedInput {
+            strategy: InputStrategy::StandardMmap,
+            file_size: 8192,
+            position: 0,
+            access_pattern: AccessPattern::Unknown,
+            mmap: None,
+            buffered_reader: None,
+            #[cfg(target_os = "linux")]
+            hugepage: None,
+        };
+        input.initialize_strategy(file).unwrap();
+
+        // Both `read_slice` and `len()` must respect the actual mapped size
+        // (4096) rather than indexing `mmap[0..5000]` and panicking.
+        assert!(input.read_slice(5000).is_err());
+        assert!(input.read_slice_zero_copy(5000).is_err());
+        assert!(input.peek_slice(5000).is_err());
+        assert!(input.peek_slice_zero_copy(5000).is_err());
+        assert_eq!(input.len(), 4096);
+        assert_eq!(input.read_slice(4096).unwrap().len(), 4096);
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    fn test_c9_i4_buffered_io_preserves_error_kind_and_restores_reader_position() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let data: Vec<u8> = (0..100u8).collect();
+        temp_file.write_all(&data).unwrap();
+        temp_file.flush().unwrap();
+
+        let file = File::open(temp_file.path()).unwrap();
+        let mut input = MemoryMappedInput::new(file).unwrap();
+        assert_eq!(input.strategy(), InputStrategy::BufferedIO);
+
+        // Truncate the underlying file to 10 bytes so a 20-byte read hits EOF
+        // after advancing the underlying BufReader 10 bytes.
+        temp_file.as_file().set_len(10).unwrap();
+
+        let err = input.read_slice(20).unwrap_err();
+        match err {
+            ZiporaError::Io(ref io_err) => {
+                assert_eq!(io_err.kind(), std::io::ErrorKind::UnexpectedEof);
+            }
+            other => panic!("expected ZiporaError::Io(UnexpectedEof), got {other:?}"),
+        }
+        assert_eq!(input.position(), 0);
+
+        // Because `position` is still 0, reading the 5 bytes that remain at
+        // offset 0..5 must succeed and return [0, 1, 2, 3, 4].
+        let prefix = input.read_slice(5).unwrap();
+        assert_eq!(prefix, vec![0, 1, 2, 3, 4]);
+        assert_eq!(input.position(), 5);
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_empty_file_input_and_output() {
+        let temp_dir = TempDir::new().unwrap();
+        let empty_path = temp_dir.path().join("empty.dat");
+
+        // Create a 0-byte file via MemoryMappedOutput::create(..., 0)
+        {
+            let mut out = MemoryMappedOutput::create(&empty_path, 0).unwrap();
+            assert_eq!(out.capacity(), 0);
+            assert_eq!(out.position(), 0);
+            assert_eq!(out.remaining(), 0);
+            out.write_slice(&[]).unwrap();
+            out.flush().unwrap();
+            out.truncate().unwrap();
+            assert_eq!(out.capacity(), 0);
+        }
+
+        // Read the 0-byte file via MemoryMappedInput::from_path / new / new_with_pattern
+        {
+            let mut input = MemoryMappedInput::from_path(&empty_path).unwrap();
+            assert_eq!(input.len(), 0);
+            assert!(input.is_empty());
+            assert_eq!(input.remaining(), 0);
+            assert!(input.read_slice(0).unwrap().is_empty());
+            assert!(input.read_u8().is_err());
+
+            let file = File::open(&empty_path).unwrap();
+            let mut input2 =
+                MemoryMappedInput::new_with_pattern(file, AccessPattern::Sequential).unwrap();
+            assert_eq!(input2.len(), 0);
+            assert!(input2.read_slice(0).unwrap().is_empty());
+        }
+
+        // Open the existing 0-byte file via MemoryMappedOutput::open, then grow it
+        {
+            let mut out = MemoryMappedOutput::open(&empty_path).unwrap();
+            assert_eq!(out.capacity(), 0);
+            out.write_slice(b"grown from zero").unwrap();
+            out.truncate().unwrap();
+        }
+
+        let mut input = MemoryMappedInput::from_path(&empty_path).unwrap();
+        assert_eq!(input.read_slice(15).unwrap(), b"grown from zero");
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_map_shared_persistence_without_explicit_flush_and_madvise_patterns() {
+        let temp_dir = TempDir::new().unwrap();
+        let shared_path = temp_dir.path().join("map_shared.dat");
+
+        // Write 96 KiB (> 64 KiB so Sequential exercises prefetch_sequential)
+        // and drop MemoryMappedOutput WITHOUT calling flush(). Because
+        // MmapOptions::map_mut uses MAP_SHARED, the writes must persist across
+        // drop + reopen.
+        let expected: Vec<u8> = (0..(96 * 1024)).map(|i| (i % 251) as u8).collect();
+        {
+            let mut out = MemoryMappedOutput::create(&shared_path, expected.len()).unwrap();
+            out.write_slice(&expected).unwrap();
+            // Intentionally drop `out` without `out.flush()`.
+        }
+
+        for pattern in [
+            AccessPattern::Sequential,
+            AccessPattern::Random,
+            AccessPattern::Mixed,
+            AccessPattern::Unknown,
+        ] {
+            let mut input =
+                MemoryMappedInput::from_path_with_pattern(&shared_path, pattern).unwrap();
+            assert_eq!(input.strategy(), InputStrategy::StandardMmap);
+            assert_eq!(input.len(), expected.len());
+            let zc = input.read_slice_zero_copy(expected.len()).unwrap();
+            assert_eq!(zc, expected.as_slice());
+        }
     }
 }
