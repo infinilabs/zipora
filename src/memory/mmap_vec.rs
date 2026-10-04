@@ -28,7 +28,6 @@ use crate::simd::{AdaptiveSimdSelector, Operation};
 use bytemuck::Pod;
 use memmap2::{MmapMut, MmapOptions};
 use std::fs::{File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
@@ -68,6 +67,21 @@ const MMAP_VEC_MAGIC: u64 = 0x4D4D41505F564543; // "MMAP_VEC"
 const MMAP_VEC_VERSION: u16 = 2;
 const MMAP_VEC_FLAGS: u16 = 0x0011; // bit 0 = little-endian, bit 4 = 64-bit header field width
 const HEADER_SIZE: usize = std::mem::size_of::<MmapVecHeader>();
+// The header is accessed in place at the (page-aligned) start of a mapping
+// and its fields are decoded byte-wise, so it needs no alignment.
+const _: () = assert!(std::mem::align_of::<MmapVecHeader>() == 1);
+
+/// The bytes of a slice of `Pod` values.
+fn pod_bytes<T: Pod>(values: &[T]) -> Result<&[u8]> {
+    bytemuck::try_cast_slice(values)
+        .map_err(|e| ZiporaError::invalid_data(format!("MmapVec byte view: {:?}", e)))
+}
+
+/// The bytes of a mutable slice of `Pod` values.
+fn pod_bytes_mut<T: Pod>(values: &mut [T]) -> Result<&mut [u8]> {
+    bytemuck::try_cast_slice_mut(values)
+        .map_err(|e| ZiporaError::invalid_data(format!("MmapVec byte view: {:?}", e)))
+}
 
 impl MmapVecHeader {
     fn new<T>() -> Self {
@@ -348,13 +362,23 @@ impl MmapVecStats {
 /// Any growth operation (`push` → `grow`, `reserve`, `resize`,
 /// `resize_to_capacity`) may **remap the backing file to a different
 /// address**: the cached `header`/`data` pointers are re-derived from a
-/// brand-new `MmapAllocation` and the old mapping is unmapped. Consequently,
+/// new mapping, which is fully checked before the old mapping is unmapped.
+/// Consequently,
 /// raw pointers or slices derived from this vector (`as_slice`,
 /// `as_mut_slice`, `get`, iterator items) must never be held across any
 /// `&mut self` call — Rust's borrow rules enforce this for safe callers, and
 /// every internal use of `data_ptr()` re-reads the cached pointer *after*
 /// any potential remap. Unsafe code must not stash `data_ptr()` results
 /// across growth operations.
+///
+/// # Length and capacity
+///
+/// Each handle owns its length and capacity. `open` reads them from the
+/// file header once and checks them against the mapping; every change made
+/// through this handle is written through to the header, but the header is
+/// never read back. A header rewritten by another handle or process
+/// therefore cannot widen this handle's views past its mapping; equally,
+/// elements appended through another handle are not seen by this one.
 pub struct MmapVec<T> {
     /// Path to the backing file
     file_path: PathBuf,
@@ -362,10 +386,18 @@ pub struct MmapVec<T> {
     mmap: Option<FileMapping>,
     /// Configuration
     config: MmapVecConfig,
-    /// Cached header pointer
+    /// Cached header pointer (into `mmap`)
     header: Option<NonNull<MmapVecHeader>>,
-    /// Cached data pointer
+    /// Cached data pointer (into `mmap`, aligned for `T`)
     data: Option<NonNull<T>>,
+    /// Number of elements; invariant `len <= cap`
+    len: usize,
+    /// Capacity in elements; invariant `cap <= mapped_cap`
+    cap: usize,
+    /// Whole elements of `T` the current mapping holds after the header and
+    /// its padding (`usize::MAX` for zero-sized `T`); set by `view_of`
+    /// together with `header` and `data`
+    mapped_cap: usize,
     /// Whether this is a temporary file that should be deleted on drop
     is_temp_file: bool,
     /// Phantom data for type safety
@@ -380,28 +412,20 @@ where
     pub fn create<P: AsRef<Path>>(path: P, config: MmapVecConfig) -> Result<Self> {
         let file_path = path.as_ref().to_path_buf();
 
-        // Create the backing file
-        let initial_file_size = Self::calculate_file_size(config.initial_capacity)?;
-        Self::create_backing_file(&file_path, initial_file_size)?;
+        // Size first: an invalid capacity must fail before an existing file
+        // at `path` is truncated.
+        let file_len = Self::calculate_file_size(config.initial_capacity)?;
 
-        // Create memory mapping
-        let mmap = Self::create_mmap(&file_path, &config)?;
-
-        let mut vec = Self {
-            file_path,
-            mmap: Some(mmap),
-            config,
-            header: None,
-            data: None,
-            is_temp_file: false,
-            _phantom: PhantomData,
-        };
-
-        // Initialize header and data pointers
-        vec.update_pointers()?;
-        vec.initialize_header()?;
-
-        Ok(vec)
+        // Create the backing file; it is sized and mapped through this
+        // handle, never re-opened by path.
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&file_path)
+            .map_err(|e| ZiporaError::io_error(format!("Failed to create file: {}", e)))?;
+        Self::from_new_file(file, file_path, config, file_len)
     }
 
     /// Open an existing memory-mapped vector
@@ -412,45 +436,49 @@ where
             return Err(ZiporaError::invalid_data("File does not exist"));
         }
 
+        let file = if config.read_only {
+            File::open(&file_path)
+        } else {
+            OpenOptions::new().read(true).write(true).open(&file_path)
+        }
+        .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
+
         // Create memory mapping
-        let mmap = Self::create_mmap(&file_path, &config)?;
+        let mut map = Self::map_file(&file, &config, None)?;
 
-        let mut vec = Self {
-            file_path,
-            mmap: Some(mmap),
-            config,
-            header: None,
-            data: None,
-            is_temp_file: false,
-            _phantom: PhantomData,
-        };
-
-        // Initialize pointers and validate
-        vec.update_pointers()?;
-        vec.validate_header()?;
+        // Copy the header out once: from here on this handle's length and
+        // capacity are authoritative (see "Length and capacity" above).
+        let header = map
+            .get(..HEADER_SIZE)
+            .and_then(|bytes| <[u8; HEADER_SIZE]>::try_from(bytes).ok())
+            .map(|data| MmapVecHeader { data })
+            .ok_or_else(|| {
+                ZiporaError::invalid_data("Backing file too small for MmapVec header")
+            })?;
+        let (header_ptr, data, mapped_cap) = Self::view_of(&mut map, Self::data_offset())?;
 
         // The mapping is exactly the file; a header declaring more capacity
         // than the file holds would make element access read past EOF.
-        let needed_u64 = Self::calculate_file_size(vec.capacity())?;
-        let needed = usize::try_from(needed_u64)
-            .map_err(|_| ZiporaError::invalid_data("Required file size overflows usize"))?;
-        let mapped = vec.mmap.as_ref().map(|m| m.map.len()).unwrap_or(0);
-        if mapped < needed {
-            return Err(ZiporaError::invalid_data(
-                "Backing file smaller than header-declared capacity",
-            ));
-        }
+        let (len, cap) = Self::counts_from_header(&header, mapped_cap)?;
 
-        Ok(vec)
+        Ok(Self {
+            file_path,
+            mmap: Some(FileMapping { file, map }),
+            config,
+            header: Some(header_ptr),
+            data: Some(data),
+            len,
+            cap,
+            mapped_cap,
+            is_temp_file: false,
+            _phantom: PhantomData,
+        })
     }
 
     /// Get the number of elements in the vector
     #[inline]
     pub fn len(&self) -> usize {
-        self.header()
-            // SAFETY: header pointer is valid, initialized by update_pointers, aligned to MmapVecHeader
-            .map(|h| unsafe { h.as_ref().length() as usize })
-            .unwrap_or(0)
+        self.len
     }
 
     /// Check if the vector is empty
@@ -462,39 +490,42 @@ where
     /// Get the capacity of the vector
     #[inline]
     pub fn capacity(&self) -> usize {
-        self.header()
-            // SAFETY: header pointer is valid, initialized by update_pointers, aligned to MmapVecHeader
-            .map(|h| unsafe { h.as_ref().capacity() as usize })
-            .unwrap_or(0)
+        self.cap
     }
 
     /// Push an element to the end of the vector
+    ///
+    /// # Errors
+    /// Returns an error if the vector is read-only, if the length would
+    /// overflow `usize`, or if growing the file or its mapping fails.
     pub fn push(&mut self, value: T) -> Result<()> {
         if self.config.read_only {
             return Err(ZiporaError::invalid_data("Vector is read-only"));
         }
 
-        let current_len = self.len();
-        let current_capacity = self.capacity();
+        let index = self.len;
+        let new_len = index
+            .checked_add(1)
+            .ok_or_else(|| ZiporaError::invalid_data("MmapVec length overflows usize"))?;
 
         // Check if we need to grow the vector
-        if current_len >= current_capacity {
+        if new_len > self.cap {
             self.grow()?;
         }
 
         // Write the element
-        // SAFETY: current_len < capacity (grow called above), data_ptr valid, add(current_len) within allocation
-        unsafe {
-            let data_ptr = self.data_ptr()?.as_ptr();
-            std::ptr::write(data_ptr.add(current_len), value);
-        }
+        let slot = self
+            .mapped_slice_mut(new_len)?
+            .get_mut(index)
+            .ok_or_else(|| ZiporaError::out_of_bounds(index, new_len))?;
+        *slot = value;
 
         // Update length in header
-        self.set_length(current_len + 1)?;
+        self.store_len(new_len)?;
 
         // Sync if requested (only the written element + header)
         if self.config.sync_on_write {
-            self.sync_range(current_len, 1)?;
+            self.sync_range(index, 1)?;
         }
 
         Ok(())
@@ -506,22 +537,13 @@ where
             return None;
         }
 
-        let current_len = self.len();
-        if current_len == 0 {
-            return None;
-        }
+        let new_len = self.len.checked_sub(1)?;
 
         // Read the element
-        // SAFETY: current_len > 0 (checked above), data_ptr valid, add(current_len-1) within allocation
-        let value = unsafe {
-            let data_ptr = self.data_ptr().ok()?.as_ptr();
-            std::ptr::read(data_ptr.add(current_len - 1))
-        };
+        let value = *self.as_slice().get(new_len)?;
 
         // Update length
-        if self.set_length(current_len - 1).is_err() {
-            return None;
-        }
+        self.store_len(new_len).ok()?;
 
         // Sync if requested (only the header changed)
         if self.config.sync_on_write {
@@ -534,43 +556,22 @@ where
     /// Get an element at the specified index
     #[inline]
     pub fn get(&self, index: usize) -> Option<&T> {
-        if index >= self.len() {
-            return None;
-        }
-
-        // SAFETY: index < len (checked above), data_ptr valid, add(index) within allocation
-        unsafe {
-            let data_ptr = self.data_ptr().ok()?.as_ptr();
-            Some(&*data_ptr.add(index))
-        }
+        self.as_slice().get(index)
     }
 
     /// Get a mutable reference to an element at the specified index
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
-        if self.config.read_only || index >= self.len() {
+        if self.config.read_only {
             return None;
         }
-
-        // SAFETY: index < len (checked above), data_ptr valid, add(index) within allocation
-        unsafe {
-            let data_ptr = self.data_ptr().ok()?.as_ptr();
-            Some(&mut *data_ptr.add(index))
-        }
+        self.as_mut_slice().get_mut(index)
     }
 
     /// Get a slice of all elements
     pub fn as_slice(&self) -> &[T] {
-        let len = self.len();
-        if len == 0 {
-            return &[];
-        }
-
-        // SAFETY: Hardware features verified or caller ensures safety invariants
-        unsafe {
-            // SAFETY: len > 0 check above guarantees self.data is initialized (Some)
-            let data_ptr = self.data_ptr().expect("mmap data pointer valid").as_ptr();
-            slice::from_raw_parts(data_ptr, len)
-        }
+        // `mapped_slice` cannot fail here: `len <= cap <= mapped_cap`, and
+        // the data pointer was checked when the mapping was made.
+        self.mapped_slice(self.len).unwrap_or(&[])
     }
 
     /// Get a mutable slice of all elements
@@ -579,17 +580,9 @@ where
             return &mut [];
         }
 
-        let len = self.len();
-        if len == 0 {
-            return &mut [];
-        }
-
-        // SAFETY: Hardware features verified or caller ensures safety invariants
-        unsafe {
-            // SAFETY: len > 0 check above guarantees self.data is initialized (Some)
-            let data_ptr = self.data_ptr().expect("mmap data pointer valid").as_ptr();
-            slice::from_raw_parts_mut(data_ptr, len)
-        }
+        // As in `as_slice`, `mapped_slice_mut` cannot fail for `len`.
+        let len = self.len;
+        self.mapped_slice_mut(len).unwrap_or(&mut [])
     }
 
     /// Clear all elements from the vector
@@ -598,7 +591,7 @@ where
             return Err(ZiporaError::invalid_data("Vector is read-only"));
         }
 
-        self.set_length(0)?;
+        self.store_len(0)?;
 
         if self.config.sync_on_write {
             self.sync_header()?;
@@ -608,14 +601,20 @@ where
     }
 
     /// Reserve capacity for at least `additional` more elements
+    ///
+    /// # Errors
+    /// Returns an error, leaving the vector unchanged, if the vector is
+    /// read-only, if `len() + additional` overflows `usize`, or if growing
+    /// the file or its mapping fails.
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
         if self.config.read_only {
             return Err(ZiporaError::invalid_data("Vector is read-only"));
         }
 
-        let current_len = self.len();
-        let current_capacity = self.capacity();
-        let required_capacity = current_len + additional;
+        let current_capacity = self.cap;
+        let required_capacity = self.len.checked_add(additional).ok_or_else(|| {
+            ZiporaError::invalid_parameter("MmapVec reserve: len + additional overflows usize")
+        })?;
 
         if required_capacity > current_capacity {
             let new_capacity = required_capacity
@@ -754,7 +753,7 @@ where
 
         let current_len = self.len();
         if len < current_len {
-            self.set_length(len)?;
+            self.store_len(len)?;
 
             if self.config.sync_on_write {
                 self.sync_header()?;
@@ -778,15 +777,12 @@ where
             self.reserve(additional)?;
 
             // Fill with the specified value
-            // SAFETY: reserve called above ensures capacity >= len, data_ptr valid, i < len within allocation
-            unsafe {
-                let data_ptr = self.data_ptr()?.as_ptr();
-                for i in current_len..len {
-                    std::ptr::write(data_ptr.add(i), value);
-                }
-            }
+            self.mapped_slice_mut(len)?
+                .get_mut(current_len..)
+                .ok_or_else(|| ZiporaError::out_of_bounds(current_len, len))?
+                .fill(value);
 
-            self.set_length(len)?;
+            self.store_len(len)?;
         } else if len < current_len {
             // Need to shrink
             self.truncate(len)?;
@@ -803,24 +799,42 @@ where
         Ok(())
     }
 
-    /// Create backing file with initial size
-    fn create_backing_file(path: &Path, size: u64) -> Result<()> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to create file: {}", e)))?;
-
+    /// Size, map and initialize a freshly created backing file so that it
+    /// is `file_len` bytes long.
+    fn from_new_file(
+        file: File,
+        file_path: PathBuf,
+        config: MmapVecConfig,
+        file_len: usize,
+    ) -> Result<Self> {
         // Set file size
-        file.seek(SeekFrom::Start(size - 1))
-            .map_err(|e| ZiporaError::io_error(format!("Failed to seek: {}", e)))?;
-        file.write_all(&[0])
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write: {}", e)))?;
+        let size = u64::try_from(file_len)
+            .map_err(|_| ZiporaError::invalid_data("MmapVec total file size overflow"))?;
+        file.set_len(size)
+            .map_err(|e| ZiporaError::io_error(format!("Failed to resize file: {}", e)))?;
         file.sync_all()
             .map_err(|e| ZiporaError::io_error(format!("Failed to sync: {}", e)))?;
 
-        Ok(())
+        // Create memory mapping
+        let mut map = Self::map_file(&file, &config, None)?;
+        let (header, data, mapped_cap) = Self::view_of(&mut map, file_len)?;
+        let initial_capacity = config.initial_capacity;
+        let mut vec = Self {
+            file_path,
+            mmap: Some(FileMapping { file, map }),
+            config,
+            header: Some(header),
+            data: Some(data),
+            len: 0,
+            cap: 0,
+            mapped_cap,
+            is_temp_file: false,
+            _phantom: PhantomData,
+        };
+
+        // Initialize header
+        vec.initialize_header(initial_capacity)?;
+        Ok(vec)
     }
 
     /// Apply the configured kernel advice to a fresh mapping.
@@ -846,51 +860,44 @@ where
         }
     }
 
-    /// Create a shared file-backed memory mapping for the whole file
-    fn create_mmap(path: &Path, config: &MmapVecConfig) -> Result<FileMapping> {
+    /// Map the first `len` bytes of `file`, or the whole file when `len` is
+    /// `None`: shared and writable, or copy-on-write for read-only vectors.
+    fn map_file(file: &File, config: &MmapVecConfig, len: Option<usize>) -> Result<MmapMut> {
         let mut options = MmapOptions::new();
+        if let Some(len) = len {
+            options.len(len);
+        }
         #[cfg(target_os = "linux")]
         if config.populate_pages {
             options.populate();
         }
 
-        if config.read_only {
-            let file = File::open(path)
-                .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
+        let map = if config.read_only {
             // SAFETY: copy-on-write private mapping — the file is never
             // modified through it. The Pod bound on T makes any file
             // content a valid bit pattern, and the map lives as long as
-            // the returned FileMapping.
-            let map = unsafe { options.map_copy(&file) }
-                .map_err(|e| ZiporaError::io_error(format!("Failed to mmap file: {}", e)))?;
-            Self::advise_mapping(&map, config);
-            return Ok(FileMapping { file, map });
+            // the FileMapping that stores it.
+            unsafe { options.map_copy(file) }
+        } else {
+            // SAFETY: shared mutable mapping of the vector's own file
+            // handle. The Pod bound on T makes any file content a valid bit
+            // pattern. As with every memory-mapped API, callers must not
+            // let another process truncate or mutate the file concurrently.
+            unsafe { options.map_mut(file) }
         }
-
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
-        // SAFETY: shared mutable mapping of a file we just opened. The Pod
-        // bound on T makes any file content a valid bit pattern. As with
-        // every memory-mapped API, callers must not let another process
-        // truncate or mutate the file concurrently.
-        let map = unsafe { options.map_mut(&file) }
-            .map_err(|e| ZiporaError::io_error(format!("Failed to mmap file: {}", e)))?;
+        .map_err(|e| ZiporaError::io_error(format!("Failed to mmap file: {}", e)))?;
         Self::advise_mapping(&map, config);
-        Ok(FileMapping { file, map })
+        Ok(map)
     }
 
     /// Calculate file size for given capacity
-    fn calculate_file_size(capacity: usize) -> Result<u64> {
+    fn calculate_file_size(capacity: usize) -> Result<usize> {
         let payload_bytes = capacity
             .checked_mul(std::mem::size_of::<T>())
             .ok_or_else(|| ZiporaError::invalid_data("MmapVec capacity byte size overflow"))?;
-        let total_bytes = Self::data_offset()
+        Self::data_offset()
             .checked_add(payload_bytes)
-            .ok_or_else(|| ZiporaError::invalid_data("MmapVec total file size overflow"))?;
-        Ok(total_bytes as u64)
+            .ok_or_else(|| ZiporaError::invalid_data("MmapVec total file size overflow"))
     }
 
     /// Byte offset of the element payload within the mapping.
@@ -905,68 +912,84 @@ where
         HEADER_SIZE.next_multiple_of(std::mem::align_of::<T>())
     }
 
-    /// Update header and data pointers
-    fn update_pointers(&mut self) -> Result<()> {
-        let mmap = self
-            .mmap
-            .as_mut()
-            .ok_or_else(|| ZiporaError::invalid_data("No memory mapping"))?;
-
-        // The mapping is exactly the file: it must at least hold the header
-        // and padding (a truncated file would make the header read OOB).
-        if mmap.map.len() < Self::data_offset() {
-            return Err(ZiporaError::invalid_data(
-                "Backing file too small for MmapVec header",
+    /// Number of whole elements a mapping of `map_len` bytes starting at
+    /// address `base_addr` holds after the header and its padding
+    /// (`usize::MAX` for zero-sized `T`).
+    ///
+    /// # Errors
+    /// `InvalidData` if the mapping cannot hold the header and its padding;
+    /// `Misaligned` if the element data would not be aligned for `T`.
+    /// Mappings start on a page boundary, so the latter only happens for
+    /// alignments above the page size.
+    fn mapped_capacity_for(base_addr: usize, map_len: usize) -> Result<usize> {
+        let data_offset = Self::data_offset();
+        let payload = map_len.checked_sub(data_offset).ok_or_else(|| {
+            ZiporaError::invalid_data("Backing file too small for MmapVec header")
+        })?;
+        let data_addr = base_addr
+            .checked_add(data_offset)
+            .ok_or_else(|| ZiporaError::invalid_data("MmapVec data address overflows usize"))?;
+        let align = std::mem::align_of::<T>();
+        if !data_addr.is_multiple_of(align) {
+            return Err(ZiporaError::misaligned(
+                data_addr,
+                align,
+                "MmapVec element data",
             ));
         }
+        Ok(payload
+            .checked_div(std::mem::size_of::<T>())
+            .unwrap_or(usize::MAX))
+    }
 
-        let base_ptr: *mut u8 = mmap.map.as_mut_ptr();
+    /// Header pointer, data pointer and element capacity of `map`, which
+    /// must be at least `required_len` bytes long.
+    ///
+    /// Both pointers derive from one base pointer of `map`. They stay valid
+    /// until `map` is dropped or replaced, so callers store them together
+    /// with `map` and the returned capacity.
+    fn view_of(
+        map: &mut MmapMut,
+        required_len: usize,
+    ) -> Result<(NonNull<MmapVecHeader>, NonNull<T>, usize)> {
+        let map_len = map.len();
+        let base = map.as_mut_ptr();
+        let mapped_cap = Self::mapped_capacity_for(base.addr(), map_len)?;
+        if map_len < required_len {
+            return Err(ZiporaError::invalid_data(format!(
+                "MmapVec mapping is {} bytes, {} required",
+                map_len, required_len
+            )));
+        }
+        let header = NonNull::new(base.cast::<MmapVecHeader>())
+            .ok_or_else(|| ZiporaError::invalid_data("Invalid header pointer"))?;
+        // `wrapping_add` stays in bounds: `mapped_capacity_for` checked that
+        // the mapping holds at least `data_offset()` bytes.
+        let data = NonNull::new(base.wrapping_add(Self::data_offset()).cast::<T>())
+            .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?;
+        Ok((header, data, mapped_cap))
+    }
 
-        // Header is at the beginning
-        self.header = Some(
-            NonNull::new(base_ptr as *mut MmapVecHeader)
-                .ok_or_else(|| ZiporaError::invalid_data("Invalid header pointer"))?,
-        );
-
-        // Data follows the header, padded to T's alignment
-        // SAFETY: base_ptr valid from mmap, data_offset() within allocation
-        let data_ptr = unsafe { base_ptr.add(Self::data_offset()) } as *mut T;
-        // Runtime check, not debug_assert (§8.5): a misaligned data pointer
-        // makes every subsequent &[T] UB. mmap bases are page-aligned, so
-        // this only fires for alignments beyond the page size.
-        if !(data_ptr as usize).is_multiple_of(std::mem::align_of::<T>()) {
+    /// Length and capacity declared by `header`, checked against a mapping
+    /// that holds `mapped_cap` elements.
+    fn counts_from_header(header: &MmapVecHeader, mapped_cap: usize) -> Result<(usize, usize)> {
+        header.validate::<T>()?;
+        let len = usize::try_from(header.length())
+            .map_err(|_| ZiporaError::invalid_data("MmapVec header length overflows usize"))?;
+        let cap = usize::try_from(header.capacity())
+            .map_err(|_| ZiporaError::invalid_data("MmapVec header capacity overflows usize"))?;
+        if cap > mapped_cap {
             return Err(ZiporaError::invalid_data(
-                "mmap base not sufficiently aligned for element type",
+                "Backing file smaller than header-declared capacity",
             ));
         }
-        self.data = Some(
-            NonNull::new(data_ptr)
-                .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?,
-        );
-
-        Ok(())
+        Ok((len, cap))
     }
 
     /// Initialize header for new file
-    fn initialize_header(&mut self) -> Result<()> {
-        let header_ptr = self.header()?;
-        let header = MmapVecHeader::new::<T>();
-
-        // SAFETY: header_ptr valid from update_pointers, aligned to MmapVecHeader
-        unsafe {
-            std::ptr::write(header_ptr.as_ptr(), header);
-        }
-
-        self.set_capacity(self.config.initial_capacity)?;
-        Ok(())
-    }
-
-    /// Validate header for existing file
-    fn validate_header(&self) -> Result<()> {
-        let header_ptr = self.header()?;
-        // SAFETY: header_ptr valid from update_pointers, aligned to MmapVecHeader
-        let header = unsafe { header_ptr.as_ref() };
-        header.validate::<T>()
+    fn initialize_header(&mut self, capacity: usize) -> Result<()> {
+        self.update_header(|header| *header = MmapVecHeader::new::<T>())?;
+        self.store_counts(0, capacity)
     }
 
     /// Get header pointer
@@ -981,32 +1004,94 @@ where
             .ok_or_else(|| ZiporaError::invalid_data("Data not initialized"))
     }
 
-    /// Set length in header
-    fn set_length(&mut self, length: usize) -> Result<()> {
-        let header_ptr = self.header()?;
-        // SAFETY: header_ptr valid from update_pointers, exclusive access via &mut self
-        unsafe {
-            (*header_ptr.as_ptr()).set_length(length as u64);
-        }
+    /// Apply `f` to the header in the mapping.
+    fn update_header(&mut self, f: impl FnOnce(&mut MmapVecHeader)) -> Result<()> {
+        let header = self.header()?;
+        // SAFETY: `header` was derived by `view_of` from the base of the
+        // live mapping in `self.mmap` (`header` and `mmap` are only ever
+        // replaced together), which holds at least `data_offset() >=
+        // HEADER_SIZE` bytes. `MmapVecHeader` is a byte array: alignment 1,
+        // every bit pattern valid. `&mut self` makes this the only reference
+        // into the mapping while `f` runs.
+        f(unsafe { &mut *header.as_ptr() });
         Ok(())
     }
 
-    /// Set capacity in header
-    fn set_capacity(&mut self, capacity: usize) -> Result<()> {
-        let header_ptr = self.header()?;
-        // SAFETY: header_ptr valid from update_pointers, exclusive access via &mut self
-        unsafe {
-            (*header_ptr.as_ptr()).set_capacity(capacity as u64);
+    /// Adopt `len` and `cap`, writing both through to the file header.
+    fn store_counts(&mut self, len: usize, cap: usize) -> Result<()> {
+        if len > cap || cap > self.mapped_cap {
+            return Err(ZiporaError::invalid_state(format!(
+                "MmapVec length {} / capacity {} do not fit the {} mapped elements",
+                len, cap, self.mapped_cap
+            )));
         }
+        let len64 = u64::try_from(len)
+            .map_err(|_| ZiporaError::invalid_data("MmapVec length overflows u64"))?;
+        let cap64 = u64::try_from(cap)
+            .map_err(|_| ZiporaError::invalid_data("MmapVec capacity overflows u64"))?;
+        self.update_header(|header| {
+            header.set_length(len64);
+            header.set_capacity(cap64);
+        })?;
+        self.len = len;
+        self.cap = cap;
         Ok(())
+    }
+
+    /// Adopt `len` (at most the capacity), writing it through to the header.
+    fn store_len(&mut self, len: usize) -> Result<()> {
+        self.store_counts(len, self.cap)
+    }
+
+    /// The data pointer, checked for a view of `count` elements: aligned for
+    /// `T`, and `count` within the elements the current mapping holds.
+    fn checked_data(&self, count: usize) -> Result<NonNull<T>> {
+        let data = self.data_ptr()?;
+        let align = std::mem::align_of::<T>();
+        if !data.as_ptr().addr().is_multiple_of(align) {
+            return Err(ZiporaError::misaligned(
+                data.as_ptr().addr(),
+                align,
+                "MmapVec element data",
+            ));
+        }
+        if count > self.mapped_cap {
+            return Err(ZiporaError::out_of_bounds(count, self.mapped_cap));
+        }
+        Ok(data)
+    }
+
+    /// The first `count` elements of the mapped data region.
+    fn mapped_slice(&self, count: usize) -> Result<&[T]> {
+        let data = self.checked_data(count)?;
+        // SAFETY: `checked_data` verified that `data` is aligned for `T` and
+        // that `count <= mapped_cap`, the number of whole elements `view_of`
+        // found between `data` and the end of the live mapping in
+        // `self.mmap` (`data`, `mapped_cap` and `mmap` are only ever
+        // replaced together), so the range is in bounds and at most
+        // `isize::MAX` bytes. `T: Pod` makes any mapped bytes a valid `T`.
+        // The slice borrows `self`, and every remap or unmap takes
+        // `&mut self`, so the mapping outlives the slice.
+        Ok(unsafe { slice::from_raw_parts(data.as_ptr(), count) })
+    }
+
+    /// The first `count` elements of the mapped data region, mutably.
+    fn mapped_slice_mut(&mut self, count: usize) -> Result<&mut [T]> {
+        let data = self.checked_data(count)?;
+        // SAFETY: as in `mapped_slice`; in addition, `&mut self` makes this
+        // the only reference into the mapping while the slice lives.
+        Ok(unsafe { slice::from_raw_parts_mut(data.as_ptr(), count) })
     }
 
     /// Grow the vector capacity
     fn grow(&mut self) -> Result<()> {
-        let current_capacity = self.capacity();
+        let current_capacity = self.cap;
+        let min_capacity = current_capacity
+            .checked_add(1)
+            .ok_or_else(|| ZiporaError::invalid_data("MmapVec capacity overflows usize"))?;
         let new_capacity = std::cmp::max(
             (current_capacity as f64 * self.config.growth_factor) as usize,
-            current_capacity + 1,
+            min_capacity,
         );
         self.resize_to_capacity(new_capacity)
     }
@@ -1014,34 +1099,67 @@ where
     /// Resize vector to specific capacity
     ///
     /// The mapping is shared with the file, so existing data needs no
-    /// copy-out/copy-in: unmap, resize the file, and remap.
+    /// copy-out/copy-in. The file is resized and remapped through the
+    /// vector's own handle, never re-opened by path. The new mapping must
+    /// cover `new_capacity` elements with aligned data before it replaces
+    /// the old one, so if resizing the file or mapping it fails the vector
+    /// is unchanged. Both mappings exist for a moment, which needs address
+    /// space for the old and the new size.
+    ///
+    /// Growth never shrinks the file: a file that is already large enough
+    /// (for example, grown through another handle) is only remapped.
+    /// Shrinking maps the shorter range first and truncates the file after
+    /// the old mapping is gone; if that truncation fails the vector already
+    /// uses the smaller capacity and the error is returned.
     fn resize_to_capacity(&mut self, new_capacity: usize) -> Result<()> {
+        if new_capacity < self.len {
+            return Err(ZiporaError::invalid_parameter(
+                "MmapVec capacity below current length",
+            ));
+        }
+        if new_capacity == self.cap {
+            return Ok(());
+        }
         let new_file_size = Self::calculate_file_size(new_capacity)?;
-
-        // Unmap before resizing so no mapping covers pages beyond EOF.
-        // Header/data pointers into the old mapping are re-derived below;
-        // on any early error they stay None-backed (mmap is None) and every
-        // accessor returns an error instead of dangling.
-        let old = self
+        let new_size = u64::try_from(new_file_size)
+            .map_err(|_| ZiporaError::invalid_data("MmapVec total file size overflow"))?;
+        let shrinking = new_capacity < self.cap;
+        let mmap = self
             .mmap
-            .take()
+            .as_mut()
             .ok_or_else(|| ZiporaError::invalid_data("No memory mapping"))?;
-        self.header = None;
-        self.data = None;
 
-        let FileMapping { file, map } = old;
-        drop(map);
-        file.set_len(new_file_size)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to resize file: {}", e)))?;
-        drop(file);
+        let mut map = if shrinking {
+            Self::map_file(&mmap.file, &self.config, Some(new_file_size))?
+        } else {
+            let file_size = mmap
+                .file
+                .metadata()
+                .map_err(|e| ZiporaError::io_error(format!("Failed to stat file: {}", e)))?
+                .len();
+            if file_size < new_size {
+                mmap.file
+                    .set_len(new_size)
+                    .map_err(|e| ZiporaError::io_error(format!("Failed to resize file: {}", e)))?;
+            }
+            Self::map_file(&mmap.file, &self.config, None)?
+        };
+        let (header, data, mapped_cap) = Self::view_of(&mut map, new_file_size)?;
 
-        // Remap with the new size
-        self.mmap = Some(Self::create_mmap(&self.file_path, &self.config)?);
-        self.update_pointers()?;
+        // The new mapping is valid: only now is the old one unmapped.
+        mmap.map = map;
+        self.header = Some(header);
+        self.data = Some(data);
+        self.mapped_cap = mapped_cap;
 
         // Update capacity in header
-        self.set_capacity(new_capacity)?;
+        self.store_counts(self.len, new_capacity)?;
 
+        if shrinking && let Some(mmap) = &self.mmap {
+            mmap.file
+                .set_len(new_size)
+                .map_err(|e| ZiporaError::io_error(format!("Failed to resize file: {}", e)))?;
+        }
         Ok(())
     }
 
@@ -1090,6 +1208,11 @@ where
     ///
     /// # Performance
     /// 4-8x faster than pushing elements individually for bulk operations
+    ///
+    /// # Errors
+    /// Returns an error, leaving the vector unchanged, if the vector is
+    /// read-only, if the new length would overflow `usize`, or if growing
+    /// the file or its mapping fails.
     pub fn push_bulk_simd(&mut self, items: &[T]) -> Result<()>
     where
         T: Copy,
@@ -1105,52 +1228,48 @@ where
         let start = std::time::Instant::now();
 
         // Ensure capacity
-        let new_len = self.len() + items.len();
-        if new_len > self.capacity() {
+        let old_len = self.len;
+        let new_len = old_len.checked_add(items.len()).ok_or_else(|| {
+            ZiporaError::invalid_parameter("MmapVec push_bulk_simd: length overflows usize")
+        })?;
+        if new_len > self.cap {
             self.reserve(items.len())?;
         }
 
-        // Use SIMD copy for bulk push (4-8x faster)
-        // SAFETY: reserve called above ensures capacity, data_ptr valid, add(len) within allocation
-        let dst_ptr = unsafe { self.data_ptr()?.as_ptr().add(self.len()) };
+        let dst = self
+            .mapped_slice_mut(new_len)?
+            .get_mut(old_len..)
+            .ok_or_else(|| ZiporaError::out_of_bounds(old_len, new_len))?;
         let size_bytes = std::mem::size_of_val(items);
 
         if size_bytes >= 64 {
             // SIMD threshold
             // Cache-optimized SIMD copy
-            // SAFETY: src is items.len() * sizeof(T) bytes, dst has same size reserved
-            let src_slice =
-                unsafe { std::slice::from_raw_parts(items.as_ptr() as *const u8, size_bytes) };
-            // SAFETY: dst_ptr valid from reserve(), size_bytes matches src, T has valid byte representation
-            let dst_slice =
-                unsafe { std::slice::from_raw_parts_mut(dst_ptr as *mut u8, size_bytes) };
-
-            fast_copy_cache_optimized(src_slice, dst_slice)?;
+            fast_copy_cache_optimized(pod_bytes(items)?, pod_bytes_mut(dst)?)?;
         } else {
             // Small copy: use standard approach
-            // SAFETY: src is items.len() elements, dst has capacity, no overlap
-            unsafe {
-                std::ptr::copy_nonoverlapping(items.as_ptr(), dst_ptr, items.len());
-            }
+            dst.copy_from_slice(items);
         }
 
         // Update length
-        self.set_length(new_len)?;
+        self.store_len(new_len)?;
 
         // Monitor performance for adaptive SIMD selection
         Self::monitor_simd_perf(Operation::Copy, start.elapsed(), items.len());
 
         if self.config.sync_on_write {
-            self.sync_range(new_len - items.len(), items.len())?;
+            self.sync_range(old_len, items.len())?;
         }
 
         Ok(())
     }
 
-    /// Pop multiple elements efficiently
+    /// Pop the last `count` elements, returned in their original order.
     ///
-    /// # Performance
-    /// 4-8x faster than popping elements individually using SIMD copy
+    /// The elements are copied out of the mapping with one slice copy.
+    ///
+    /// # Errors
+    /// Returns an error if the vector is read-only or `count > len()`.
     pub fn pop_bulk_simd(&mut self, count: usize) -> Result<Vec<T>>
     where
         T: Copy,
@@ -1163,40 +1282,17 @@ where
             return Ok(Vec::new());
         }
 
-        if count > self.len() {
-            return Err(ZiporaError::invalid_data("Count exceeds length"));
-        }
-
         let start = std::time::Instant::now();
-        let new_len = self.len() - count;
-        // SAFETY: count <= len (checked above), data_ptr valid, add(new_len) within allocation
-        let src_ptr = unsafe { self.data_ptr()?.as_ptr().add(new_len) };
-
-        // Allocate result vector
-        let mut result = Vec::with_capacity(count);
-
-        // Use SIMD copy if beneficial
-        let size_bytes = count * std::mem::size_of::<T>();
-        if size_bytes >= 64 {
-            // SAFETY: src_ptr valid for count elements, dst has capacity count, size_bytes matches
-            let src_slice = unsafe { std::slice::from_raw_parts(src_ptr as *const u8, size_bytes) };
-            let dst_slice = unsafe {
-                std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, size_bytes)
-            };
-
-            fast_copy_cache_optimized(src_slice, dst_slice)?;
-        } else {
-            // SAFETY: src_ptr valid for count elements, dst has capacity count, no overlap
-            unsafe {
-                std::ptr::copy_nonoverlapping(src_ptr, result.as_mut_ptr(), count);
-            }
-        }
-
-        // SAFETY: count elements copied into result with capacity count
-        unsafe {
-            result.set_len(count);
-        }
-        self.set_length(new_len)?;
+        let old_len = self.len;
+        let new_len = old_len
+            .checked_sub(count)
+            .ok_or_else(|| ZiporaError::invalid_data("Count exceeds length"))?;
+        let result = self
+            .mapped_slice(old_len)?
+            .get(new_len..)
+            .map(<[T]>::to_vec)
+            .ok_or_else(|| ZiporaError::out_of_bounds(new_len, old_len))?;
+        self.store_len(new_len)?;
 
         // Monitor performance
         Self::monitor_simd_perf(Operation::Copy, start.elapsed(), count);
@@ -1226,55 +1322,38 @@ where
         }
 
         let start = std::time::Instant::now();
+        let src = other.mapped_slice(other.len)?;
+        let count = src.len();
 
         // Resize to match source
-        if self.capacity() < other.len() {
+        if self.capacity() < count {
             // Need to grow capacity - use reserve instead of creating new vector
-            self.reserve(other.len() - self.len())?;
+            self.reserve(count.saturating_sub(self.len()))?;
         }
 
         // Now copy the data
         {
             // Have enough capacity, copy directly
-            let size_bytes = other.len() * std::mem::size_of::<T>();
+            let size_bytes = std::mem::size_of_val(src);
 
             // Prefetch source data for large copies
             if size_bytes >= 4096 {
-                // SAFETY: other.data_ptr valid for other.len() elements, size_bytes matches
-                let src_slice = unsafe {
-                    std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
-                };
-                fast_prefetch_range(src_slice);
+                fast_prefetch_range(pod_bytes(src)?);
             }
 
+            let dst = self.mapped_slice_mut(count)?;
             // Use cache-optimized SIMD copy
             if size_bytes >= 64 {
-                // SAFETY: src has other.len() elements, dst has capacity >= other.len(), size_bytes matches
-                let src_slice = unsafe {
-                    std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
-                };
-                // SAFETY: dst has capacity >= other.len(), size_bytes matches src, T has valid byte representation
-                let dst_slice = unsafe {
-                    std::slice::from_raw_parts_mut(self.data_ptr()?.as_ptr() as *mut u8, size_bytes)
-                };
-
-                fast_copy_cache_optimized(src_slice, dst_slice)?;
+                fast_copy_cache_optimized(pod_bytes(src)?, pod_bytes_mut(dst)?)?;
             } else {
-                // SAFETY: src has other.len() elements, dst has capacity >= other.len(), no overlap
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        other.data_ptr()?.as_ptr(),
-                        self.data_ptr()?.as_ptr(),
-                        other.len(),
-                    );
-                }
+                dst.copy_from_slice(src);
             }
 
-            self.set_length(other.len())?;
+            self.store_len(count)?;
         }
 
         // Monitor performance
-        Self::monitor_simd_perf(Operation::Copy, start.elapsed(), other.len());
+        Self::monitor_simd_perf(Operation::Copy, start.elapsed(), count);
 
         if self.config.sync_on_write {
             self.sync_range(0, self.len())?;
@@ -1305,24 +1384,17 @@ where
 
         let range_start = range.start;
         let count = range.end - range.start;
-        let size_bytes = count * std::mem::size_of::<T>();
+        let len = self.len;
+        let slice = self
+            .mapped_slice_mut(len)?
+            .get_mut(range)
+            .ok_or_else(|| ZiporaError::invalid_data("Range exceeds length"))?;
 
-        // For byte-sized types, use direct SIMD fill
-        if std::mem::size_of::<T>() == 1 && size_bytes >= 64 {
-            // SAFETY: range.end <= len checked above, data_ptr valid, add(range.start) + size_bytes within allocation
-            let slice = unsafe {
-                let ptr = self.data_ptr()?.as_ptr().add(range.start);
-                std::slice::from_raw_parts_mut(ptr as *mut u8, size_bytes)
-            };
-
-            // SAFETY: T is single-byte, transmuting &T to &u8 is safe
-            // Transmute value to u8 (safe for single-byte types)
-            let byte_value = unsafe { *(&value as *const T as *const u8) };
-            fast_fill(slice, byte_value);
-        } else {
+        match *bytemuck::bytes_of(&value) {
+            // For byte-sized types, use direct SIMD fill
+            [byte] if count >= 64 => fast_fill(pod_bytes_mut(slice)?, byte),
             // Standard fill for complex types
-            let slice = &mut self.as_mut_slice()[range];
-            slice.fill(value);
+            _ => slice.fill(value),
         }
 
         if self.config.sync_on_write {
@@ -1349,24 +1421,21 @@ where
         }
 
         let count = range.end - range.start;
-        let size_bytes = count * std::mem::size_of::<T>();
+        let mine = self
+            .mapped_slice(self.len)?
+            .get(range)
+            .ok_or_else(|| ZiporaError::invalid_data("Invalid range"))?;
+        let theirs = other
+            .mapped_slice(other.len)?
+            .get(..count)
+            .ok_or_else(|| ZiporaError::invalid_data("Invalid range"))?;
 
         // Use SIMD comparison for large ranges
-        if size_bytes >= 64 {
-            // SAFETY: range.end <= self.len(), data_ptr valid, add(range.start) + size_bytes within allocation
-            let self_slice = unsafe {
-                let ptr = self.data_ptr()?.as_ptr().add(range.start);
-                std::slice::from_raw_parts(ptr as *const u8, size_bytes)
-            };
-            // SAFETY: range.len() <= other.len() checked above, other.data_ptr valid for size_bytes
-            let other_slice = unsafe {
-                std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
-            };
-
-            Ok(fast_compare(self_slice, other_slice) == 0)
+        if std::mem::size_of_val(mine) >= 64 {
+            Ok(fast_compare(pod_bytes(mine)?, pod_bytes(theirs)?) == 0)
         } else {
             // Standard comparison for small ranges
-            Ok(self.as_slice()[range] == other.as_slice()[0..count])
+            Ok(mine == theirs)
         }
     }
 
@@ -2381,6 +2450,448 @@ mod tests {
             matches!(result, Ok(Err(_))),
             "expected Err, got {:?}",
             result
+        );
+    }
+
+    /// Element type aligned beyond the 4 KiB page size: its data offset is
+    /// 8192, so its data is misaligned whenever the kernel places a mapping
+    /// on an odd 4 KiB page.
+    #[repr(C, align(8192))]
+    #[derive(Clone, Copy)]
+    struct Page8k([u8; 8192]);
+    // SAFETY: a single `[u8; 8192]` field with `align(8192)`: size 8192, no
+    // padding, and the all-zero bit pattern is a valid value.
+    unsafe impl bytemuck::Zeroable for Page8k {}
+    // SAFETY: as above, every bit pattern is a valid value; `Page8k` is
+    // `Copy + 'static` and holds no pointers or padding bytes.
+    unsafe impl bytemuck::Pod for Page8k {}
+
+    /// Message of a caught panic, for assertion output.
+    fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+        payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_string())
+    }
+
+    /// C9.1 (alignment check): `create`, `open` and a growth/shrink remap
+    /// must each report `ZiporaError::Misaligned` when the element data
+    /// would be misaligned, and a failed remap must leave the vector
+    /// unchanged. The unfixed code reported `InvalidData`, and a failed
+    /// remap left the header pointer set but the data pointer unset, so
+    /// the next `as_slice()` panicked in its `expect`.
+    ///
+    /// The kernel chooses mapping addresses, so each phase retries (up to
+    /// 256 times) and holds a one-page anonymous mapping between attempts
+    /// to move the next mapping by a page.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_1_misaligned_mapping_reported_and_harmless() {
+        // SAFETY: sysconf has no preconditions; _SC_PAGESIZE is a valid name.
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let page = match usize::try_from(page) {
+            Ok(page) if page > 0 && page < 8192 => page,
+            // Pages of 8 KiB or more align every mapping for Page8k.
+            _ => return,
+        };
+        const ATTEMPTS: usize = 256;
+        let dir = tempdir().unwrap();
+        let mut fillers = Vec::new();
+        let mut keep: Vec<MmapVec<Page8k>> = Vec::new();
+
+        let mut create_err = None;
+        let mut aligned = None;
+        for i in 0..ATTEMPTS {
+            let path = dir.path().join(format!("create{i}.mmap"));
+            let config = MmapVecConfig::default().with_initial_capacity(1);
+            match MmapVec::<Page8k>::create(path, config) {
+                Ok(v) if aligned.is_none() => aligned = Some(v),
+                Ok(v) => keep.push(v),
+                Err(e) => {
+                    if create_err.is_none() {
+                        create_err = Some(e);
+                    }
+                }
+            }
+            if create_err.is_some() && aligned.is_some() {
+                break;
+            }
+            fillers.push(MmapMut::map_anon(page).unwrap());
+        }
+
+        let path = dir.path().join("handmade.mmap");
+        let mut header = MmapVecHeader::new::<Page8k>();
+        header.set_length(1);
+        header.set_capacity(1);
+        let mut file = vec![0xABu8; 2 * 8192];
+        file[..HEADER_SIZE].copy_from_slice(&header.data);
+        file[HEADER_SIZE..8192].fill(0);
+        std::fs::write(&path, &file).unwrap();
+        let mut open_err = None;
+        let mut opened = None;
+        for _ in 0..ATTEMPTS {
+            match MmapVec::<Page8k>::open(&path, MmapVecConfig::default()) {
+                Ok(v) => {
+                    if opened.is_none() {
+                        opened = Some((v.len(), v.get(0).map(|e| e.0[0])));
+                    }
+                    keep.push(v);
+                }
+                Err(e) => {
+                    if open_err.is_none() {
+                        open_err = Some(e);
+                    }
+                }
+            }
+            if open_err.is_some() && opened.is_some() {
+                break;
+            }
+            fillers.push(MmapMut::map_anon(page).unwrap());
+        }
+
+        let mut remap_err = None;
+        let mut after = None;
+        if let Some(mut v) = aligned {
+            v.push(Page8k([0xAB; 8192])).unwrap();
+            for _ in 0..ATTEMPTS {
+                let step = if v.capacity() > 1 {
+                    v.shrink_to_fit()
+                } else {
+                    v.reserve(2)
+                };
+                if let Err(e) = step {
+                    remap_err = Some(e);
+                    break;
+                }
+                fillers.push(MmapMut::map_anon(page).unwrap());
+            }
+            after = Some(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    (v.len(), v.as_slice().len(), v.get(0).map(|e| e.0[0]))
+                }))
+                .map_err(|p| panic_message(&*p)),
+            );
+            keep.push(v);
+        }
+
+        let page_misaligned = |e: &Option<ZiporaError>| {
+            matches!(e, Some(ZiporaError::Misaligned { required: 8192, .. }))
+        };
+        assert!(
+            page_misaligned(&create_err)
+                && page_misaligned(&open_err)
+                && page_misaligned(&remap_err)
+                && opened == Some((1, Some(0xAB)))
+                && after == Some(Ok((1, 1, Some(0xAB)))),
+            "create: {:?}\nopen: {:?} (aligned open: {:?})\nremap: {:?}\nafter the failed remap: {:?}",
+            create_err,
+            open_err,
+            opened,
+            remap_err,
+            after
+        );
+    }
+
+    /// C9.1 F2: `len()` and `capacity()` re-read the shared header on
+    /// every call, so a foreign write to the header widened every later
+    /// view past the mapping. Each handle must keep its own validated
+    /// length and capacity.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f2_header_rewrite_does_not_widen_views() {
+        use std::os::unix::fs::FileExt;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("f2a.mmap");
+        let config = MmapVecConfig::default().with_initial_capacity(4);
+        let mut v = MmapVec::<u64>::create(&path, config).unwrap();
+        v.push(7).unwrap();
+
+        // Another writer scribbles over length and capacity in the header.
+        let file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.write_all_at(&500u64.to_le_bytes(), 16).unwrap();
+        file.write_all_at(&500u64.to_le_bytes(), 24).unwrap();
+        drop(file);
+
+        // Checked before any element access: on the unfixed code len() and
+        // capacity() now read 500, and as_slice() would read past the
+        // 112-byte file.
+        assert!(
+            v.len() <= 4 && v.capacity() <= 4,
+            "len {} / capacity {} widened by a foreign header write",
+            v.len(),
+            v.capacity()
+        );
+        assert_eq!(v.as_slice(), &[7]);
+        assert_eq!(v.get(1), None);
+        v.push(8).unwrap();
+        assert_eq!(v.as_slice(), &[7, 8]);
+    }
+
+    /// C9.1 F2: growth through a second handle rewrote the shared header,
+    /// and the first handle then reported the second handle's capacity
+    /// over its own, smaller mapping. Growth through either handle must
+    /// also never shrink a file the other one already grew.
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f2_second_handle_growth_does_not_widen_first_handle() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("f2b.mmap");
+        let config = MmapVecConfig::default().with_initial_capacity(4);
+        let mut a = MmapVec::<u64>::create(&path, config).unwrap();
+        a.push(1).unwrap();
+
+        let mut b = MmapVec::<u64>::open(&path, MmapVecConfig::default()).unwrap();
+        b.reserve(100_000).unwrap();
+        assert!(
+            a.capacity() <= 4 && a.len() <= a.capacity(),
+            "first handle reports len {} / capacity {} over a 4-element mapping",
+            a.len(),
+            a.capacity()
+        );
+        drop(b);
+
+        a.push(2).unwrap();
+        assert_eq!(a.as_slice(), &[1, 2]);
+        let grown_len = std::fs::metadata(&path).unwrap().len();
+        a.reserve(10).unwrap();
+        assert!(std::fs::metadata(&path).unwrap().len() >= grown_len);
+        assert_eq!(a.as_slice(), &[1, 2]);
+    }
+
+    /// C9.1 F3: growth re-opened the backing file by path. Once the path
+    /// had been replaced, it resized the vector's own (unlinked) file but
+    /// then mapped, and wrote a header into, whatever file now lived at
+    /// the path. Growth must keep using the vector's own file handle.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f3_growth_never_reopens_path() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("f3.mmap");
+        let config = MmapVecConfig::default().with_initial_capacity(4);
+        let mut v = MmapVec::<u64>::create(&path, config).unwrap();
+        v.push(42).unwrap();
+
+        // Someone replaces the file at our path.
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, [0u8; 80]).unwrap();
+        let grown = v.reserve(10_000);
+
+        // Checked before any element access: on the unfixed code the vector
+        // now maps the 80-byte stranger while claiming 10 001 elements.
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            vec![0u8; 80],
+            "growth wrote into the file that now lives at the path"
+        );
+        grown.unwrap();
+        assert!(v.capacity() >= 10_000);
+        v.push(100).unwrap();
+        assert_eq!(v.get(0), Some(&42));
+        assert_eq!(v.get(1), Some(&100));
+    }
+
+    /// C9.1 F6: `reserve` added `len + additional` unchecked, so an
+    /// oversized request (direct, or through `extend` trusting an
+    /// iterator's `size_hint`) overflowed: a panic in debug builds, a
+    /// wrapped and silently ignored request in release builds. It must be
+    /// an `Err` that leaves the vector unchanged.
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f6_reserve_and_extend_overflow_are_errors() {
+        /// Yields 1, 2, 3 but claims at least `usize::MAX` items.
+        struct Liar(u64);
+        impl Iterator for Liar {
+            type Item = u64;
+            fn next(&mut self) -> Option<u64> {
+                self.0 += 1;
+                (self.0 <= 3).then_some(self.0)
+            }
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                (usize::MAX, None)
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let config = MmapVecConfig::default().with_initial_capacity(4);
+        let mut v = MmapVec::<u64>::create(dir.path().join("f6.mmap"), config).unwrap();
+        v.push(1).unwrap();
+        let reserve =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| v.reserve(usize::MAX)));
+        let extend = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| v.extend(Liar(0))));
+        assert!(
+            matches!(reserve, Ok(Err(_))) && matches!(extend, Ok(Err(_))),
+            "reserve: {:?}\nextend: {:?}",
+            reserve.map_err(|p| panic_message(&*p)),
+            extend.map_err(|p| panic_message(&*p))
+        );
+        assert_eq!(v.as_slice(), &[1]);
+    }
+
+    /// C9.1 F9: for a zero-sized `T` the file never limits capacity, so a
+    /// header may declare `u64::MAX` elements. `push`, `reserve` and
+    /// `push_bulk_simd` then computed `len + n` unchecked (a panic in
+    /// debug builds). They must return `Err`.
+    #[test]
+    #[cfg(all(unix, target_pointer_width = "64"))]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f9_zst_length_overflow_is_error() {
+        use std::os::unix::fs::FileExt;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("zst.mmap");
+        drop(MmapVec::<()>::create(&path, MmapVecConfig::default()).unwrap());
+        let file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.write_all_at(&u64::MAX.to_le_bytes(), 16).unwrap();
+        file.write_all_at(&u64::MAX.to_le_bytes(), 24).unwrap();
+        drop(file);
+
+        let mut v = MmapVec::<()>::open(&path, MmapVecConfig::default()).unwrap();
+        assert_eq!(v.len(), usize::MAX);
+        let push = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| v.push(())));
+        let reserve = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| v.reserve(1)));
+        let bulk =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| v.push_bulk_simd(&[(); 2])));
+        assert!(
+            matches!(push, Ok(Err(_)))
+                && matches!(reserve, Ok(Err(_)))
+                && matches!(bulk, Ok(Err(_))),
+            "push: {:?}\nreserve: {:?}\npush_bulk_simd: {:?}",
+            push.map_err(|p| panic_message(&*p)),
+            reserve.map_err(|p| panic_message(&*p)),
+            bulk.map_err(|p| panic_message(&*p))
+        );
+        assert_eq!(v.len(), usize::MAX);
+    }
+
+    /// Guard for the C9.1 `open` rewrite (passes before and after): a
+    /// zero-length file has no header and must be rejected.
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f2_guard_open_rejects_zero_length_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("empty.mmap");
+        std::fs::write(&path, b"").unwrap();
+        assert!(MmapVec::<u64>::open(&path, MmapVecConfig::default()).is_err());
+    }
+
+    /// Guard for the C9.1 `open` rewrite (passes before and after): a
+    /// header declaring more capacity than the file holds must be
+    /// rejected.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f2_guard_open_rejects_header_capacity_beyond_file() {
+        use std::os::unix::fs::FileExt;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("short.mmap");
+        let config = MmapVecConfig::default().with_initial_capacity(4);
+        drop(MmapVec::<u64>::create(&path, config).unwrap());
+        let file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.write_all_at(&500u64.to_le_bytes(), 16).unwrap();
+        file.write_all_at(&500u64.to_le_bytes(), 24).unwrap();
+        drop(file);
+        assert!(MmapVec::<u64>::open(&path, MmapVecConfig::default()).is_err());
+    }
+
+    /// C9.1 (alignment check), GREEN-only: `mapped_capacity_for` is new in
+    /// this commit. It is pure address arithmetic, so it also runs under
+    /// Miri, which cannot execute the real-file tests.
+    #[test]
+    fn test_c9_1_mapped_capacity_for_checks_layout() {
+        // u64: data at offset 80; 47 payload bytes hold 5 whole elements.
+        assert_eq!(
+            MmapVec::<u64>::mapped_capacity_for(0x10000, 80 + 5 * 8 + 7).ok(),
+            Some(5)
+        );
+        assert!(matches!(
+            MmapVec::<u64>::mapped_capacity_for(0x10000, 79),
+            Err(ZiporaError::InvalidData { .. })
+        ));
+        assert!(matches!(
+            MmapVec::<u64>::mapped_capacity_for(0x10004, 200),
+            Err(ZiporaError::Misaligned {
+                address: 0x10054,
+                required: 8,
+                ..
+            })
+        ));
+        // Page8k: data at offset 8192, aligned only on even 4 KiB pages.
+        assert_eq!(MmapVec::<Page8k>::data_offset(), 8192);
+        assert_eq!(
+            MmapVec::<Page8k>::mapped_capacity_for(0x4000, 3 * 8192).ok(),
+            Some(2)
+        );
+        assert!(matches!(
+            MmapVec::<Page8k>::mapped_capacity_for(0x5000, 3 * 8192),
+            Err(ZiporaError::Misaligned {
+                address: 0x7000,
+                required: 8192,
+                ..
+            })
+        ));
+        // Zero-sized elements: the mapping never limits the capacity.
+        assert_eq!(
+            MmapVec::<()>::mapped_capacity_for(0x1000, 80).ok(),
+            Some(usize::MAX)
+        );
+        // The data address itself must not overflow.
+        assert!(MmapVec::<u8>::mapped_capacity_for(usize::MAX - 10, 100).is_err());
+    }
+
+    /// C9.1 F5, GREEN-only: `counts_from_header` is new in this commit. It
+    /// validates the header and checks the declared capacity against the
+    /// mapping. Its `usize::try_from` conversions can only fail where
+    /// `usize` is narrower than 64 bits; the zero-sized case below asserts
+    /// that rejection on such targets and the full value on 64-bit ones.
+    #[test]
+    fn test_c9_f5_counts_from_header_validates() {
+        let header = |len: u64, cap: u64| {
+            let mut h = MmapVecHeader::new::<u64>();
+            h.set_length(len);
+            h.set_capacity(cap);
+            h
+        };
+        let counts =
+            |h: &MmapVecHeader, mapped_cap| MmapVec::<u64>::counts_from_header(h, mapped_cap).ok();
+        assert_eq!(counts(&header(3, 5), 5), Some((3, 5)));
+        assert_eq!(counts(&header(3, 5), 9), Some((3, 5)));
+        assert_eq!(counts(&header(3, 5), 4), None, "capacity beyond mapping");
+        assert_eq!(counts(&header(6, 5), 9), None, "length beyond capacity");
+        let mut bad_magic = header(3, 5);
+        bad_magic.data[0] ^= 1;
+        assert_eq!(counts(&bad_magic, 9), None, "bad magic");
+        assert!(
+            MmapVec::<u32>::counts_from_header(&header(3, 5), 9).is_err(),
+            "element size mismatch"
+        );
+
+        let mut zst = MmapVecHeader::new::<()>();
+        zst.set_length(u64::MAX);
+        zst.set_capacity(u64::MAX);
+        let zst_counts = MmapVec::<()>::counts_from_header(&zst, usize::MAX).ok();
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(zst_counts, Some((usize::MAX, usize::MAX)));
+        #[cfg(not(target_pointer_width = "64"))]
+        assert_eq!(zst_counts, None);
+    }
+
+    /// Guard (passes before and after C9.1): the file size for a capacity
+    /// is overflow-checked. Pure arithmetic, so it also runs under Miri.
+    #[test]
+    fn test_c9_f6_guard_calculate_file_size_is_checked() {
+        assert_eq!(MmapVec::<u64>::calculate_file_size(3).ok(), Some(104));
+        assert_eq!(MmapVec::<u8>::calculate_file_size(0).ok(), Some(80));
+        assert!(MmapVec::<u64>::calculate_file_size(usize::MAX).is_err());
+        assert!(MmapVec::<u8>::calculate_file_size(usize::MAX).is_err());
+        assert_eq!(
+            MmapVec::<()>::calculate_file_size(usize::MAX).ok(),
+            Some(80)
         );
     }
 }
