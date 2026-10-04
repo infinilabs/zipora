@@ -148,7 +148,19 @@ impl ZeroCopyBuffer {
     }
 
     /// Fill the buffer from a reader, returning the number of bytes read
+    ///
+    /// Makes exactly one `read` call (after compacting a full buffer). Ok(0)
+    /// means the reader is at end of stream or the buffer has no free space.
+    /// A reader error is returned as [`ZiporaError::Io`] with its original
+    /// [`io::ErrorKind`] (so `Interrupted` can be retried and `WouldBlock`
+    /// recognised), and the buffered data is left unchanged.
     pub fn fill_from<R: Read>(&mut self, reader: &mut R) -> Result<usize> {
+        self.fill_once(reader).map_err(ZiporaError::Io)
+    }
+
+    /// One `read` call into the free space; the reader's error is returned
+    /// as is.
+    fn fill_once<R: Read>(&mut self, reader: &mut R) -> io::Result<usize> {
         if self.is_full() {
             self.compact();
         }
@@ -158,25 +170,29 @@ impl ZeroCopyBuffer {
             return Ok(0);
         }
 
-        let bytes_read = reader
-            .read(writable)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to fill buffer: {}", e)))?;
-
+        let bytes_read = reader.read(writable)?;
         self.write_pos += bytes_read;
         Ok(bytes_read)
     }
 
     /// Drain the buffer to a writer, returning the number of bytes written
+    ///
+    /// Makes exactly one `write` call. A writer error is returned as
+    /// [`ZiporaError::Io`] with its original [`io::ErrorKind`], and the
+    /// buffered data is left unchanged.
     pub fn drain_to<W: Write>(&mut self, writer: &mut W) -> Result<usize> {
+        self.drain_once(writer).map_err(ZiporaError::Io)
+    }
+
+    /// One `write` call from the readable data; the writer's error is
+    /// returned as is.
+    fn drain_once<W: Write>(&mut self, writer: &mut W) -> io::Result<usize> {
         let readable = self.readable_slice();
         if readable.is_empty() {
             return Ok(0);
         }
 
-        let bytes_written = writer
-            .write(readable)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to drain buffer: {}", e)))?;
-
+        let bytes_written = writer.write(readable)?;
         self.read_pos += bytes_written;
         Ok(bytes_written)
     }
@@ -289,27 +305,35 @@ impl<R: Read> ZeroCopyReader<R> {
 
     /// Ensure the buffer has at least `len` bytes available, or is full when
     /// `len` exceeds its capacity
+    ///
+    /// Retries reads interrupted by a signal. Any other reader error is
+    /// returned as [`ZiporaError::Io`] with its original kind; the data
+    /// buffered so far stays in the buffer.
     fn ensure_buffered(&mut self, len: usize) -> Result<()> {
         // A request larger than the buffer can only be served with one buffer's
         // worth of data. Aiming for more would find the buffer full, get Ok(0)
-        // from `fill_from` for lack of space and mistake that for the end of
+        // from `fill_once` for lack of space and mistake that for the end of
         // the stream (C9 Z1). Below the capacity there is always free space
-        // after `fill_from` compacts, so Ok(0) here really means end of stream.
+        // after `fill_once` compacts, so Ok(0) here really means end of stream.
         let target = len.min(self.buffer.capacity());
         while self.buffer.available() < target && !self.eof {
-            let bytes_read = self
-                .buffer
-                .fill_from(&mut self.inner)
-                .map_err(|e| ZiporaError::io_error(format!("Fill buffer failed: {}", e)))?;
-            if bytes_read == 0 {
-                self.eof = true;
-                break;
+            match self.buffer.fill_once(&mut self.inner) {
+                Ok(0) => {
+                    self.eof = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(ZiporaError::Io(e)),
             }
         }
         Ok(())
     }
 
     /// Read data with zero-copy optimization when possible
+    ///
+    /// Reads interrupted by a signal are retried; any other reader error is
+    /// returned as [`ZiporaError::Io`] with its original kind.
     pub fn read_optimized(&mut self, buf: &mut [u8]) -> Result<usize> {
         // Try zero-copy first
         if let Some(zc_data) = self.zc_read(buf.len())? {
@@ -320,8 +344,12 @@ impl<R: Read> ZeroCopyReader<R> {
         }
 
         // Fall back to normal read
-        self.read(buf)
-            .map_err(|e| ZiporaError::io_error(format!("Read failed: {}", e)))
+        loop {
+            match self.read(buf) {
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                result => return result.map_err(ZiporaError::Io),
+            }
+        }
     }
 
     /// Peek at data without consuming it
@@ -335,6 +363,11 @@ impl<R: Read> ZeroCopyReader<R> {
     }
 
     /// Skip the specified number of bytes efficiently
+    ///
+    /// Reads interrupted by a signal are retried. If the stream ends first
+    /// the error has kind [`io::ErrorKind::UnexpectedEof`]; any other reader
+    /// error keeps its kind. As with [`Read::read_exact`], how many bytes
+    /// were skipped before an error is unspecified.
     pub fn skip_bytes(&mut self, mut len: usize) -> Result<()> {
         // First, skip from buffer if available
         let buffered = self.buffer.available().min(len);
@@ -347,18 +380,17 @@ impl<R: Read> ZeroCopyReader<R> {
         let mut temp_buf = vec![0u8; 8192];
         while len > 0 {
             let to_skip = len.min(temp_buf.len());
-            let bytes_read = self
-                .inner
-                .read(&mut temp_buf[..to_skip])
-                .map_err(|e| ZiporaError::io_error(format!("Failed to skip bytes: {}", e)))?;
-
-            if bytes_read == 0 {
-                return Err(ZiporaError::io_error(
-                    "Unexpected end of stream while skipping",
-                ));
+            match self.inner.read(&mut temp_buf[..to_skip]) {
+                Ok(0) => {
+                    return Err(ZiporaError::Io(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "unexpected end of stream while skipping",
+                    )));
+                }
+                Ok(bytes_read) => len -= bytes_read,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(ZiporaError::Io(e)),
             }
-
-            len -= bytes_read;
         }
 
         Ok(())
@@ -505,12 +537,11 @@ impl<R: Read> Read for ZeroCopyReader<R> {
             return self.inner.read(buf);
         }
 
-        // Fill buffer and read from it
+        // Fill buffer and read from it. This is a single `read` call: its
+        // error, Interrupted included, goes to the caller with its kind, as
+        // with std's BufReader, so `read_exact` and friends can retry it.
         if !self.eof {
-            let bytes_read = self
-                .buffer
-                .fill_from(&mut self.inner)
-                .map_err(io::Error::other)?;
+            let bytes_read = self.buffer.fill_once(&mut self.inner)?;
             if bytes_read == 0 {
                 self.eof = true;
             }
@@ -585,17 +616,22 @@ impl<W: Write> ZeroCopyWriter<W> {
     }
 
     /// Flush the internal buffer to the underlying writer
+    ///
+    /// Retries writes interrupted by a signal. Any other writer error is
+    /// returned with its kind, and the bytes not yet written stay buffered,
+    /// so a later flush (after `WouldBlock`, say) writes each byte once.
     fn flush_buffer(&mut self) -> io::Result<()> {
         while !self.buffer.is_empty() {
-            let bytes_written = self
-                .buffer
-                .drain_to(&mut self.inner)
-                .map_err(io::Error::other)?;
-            if bytes_written == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    "Failed to drain buffer completely",
-                ));
+            match self.buffer.drain_once(&mut self.inner) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "Failed to drain buffer completely",
+                    ));
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
             }
         }
         self.buffer.reset();
@@ -638,8 +674,7 @@ impl<W: Write> Write for ZeroCopyWriter<W> {
 impl<W: Write> ZeroCopyWrite for ZeroCopyWriter<W> {
     fn zc_write(&mut self, len: usize) -> Result<Option<&mut [u8]>> {
         if self.buffer.write_available() < len {
-            self.flush_buffer()
-                .map_err(|e| ZiporaError::io_error(format!("Flush failed: {}", e)))?;
+            self.flush_buffer().map_err(ZiporaError::Io)?;
         }
         self.buffer.zc_write(len)
     }
@@ -654,8 +689,7 @@ impl<W: Write> ZeroCopyWrite for ZeroCopyWriter<W> {
 
     fn zc_ensure_write(&mut self, len: usize) -> Result<usize> {
         if self.buffer.write_available() < len {
-            self.flush_buffer()
-                .map_err(|e| ZiporaError::io_error(format!("Flush failed: {}", e)))?;
+            self.flush_buffer().map_err(ZiporaError::Io)?;
         }
         Ok(self.buffer.write_available().min(len))
     }
@@ -1379,5 +1413,238 @@ mod tests {
         let out = drain_in_small_reads(&mut r, first);
         assert_eq!(out.len(), data.len(), "stream truncated after read_optimized");
         assert_eq!(out, data);
+    }
+
+    /// A reader over `data` that returns at most `chunk` bytes per call and
+    /// fails with `kind` on every other call (starting with the first when
+    /// `fail_first` is set), like a source hit by signals or a non-blocking
+    /// socket that keeps running dry.
+    struct FlakyReader {
+        data: Vec<u8>,
+        pos: usize,
+        chunk: usize,
+        kind: io::ErrorKind,
+        fail_next: bool,
+    }
+
+    impl FlakyReader {
+        fn new(data: &[u8], chunk: usize, kind: io::ErrorKind, fail_first: bool) -> Self {
+            Self {
+                data: data.to_vec(),
+                pos: 0,
+                chunk,
+                kind,
+                fail_next: fail_first,
+            }
+        }
+    }
+
+    impl Read for FlakyReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let fail = self.fail_next;
+            self.fail_next = !fail;
+            if fail {
+                return Err(io::Error::new(self.kind, "flaky reader"));
+            }
+            let n = buf.len().min(self.chunk).min(self.data.len() - self.pos);
+            buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
+        }
+    }
+
+    /// A writer that accepts at most `chunk` bytes per call and fails with
+    /// `kind` on every other call, starting with the first.
+    struct FlakyWriter {
+        written: Vec<u8>,
+        chunk: usize,
+        kind: io::ErrorKind,
+        fail_next: bool,
+    }
+
+    impl FlakyWriter {
+        fn new(chunk: usize, kind: io::ErrorKind) -> Self {
+            Self {
+                written: Vec::new(),
+                chunk,
+                kind,
+                fail_next: true,
+            }
+        }
+    }
+
+    impl Write for FlakyWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let fail = self.fail_next;
+            self.fail_next = !fail;
+            if fail {
+                return Err(io::Error::new(self.kind, "flaky writer"));
+            }
+            let n = buf.len().min(self.chunk);
+            self.written.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The `io::ErrorKind` carried by a `ZiporaError::Io`, `None` for any
+    /// other variant.
+    fn io_kind(e: &ZiporaError) -> Option<io::ErrorKind> {
+        match e {
+            ZiporaError::Io(e) => Some(e.kind()),
+            _ => None,
+        }
+    }
+
+    const Z2_DATA: &[u8] = b"abcdefgh";
+
+    #[test]
+    fn test_c9_z2_read_exact_retries_interrupted() {
+        // Regression (C9 Z2): the `Read` impl rewrapped every inner error as
+        // ErrorKind::Other, so `read_exact`, which retries only Interrupted,
+        // gave up at the first signal.
+        let inner = FlakyReader::new(Z2_DATA, 2, io::ErrorKind::Interrupted, true);
+        let mut r = ZeroCopyReader::with_capacity(inner, 1024).unwrap();
+        let mut buf = [0u8; 8];
+        if let Err(e) = r.read_exact(&mut buf) {
+            panic!("read_exact gave up with kind {:?}: {e}", e.kind());
+        }
+        assert_eq!(&buf, Z2_DATA);
+    }
+
+    #[test]
+    fn test_c9_z2_read_keeps_would_block_kind() {
+        // Non-blocking callers look for WouldBlock; it used to arrive as Other.
+        let inner = FlakyReader::new(Z2_DATA, 8, io::ErrorKind::WouldBlock, true);
+        let mut r = ZeroCopyReader::with_capacity(inner, 1024).unwrap();
+        let mut buf = [0u8; 8];
+        let err = r.read(&mut buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+        // Nothing was consumed: the next call delivers the data.
+        assert_eq!(r.read(&mut buf).unwrap(), 8);
+        assert_eq!(&buf, Z2_DATA);
+    }
+
+    #[test]
+    fn test_c9_z2_fill_loop_retries_interrupted() {
+        // The fill loop behind peek/zc_read/zc_ensure returned the first
+        // Interrupted as an error instead of retrying it.
+        let flaky = || {
+            let inner = FlakyReader::new(Z2_DATA, 2, io::ErrorKind::Interrupted, true);
+            ZeroCopyReader::with_capacity(inner, 1024).unwrap()
+        };
+        let mut r = flaky();
+        assert_eq!(r.peek(8).unwrap(), Z2_DATA, "peek");
+        let mut r = flaky();
+        assert_eq!(r.zc_read(8).unwrap(), Some(Z2_DATA), "zc_read");
+        let mut r = flaky();
+        assert_eq!(r.zc_ensure(8).unwrap(), 8, "zc_ensure");
+        assert_eq!(r.zc_read(8).unwrap(), Some(Z2_DATA));
+    }
+
+    #[test]
+    fn test_c9_z2_read_optimized_retries_interrupted() {
+        // Through the buffer...
+        let inner = FlakyReader::new(Z2_DATA, 2, io::ErrorKind::Interrupted, true);
+        let mut r = ZeroCopyReader::with_capacity(inner, 1024).unwrap();
+        let mut buf = [0u8; 8];
+        assert_eq!(r.read_optimized(&mut buf).unwrap(), 8);
+        assert_eq!(&buf, Z2_DATA);
+        // ...and through the fallback `read`, which a zero-capacity reader
+        // always takes.
+        let inner = FlakyReader::new(Z2_DATA, 2, io::ErrorKind::Interrupted, true);
+        let mut r = ZeroCopyReader::with_capacity(inner, 0).unwrap();
+        let mut buf = [0u8; 8];
+        assert_eq!(r.read_optimized(&mut buf).unwrap(), 2);
+        assert_eq!(&buf[..2], b"ab");
+    }
+
+    #[test]
+    fn test_c9_z2_skip_bytes_retries_interrupted() {
+        let inner = FlakyReader::new(Z2_DATA, 2, io::ErrorKind::Interrupted, true);
+        let mut r = ZeroCopyReader::with_capacity(inner, 1024).unwrap();
+        r.skip_bytes(4).unwrap();
+        let mut rest = Vec::new();
+        r.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, b"efgh");
+    }
+
+    #[test]
+    fn test_c9_z2_skip_bytes_past_end_is_unexpected_eof() {
+        // Running out of data mid-skip is what `read_exact` reports as
+        // UnexpectedEof; it used to be Other.
+        let mut r = ZeroCopyReader::with_capacity(Cursor::new(Z2_DATA.to_vec()), 4).unwrap();
+        let err = r.skip_bytes(100).unwrap_err();
+        assert_eq!(io_kind(&err), Some(io::ErrorKind::UnexpectedEof));
+    }
+
+    #[test]
+    fn test_c9_z2_zero_copy_api_keeps_would_block_kind() {
+        let would_block = || {
+            let inner = FlakyReader::new(Z2_DATA, 8, io::ErrorKind::WouldBlock, true);
+            ZeroCopyReader::with_capacity(inner, 1024).unwrap()
+        };
+        let wb = Some(io::ErrorKind::WouldBlock);
+        let mut r = would_block();
+        assert_eq!(io_kind(&r.peek(8).unwrap_err()), wb, "peek");
+        assert_eq!(r.peek(8).unwrap(), Z2_DATA, "peek after WouldBlock");
+        let mut r = would_block();
+        assert_eq!(io_kind(&r.zc_ensure(8).unwrap_err()), wb, "zc_ensure");
+        let mut r = would_block();
+        assert_eq!(io_kind(&r.zc_read(8).unwrap_err()), wb, "zc_read");
+        let mut r = would_block();
+        let err = r.read_optimized(&mut [0u8; 8]).unwrap_err();
+        assert_eq!(io_kind(&err), wb, "read_optimized");
+        let mut r = would_block();
+        assert_eq!(io_kind(&r.skip_bytes(8).unwrap_err()), wb, "skip_bytes");
+
+        let mut buf = ZeroCopyBuffer::new(16).unwrap();
+        let mut inner = FlakyReader::new(Z2_DATA, 8, io::ErrorKind::WouldBlock, true);
+        assert_eq!(io_kind(&buf.fill_from(&mut inner).unwrap_err()), wb, "fill_from");
+        assert_eq!(buf.available(), 0, "a failed fill leaves the buffer as it was");
+        assert_eq!(buf.fill_from(&mut inner).unwrap(), 8);
+        let mut out = FlakyWriter::new(8, io::ErrorKind::WouldBlock);
+        assert_eq!(io_kind(&buf.drain_to(&mut out).unwrap_err()), wb, "drain_to");
+        assert_eq!(buf.available(), 8, "a failed drain leaves the buffer as it was");
+        assert_eq!(buf.drain_to(&mut out).unwrap(), 8);
+        assert_eq!(out.written, Z2_DATA);
+    }
+
+    #[test]
+    fn test_c9_z2_flush_retries_interrupted() {
+        let inner = FlakyWriter::new(3, io::ErrorKind::Interrupted);
+        let mut w = ZeroCopyWriter::with_capacity(inner, 1024).unwrap();
+        w.write_all(b"hello world").unwrap();
+        if let Err(e) = w.flush() {
+            panic!("flush gave up with kind {:?}: {e}", e.kind());
+        }
+        assert_eq!(w.get_ref().written, b"hello world");
+    }
+
+    #[test]
+    fn test_c9_z2_flush_keeps_would_block_kind_and_data() {
+        let inner = FlakyWriter::new(4, io::ErrorKind::WouldBlock);
+        let mut w = ZeroCopyWriter::with_capacity(inner, 1024).unwrap();
+        w.write_all(b"0123456789").unwrap();
+        let mut would_blocks = 0;
+        while let Err(e) = w.flush() {
+            assert_eq!(e.kind(), io::ErrorKind::WouldBlock);
+            would_blocks += 1;
+            assert!(would_blocks <= 10, "flush makes no progress");
+        }
+        assert_eq!(would_blocks, 3, "one WouldBlock before each 4-byte write");
+        assert_eq!(w.get_ref().written, b"0123456789", "every byte written once");
+
+        // The zero-copy write API reports the same kind when it has to flush.
+        let inner = FlakyWriter::new(4, io::ErrorKind::WouldBlock);
+        let mut w = ZeroCopyWriter::with_capacity(inner, 16).unwrap();
+        w.write_all(b"0123456").unwrap();
+        w.write_all(b"0123456").unwrap();
+        let wb = Some(io::ErrorKind::WouldBlock);
+        assert_eq!(io_kind(&w.zc_write(4).unwrap_err()), wb, "zc_write");
+        assert_eq!(io_kind(&w.zc_ensure_write(4).unwrap_err()), wb, "zc_ensure_write");
     }
 }
