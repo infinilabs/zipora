@@ -132,6 +132,17 @@ pub enum ZiporaError {
         /// Error message describing the invalid state
         message: String,
     },
+
+    /// Address or offset not aligned for the type it would be viewed as
+    #[error("Misaligned access: {context} at {address:#x} requires alignment {required}")]
+    Misaligned {
+        /// The offending address (or byte offset)
+        address: usize,
+        /// The alignment required by the target type, in bytes
+        required: usize,
+        /// What was about to be viewed (e.g. "MmapVec element data")
+        context: String,
+    },
 }
 
 impl ZiporaError {
@@ -254,6 +265,16 @@ impl ZiporaError {
         }
     }
 
+    /// Create a misaligned-access error: `address` (or byte offset) is not a
+    /// multiple of `required`, the alignment of the type it would be viewed as
+    pub fn misaligned<S: Into<String>>(address: usize, required: usize, context: S) -> Self {
+        Self::Misaligned {
+            address,
+            required,
+            context: context.into(),
+        }
+    }
+
     /// Check if this is a recoverable error
     pub fn is_recoverable(&self) -> bool {
         match self {
@@ -274,6 +295,7 @@ impl ZiporaError {
             Self::InvalidParameter { .. } => false,
             Self::InvalidOperation { .. } => false,
             Self::InvalidState { .. } => false,
+            Self::Misaligned { .. } => false,
             #[cfg(feature = "serde")]
             Self::Serialization(_) => false,
         }
@@ -299,6 +321,7 @@ impl ZiporaError {
             Self::InvalidParameter { .. } => "parameter",
             Self::InvalidOperation { .. } => "operation",
             Self::InvalidState { .. } => "state",
+            Self::Misaligned { .. } => "alignment",
             #[cfg(feature = "serde")]
             Self::Serialization(_) => "serialization",
         }
@@ -529,5 +552,34 @@ mod tests {
 
         let display = format!("{}", zipora_error);
         assert!(display.contains("Serialization error"));
+    }
+
+    /// C9.1: the alignment check in front of every cast from mapped bytes to
+    /// `&T`/`&[T]` reports its own variant, so callers can tell a misaligned
+    /// view from corrupt data.
+    #[test]
+    fn test_c9_misaligned_error_variant() {
+        let err = ZiporaError::misaligned(0x1004, 8, "MmapVec element data");
+        match &err {
+            ZiporaError::Misaligned {
+                address,
+                required,
+                context,
+            } => {
+                assert_eq!(*address, 0x1004);
+                assert_eq!(*required, 8);
+                assert_eq!(context, "MmapVec element data");
+            }
+            other => panic!("expected Misaligned, got {:?}", other),
+        }
+        assert_eq!(err.category(), "alignment");
+        assert!(!err.is_recoverable());
+
+        let display = format!("{}", err);
+        assert_eq!(
+            display,
+            "Misaligned access: MmapVec element data at 0x1004 requires alignment 8"
+        );
+        assert!(format!("{:?}", err).contains("Misaligned"));
     }
 }
