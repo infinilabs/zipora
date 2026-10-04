@@ -1,6 +1,4 @@
-// SAFETY comment to add after reading full file
 //! Memory-mapped vectors backed by memory-mapped files
-// SAFETY comment to add after reading full file
 //!
 //! This module provides vectors that are backed by memory-mapped files,
 //! enabling persistent storage and efficient large data handling.
@@ -45,16 +43,17 @@ struct FileMapping {
     map: MmapMut,
 }
 
-/// Header for memory-mapped vector files (80 bytes, little-endian on disk)
+/// Header for memory-mapped vector files (80 bytes, little-endian header fields on disk)
 ///
 /// Binary layout (C2.1):
 /// - `0..8`: `magic: u64` (`0x4D4D41505F564543` LE)
 /// - `8..10`: `version: u16` (`2` LE)
-/// - `10..12`: `flags: u16` (`0x0011` LE: bit 0 = little-endian, bit 4 = 64-bit header field width)
+/// - `10..12`: `flags: u16` (LE: bit 0 = little-endian host payload, bit 4 = 64-bit header field width; `0x0011` on little-endian, `0x0010` on big-endian)
 /// - `12..16`: `element_size: u32` (LE)
 /// - `16..24`: `length: u64` (LE)
 /// - `24..32`: `capacity: u64` (LE)
-/// - `32..80`: `reserved: [u8; 48]` (zero)
+/// - `32..40`: `extended_align: u64` (LE: `align_of::<T>()` when `align_of::<T>() > 16`, else `0` so `32..80` stays all-zero for standard alignments `<= 16` where `data_offset() == 80`)
+/// - `40..80`: `reserved: [u8; 40]` (zero)
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
 struct MmapVecHeader {
@@ -63,7 +62,11 @@ struct MmapVecHeader {
 
 const MMAP_VEC_MAGIC: u64 = 0x4D4D41505F564543; // "MMAP_VEC"
 const MMAP_VEC_VERSION: u16 = 2;
-const MMAP_VEC_FLAGS: u16 = 0x0011; // bit 0 = little-endian, bit 4 = 64-bit header field width
+const MMAP_VEC_FLAGS: u16 = if cfg!(target_endian = "little") {
+    0x0011
+} else {
+    0x0010
+}; // bit 0 = little-endian host payload, bit 4 = 64-bit header field width
 const HEADER_SIZE: usize = std::mem::size_of::<MmapVecHeader>();
 // The header is accessed in place at the (page-aligned) start of a mapping
 // and its fields are decoded byte-wise, so it needs no alignment.
@@ -82,12 +85,24 @@ fn pod_bytes_mut<T: Pod>(values: &mut [T]) -> Result<&mut [u8]> {
 }
 
 impl MmapVecHeader {
+    /// Alignment marker stored in bytes `32..40`: `0` when `align_of::<T>() <= 16`
+    /// (the 80-byte header is already a multiple of 16, so `data_offset() == 80`
+    /// and bytes `32..80` remain all-zero for v2 wire compatibility), and
+    /// `align_of::<T>() as u64` when `align_of::<T>() > 16` (where `data_offset()`
+    /// is padded past 80).
+    #[inline]
+    const fn required_extended_align<T>() -> u64 {
+        let align = std::mem::align_of::<T>();
+        if align > 16 { align as u64 } else { 0 }
+    }
+
     fn new<T>() -> Self {
         let mut data = [0u8; 80];
         data[0..8].copy_from_slice(&MMAP_VEC_MAGIC.to_le_bytes());
         data[8..10].copy_from_slice(&MMAP_VEC_VERSION.to_le_bytes());
         data[10..12].copy_from_slice(&MMAP_VEC_FLAGS.to_le_bytes());
         data[12..16].copy_from_slice(&(std::mem::size_of::<T>() as u32).to_le_bytes());
+        data[32..40].copy_from_slice(&Self::required_extended_align::<T>().to_le_bytes());
         Self { data }
     }
 
@@ -158,6 +173,20 @@ impl MmapVecHeader {
         self.data[24..32].copy_from_slice(&cap.to_le_bytes());
     }
 
+    #[inline]
+    fn extended_align(&self) -> u64 {
+        u64::from_le_bytes([
+            self.data[32],
+            self.data[33],
+            self.data[34],
+            self.data[35],
+            self.data[36],
+            self.data[37],
+            self.data[38],
+            self.data[39],
+        ])
+    }
+
     fn validate<T>(&self) -> Result<()> {
         if self.magic() != MMAP_VEC_MAGIC {
             return Err(ZiporaError::invalid_data("Invalid magic number"));
@@ -173,6 +202,9 @@ impl MmapVecHeader {
         if self.element_size() != std::mem::size_of::<T>() as u32 {
             return Err(ZiporaError::invalid_data("Element size mismatch"));
         }
+        if self.extended_align() != Self::required_extended_align::<T>() {
+            return Err(ZiporaError::invalid_data("Element alignment mismatch"));
+        }
         if self.length() > self.capacity() {
             return Err(ZiporaError::invalid_data("Length exceeds capacity"));
         }
@@ -187,13 +219,28 @@ pub struct MmapVecConfig {
     pub initial_capacity: usize,
     /// Growth factor when expanding (1.5 = 50% growth)
     pub growth_factor: f64,
-    /// Enable read-only mode
+    /// Enable read-only mode (valid only for [`MmapVec::open`]; rejected by
+    /// [`MmapVec::create`])
     pub read_only: bool,
-    /// Enable population of pages on creation (MAP_POPULATE on Linux)
+    /// Enable population of pages on creation (`MAP_POPULATE` on Linux)
     pub populate_pages: bool,
-    /// Advise the kernel to back the mapping with huge pages (MADV_HUGEPAGE on Linux)
+    /// Advise the kernel to back the mapping with transparent huge pages
+    /// (`MADV_HUGEPAGE` on Linux).
+    ///
+    /// Limitation: `MADV_HUGEPAGE` is a best-effort kernel hint that takes
+    /// effect on `tmpfs`/shared-memory mappings and on kernels with
+    /// file-backed transparent huge pages enabled; on regular filesystems
+    /// without file-THP support it is a silent no-op.
     pub use_huge_pages: bool,
-    /// Sync changes to disk immediately
+    /// Flush (`msync`) modified ranges and the header on mutating methods
+    /// that return `Result`.
+    ///
+    /// Limitation: direct writes through borrows returned by
+    /// [`MmapVec::get_mut`] or [`MmapVec::as_mut_slice`] land in the
+    /// `MAP_SHARED` OS page cache immediately but cannot trigger an automatic
+    /// `msync` when the borrow ends (call [`MmapVec::sync`] explicitly if
+    /// crash durability is required), and [`MmapVec::pop`] returns `Option<T>`
+    /// so any `msync` error from its header flush is ignored.
     pub sync_on_write: bool,
     /// Expected access pattern, forwarded to the kernel via madvise
     /// (Sequential/ReadHeavy -> MADV_SEQUENTIAL, Random -> MADV_RANDOM)
@@ -377,6 +424,32 @@ impl MmapVecStats {
 /// never read back. A header rewritten by another handle or process
 /// therefore cannot widen this handle's views past its mapping; equally,
 /// elements appended through another handle are not seen by this one.
+///
+/// # Limitations
+///
+/// - **External file truncation (`SIGBUS`) and concurrent mutation**:
+///   [`MmapVec::create`], [`MmapVec::open`], and [`MmapVec::with_capacity_simd`]
+///   wrap `memmap2`'s `unsafe` file mappings behind safe constructors (`T: Pod`).
+///   The OS still requires the backing file to remain at least as long as the
+///   mapped region and unmutated by external writers while references are live:
+///   if another process (or a second [`MmapVec`] handle via [`MmapVec::create`]
+///   or [`MmapVec::shrink_to_fit`] on the same path) truncates the file below
+///   this handle's mapped length, reading or writing the unmapped tail raises
+///   `SIGBUS` on Unix (process abort, not a recoverable Rust panic), and
+///   concurrent writes to the mapped bytes while a `&[T]` or `&T` borrow is
+///   live violate Rust's aliasing rules (undefined behavior even for `T: Pod`).
+/// - **Single-writer handle model**: because each handle caches `len` and `cap`
+///   and writes them back to the header on mutation without re-reading the
+///   header, two writable handles open on the same file will overwrite each
+///   other's header fields, and a read-only handle will not observe elements
+///   appended after it was opened without reopening the file.
+/// - **Host-native payload layout**: header fields are little-endian on disk
+///   with `flags` bit 0 recording host endianness (`0x0011` on little-endian,
+///   `0x0010` on big-endian) and bytes `32..40` recording extended element
+///   alignment (`align_of::<T>()` when `> 16`, else `0`), while element bytes
+///   are mapped directly in the host's `T: Pod` representation (`open` rejects
+///   files with mismatched endianness flags, element size, or extended
+///   alignment).
 pub struct MmapVec<T> {
     /// Path to the backing file
     file_path: PathBuf,
@@ -406,8 +479,25 @@ impl<T> MmapVec<T>
 where
     T: Pod + 'static, // Pod ensures every bit pattern is valid for T (prevents UB on mmap read)
 {
-    /// Create a new memory-mapped vector
+    /// Create a new memory-mapped vector at `path`, truncating any existing file.
+    ///
+    /// # Errors
+    /// Returns an error if `config.read_only` is `true`, if the initial
+    /// capacity overflows the file-size calculation, or if the file cannot be
+    /// created, sized, or mapped.
+    ///
+    /// # Limitations
+    /// Truncating `path` while another [`MmapVec`] handle or process has the
+    /// same file mapped will cause that other mapping to raise `SIGBUS` on
+    /// Unix when it accesses pages beyond the new file length; see the
+    /// struct-level [Limitations](Self#limitations).
     pub fn create<P: AsRef<Path>>(path: P, config: MmapVecConfig) -> Result<Self> {
+        if config.read_only {
+            return Err(ZiporaError::invalid_parameter(
+                "MmapVec::create cannot use a read-only configuration",
+            ));
+        }
+
         let file_path = path.as_ref().to_path_buf();
 
         // Size first: an invalid capacity must fail before an existing file
@@ -426,7 +516,19 @@ where
         Self::from_new_file(file, file_path, config, file_len)
     }
 
-    /// Open an existing memory-mapped vector
+    /// Open an existing memory-mapped vector at `path`.
+    ///
+    /// # Errors
+    /// Returns an error if `path` does not exist, cannot be opened or mapped,
+    /// has an invalid/mismatched [`MmapVecHeader`] (magic, version, endianness
+    /// or word-size flags, `size_of::<T>()`, extended `align_of::<T>()`), or
+    /// is smaller than the header-declared capacity.
+    ///
+    /// # Limitations
+    /// The returned handle caches `len` and `cap` from the header at open time
+    /// and assumes no other process or handle truncates the file below the
+    /// mapped length or mutates mapped bytes concurrently with live references;
+    /// see the struct-level [Limitations](Self#limitations).
     pub fn open<P: AsRef<Path>>(path: P, config: MmapVecConfig) -> Result<Self> {
         let file_path = path.as_ref().to_path_buf();
 
@@ -529,7 +631,12 @@ where
         Ok(())
     }
 
-    /// Pop an element from the end of the vector
+    /// Pop an element from the end of the vector.
+    ///
+    /// Limitation: because this method returns `Option<T>` rather than
+    /// `Result<Option<T>>`, any `msync` error when `config.sync_on_write` is
+    /// enabled is ignored (use [`MmapVec::pop_bulk_simd`]`(1)` or call
+    /// [`MmapVec::sync`] if `msync` errors must be surfaced).
     pub fn pop(&mut self) -> Option<T> {
         if self.config.read_only {
             return None;
@@ -557,7 +664,12 @@ where
         self.as_slice().get(index)
     }
 
-    /// Get a mutable reference to an element at the specified index
+    /// Get a mutable reference to an element at the specified index.
+    ///
+    /// Limitation: mutations through the returned `&mut T` are visible via
+    /// `MAP_SHARED` immediately, but `config.sync_on_write` cannot trigger an
+    /// automatic `msync` when the borrow ends; call [`MmapVec::sync`] explicitly
+    /// if crash durability is required.
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         if self.config.read_only {
             return None;
@@ -572,7 +684,12 @@ where
         self.mapped_slice(self.len).unwrap_or(&[])
     }
 
-    /// Get a mutable slice of all elements
+    /// Get a mutable slice of all elements.
+    ///
+    /// Limitation: mutations through the returned `&mut [T]` are visible via
+    /// `MAP_SHARED` immediately, but `config.sync_on_write` cannot trigger an
+    /// automatic `msync` when the borrow ends; call [`MmapVec::sync`] explicitly
+    /// if crash durability is required.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         if self.config.read_only {
             return &mut [];
@@ -702,7 +819,13 @@ where
         }
     }
 
-    /// Shrink the vector to fit the current length
+    /// Shrink the vector to fit the current length (at least 1 element capacity).
+    ///
+    /// # Limitations
+    /// Shrinking truncates the backing file after remapping this handle; if
+    /// another [`MmapVec`] handle or process still has the old, larger range
+    /// mapped, accessing pages beyond the new file length through that other
+    /// mapping will raise `SIGBUS` on Unix (see [Limitations](Self#limitations)).
     pub fn shrink_to_fit(&mut self) -> Result<()> {
         if self.config.read_only {
             return Err(ZiporaError::invalid_data("Vector is read-only"));
@@ -832,6 +955,9 @@ where
 
         // Initialize header
         vec.initialize_header(initial_capacity)?;
+        if vec.config.sync_on_write {
+            vec.sync_header()?;
+        }
         Ok(vec)
     }
 
@@ -871,16 +997,23 @@ where
         }
 
         let map = if config.read_only {
-            // SAFETY: copy-on-write private mapping — the file is never
-            // modified through it. The Pod bound on T makes any file
-            // content a valid bit pattern, and the map lives as long as
-            // the FileMapping that stores it.
+            // SAFETY: copy-on-write private mapping (`MAP_PRIVATE`) — the file
+            // is never modified through it. The `Pod` bound on `T` makes any
+            // file content a valid bit pattern, and the map lives as long as
+            // the `FileMapping` that stores it. As required by `memmap2`
+            // (documented under `MmapVec` Limitations), the backing file must
+            // not be concurrently truncated below the mapped length (which
+            // raises `SIGBUS` on Unix) or mutated while references into the
+            // mapping are live.
             unsafe { options.map_copy(file) }
         } else {
-            // SAFETY: shared mutable mapping of the vector's own file
-            // handle. The Pod bound on T makes any file content a valid bit
-            // pattern. As with every memory-mapped API, callers must not
-            // let another process truncate or mutate the file concurrently.
+            // SAFETY: shared mutable mapping (`MAP_SHARED`) of the vector's own
+            // file handle. The `Pod` bound on `T` makes any file content a
+            // valid bit pattern. As required by `memmap2` (documented under
+            // `MmapVec` Limitations), callers must not let another process or
+            // handle truncate the file below the mapped length (which raises
+            // `SIGBUS` on Unix) or mutate mapped bytes concurrently with live
+            // references.
             unsafe { options.map_mut(file) }
         }
         .map_err(|e| ZiporaError::io_error(format!("Failed to mmap file: {}", e)))?;
@@ -1158,6 +1291,9 @@ where
                 .set_len(new_size)
                 .map_err(|e| ZiporaError::io_error(format!("Failed to resize file: {}", e)))?;
         }
+        if self.config.sync_on_write {
+            self.sync_header()?;
+        }
         Ok(())
     }
 
@@ -1236,6 +1372,14 @@ where
     /// # Errors
     /// Returns an error if `capacity` elements plus the header do not fit
     /// in `usize` bytes, or if the file cannot be created, sized or mapped.
+    ///
+    /// # Limitations
+    /// The temporary file in `std::env::temp_dir()` is opened with
+    /// `create_new(true)` (`O_EXCL`) and unlinked when `Self` is dropped, not
+    /// immediately after mapping; another process with write access to the
+    /// temporary directory that truncates or mutates the file while it is
+    /// mapped is subject to the same OS `mmap` constraints documented under
+    /// [Limitations](Self#limitations).
     pub fn with_capacity_simd(capacity: usize) -> Result<Self>
     where
         T: Copy + 'static,
@@ -3158,4 +3302,173 @@ mod tests {
         assert!(MmapVec::<u64>::create_temp_in(4, dir.path(), || "slot0.dat".to_string()).is_err());
         assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
     }
+
+    /// C9.1 F9: `MmapVec::create` with `MmapVecConfig::read_only()` truncated
+    /// the path and mapped it with `map_copy` (`MAP_PRIVATE`), so the header
+    /// was written only to a private copy-on-write page and the file on disk
+    /// stayed all zeros (unreadable by `open`). `create` must reject a
+    /// read-only configuration before touching the path.
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f9_create_rejects_read_only_config() {
+        let dir = tempdir().unwrap();
+        let existing = dir.path().join("existing.mmap");
+        std::fs::write(&existing, b"keep-me").unwrap();
+        let fresh = dir.path().join("fresh.mmap");
+
+        let err_existing = MmapVec::<u64>::create(&existing, MmapVecConfig::read_only());
+        let err_fresh = MmapVec::<u64>::create(&fresh, MmapVecConfig::read_only());
+        let existing_bytes = std::fs::read(&existing).unwrap();
+        let fresh_exists = fresh.exists();
+        assert!(
+            err_existing.is_err()
+                && err_fresh.is_err()
+                && existing_bytes == b"keep-me"
+                && !fresh_exists,
+            "create(existing, read_only): {:?}, existing_bytes len: {}, create(fresh, read_only): {:?}, fresh_exists: {fresh_exists}",
+            err_existing.map(|v| v.capacity()),
+            existing_bytes.len(),
+            err_fresh.map(|v| v.capacity()),
+        );
+    }
+
+    /// C9.1 F9: `MmapVecHeader` checked `size_of::<T>()` but not whether `T`
+    /// padded `data_offset()` past the 80-byte header (`align_of::<T>() >
+    /// 16`), so a file written as `[u8; 32]` (`data_offset = 80`) could be
+    /// opened as an `align(32)` type of the same size (`data_offset = 96`),
+    /// reading elements shifted by 16 bytes.
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f9_open_rejects_alignment_padding_mismatch() {
+        #[repr(C, align(32))]
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        struct Align32([u8; 32]);
+        // SAFETY: a single `[u8; 32]` field with `align(32)`: size 32, no
+        // padding, and the all-zero bit pattern is a valid value.
+        unsafe impl bytemuck::Zeroable for Align32 {}
+        // SAFETY: as above, every bit pattern is valid; `Align32` is
+        // `Copy + 'static` and holds no pointers or padding bytes.
+        unsafe impl bytemuck::Pod for Align32 {}
+
+        let dir = tempdir().unwrap();
+        let path_u8 = dir.path().join("u8_32.mmap");
+        let path_a32 = dir.path().join("align32.mmap");
+        let config = MmapVecConfig::default().with_initial_capacity(10);
+
+        let mut v_u8 = MmapVec::<[u8; 32]>::create(&path_u8, config.clone()).unwrap();
+        v_u8.push([0xAA; 32]).unwrap();
+        v_u8.push([0xBB; 32]).unwrap();
+        drop(v_u8);
+        // Leave 16 bytes of slack in `path_u8` (e.g. from an earlier larger
+        // file) so the unfixed `open` does not stop at the file-length check.
+        OpenOptions::new()
+            .write(true)
+            .open(&path_u8)
+            .unwrap()
+            .set_len(96 + 10 * 32)
+            .unwrap();
+
+        let mut v_a32 = MmapVec::<Align32>::create(&path_a32, config).unwrap();
+        v_a32.push(Align32([0xCC; 32])).unwrap();
+        v_a32.push(Align32([0xDD; 32])).unwrap();
+        drop(v_a32);
+
+        let open_u8_as_a32 = MmapVec::<Align32>::open(&path_u8, MmapVecConfig::default())
+            .map(|v| v.get(0).map(|e| (e.0[0], e.0[16])));
+        let open_a32_as_u8 = MmapVec::<[u8; 32]>::open(&path_a32, MmapVecConfig::default())
+            .map(|v| v.get(0).map(|e| (e[0], e[16])));
+        assert!(
+            open_u8_as_a32.is_err() && open_a32_as_u8.is_err(),
+            "u8->Align32: {:?}\nAlign32->u8: {:?}",
+            open_u8_as_a32,
+            open_a32_as_u8
+        );
+    }
+
+    /// C9.1 F9, GREEN-only: pure in-memory check (runs under Miri) that
+    /// `MmapVecHeader::new` keeps bytes `32..80` all-zero for `align <= 16`
+    /// while recording `extended_align` for `align > 16`, and `validate`
+    /// rejects both extended-alignment mismatches and flipped endianness flags.
+    #[test]
+    fn test_c9_f9_header_validates_alignment_and_endianness_flags() {
+        let h_u64 = MmapVecHeader::new::<u64>();
+        assert_eq!(&h_u64.data[32..80], &[0u8; 48]);
+        assert!(h_u64.validate::<u64>().is_ok());
+
+        let h_8k = MmapVecHeader::new::<Page8k>();
+        assert_eq!(h_8k.extended_align(), 8192);
+        assert!(h_8k.validate::<Page8k>().is_ok());
+        assert!(h_8k.validate::<[u8; 8192]>().is_err());
+
+        let h_bytes_8k = MmapVecHeader::new::<[u8; 8192]>();
+        assert_eq!(h_bytes_8k.extended_align(), 0);
+        assert!(h_bytes_8k.validate::<Page8k>().is_err());
+
+        let mut flipped_endian = h_u64;
+        let bad_flags = MMAP_VEC_FLAGS ^ 0x0001;
+        flipped_endian.data[10..12].copy_from_slice(&bad_flags.to_le_bytes());
+        assert!(flipped_endian.validate::<u64>().is_err());
+    }
+
+    /// C9.1(d), GREEN-only: exercises every `AccessPattern` variant,
+    /// `use_huge_pages`, `populate_pages`, and `sync_on_write` (`true`/`false`)
+    /// across `create` -> `push`/grow remap -> `reserve` remap ->
+    /// `shrink_to_fit` remap -> drop without `sync()` -> `open`, verifying
+    /// `advise_mapping` and `MAP_SHARED` persistence without asserting page
+    /// residency.
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_madvise_knobs_and_map_shared_survive_remap_and_reopen() {
+        let dir = tempdir().unwrap();
+        let patterns = [
+            AccessPattern::Sequential,
+            AccessPattern::ReadHeavy,
+            AccessPattern::Random,
+            AccessPattern::WriteHeavy,
+            AccessPattern::Mixed,
+        ];
+
+        for (idx, pattern) in patterns.into_iter().enumerate() {
+            for sync_on_write in [false, true] {
+                let path = dir.path().join(format!("knobs_{idx}_{sync_on_write}.mmap"));
+                let config = MmapVecConfig {
+                    initial_capacity: 2,
+                    growth_factor: 2.0,
+                    read_only: false,
+                    populate_pages: true,
+                    use_huge_pages: true,
+                    sync_on_write,
+                    access_pattern: pattern,
+                };
+
+                let mut vec = MmapVec::<u64>::create(&path, config.clone()).unwrap();
+                for v in 0..5u64 {
+                    vec.push(v * 10 + idx as u64).unwrap();
+                }
+                vec.reserve(16).unwrap();
+                vec.as_mut_slice()[0] = 999 + idx as u64;
+                vec.shrink_to_fit().unwrap();
+                assert_eq!(vec.len(), 5);
+                assert_eq!(vec.capacity(), 5);
+                // Drop without calling `sync()`: `MAP_SHARED` writes must still
+                // be visible when reopened.
+                drop(vec);
+
+                let ro = MmapVec::<u64>::open(&path, MmapVecConfig::read_only()).unwrap();
+                assert_eq!(ro.len(), 5);
+                assert_eq!(ro.capacity(), 5);
+                assert_eq!(
+                    ro.as_slice(),
+                    &[
+                        999 + idx as u64,
+                        10 + idx as u64,
+                        20 + idx as u64,
+                        30 + idx as u64,
+                        40 + idx as u64,
+                    ]
+                );
+            }
+        }
+    }
 }
+
