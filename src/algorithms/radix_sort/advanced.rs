@@ -234,6 +234,11 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             return Ok(());
         }
 
+        // Path statistics describe this call; only the chunked parallel LSD
+        // path changes them (S21-R1).
+        self.stats.basic_stats.used_parallel = false;
+        self.stats.threads_used = 1;
+
         // Phase 1: Data analysis for adaptive strategy selection
         let analysis_start = Instant::now();
         let strategy = self.select_strategy(data)?;
@@ -480,21 +485,33 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         Ok(())
     }
 
-    /// Parallel LSD radix sort with work-stealing
+    /// Parallel LSD radix sort: sorts contiguous chunks on the current rayon
+    /// pool and merges them with the parallel merge tree.
+    ///
+    /// The chunk count is `config.num_threads`, or the pool's thread count
+    /// when that is 0. Below `2 * parallel_threshold` elements, or when there
+    /// would be a single chunk (`num_threads == 1`, or a one-thread pool with
+    /// `num_threads == 0`), the whole slice is sorted sequentially instead.
+    /// So `used_parallel` reports whether the chunked path ran, as in
+    /// `RadixSort`. On that path `threads_used` is
+    /// `min(chunks, rayon::current_num_threads())`, an upper bound on the
+    /// threads that sorted chunks.
+    /// Until S21-R1 a single chunk still went through the chunked path, which
+    /// set `used_parallel = true` and `threads_used = num_threads` either way.
     fn lsd_radix_sort_parallel(&mut self, data: &mut [T]) -> Result<()> {
+        let pool_threads = rayon::current_num_threads().max(1);
         let num_threads = if self.config.num_threads > 0 {
             self.config.num_threads
         } else {
-            rayon::current_num_threads()
+            pool_threads
         };
+        let chunk_size = data.len().div_ceil(num_threads);
 
-        // For very large datasets, use parallel radix sort
-        if data.len() < 2 * self.config.parallel_threshold {
+        if data.len() < 2 * self.config.parallel_threshold || chunk_size >= data.len() {
             return self.lsd_radix_sort_sequential(data);
         }
 
         // Split into chunks and sort in parallel
-        let chunk_size = data.len().div_ceil(num_threads);
         let chunk_err = std::sync::Mutex::new(None);
 
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
@@ -526,7 +543,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         self.stats.basic_stats.used_parallel = true;
         self.stats.basic_stats.used_simd =
             self.config.use_simd && self.cpu_features.has_advanced_simd();
-        self.stats.threads_used = num_threads;
+        self.stats.threads_used = data.len().div_ceil(chunk_size).min(pool_threads);
         Ok(())
     }
 

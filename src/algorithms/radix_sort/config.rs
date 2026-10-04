@@ -205,7 +205,10 @@ pub struct AdvancedRadixSortConfig {
     pub use_parallel: bool,
     /// Threshold for switching to parallel processing
     pub parallel_threshold: usize,
-    /// Number of worker threads for parallel processing (0 = auto-detect)
+    /// Number of chunks the parallel LSD path splits the input into
+    /// (0 = the current rayon pool's thread count). The chunks are sorted on
+    /// the current rayon pool; no threads are created. A single chunk
+    /// (`1`, or `0` on a one-thread pool) sorts the input sequentially.
     pub num_threads: usize,
     /// Radix size for LSD radix sort (typically 8 or 16 bits)
     pub radix_bits: usize,
@@ -262,7 +265,10 @@ pub struct AdvancedAlgorithmStats {
     pub estimated_cache_misses: u64,
     /// Peak memory usage during sorting
     pub peak_memory_bytes: usize,
-    /// Number of worker threads used
+    /// Upper bound on the threads that sorted chunks in the last call:
+    /// `min(chunks, rayon::current_num_threads())` when the chunked parallel
+    /// LSD path ran (`basic_stats.used_parallel`), otherwise 1. It is 0 until
+    /// the first sort of a non-empty slice.
     pub threads_used: usize,
     /// Time spent in different phases (us)
     pub phase_times: PhaseTimes,

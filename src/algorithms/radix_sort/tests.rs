@@ -416,18 +416,23 @@ fn test_advanced_radix_sort_parallel() {
         ..Default::default()
     };
 
-    let mut sorter = AdvancedU32RadixSort::with_config(config).unwrap();
-    let mut data: Vec<u32> = (0..1000).rev().collect();
+    // With `num_threads: 0` the chunk count is the current pool's thread
+    // count, and the global pool has one thread under Miri and on one-CPU
+    // hosts, which sorts sequentially (S21-R1). Pin a two-thread pool.
+    in_scoped_pool(2, || {
+        let mut sorter = AdvancedU32RadixSort::with_config(config).unwrap();
+        let mut data: Vec<u32> = (0..1000).rev().collect();
 
-    let result = sorter.sort(&mut data);
-    assert!(result.is_ok());
+        let result = sorter.sort(&mut data);
+        assert!(result.is_ok());
 
-    let expected: Vec<u32> = (0..1000).collect();
-    assert_eq!(data, expected);
+        let expected: Vec<u32> = (0..1000).collect();
+        assert_eq!(data, expected);
 
-    let stats = sorter.stats();
-    assert!(stats.basic_stats.used_parallel);
-    assert!(stats.threads_used > 0);
+        let stats = sorter.stats();
+        assert!(stats.basic_stats.used_parallel);
+        assert_eq!(stats.threads_used, 2);
+    });
 }
 
 #[test]
@@ -1010,4 +1015,92 @@ fn test_s20_r5_sort_u32_every_radix_width() {
             assert_eq!(v, want, "radix_bits={radix_bits} use_simd={use_simd}");
         }
     }
+}
+
+/// Runs `f` on a rayon pool of `threads` threads. `build_scoped` spawns them
+/// inside `std::thread::scope`, so they are joined before this returns.
+fn in_scoped_pool<R: Send>(threads: usize, f: impl FnOnce() -> R + Send) -> R {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_scoped(|thread| thread.run(), |pool| pool.install(f))
+        .unwrap()
+}
+
+/// S21-R1: `AdvancedRadixSort` set `used_parallel = true` and
+/// `threads_used = num_threads` whenever the parallel LSD path was entered:
+/// also for a single chunk (a one-thread pool, or `num_threads: 1`) and for
+/// more chunks than the pool has threads. A later sequential sort left
+/// `threads_used` at the old value. `used_parallel` now reports whether the
+/// chunked path ran, and `threads_used` is `min(chunks, pool threads)` there
+/// and 1 otherwise.
+///
+/// Every case runs, and mismatches are reported together.
+#[test]
+fn test_s21_r1_advanced_radix_sort_reports_the_path_that_ran() {
+    let n: u32 = if cfg!(miri) { 300 } else { 5_000 };
+    let input: Vec<u32> = (0..n)
+        .map(|i| i.wrapping_mul(0x9E37_79B9) ^ (i << 7))
+        .collect();
+    let mut want = input.clone();
+    want.sort_unstable();
+    let config = |num_threads| AdvancedRadixSortConfig {
+        use_secure_memory: false,
+        force_strategy: Some(SortingStrategy::LsdRadix),
+        use_parallel: true,
+        parallel_threshold: 64,
+        num_threads,
+        ..Default::default()
+    };
+    let stats_of = |sorter: &AdvancedU32RadixSort| {
+        let stats = sorter.stats();
+        (stats.basic_stats.used_parallel, stats.threads_used)
+    };
+
+    let mut mismatches = Vec::new();
+    // (pool threads, num_threads, want (used_parallel, threads_used))
+    let cases: &[(usize, usize, (bool, usize))] = &[
+        (1, 0, (false, 1)), // one chunk: the pool's single thread
+        (1, 1, (false, 1)),
+        (4, 1, (false, 1)), // one chunk on a larger pool
+        (4, 8, (true, 4)),  // more chunks than pool threads
+        (1, 3, (true, 1)),  // forced chunks still merge on one thread
+        (4, 0, (true, 4)),
+        (4, 2, (true, 2)),
+    ];
+    for &(pool_threads, num_threads, want_stats) in cases {
+        in_scoped_pool(pool_threads, || {
+            let mut sorter = AdvancedU32RadixSort::with_config(config(num_threads)).unwrap();
+            let mut v = input.clone();
+            sorter.sort(&mut v).unwrap();
+            assert_eq!(v, want, "pool={pool_threads} num_threads={num_threads}");
+            let got = stats_of(&sorter);
+            if got != want_stats {
+                mismatches.push(format!(
+                    "pool={pool_threads} num_threads={num_threads}: \
+                     (used_parallel, threads_used) = {got:?}, want {want_stats:?}"
+                ));
+            }
+        });
+    }
+
+    // The statistics describe the last call: a chunked sort, then one below
+    // 2 * parallel_threshold on the same sorter.
+    in_scoped_pool(4, || {
+        let mut sorter = AdvancedU32RadixSort::with_config(config(0)).unwrap();
+        let mut v = input.clone();
+        sorter.sort(&mut v).unwrap();
+        assert_eq!(v, want);
+        let mut small: Vec<u32> = (0..100).rev().collect();
+        sorter.sort(&mut small).unwrap();
+        assert_eq!(small, (0..100).collect::<Vec<u32>>());
+        let got = stats_of(&sorter);
+        if got != (false, 1) {
+            mismatches.push(format!(
+                "chunked sort, then 100 elements: (used_parallel, threads_used) = \
+                 {got:?}, want (false, 1)"
+            ));
+        }
+    });
+
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
