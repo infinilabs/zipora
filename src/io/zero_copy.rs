@@ -287,9 +287,16 @@ impl<R: Read> ZeroCopyReader<R> {
         self.inner
     }
 
-    /// Ensure the buffer has at least `len` bytes available
+    /// Ensure the buffer has at least `len` bytes available, or is full when
+    /// `len` exceeds its capacity
     fn ensure_buffered(&mut self, len: usize) -> Result<()> {
-        while self.buffer.available() < len && !self.eof {
+        // A request larger than the buffer can only be served with one buffer's
+        // worth of data. Aiming for more would find the buffer full, get Ok(0)
+        // from `fill_from` for lack of space and mistake that for the end of
+        // the stream (C9 Z1). Below the capacity there is always free space
+        // after `fill_from` compacts, so Ok(0) here really means end of stream.
+        let target = len.min(self.buffer.capacity());
+        while self.buffer.available() < target && !self.eof {
             let bytes_read = self
                 .buffer
                 .fill_from(&mut self.inner)
@@ -318,6 +325,9 @@ impl<R: Read> ZeroCopyReader<R> {
     }
 
     /// Peek at data without consuming it
+    ///
+    /// Returns up to `len` bytes: never more than the buffer capacity, and
+    /// fewer only when the stream ends first.
     pub fn peek(&mut self, len: usize) -> Result<&[u8]> {
         self.ensure_buffered(len)?;
         let available = self.buffer.available().min(len);
@@ -1298,5 +1308,76 @@ mod tests {
 
         assert_eq!(reader.position(), 5);
         assert_eq!(reader.remaining_slice(), &data[5..]);
+    }
+
+    //==========================================================================
+    // C9 REGRESSION TESTS
+    //==========================================================================
+
+    /// Appends the rest of `r` to `out` using 100-byte `read` calls, the way a
+    /// caller that only ever asks for small chunks consumes a stream.
+    fn drain_in_small_reads<R: Read>(r: &mut ZeroCopyReader<R>, mut out: Vec<u8>) -> Vec<u8> {
+        let mut chunk = [0u8; 100];
+        loop {
+            let n = r.read(&mut chunk).unwrap();
+            if n == 0 {
+                return out;
+            }
+            out.extend_from_slice(&chunk[..n]);
+        }
+    }
+
+    /// 10_000 patterned bytes behind a reader whose 1024-byte buffer is much
+    /// smaller than the 4096-byte requests the Z1 tests make.
+    fn z1_reader() -> (Vec<u8>, ZeroCopyReader<Cursor<Vec<u8>>>) {
+        let data: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+        let reader = ZeroCopyReader::with_capacity(Cursor::new(data.clone()), 1024).unwrap();
+        (data, reader)
+    }
+
+    #[test]
+    fn test_c9_z1_peek_beyond_capacity_keeps_stream() {
+        // Regression (C9 Z1): a request larger than the buffer filled it to
+        // capacity, then `fill_from` found no free space, returned Ok(0), and
+        // the reader marked itself as at EOF. Every later small `read`
+        // returned Ok(0), silently truncating the stream.
+        let (data, mut r) = z1_reader();
+        assert_eq!(r.peek(4096).unwrap(), &data[..1024], "peek returns at most one buffer");
+        let out = drain_in_small_reads(&mut r, Vec::new());
+        assert_eq!(out.len(), data.len(), "stream truncated after peek(4096)");
+        assert_eq!(out, data);
+    }
+
+    #[test]
+    fn test_c9_z1_zc_read_beyond_capacity_keeps_stream() {
+        let (data, mut r) = z1_reader();
+        assert!(
+            r.zc_read(4096).unwrap().is_none(),
+            "more than one buffer can never be available"
+        );
+        let out = drain_in_small_reads(&mut r, Vec::new());
+        assert_eq!(out.len(), data.len(), "stream truncated after zc_read(4096)");
+        assert_eq!(out, data);
+    }
+
+    #[test]
+    fn test_c9_z1_zc_ensure_beyond_capacity_keeps_stream() {
+        let (data, mut r) = z1_reader();
+        assert_eq!(r.zc_ensure(4096).unwrap(), 1024);
+        let out = drain_in_small_reads(&mut r, Vec::new());
+        assert_eq!(out.len(), data.len(), "stream truncated after zc_ensure(4096)");
+        assert_eq!(out, data);
+    }
+
+    #[test]
+    fn test_c9_z1_read_optimized_beyond_capacity_keeps_stream() {
+        let (data, mut r) = z1_reader();
+        let mut first = vec![0u8; 4096];
+        let n = r.read_optimized(&mut first).unwrap();
+        assert!(n > 0);
+        first.truncate(n);
+        let out = drain_in_small_reads(&mut r, first);
+        assert_eq!(out.len(), data.len(), "stream truncated after read_optimized");
+        assert_eq!(out, data);
     }
 }
