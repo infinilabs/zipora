@@ -135,16 +135,21 @@ impl<T: SerializableType, const N: usize> ComplexSerialize for [T; N] {
             )));
         }
 
-        use std::mem::MaybeUninit;
-        // Safe: each element is individually MaybeUninit::uninit(), no assume_init needed
-        let mut array: [MaybeUninit<T>; N] = std::array::from_fn(|_| MaybeUninit::uninit());
-
-        for i in 0..N {
-            array[i] = MaybeUninit::new(T::deserialize(input)?);
+        // Decode into a Vec: if an element fails, the elements decoded so
+        // far are dropped with it instead of leaking. `N` is a compile-time
+        // constant and was checked against the input above, so the
+        // reservation is the size of the array being returned.
+        let mut items = Vec::with_capacity(N);
+        for _ in 0..N {
+            items.push(T::deserialize(input)?);
         }
-
-        // SAFETY: All N elements initialized in the loop above
-        Ok(unsafe { std::mem::transmute_copy::<_, [T; N]>(&array) })
+        <[T; N]>::try_from(items).map_err(|items| {
+            ZiporaError::invalid_data(format!(
+                "decoded {} elements for an array of {}",
+                items.len(),
+                N
+            ))
+        })
     }
 }
 
@@ -902,5 +907,43 @@ mod tests {
         let result = <[u32; 5]>::deserialize_with_version(&mut input, 1);
 
         assert!(result.is_err());
+    }
+
+    thread_local! {
+        static DROPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Element that counts its drops; it decodes from one non-zero byte and
+    /// rejects a zero byte.
+    struct DropCounter(u8);
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            DROPS.with(|drops| drops.set(drops.get() + 1));
+        }
+    }
+
+    impl SerializableType for DropCounter {
+        fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+            output.write_u8(self.0)
+        }
+
+        fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
+            match input.read_u8()? {
+                0 => Err(ZiporaError::invalid_data("DropCounter: zero byte")),
+                byte => Ok(DropCounter(byte)),
+            }
+        }
+    }
+
+    #[test]
+    fn test_c9_ct4_array_error_drops_decoded_elements() {
+        DROPS.with(|drops| drops.set(0));
+        // Array length 3, one valid element, then a rejected one.
+        let bytes = [3, 0, 0, 0, 7, 0];
+        let result =
+            <[DropCounter; 3]>::deserialize_with_version(&mut SliceDataInput::new(&bytes), 1);
+        assert!(result.is_err());
+        assert_eq!(DROPS.with(|drops| drops.get()), 1);
     }
 }
