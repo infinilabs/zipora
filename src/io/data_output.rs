@@ -191,49 +191,33 @@ impl<W: Write> WriterDataOutput<W> {
 
 impl<W: Write> DataOutput for WriterDataOutput<W> {
     fn write_u8(&mut self, value: u8) -> Result<()> {
-        self.writer
-            .write_all(&[value])
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write u8: {}", e)))?;
-        self.bytes_written += 1;
-        Ok(())
+        Write::write_all(self, &[value])
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u8: {}", e)))
     }
 
     fn write_u16(&mut self, value: u16) -> Result<()> {
-        self.writer
-            .write_all(&value.to_le_bytes())
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write u16: {}", e)))?;
-        self.bytes_written += 2;
-        Ok(())
+        Write::write_all(self, &value.to_le_bytes())
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u16: {}", e)))
     }
 
     fn write_u32(&mut self, value: u32) -> Result<()> {
-        self.writer
-            .write_all(&value.to_le_bytes())
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write u32: {}", e)))?;
-        self.bytes_written += 4;
-        Ok(())
+        Write::write_all(self, &value.to_le_bytes())
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u32: {}", e)))
     }
 
     fn write_u64(&mut self, value: u64) -> Result<()> {
-        self.writer
-            .write_all(&value.to_le_bytes())
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write u64: {}", e)))?;
-        self.bytes_written += 8;
-        Ok(())
+        Write::write_all(self, &value.to_le_bytes())
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u64: {}", e)))
     }
 
     fn write_var_int(&mut self, value: u64) -> Result<()> {
-        let _start_bytes = self.bytes_written;
         VarInt::write_to(self, value)?;
         Ok(())
     }
 
     fn write_bytes(&mut self, data: &[u8]) -> Result<()> {
-        self.writer
-            .write_all(data)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write bytes: {}", e)))?;
-        self.bytes_written += data.len() as u64;
-        Ok(())
+        Write::write_all(self, data)
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write bytes: {}", e)))
     }
 
     fn flush(&mut self) -> Result<()> {
@@ -267,6 +251,7 @@ impl<W: Write> Write for WriterDataOutput<W> {
 /// DataOutput implementation for files
 pub struct FileDataOutput {
     file: File,
+    initial_len: u64,
     bytes_written: u64,
 }
 
@@ -278,6 +263,7 @@ impl FileDataOutput {
 
         Ok(Self {
             file,
+            initial_len: 0,
             bytes_written: 0,
         })
     }
@@ -290,15 +276,16 @@ impl FileDataOutput {
             .open(path)
             .map_err(|e| ZiporaError::io_error(format!("Failed to open file for append: {}", e)))?;
 
-        let bytes_written = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let initial_len = file.metadata().map(|m| m.len()).unwrap_or(0);
 
         Ok(Self {
             file,
-            bytes_written,
+            initial_len,
+            bytes_written: 0,
         })
     }
 
-    /// Get the number of bytes written
+    /// Get the number of bytes written through this `FileDataOutput`
     pub fn bytes_written(&self) -> u64 {
         self.bytes_written
     }
@@ -320,35 +307,23 @@ impl FileDataOutput {
 
 impl DataOutput for FileDataOutput {
     fn write_u8(&mut self, value: u8) -> Result<()> {
-        self.file
-            .write_all(&[value])
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write u8: {}", e)))?;
-        self.bytes_written += 1;
-        Ok(())
+        Write::write_all(self, &[value])
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u8: {}", e)))
     }
 
     fn write_u16(&mut self, value: u16) -> Result<()> {
-        self.file
-            .write_all(&value.to_le_bytes())
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write u16: {}", e)))?;
-        self.bytes_written += 2;
-        Ok(())
+        Write::write_all(self, &value.to_le_bytes())
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u16: {}", e)))
     }
 
     fn write_u32(&mut self, value: u32) -> Result<()> {
-        self.file
-            .write_all(&value.to_le_bytes())
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write u32: {}", e)))?;
-        self.bytes_written += 4;
-        Ok(())
+        Write::write_all(self, &value.to_le_bytes())
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u32: {}", e)))
     }
 
     fn write_u64(&mut self, value: u64) -> Result<()> {
-        self.file
-            .write_all(&value.to_le_bytes())
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write u64: {}", e)))?;
-        self.bytes_written += 8;
-        Ok(())
+        Write::write_all(self, &value.to_le_bytes())
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u64: {}", e)))
     }
 
     fn write_var_int(&mut self, value: u64) -> Result<()> {
@@ -357,11 +332,8 @@ impl DataOutput for FileDataOutput {
     }
 
     fn write_bytes(&mut self, data: &[u8]) -> Result<()> {
-        self.file
-            .write_all(data)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to write bytes: {}", e)))?;
-        self.bytes_written += data.len() as u64;
-        Ok(())
+        Write::write_all(self, data)
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write bytes: {}", e)))
     }
 
     fn flush(&mut self) -> Result<()> {
@@ -371,7 +343,7 @@ impl DataOutput for FileDataOutput {
     }
 
     fn position(&self) -> Option<u64> {
-        Some(self.bytes_written)
+        Some(self.initial_len.saturating_add(self.bytes_written))
     }
 
     fn bytes_written(&self) -> Option<u64> {
@@ -639,5 +611,110 @@ mod tests {
         assert_eq!(prefixed_text, "length prefixed");
 
         assert!(!input.has_more());
+    }
+
+    struct OneByteThenFail {
+        wrote: Vec<u8>,
+    }
+
+    impl Write for OneByteThenFail {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.wrote.is_empty() {
+                if let Some(&b) = buf.first() {
+                    self.wrote.push(b);
+                    return Ok(1);
+                }
+                return Ok(0);
+            }
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "boom"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct TrickleWriter {
+        wrote: Vec<u8>,
+        interrupt_next: bool,
+    }
+
+    impl Write for TrickleWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let interrupt = self.interrupt_next;
+            self.interrupt_next = !interrupt;
+            if interrupt {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            match buf.first() {
+                Some(&b) => {
+                    self.wrote.push(b);
+                    Ok(1)
+                }
+                None => Ok(0),
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct ZeroWriter;
+
+    impl Write for ZeroWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_c9_do1_writer_counts_partial_writes_and_retries_interrupted() {
+        let mut out = WriterDataOutput::new(OneByteThenFail { wrote: Vec::new() });
+        assert!(out.write_bytes(b"hello").is_err());
+        assert_eq!(out.bytes_written(), 1);
+        assert_eq!(DataOutput::bytes_written(&out), Some(1));
+
+        let mut out_u32 = WriterDataOutput::new(OneByteThenFail { wrote: Vec::new() });
+        assert!(out_u32.write_u32(0x1122_3344).is_err());
+        assert_eq!(out_u32.bytes_written(), 1);
+
+        let mut trickle = WriterDataOutput::new(TrickleWriter {
+            wrote: Vec::new(),
+            interrupt_next: true,
+        });
+        trickle.write_u64(0x0102_0304_0506_0708).unwrap();
+        trickle.write_bytes(b"hello").unwrap();
+        assert_eq!(trickle.bytes_written(), 13);
+        assert_eq!(
+            trickle.into_inner().wrote,
+            [8, 7, 6, 5, 4, 3, 2, 1, b'h', b'e', b'l', b'l', b'o']
+        );
+
+        let mut zero = WriterDataOutput::new(ZeroWriter);
+        assert!(zero.write_bytes(b"a").is_err());
+        assert_eq!(zero.bytes_written(), 0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // Miri cannot open temporary files without -Zmiri-disable-isolation.
+    fn test_c9_do1_file_append_bytes_written_counts_new_bytes_only() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+        std::fs::write(path, b"initial").unwrap();
+
+        let mut out = FileDataOutput::append(path).unwrap();
+        assert_eq!(out.bytes_written(), 0);
+        assert_eq!(DataOutput::bytes_written(&out), Some(0));
+        assert_eq!(out.position(), Some(7));
+
+        out.write_string(" appended").unwrap();
+        assert_eq!(out.bytes_written(), 9);
+        assert_eq!(DataOutput::bytes_written(&out), Some(9));
+        assert_eq!(out.position(), Some(16));
     }
 }
