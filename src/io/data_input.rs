@@ -359,11 +359,25 @@ pub struct MmapDataInput {
 #[cfg(feature = "mmap")]
 impl MmapDataInput {
     /// Create a new MmapDataInput from a file path
+    ///
+    /// Limitation: the file is mapped, not copied, and nothing here stops
+    /// another handle or process from changing it. memmap2 documents any
+    /// such change while the map is alive as undefined behaviour. In
+    /// practice, if the file is truncated, a read that touches a page past
+    /// the new end raises SIGBUS and kills the process; if it is modified,
+    /// reads observe the new bytes, possibly in the middle of a value. Only
+    /// open files that nothing writes to for the lifetime of the returned
+    /// value.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::open(path)
             .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
 
-        // SAFETY: File is valid and open for reading, mmap follows standard OS guarantees for read-only memory maps
+        // SAFETY: `Mmap::map` requires that the mapped file is not modified
+        // or truncated, by this or any other process, while the map is alive
+        // (memmap2 0.9.9 `Mmap` docs, src/lib.rs:681-687). This function
+        // cannot enforce that, so it is passed on to the caller as the
+        // `Limitation:` on `open` above. The map is read-only and `file` is
+        // a handle that `File::open` just opened for reading.
         let mmap = unsafe {
             Mmap::map(&file)
                 .map_err(|e| ZiporaError::io_error(format!("Failed to memory map file: {}", e)))?
@@ -508,6 +522,9 @@ pub fn from_reader<R: Read>(reader: R) -> ReaderDataInput<R> {
 }
 
 /// Convenience function to create a DataInput from a file path
+///
+/// Limitation: the file is memory-mapped; see [`MmapDataInput::open`] for
+/// what happens if it is truncated or modified while it is being read.
 #[cfg(feature = "mmap")]
 pub fn from_file<P: AsRef<Path>>(path: P) -> Result<MmapDataInput> {
     MmapDataInput::open(path)
