@@ -49,16 +49,7 @@ impl VarInt {
         Ok(bytes_written)
     }
 
-    /// Write a u64 value as a variable-length integer to a Vec<u8>
-    ///
-    /// # Arguments
-    /// * `buffer` - The buffer to write to
-    /// * `value` - The value to encode
-    ///
-    /// # Returns
-    /// * `Ok(usize)` - Number of bytes written
-    /// * `Err(ZiporaError)` - If writing fails
-    pub fn write_to_vec(buffer: &mut Vec<u8>, mut value: u64) -> Result<usize> {
+    fn push_to_vec(buffer: &mut Vec<u8>, mut value: u64) -> usize {
         let mut bytes_written = 0;
 
         loop {
@@ -77,7 +68,20 @@ impl VarInt {
             }
         }
 
-        Ok(bytes_written)
+        bytes_written
+    }
+
+    /// Write a u64 value as a variable-length integer to a Vec<u8>
+    ///
+    /// # Arguments
+    /// * `buffer` - The buffer to write to
+    /// * `value` - The value to encode
+    ///
+    /// # Returns
+    /// * `Ok(usize)` - Number of bytes written
+    /// * `Err(ZiporaError)` - If writing fails
+    pub fn write_to_vec(buffer: &mut Vec<u8>, value: u64) -> Result<usize> {
+        Ok(Self::push_to_vec(buffer, value))
     }
 
     /// Encode a u64 value as a variable-length integer and return the bytes
@@ -89,7 +93,7 @@ impl VarInt {
     /// * Vec<u8> containing the encoded bytes
     pub fn encode(value: u64) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(Self::MAX_ENCODED_LEN);
-        Self::write_to_vec(&mut buffer, value).expect("Vec<u8> write cannot fail");
+        Self::push_to_vec(&mut buffer, value);
         buffer
     }
 
@@ -225,7 +229,7 @@ impl VarInt {
     {
         let mut buffer = Vec::new();
         for value in values {
-            Self::write_to_vec(&mut buffer, value).expect("Vec<u8> write cannot fail");
+            Self::push_to_vec(&mut buffer, value);
         }
         buffer
     }

@@ -1,11 +1,14 @@
 //! Variable integer encoding variants with multiple strategies
 //!
-//! This module provides multiple variable integer encoding strategies optimized for
+//! This module provides multiple variable integer encoding strategies for
 //! different data distributions and use cases, including LEB128, zigzag encoding,
-//! delta encoding, and SIMD-accelerated variants.
+//! delta encoding, group varint encoding, and prefix-free encoding.
+//!
+//! # Limitation
+//! [`VarIntStrategy::Compact`] and [`VarIntStrategy::Simd`] currently delegate to
+//! scalar LEB128 (for unsigned integers) and zigzag + LEB128 (for signed integers).
 
 use crate::error::{Result, ZiporaError};
-// Note: DataInput and DataOutput imports are available but not directly used in this module
 use std::cmp;
 
 /// Variable integer encoding strategies
@@ -21,9 +24,15 @@ pub enum VarIntStrategy {
     GroupVarint,
     /// Prefix-free encoding with length prefix
     PrefixFree,
-    /// Compact encoding for small ranges
+    /// Compact encoding for small ranges.
+    ///
+    /// # Limitation
+    /// Currently delegates to scalar LEB128 (unsigned) and zigzag + LEB128 (signed).
     Compact,
-    /// SIMD-optimized encoding
+    /// Bulk varint encoding strategy.
+    ///
+    /// # Limitation
+    /// Currently delegates to scalar LEB128 (unsigned) and zigzag + LEB128 (signed).
     Simd,
 }
 
@@ -103,7 +112,10 @@ impl VarIntEncoder {
             VarIntStrategy::Delta => Err(ZiporaError::invalid_data(
                 "Delta encoding requires sequence",
             )),
-            VarIntStrategy::GroupVarint => self.encode_group_varint_single(value as u64),
+            VarIntStrategy::GroupVarint => {
+                let unsigned = ((value << 1) ^ (value >> 63)) as u64;
+                self.encode_group_varint_single(unsigned)
+            }
             VarIntStrategy::PrefixFree => self.encode_prefix_free_i64(value),
             VarIntStrategy::Compact => self.encode_compact_i64(value),
             VarIntStrategy::Simd => self.encode_zigzag_i64(value), // Use zigzag for signed SIMD
@@ -132,7 +144,10 @@ impl VarIntEncoder {
             VarIntStrategy::Zigzag => self.encode_zigzag_sequence_i64(values),
             VarIntStrategy::Delta => self.encode_delta_sequence_i64(values),
             VarIntStrategy::GroupVarint => {
-                let unsigned: Vec<u64> = values.iter().map(|&v| v as u64).collect();
+                let unsigned: Vec<u64> = values
+                    .iter()
+                    .map(|&v| ((v << 1) ^ (v >> 63)) as u64)
+                    .collect();
                 self.encode_group_varint_u64(&unsigned)
             }
             VarIntStrategy::PrefixFree => self.encode_prefix_free_sequence_i64(values),
@@ -167,8 +182,9 @@ impl VarIntEncoder {
                 "Delta decoding requires sequence context",
             )),
             VarIntStrategy::GroupVarint => {
-                let (value, consumed) = self.decode_group_varint_single(data)?;
-                Ok((value as i64, consumed))
+                let (unsigned, consumed) = self.decode_group_varint_single(data)?;
+                let signed = ((unsigned >> 1) as i64) ^ (-((unsigned & 1) as i64));
+                Ok((signed, consumed))
             }
             VarIntStrategy::PrefixFree => self.decode_prefix_free_i64(data),
             VarIntStrategy::Compact => self.decode_compact_i64(data),
@@ -199,7 +215,10 @@ impl VarIntEncoder {
             VarIntStrategy::Delta => self.decode_delta_sequence_i64(data),
             VarIntStrategy::GroupVarint => {
                 let unsigned = self.decode_group_varint_u64(data)?;
-                Ok(unsigned.into_iter().map(|v| v as i64).collect())
+                Ok(unsigned
+                    .into_iter()
+                    .map(|v| ((v >> 1) as i64) ^ (-((v & 1) as i64)))
+                    .collect())
             }
             VarIntStrategy::PrefixFree => self.decode_prefix_free_sequence_i64(data),
             VarIntStrategy::Compact => self.decode_compact_sequence_i64(data),
@@ -258,7 +277,7 @@ impl VarIntEncoder {
         let mut bytes_read = 0;
 
         for &byte in data {
-            if shift >= 64 {
+            if shift >= 64 || (shift == 63 && byte > 1) {
                 return Err(ZiporaError::invalid_data("LEB128 overflow"));
             }
 
@@ -281,7 +300,7 @@ impl VarIntEncoder {
         let mut bytes_read = 0;
 
         for &byte in data {
-            if shift >= 64 {
+            if shift >= 64 || (shift == 63 && byte != 0x00 && byte != 0x7F) {
                 return Err(ZiporaError::invalid_data("LEB128 overflow"));
             }
 
@@ -296,6 +315,46 @@ impl VarIntEncoder {
                 }
                 return Ok((result, bytes_read));
             }
+        }
+
+        Err(ZiporaError::invalid_data("Incomplete LEB128"))
+    }
+
+    fn encode_leb128_u128(&self, mut value: u128, out: &mut Vec<u8>) {
+        loop {
+            let mut byte = (value & 0x7F) as u8;
+            value >>= 7;
+
+            if value != 0 {
+                byte |= 0x80;
+            }
+
+            out.push(byte);
+
+            if value == 0 {
+                break;
+            }
+        }
+    }
+
+    fn decode_leb128_u128_65(&self, data: &[u8]) -> Result<(u128, usize)> {
+        let mut result = 0u128;
+        let mut shift = 0u32;
+        let mut bytes_read = 0usize;
+
+        for &byte in data {
+            if shift >= 65 || (shift == 63 && byte > 3) {
+                return Err(ZiporaError::invalid_data("LEB128 delta overflow"));
+            }
+
+            result |= ((byte & 0x7F) as u128) << shift;
+            bytes_read += 1;
+
+            if (byte & 0x80) == 0 {
+                return Ok((result, bytes_read));
+            }
+
+            shift += 7;
         }
 
         Err(ZiporaError::invalid_data("Incomplete LEB128"))
@@ -449,16 +508,15 @@ impl VarIntEncoder {
         let first_bytes = self.encode_leb128_u64(values[0])?;
         result.extend_from_slice(&first_bytes);
 
-        // Write deltas
+        // Write deltas (64-bit magnitude + 1 sign bit = up to 65 bits)
         for i in 1..values.len() {
-            let delta = if values[i] >= values[i - 1] {
-                (values[i] - values[i - 1]) << 1 // Positive delta, LSB = 0
+            let delta: u128 = if values[i] >= values[i - 1] {
+                ((values[i] - values[i - 1]) as u128) << 1 // Positive delta, LSB = 0
             } else {
-                ((values[i - 1] - values[i]) << 1) | 1 // Negative delta, LSB = 1
+                (((values[i - 1] - values[i]) as u128) << 1) | 1 // Negative delta, LSB = 1
             };
 
-            let delta_bytes = self.encode_leb128_u64(delta)?;
-            result.extend_from_slice(&delta_bytes);
+            self.encode_leb128_u128(delta, &mut result);
         }
 
         Ok(result)
@@ -478,9 +536,9 @@ impl VarIntEncoder {
         let first_bytes = self.encode_leb128_i64(values[0])?;
         result.extend_from_slice(&first_bytes);
 
-        // Write deltas using zigzag encoding
+        // Write deltas using wrapping arithmetic + zigzag encoding
         for i in 1..values.len() {
-            let delta = values[i] - values[i - 1];
+            let delta = values[i].wrapping_sub(values[i - 1]);
             let delta_bytes = self.encode_zigzag_i64(delta)?;
             result.extend_from_slice(&delta_bytes);
         }
@@ -526,14 +584,15 @@ impl VarIntEncoder {
             let slice = data
                 .get(offset..)
                 .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
-            let (encoded_delta, delta_bytes) = self.decode_leb128_u64(slice)?;
+            let (encoded_delta, delta_bytes) = self.decode_leb128_u128_65(slice)?;
+            let mag = (encoded_delta >> 1) as u64;
 
             current_value = if (encoded_delta & 1) == 0 {
                 // Positive delta
-                current_value.wrapping_add(encoded_delta >> 1)
+                current_value.wrapping_add(mag)
             } else {
                 // Negative delta
-                current_value.wrapping_sub(encoded_delta >> 1)
+                current_value.wrapping_sub(mag)
             };
 
             result.push(current_value);
@@ -611,9 +670,9 @@ impl VarIntEncoder {
         let count_bytes = self.encode_leb128_u64(values.len() as u64)?;
         result.extend_from_slice(&count_bytes);
 
-        // Process in groups of 4
+        // Process in groups of 4 using a 2-byte selector (3 bits per value for 1..=8 bytes)
         for chunk in values.chunks(4) {
-            let mut selector = 0u8;
+            let mut selector = 0u16;
             let mut group_data = Vec::new();
 
             for (i, &value) in chunk.iter().enumerate() {
@@ -623,15 +682,15 @@ impl VarIntEncoder {
                     (64 - value.leading_zeros()).div_ceil(8) as usize
                 };
 
-                // Encode bytes needed in selector (2 bits per value)
-                selector |= ((bytes_needed - 1) as u8) << (i * 2);
+                // Encode bytes needed in selector (3 bits per value: 1..=8 bytes -> 0..=7)
+                selector |= ((bytes_needed - 1) as u16) << (i * 3);
 
                 // Store the value in little-endian format
                 let value_bytes = value.to_le_bytes();
                 group_data.extend_from_slice(&value_bytes[..bytes_needed]);
             }
 
-            result.push(selector);
+            result.extend_from_slice(&selector.to_le_bytes());
             result.extend_from_slice(&group_data);
         }
 
@@ -657,15 +716,19 @@ impl VarIntEncoder {
         let mut remaining = count;
 
         while remaining > 0 {
-            let &selector = data
-                .get(offset)
-                .ok_or_else(|| ZiporaError::invalid_data("Incomplete group varint"))?;
-            offset += 1;
+            let selector = match data.get(offset..offset + 2) {
+                Some(&[s0, s1]) => u16::from_le_bytes([s0, s1]),
+                _ => return Err(ZiporaError::invalid_data("Incomplete group varint")),
+            };
+            offset += 2;
+            if (selector & !0x0FFF) != 0 {
+                return Err(ZiporaError::invalid_data("Invalid group varint selector"));
+            }
 
             let chunk_size = cmp::min(remaining, 4);
 
             for i in 0..chunk_size {
-                let bytes_needed = ((selector >> (i * 2)) & 0x3) as usize + 1;
+                let bytes_needed = ((selector >> (i * 3)) & 0x7) as usize + 1;
 
                 let val_slice = data
                     .get(offset..offset + bytes_needed)
@@ -843,7 +906,6 @@ impl VarIntEncoder {
 // Compact and SIMD implementations
 impl VarIntEncoder {
     fn encode_compact_u64(&self, value: u64) -> Result<Vec<u8>> {
-        // For simplicity, use LEB128 for compact encoding
         self.encode_leb128_u64(value)
     }
 
@@ -897,13 +959,11 @@ impl VarIntEncoder {
 
 /// Choose optimal encoding strategy based on data characteristics
 pub fn choose_optimal_strategy(values: &[u64]) -> VarIntStrategy {
-    if values.is_empty() {
+    let Some(&max_value) = values.iter().max() else {
         return VarIntStrategy::Leb128;
-    }
+    };
 
     // Analyze data characteristics
-    // SAFETY: is_empty() check at line 777 returns early, so values is non-empty
-    let max_value = *values.iter().max().expect("non-empty input");
     let is_sorted = values.windows(2).all(|w| w[0] <= w[1]);
     let small_values = values.iter().all(|&v| v < 256);
 
@@ -929,7 +989,7 @@ pub fn choose_optimal_strategy_signed(values: &[i64]) -> VarIntStrategy {
     // Analyze data characteristics
     let has_negative = values.iter().any(|&v| v < 0);
     let is_sorted = values.windows(2).all(|w| w[0] <= w[1]);
-    let small_range = values.iter().all(|&v| v.abs() < 256);
+    let small_range = values.iter().all(|&v| v.unsigned_abs() < 256);
 
     // Choose strategy based on characteristics - prioritize sorted sequences even with negative values
     if is_sorted && values.len() > 5 {
@@ -1150,6 +1210,98 @@ mod tests {
         let input_i64 = [2, 0, 1];
         let decoded_i64 = encoder_delta.decode_i64_sequence(&input_i64).expect("wrapping delta does not panic");
         assert_eq!(decoded_i64, vec![0, -1]);
+    }
+
+    #[test]
+    fn test_c9_vv1_group_varint_roundtrips_u64_above_32_bits_and_negative_i64() {
+        let encoder = VarIntEncoder::group_varint();
+
+        let u64_vals = vec![
+            0u64,
+            1,
+            u32::MAX as u64,
+            1u64 << 32,
+            (1u64 << 40) + 7,
+            (1u64 << 48) + 9,
+            (1u64 << 56) + 11,
+            u64::MAX,
+        ];
+        let encoded_u64 = encoder.encode_u64_sequence(&u64_vals).unwrap();
+        let decoded_u64 = encoder.decode_u64_sequence(&encoded_u64).unwrap();
+        assert_eq!(decoded_u64, u64_vals);
+
+        let i64_vals = vec![-1i64, -128, -100_000, i64::MIN, i64::MAX, 0, 42];
+        let encoded_i64 = encoder.encode_i64_sequence(&i64_vals).unwrap();
+        let decoded_i64 = encoder.decode_i64_sequence(&encoded_i64).unwrap();
+        assert_eq!(decoded_i64, i64_vals);
+
+        let single_neg = encoder.encode_i64(-1).unwrap();
+        assert_eq!(encoder.decode_i64(&single_neg).unwrap().0, -1);
+    }
+
+    #[test]
+    fn test_c9_vv2_delta_u64_roundtrips_full_64_bit_span() {
+        let encoder = VarIntEncoder::delta();
+
+        let values = vec![0u64, 1u64 << 63, u64::MAX, 0, u64::MAX];
+        let encoded = encoder.encode_u64_sequence(&values).unwrap();
+        let decoded = encoder.decode_u64_sequence(&encoded).unwrap();
+        assert_eq!(decoded, values);
+
+        let sorted_span = vec![0u64, 1, 2, 3, 4, 5, u64::MAX];
+        let strategy = choose_optimal_strategy(&sorted_span);
+        assert_eq!(strategy, VarIntStrategy::Delta);
+        let auto_encoder = VarIntEncoder::new(strategy);
+        let auto_encoded = auto_encoder.encode_u64_sequence(&sorted_span).unwrap();
+        let auto_decoded = auto_encoder.decode_u64_sequence(&auto_encoded).unwrap();
+        assert_eq!(auto_decoded, sorted_span);
+    }
+
+    #[test]
+    fn test_c9_vv3_delta_i64_roundtrips_i64_min_to_max_without_overflow() {
+        let encoder = VarIntEncoder::delta();
+        let values = vec![i64::MIN, i64::MAX, i64::MIN, 0];
+        let res = std::panic::catch_unwind(|| {
+            let encoded = encoder.encode_i64_sequence(&values).unwrap();
+            encoder.decode_i64_sequence(&encoded).unwrap()
+        });
+        assert_eq!(
+            res.expect("encode_delta_sequence_i64 must not panic on i64::MIN..i64::MAX"),
+            values
+        );
+    }
+
+    #[test]
+    fn test_c9_vv4_leb128_decoders_reject_tenth_byte_overflow() {
+        let encoder = VarIntEncoder::leb128();
+
+        // 10th byte > 1 overflows u64
+        let overflow_u64 = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02];
+        assert!(
+            encoder.decode_u64(&overflow_u64).is_err(),
+            "u64 LEB128 with 10th byte 0x02 must fail"
+        );
+
+        // 10th byte for signed i64 must be 0x00 (positive sign bit 0) or 0x7F (negative sign bit 1)
+        let overflow_pos_i64 = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01];
+        assert!(
+            encoder.decode_i64(&overflow_pos_i64).is_err(),
+            "i64 LEB128 with 10th byte 0x01 (+2^63) must fail"
+        );
+        let overflow_neg_i64 = [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7E];
+        assert!(
+            encoder.decode_i64(&overflow_neg_i64).is_err(),
+            "i64 LEB128 with 10th byte 0x7E (-2^63 - 1) must fail"
+        );
+    }
+
+    #[test]
+    fn test_c9_vv5_choose_optimal_strategy_signed_handles_i64_min() {
+        let res = std::panic::catch_unwind(|| choose_optimal_strategy_signed(&[i64::MIN]));
+        assert_eq!(
+            res.expect("choose_optimal_strategy_signed must not panic on i64::MIN"),
+            VarIntStrategy::Zigzag
+        );
     }
 }
 
