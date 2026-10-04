@@ -15,6 +15,32 @@ use crate::io::var_int::VarInt;
 #[cfg(feature = "mmap")]
 use memmap2::Mmap;
 
+/// Most bytes a reader allocates ahead of the input that has to back them.
+///
+/// Lengths and element counts read from the input are untrusted. Code that
+/// sizes a buffer from one allocates at most this much before the input has
+/// delivered the corresponding bytes.
+pub(crate) const MAX_READ_AHEAD_ALLOC: usize = 64 * 1024;
+
+/// Error for a read of `len` bytes from a source with only `remaining` left.
+fn short_input(len: usize, remaining: u64) -> ZiporaError {
+    ZiporaError::io_error(format!(
+        "Unexpected end of data: {} bytes requested, {} remaining",
+        len, remaining
+    ))
+}
+
+/// Fail before allocating when a source that knows its remaining length
+/// cannot supply `len` more bytes.
+fn check_len_available(len: usize, remaining: Option<u64>) -> Result<()> {
+    match remaining {
+        Some(remaining) if u64::try_from(len).unwrap_or(u64::MAX) > remaining => {
+            Err(short_input(len, remaining))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Trait for reading structured data from various sources
 pub trait DataInput {
     /// Read a single byte
@@ -35,16 +61,49 @@ pub trait DataInput {
     /// Read exact number of bytes into the provided buffer
     fn read_bytes(&mut self, buf: &mut [u8]) -> Result<()>;
 
+    /// Upper bound on the number of bytes that can still be read, if the
+    /// source knows one.
+    ///
+    /// [`read_vec`](Self::read_vec) and the deserializers in this module
+    /// consult it before sizing a buffer from a length or count read from the
+    /// input, so a corrupt prefix fails with an error instead of allocating
+    /// memory the input cannot back. `None` (the default) means the source
+    /// does not know; readers then grow their buffers in bounded steps as the
+    /// bytes arrive. Implementations must never report fewer bytes than can
+    /// actually be read.
+    fn remaining_bytes(&self) -> Option<u64> {
+        None
+    }
+
     /// Read a vector of bytes with the specified length
+    ///
+    /// `len` is treated as untrusted. If [`remaining_bytes`](Self::remaining_bytes)
+    /// reports fewer than `len` bytes, the call fails before allocating.
+    /// Otherwise the buffer grows as the bytes arrive: each step adds at most
+    /// `max(64 KiB, bytes already read)`, so a length that promises more
+    /// bytes than the source delivers costs at most `max(n + 64 KiB, 2 * n)`
+    /// bytes of buffer, where `n` is the number of bytes actually read before
+    /// the read fails.
     fn read_vec(&mut self, len: usize) -> Result<Vec<u8>> {
-        let mut buf = vec![0u8; len];
-        self.read_bytes(&mut buf)?;
+        check_len_available(len, self.remaining_bytes())?;
+        let mut buf = Vec::new();
+        while buf.len() < len {
+            let filled = buf.len();
+            let step = (len - filled).min(MAX_READ_AHEAD_ALLOC.max(filled));
+            buf.try_reserve_exact(step)
+                .map_err(|_| ZiporaError::out_of_memory(filled.saturating_add(step)))?;
+            buf.resize(filled + step, 0);
+            self.read_bytes(&mut buf[filled..])?;
+        }
         Ok(buf)
     }
 
     /// Read a length-prefixed byte vector (length as varint)
     fn read_length_prefixed_bytes(&mut self) -> Result<Vec<u8>> {
-        let len = self.read_var_int()? as usize;
+        let len = self.read_var_int()?;
+        let len = usize::try_from(len).map_err(|_| {
+            ZiporaError::invalid_data(format!("Length prefix {} does not fit in usize", len))
+        })?;
         self.read_vec(len)
     }
 
@@ -161,8 +220,24 @@ impl<'a> DataInput for SliceDataInput<'a> {
         Ok(())
     }
 
+    fn remaining_bytes(&self) -> Option<u64> {
+        Some(self.remaining() as u64)
+    }
+
+    fn read_vec(&mut self, len: usize) -> Result<Vec<u8>> {
+        let remaining = self.remaining();
+        if len > remaining {
+            return Err(short_input(len, remaining as u64));
+        }
+        // `len <= remaining` keeps `end` within `data`.
+        let end = self.position + len;
+        let vec = self.data[self.position..end].to_vec();
+        self.position = end;
+        Ok(vec)
+    }
+
     fn skip(&mut self, n: usize) -> Result<()> {
-        if self.position + n > self.data.len() {
+        if n > self.remaining() {
             return Err(ZiporaError::io_error("Cannot skip past end of data"));
         }
         self.position += n;
@@ -389,8 +464,24 @@ impl DataInput for MmapDataInput {
         Ok(())
     }
 
+    fn remaining_bytes(&self) -> Option<u64> {
+        Some(self.remaining() as u64)
+    }
+
+    fn read_vec(&mut self, len: usize) -> Result<Vec<u8>> {
+        let remaining = self.remaining();
+        if len > remaining {
+            return Err(short_input(len, remaining as u64));
+        }
+        // `len <= remaining` keeps `end` within the map.
+        let end = self.position + len;
+        let vec = self.mmap[self.position..end].to_vec();
+        self.position = end;
+        Ok(vec)
+    }
+
     fn skip(&mut self, n: usize) -> Result<()> {
-        if self.position + n > self.mmap.len() {
+        if n > self.remaining() {
             return Err(ZiporaError::io_error("Cannot skip past end of data"));
         }
         self.position += n;
@@ -582,5 +673,180 @@ mod tests {
         let cursor = Cursor::new(vec![5, 6, 7, 8]);
         let mut input = from_reader(cursor);
         assert_eq!(input.read_u32().unwrap(), u32::from_le_bytes([5, 6, 7, 8]));
+    }
+
+    /// Reader that returns at most one byte per call, fails every other call
+    /// with `Interrupted`, and records the largest buffer it was asked to
+    /// fill.
+    struct TrickleReader {
+        data: Vec<u8>,
+        pos: usize,
+        interrupt_next: bool,
+        max_request: usize,
+    }
+
+    impl TrickleReader {
+        fn new(data: Vec<u8>) -> Self {
+            Self {
+                data,
+                pos: 0,
+                interrupt_next: true,
+                max_request: 0,
+            }
+        }
+    }
+
+    impl Read for TrickleReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.max_request = self.max_request.max(buf.len());
+            let interrupt = self.interrupt_next;
+            self.interrupt_next = !interrupt;
+            if interrupt {
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            match (buf.first_mut(), self.data.get(self.pos)) {
+                (Some(slot), Some(&byte)) => {
+                    *slot = byte;
+                    self.pos += 1;
+                    Ok(1)
+                }
+                _ => Ok(0),
+            }
+        }
+    }
+
+    /// Length prefixes with no payload behind them. The u64::MAX prefix must
+    /// stay first: before the fix it panicked ("capacity overflow"), which
+    /// fails the test before the 2^45 prefix, whose allocation request
+    /// aborted the process, is attempted.
+    const OVERSIZED_PREFIXES: [&[u8]; 2] = [
+        &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01],
+        &[0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x08],
+    ];
+
+    #[test]
+    fn test_c9_di1_length_prefix_beyond_slice_is_err() {
+        for prefix in OVERSIZED_PREFIXES {
+            let r = std::panic::catch_unwind(|| {
+                SliceDataInput::new(prefix).read_length_prefixed_bytes()
+            });
+            assert!(matches!(r, Ok(Err(_))), "prefix {:02x?}: {:?}", prefix, r);
+        }
+
+        // One byte short of the declared length.
+        let mut input = SliceDataInput::new(&[3, b'a', b'b']);
+        assert!(input.read_length_prefixed_bytes().is_err());
+
+        // An oversized explicit length fails without consuming input.
+        let mut input = SliceDataInput::new(&[1, 2, 3]);
+        assert!(input.read_vec(4).is_err());
+        assert!(input.read_string(usize::MAX).is_err());
+        assert_eq!(input.pos(), 0);
+        assert_eq!(input.read_vec(3).unwrap(), vec![1, 2, 3]);
+        assert_eq!(input.read_vec(0).unwrap(), Vec::<u8>::new());
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    #[cfg_attr(miri, ignore)] // Miri cannot map files.
+    fn test_c9_di1_length_prefix_beyond_mmap_is_err() {
+        for prefix in OVERSIZED_PREFIXES {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            temp_file.write_all(prefix).unwrap();
+            temp_file.flush().unwrap();
+            let path = temp_file.path().to_path_buf();
+            let r = std::panic::catch_unwind(move || {
+                MmapDataInput::open(&path)
+                    .unwrap()
+                    .read_length_prefixed_bytes()
+            });
+            assert!(matches!(r, Ok(Err(_))), "prefix {:02x?}: {:?}", prefix, r);
+        }
+    }
+
+    #[test]
+    fn test_c9_di1_stream_length_prefix_allocates_with_the_data() {
+        // A 2^30 length prefix followed by three payload bytes.
+        let mut data = Vec::new();
+        VarInt::write_to(&mut data, 1 << 30).unwrap();
+        data.extend_from_slice(b"abc");
+        let mut input = ReaderDataInput::new(TrickleReader::new(data));
+        assert!(input.read_length_prefixed_bytes().is_err());
+        // `read_vec` hands the reader the buffer it allocated, so the largest
+        // request is the largest buffer allocated ahead of the data.
+        let max_request = input.into_inner().max_request;
+        assert!(
+            max_request <= 64 * 1024,
+            "allocated {} bytes ahead of the data",
+            max_request
+        );
+    }
+
+    #[test]
+    fn test_c9_di1_stream_read_vec_crosses_growth_steps() {
+        // Lengths around the 64 KiB growth step, delivered one byte per call
+        // with an Interrupted error before every byte.
+        let lens: &[usize] = if cfg!(miri) {
+            &[0, 1, 65_537]
+        } else {
+            &[0, 1, 65_535, 65_536, 65_537, 3 * 65_536 + 5]
+        };
+        for &len in lens {
+            let payload: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+            let mut data = Vec::new();
+            VarInt::write_to(&mut data, len as u64).unwrap();
+            data.extend_from_slice(&payload);
+            data.push(0xAA);
+            let mut input = ReaderDataInput::new(TrickleReader::new(data));
+            assert_eq!(input.read_length_prefixed_bytes().unwrap(), payload, "len {}", len);
+            assert_eq!(input.read_u8().unwrap(), 0xAA, "len {}", len);
+        }
+    }
+
+    #[test]
+    fn test_c9_di1_remaining_bytes_reports_what_is_left() {
+        let mut input = SliceDataInput::new(&[1, 2, 3]);
+        assert_eq!(input.remaining_bytes(), Some(3));
+        input.read_u8().unwrap();
+        assert_eq!(input.remaining_bytes(), Some(2));
+        input.read_vec(2).unwrap();
+        assert_eq!(input.remaining_bytes(), Some(0));
+        let input = ReaderDataInput::new(Cursor::new(vec![1, 2, 3]));
+        assert_eq!(input.remaining_bytes(), None);
+    }
+
+    #[test]
+    fn test_c9_di2_skip_overflow_is_err() {
+        let data = [1u8, 2, 3];
+        let r = std::panic::catch_unwind(|| {
+            let mut input = SliceDataInput::new(&data);
+            input.read_u8().unwrap();
+            let skipped = input.skip(usize::MAX);
+            (skipped.is_err(), input.pos())
+        });
+        assert_eq!(r.ok(), Some((true, 1)));
+
+        let mut input = SliceDataInput::new(&data);
+        input.read_u8().unwrap();
+        assert!(input.skip(3).is_err());
+        input.skip(2).unwrap();
+        assert_eq!(input.pos(), 3);
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    #[cfg_attr(miri, ignore)] // Miri cannot map files.
+    fn test_c9_di2_mmap_skip_overflow_is_err() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(&[1, 2, 3]).unwrap();
+        temp_file.flush().unwrap();
+        let path = temp_file.path().to_path_buf();
+        let r = std::panic::catch_unwind(move || {
+            let mut input = MmapDataInput::open(&path).unwrap();
+            input.read_u8().unwrap();
+            let skipped = input.skip(usize::MAX);
+            (skipped.is_err(), input.pos())
+        });
+        assert_eq!(r.ok(), Some((true, 1)));
     }
 }
