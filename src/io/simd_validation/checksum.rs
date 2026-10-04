@@ -4,19 +4,19 @@
 //!
 //! ## Architecture
 //!
-//! Implements zipora's 6-tier SIMD framework:
-//! - **Tier 5**: AVX-512 (not applicable for CRC32C)
-//! - **Tier 4**: x86_64 SSE4.2 `_mm_crc32_u64` instruction (25 GB/s target)
-//! - **Tier 3**: BMI2 (not applicable for CRC32C)
-//! - **Tier 2**: ARM64 CRC32 extensions `__crc32cd` instruction
-//! - **Tier 1**: ARM NEON (not applicable for CRC32C)
-//! - **Tier 0**: Scalar table-based fallback
+//! [`detect_crc32c_impl`] picks one of three implementations at run time:
+//! - **x86_64 SSE4.2**: the `CRC32` instruction through `_mm_crc32_u64` and
+//!   its 32/16/8-bit forms
+//! - **aarch64 CRC extension**: the `CRC32C` instructions through
+//!   `__crc32cd` and its 32/16/8-bit forms
+//! - **Scalar**: a 256-entry lookup table, one byte per step
 //!
-//! ## Performance Targets
+//! ## Performance
 //!
-//! - **x86_64 SSE4.2**: 25 GB/s with hardware CRC instruction
-//! - **ARM64 CRC**: 15+ GB/s with hardware CRC instruction
-//! - **Scalar**: 1-2 GB/s with table-based implementation
+//! Limitation: no throughput figure is claimed. Each hardware kernel runs
+//! one dependent chain of CRC instructions, so it is bound by their
+//! latency. On Linux aarch64, `CpuFeatures::has_crc32` is never set, so
+//! [`crc32c`] runs the scalar code there.
 //!
 //! ## Usage
 //!
@@ -46,6 +46,9 @@ use std::sync::OnceLock;
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
+
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{__crc32cb, __crc32cd, __crc32ch, __crc32cw};
 
 /// CRC32C polynomial (Castagnoli)
 const CRC32C_POLY: u32 = 0x82f63b78;
@@ -192,7 +195,8 @@ pub fn crc32c_hash(data: &[u8]) -> Result<u32> {
 ///
 /// # Arguments
 ///
-/// * `crc` - Current CRC value
+/// * `crc` - Current CRC value: `0xFFFF_FFFF` for a new checksum, otherwise
+///   the value the previous call returned
 /// * `data` - New data to process
 ///
 /// # Returns
@@ -204,10 +208,11 @@ pub fn crc32c_hash(data: &[u8]) -> Result<u32> {
 /// ```rust
 /// use zipora::io::simd_validation::checksum::{crc32c_update, crc32c_finalize};
 ///
-/// let mut crc = 0;
-/// crc = crc32c_update(crc, b"Hello, ").unwrap();
-/// crc = crc32c_update(crc, b"world!").unwrap();
-/// let final_crc = crc32c_finalize(crc);
+/// let mut crc = 0xFFFF_FFFF;
+/// crc = crc32c_update(crc, b"12345").unwrap();
+/// crc = crc32c_update(crc, b"6789").unwrap();
+/// // The CRC32C check value of "123456789"
+/// assert_eq!(crc32c_finalize(crc), 0xE306_9283);
 /// ```
 pub fn crc32c_update(crc: u32, data: &[u8]) -> Result<u32> {
     crc32c(data, crc)
@@ -229,13 +234,12 @@ pub fn crc32c_finalize(crc: u32) -> u32 {
 }
 
 // ============================================================================
-// Scalar Implementation (Tier 0)
+// Scalar Implementation
 // ============================================================================
 
 /// Scalar CRC32C implementation using lookup table
 ///
 /// This is the portable fallback implementation that works on all platforms.
-/// Performance: ~1-2 GB/s
 fn crc32c_scalar(data: &[u8], mut crc: u32) -> u32 {
     let table = get_crc32c_table();
 
@@ -249,60 +253,63 @@ fn crc32c_scalar(data: &[u8], mut crc: u32) -> u32 {
 }
 
 // ============================================================================
-// x86_64 SSE4.2 Implementation (Tier 4)
+// x86_64 SSE4.2 Implementation
 // ============================================================================
 
 #[cfg(target_arch = "x86_64")]
 /// x86_64 SSE4.2 CRC32C implementation using hardware instruction
 ///
-/// Performance: ~25 GB/s with hardware acceleration
-///
 /// # Safety
 ///
-/// Requires SSE4.2 support (checked at runtime)
+/// The CPU must support SSE4.2. There are no requirements on `data`.
 #[target_feature(enable = "sse4.2")]
 unsafe fn crc32c_sse42(data: &[u8], mut crc: u32) -> u32 {
+    // Invariant: `ptr` points at the first unprocessed byte of `data`, and
+    // `remaining` bytes of `data` start there.
     let mut ptr = data.as_ptr();
     let mut remaining = data.len();
 
     // Process 8 bytes at a time with _mm_crc32_u64
     while remaining >= 8 {
         // Read 8 bytes as u64 (handles unaligned access)
-        // SAFETY: We check remaining >= 8, so this is safe
-        // SAFETY: We check remaining >= 8, so ptr is valid for 8 bytes
+        // SAFETY: by the invariant and `remaining >= 8`, the 8 bytes at `ptr`
+        // lie inside `data`; `read_unaligned` needs no alignment.
         let value = unsafe { ptr.cast::<u64>().read_unaligned() };
         crc = _mm_crc32_u64(crc as u64, value) as u32;
-        // SAFETY: We just checked we have at least 8 bytes
+        // SAFETY: `remaining >= 8`, so `ptr + 8` is inside `data` or one
+        // past its end.
         ptr = unsafe { ptr.add(8) };
         remaining -= 8;
     }
 
     // Process 4 bytes with _mm_crc32_u32
     if remaining >= 4 {
-        // SAFETY: We check remaining >= 4, so ptr is valid for 4 bytes
-        // SAFETY: We check remaining >= 4, so this is safe
+        // SAFETY: by the invariant and `remaining >= 4`, the 4 bytes at `ptr`
+        // lie inside `data`; `read_unaligned` needs no alignment.
         let value = unsafe { ptr.cast::<u32>().read_unaligned() };
         crc = _mm_crc32_u32(crc, value);
-        // SAFETY: We just checked we have at least 4 bytes
+        // SAFETY: `remaining >= 4`, so `ptr + 4` is inside `data` or one
+        // past its end.
         ptr = unsafe { ptr.add(4) };
         remaining -= 4;
     }
 
     // Process 2 bytes with _mm_crc32_u16
-    // SAFETY: We check remaining >= 2, so ptr is valid for 2 bytes
     if remaining >= 2 {
-        // SAFETY: We check remaining >= 2, so this is safe
+        // SAFETY: by the invariant and `remaining >= 2`, the 2 bytes at `ptr`
+        // lie inside `data`; `read_unaligned` needs no alignment.
         let value = unsafe { ptr.cast::<u16>().read_unaligned() };
         crc = _mm_crc32_u16(crc, value);
-        // SAFETY: We just checked we have at least 2 bytes
+        // SAFETY: `remaining >= 2`, so `ptr + 2` is inside `data` or one
+        // past its end.
         ptr = unsafe { ptr.add(2) };
         remaining -= 2;
     }
 
-    // SAFETY: We check remaining == 1, so dereferencing ptr is safe
     // Process remaining byte with _mm_crc32_u8
     if remaining == 1 {
-        // SAFETY: We check remaining == 1, so this is safe
+        // SAFETY: by the invariant and `remaining == 1`, `ptr` points at the
+        // last byte of `data`.
         crc = _mm_crc32_u8(crc, unsafe { *ptr });
     }
 
@@ -310,76 +317,46 @@ unsafe fn crc32c_sse42(data: &[u8], mut crc: u32) -> u32 {
 }
 
 // ============================================================================
-// ARM64 CRC Implementation (Tier 2)
+// ARM64 CRC Implementation
 // ============================================================================
 
 #[cfg(target_arch = "aarch64")]
 /// ARM64 CRC32C implementation using hardware CRC extensions
 ///
-/// Performance: ~15+ GB/s with hardware acceleration
+/// Feeds `data` to the `std::arch::aarch64` CRC32C intrinsics as
+/// little-endian 8-, 4-, 2- and 1-byte words, the byte order of the
+/// reflected CRC32C, so the result matches [`crc32c_scalar`].
 ///
 /// # Safety
 ///
-/// Requires ARM CRC32 extensions (checked at runtime)
+/// The CPU must support the ARMv8 CRC extension (target feature `crc`).
+/// There are no requirements on `data`.
 #[target_feature(enable = "crc")]
 unsafe fn crc32c_arm(data: &[u8], mut crc: u32) -> u32 {
-    let mut ptr = data.as_ptr();
-    let mut remaining = data.len();
-
     // Process 8 bytes at a time with __crc32cd
-    while remaining >= 8 {
-        // SAFETY: We check remaining >= 8, so this is safe
-        let value = unsafe { ptr.cast::<u64>().read_unaligned() };
-        crc = __crc32cd(crc, value);
-        // SAFETY: We just checked we have at least 8 bytes
-        ptr = unsafe { ptr.add(8) };
-        remaining -= 8;
+    let (words, mut rest) = data.as_chunks::<8>();
+    for word in words {
+        crc = __crc32cd(crc, u64::from_le_bytes(*word));
     }
 
     // Process 4 bytes with __crc32cw
-    if remaining >= 4 {
-        // SAFETY: We check remaining >= 4, so this is safe
-        let value = unsafe { ptr.cast::<u32>().read_unaligned() };
-        crc = __crc32cw(crc, value);
-        // SAFETY: We just checked we have at least 4 bytes
-        ptr = unsafe { ptr.add(4) };
-        remaining -= 4;
+    if let Some((word, tail)) = rest.split_first_chunk::<4>() {
+        crc = __crc32cw(crc, u32::from_le_bytes(*word));
+        rest = tail;
     }
 
     // Process 2 bytes with __crc32ch
-    if remaining >= 2 {
-        // SAFETY: We check remaining >= 2, so this is safe
-        let value = unsafe { ptr.cast::<u16>().read_unaligned() };
-        crc = __crc32ch(crc, value);
-        // SAFETY: We just checked we have at least 2 bytes
-        ptr = unsafe { ptr.add(2) };
-        remaining -= 2;
+    if let Some((half, tail)) = rest.split_first_chunk::<2>() {
+        crc = __crc32ch(crc, u16::from_le_bytes(*half));
+        rest = tail;
     }
-    // SAFETY: We check remaining == 1, so dereferencing ptr is safe
 
     // Process remaining byte with __crc32cb
-    if remaining == 1 {
-        // SAFETY: We check remaining == 1, so this is safe
-        crc = __crc32cb(crc, unsafe { *ptr });
+    if let Some(&byte) = rest.first() {
+        crc = __crc32cb(crc, byte);
     }
 
     crc
-}
-
-// ARM CRC32C intrinsics (Castagnoli variant)
-#[cfg(target_arch = "aarch64")]
-extern "C" {
-    #[link_name = "llvm.aarch64.crc32cb"]
-    fn __crc32cb(crc: u32, data: u8) -> u32;
-
-    #[link_name = "llvm.aarch64.crc32ch"]
-    fn __crc32ch(crc: u32, data: u16) -> u32;
-
-    #[link_name = "llvm.aarch64.crc32cw"]
-    fn __crc32cw(crc: u32, data: u32) -> u32;
-
-    #[link_name = "llvm.aarch64.crc32cd"]
-    fn __crc32cd(crc: u32, data: u64) -> u32;
 }
 
 #[cfg(test)]
@@ -555,6 +532,50 @@ mod tests {
         let crc2 = crc32c_hash(&data).unwrap();
         assert_eq!(crc, crc2);
     }
+
+    /// C9 C1/C3: the hardware kernels against the table-driven code for
+    /// every length 0..=64, eight start offsets (most inputs misaligned) and
+    /// three initial values. The kernels are called directly behind the
+    /// runtime feature check: under Miri `CpuFeatures` reports nothing, so
+    /// `crc32c` itself always takes the scalar path there, while
+    /// `is_x86_feature_detected!` reports the build's target features, so
+    /// the Miri SIMD build runs `crc32c_sse42` here (C3). On aarch64 with the
+    /// CRC extension the test runs `crc32c_arm` (C1).
+    #[test]
+    fn test_c9_c1_c3_hardware_kernels_match_scalar_for_lengths_0_to_64_and_offsets() {
+        let buf: Vec<u8> = (0..72u32).map(|i| (i.wrapping_mul(151) ^ (i >> 3)) as u8).collect();
+        let mut hardware_checked = 0usize;
+        for offset in 0..8 {
+            for len in 0..=64 {
+                let data = &buf[offset..offset + len];
+                for init in [0u32, 0xFFFF_FFFF, 0x89AB_CDEF] {
+                    let expected = crc32c_scalar(data, init);
+                    let what = (offset, len, init);
+                    assert_eq!(crc32c(data, init).unwrap(), expected, "crc32c {what:?}");
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        if is_x86_feature_detected!("sse4.2") {
+                            // SAFETY: SSE4.2 support was verified at runtime just above.
+                            let got = unsafe { crc32c_sse42(data, init) };
+                            assert_eq!(got, expected, "crc32c_sse42 {what:?}");
+                            hardware_checked += 1;
+                        }
+                    }
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        if std::arch::is_aarch64_feature_detected!("crc") {
+                            // SAFETY: the CRC extension was verified at runtime just above.
+                            let got = unsafe { crc32c_arm(data, init) };
+                            assert_eq!(got, expected, "crc32c_arm {what:?}");
+                            hardware_checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        println!("C1/C3: hardware CRC32C kernel compared with scalar on {hardware_checked} inputs");
+        assert_eq!(crc32c_hash(b"123456789").unwrap(), 0xE306_9283);
+    }
 }
 
 #[cfg(all(test, not(miri)))]
@@ -639,9 +660,6 @@ mod benches {
         let bytes_processed = data.len() * 100_000;
         let throughput_gbps = (bytes_processed as f64 / elapsed.as_secs_f64()) / 1_000_000_000.0;
 
-        println!(
-            "CRC32C SSE4.2 (1 KB): {:.2} GB/s (target: 25 GB/s)",
-            throughput_gbps
-        );
+        println!("CRC32C SSE4.2 (1 KB): {:.2} GB/s", throughput_gbps);
     }
 }
