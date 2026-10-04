@@ -669,7 +669,12 @@ impl SerializableType for bool {
     }
 
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
-        Ok(input.read_u8()? != 0)
+        // `serialize` writes only 0 or 1; any other byte is corrupt input.
+        match input.read_u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(ZiporaError::invalid_data("Invalid bool byte")),
+        }
     }
 }
 
@@ -883,5 +888,25 @@ mod tests {
         assert_eq!(deserialized.len(), 2);
         assert_eq!(*deserialized[0], "Hello");
         assert_eq!(*deserialized[1], "World");
+    }
+
+    #[test]
+    fn test_c9_sp6_bool_rejects_bytes_above_one() {
+        for byte in [2u8, 0xFF] {
+            let bytes = [byte];
+            let mut input = SliceDataInput::new(&bytes);
+            assert!(
+                <bool as SerializableType>::deserialize(&mut input).is_err(),
+                "byte {byte:#04x} must not decode as a bool"
+            );
+        }
+        for (byte, expected) in [(0u8, false), (1u8, true)] {
+            let bytes = [byte];
+            let mut input = SliceDataInput::new(&bytes);
+            assert_eq!(
+                <bool as SerializableType>::deserialize(&mut input).unwrap(),
+                expected
+            );
+        }
     }
 }
