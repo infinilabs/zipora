@@ -1462,6 +1462,7 @@ mod tests {
     /// guarantee. With a real shared file mapping, writes must survive
     /// drop + reopen without any sync() call.
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_data_persists_without_explicit_sync() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("persist_no_sync.mmap");
@@ -1481,6 +1482,7 @@ mod tests {
     /// Same regression, growth path: capacity growth remaps the file; data
     /// written before and after growth must persist without sync().
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_growth_persists_without_explicit_sync() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("persist_growth.mmap");
@@ -1506,6 +1508,7 @@ mod tests {
     /// unused knobs — cache alignment, NUMA, prefetch distance — were
     /// removed rather than left as silent no-ops).
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_access_pattern_and_huge_page_configs_work() {
         for pattern in [
             AccessPattern::Sequential,
@@ -1535,6 +1538,7 @@ mod tests {
     /// the flag on — a wrong flush_range offset/len would return an error —
     /// and verify the result persists across reopen.
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_sync_on_write_range_flushes_cover_all_write_paths() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("sync_range.mmap");
@@ -1565,6 +1569,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_create_mmap_vec() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
@@ -1578,6 +1583,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_push_and_get() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
@@ -1598,6 +1604,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_pop() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
@@ -1615,6 +1622,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_persistence() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
@@ -1647,6 +1655,7 @@ mod tests {
     /// (80 % 32 == 16) — UB when creating &[T]. The offset is now padded
     /// to align_of::<T>(), including across a persist/reopen cycle.
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_alignment_over_16() {
         #[repr(C, align(32))]
         #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1695,6 +1704,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_growth() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
@@ -1723,6 +1733,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_slice_access() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
@@ -1744,6 +1755,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_iterator() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
@@ -1761,6 +1773,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_read_only() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
@@ -1790,6 +1803,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_reserve() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
@@ -1814,6 +1828,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_different_configs() {
         let temp_dir = tempdir().unwrap();
 
@@ -1831,6 +1846,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_builder_pattern() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("builder.mmap");
@@ -1849,6 +1865,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_stats() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("stats.mmap");
@@ -1876,6 +1893,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_extend() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("extend.mmap");
@@ -1898,6 +1916,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_truncate() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("truncate.mmap");
@@ -1923,6 +1942,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_resize_with_value() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("resize_val.mmap");
@@ -1952,6 +1972,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_shrink_to_fit() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("shrink.mmap");
@@ -1983,6 +2004,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_new_config_presets() {
         let temp_dir = tempdir().unwrap();
 
@@ -2017,6 +2039,7 @@ mod tests {
     //==========================================================================
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_bulk_initialization() {
         let vec: MmapVec<u64> = MmapVec::with_capacity_simd(1000).unwrap();
         assert!(vec.capacity() >= 1000);
@@ -2024,6 +2047,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_bulk_push() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("simd_push.mmap");
@@ -2039,6 +2063,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_bulk_pop() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("simd_pop.mmap");
@@ -2058,6 +2083,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_copy_from() {
         let temp_dir = tempdir().unwrap();
         let file_path1 = temp_dir.path().join("simd_src.mmap");
@@ -2076,6 +2102,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_fill_range() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("simd_fill.mmap");
@@ -2095,6 +2122,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_compare_range() {
         let temp_dir = tempdir().unwrap();
         let file_path1 = temp_dir.path().join("simd_cmp1.mmap");
@@ -2120,6 +2148,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_performance_different_sizes() {
         let temp_dir = tempdir().unwrap();
 
@@ -2139,6 +2168,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_edge_cases() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("simd_edge.mmap");
@@ -2160,6 +2190,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_small_operations() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("simd_small.mmap");
@@ -2178,6 +2209,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_read_only_error() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("simd_ro.mmap");
@@ -2203,6 +2235,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_large_bulk_operations() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("simd_large.mmap");
@@ -2227,6 +2260,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_fill_range_edge_cases() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("simd_fill_edge.mmap");
@@ -2251,6 +2285,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_compare_range_edge_cases() {
         let temp_dir = tempdir().unwrap();
         let file_path1 = temp_dir.path().join("simd_cmp_e1.mmap");
@@ -2276,6 +2311,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_copy_from_empty() {
         let temp_dir = tempdir().unwrap();
         let file_path1 = temp_dir.path().join("simd_copy_empty1.mmap");
@@ -2292,6 +2328,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_simd_copy_from_capacity_growth() {
         let temp_dir = tempdir().unwrap();
         let file_path1 = temp_dir.path().join("simd_copy_grow1.mmap");
