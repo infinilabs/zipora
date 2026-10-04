@@ -17,6 +17,7 @@ pub struct RangeReader<R> {
     current_pos: u64,
     end_pos: u64,
     total_size: Option<u64>,
+    needs_initial_seek: bool,
 }
 
 impl<R> RangeReader<R> {
@@ -43,6 +44,7 @@ impl<R> RangeReader<R> {
             current_pos: start,
             end_pos: start.saturating_add(length),
             total_size: None,
+            needs_initial_seek: true,
         }
     }
 
@@ -59,6 +61,7 @@ impl<R> RangeReader<R> {
             current_pos: start,
             end_pos: end,
             total_size: None,
+            needs_initial_seek: true,
         }
     }
 
@@ -135,7 +138,9 @@ impl<R: Read + Seek> RangeReader<R> {
             ZiporaError::io_error(format!("Failed to seek to start position {}: {}", start, e))
         })?;
 
-        Ok(Self::new(inner, start, length))
+        let mut reader = Self::new(inner, start, length);
+        reader.needs_initial_seek = false;
+        Ok(reader)
     }
 
     /// Reset to the beginning of the range
@@ -146,6 +151,7 @@ impl<R: Read + Seek> RangeReader<R> {
                 ZiporaError::io_error(format!("Failed to reset to start position: {}", e))
             })?;
         self.current_pos = self.start_pos;
+        self.needs_initial_seek = false;
         Ok(())
     }
 
@@ -163,17 +169,23 @@ impl<R: Read + Seek> RangeReader<R> {
             .seek(SeekFrom::Start(absolute_pos))
             .map_err(|e| ZiporaError::io_error(format!("Failed to seek within range: {}", e)))?;
         self.current_pos = absolute_pos;
+        self.needs_initial_seek = false;
         Ok(pos)
     }
 }
 
-impl<R: Read> Read for RangeReader<R> {
+impl<R: Read + Seek> Read for RangeReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.is_at_end() {
             return Ok(0);
         }
 
-        let remaining = self.remaining() as usize;
+        if self.needs_initial_seek {
+            self.inner.seek(SeekFrom::Start(self.current_pos))?;
+            self.needs_initial_seek = false;
+        }
+
+        let remaining = usize::try_from(self.remaining()).unwrap_or(usize::MAX);
         let to_read = cmp::min(buf.len(), remaining);
 
         let bytes_read = self.inner.read(&mut buf[..to_read])?;
@@ -183,33 +195,48 @@ impl<R: Read> Read for RangeReader<R> {
     }
 }
 
+fn resolve_range_seek(
+    start_pos: u64,
+    current_pos: u64,
+    end_pos: u64,
+    pos: SeekFrom,
+) -> io::Result<u64> {
+    let target_pos = match pos {
+        SeekFrom::Start(offset) => start_pos.checked_add(offset),
+        SeekFrom::End(offset) => {
+            if offset >= 0 {
+                end_pos.checked_add(offset as u64)
+            } else {
+                end_pos.checked_sub(offset.unsigned_abs())
+            }
+        }
+        SeekFrom::Current(offset) => {
+            if offset >= 0 {
+                current_pos.checked_add(offset as u64)
+            } else {
+                current_pos.checked_sub(offset.unsigned_abs())
+            }
+        }
+    };
+
+    match target_pos {
+        Some(target) if target >= start_pos && target <= end_pos => Ok(target),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Seek position is outside range bounds",
+        )),
+    }
+}
+
 impl<R: Read + Seek> Seek for RangeReader<R> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let target_pos = match pos {
-            SeekFrom::Start(pos) => self.start_pos.saturating_add(pos),
-            SeekFrom::End(offset) => {
-                if offset >= 0 {
-                    self.end_pos.saturating_add(offset as u64)
-                } else {
-                    self.end_pos.saturating_sub((-offset) as u64)
-                }
-            }
-            SeekFrom::Current(offset) => {
-                if offset >= 0 {
-                    self.current_pos.saturating_add(offset as u64)
-                } else {
-                    self.current_pos.saturating_sub((-offset) as u64)
-                }
-            }
-        };
+        let target_pos = resolve_range_seek(self.start_pos, self.current_pos, self.end_pos, pos)?;
 
-        // Clamp to range bounds
-        let clamped_pos = cmp::max(self.start_pos, cmp::min(target_pos, self.end_pos));
+        self.inner.seek(SeekFrom::Start(target_pos))?;
+        self.current_pos = target_pos;
+        self.needs_initial_seek = false;
 
-        self.inner.seek(SeekFrom::Start(clamped_pos))?;
-        self.current_pos = clamped_pos;
-
-        Ok(clamped_pos - self.start_pos)
+        Ok(target_pos - self.start_pos)
     }
 }
 
@@ -220,6 +247,7 @@ pub struct RangeWriter<W> {
     current_pos: u64,
     end_pos: u64,
     bytes_written: u64,
+    needs_initial_seek: bool,
 }
 
 impl<W> RangeWriter<W> {
@@ -231,6 +259,7 @@ impl<W> RangeWriter<W> {
             current_pos: start,
             end_pos: start.saturating_add(length),
             bytes_written: 0,
+            needs_initial_seek: true,
         }
     }
 
@@ -242,6 +271,7 @@ impl<W> RangeWriter<W> {
             current_pos: start,
             end_pos: end,
             bytes_written: 0,
+            needs_initial_seek: true,
         }
     }
 
@@ -303,17 +333,24 @@ impl<W: Write + Seek> RangeWriter<W> {
             ZiporaError::io_error(format!("Failed to seek to start position {}: {}", start, e))
         })?;
 
-        Ok(Self::new(inner, start, length))
+        let mut writer = Self::new(inner, start, length);
+        writer.needs_initial_seek = false;
+        Ok(writer)
     }
 }
 
-impl<W: Write> Write for RangeWriter<W> {
+impl<W: Write + Seek> Write for RangeWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.is_at_end() {
             return Ok(0);
         }
 
-        let remaining = self.remaining() as usize;
+        if self.needs_initial_seek {
+            self.inner.seek(SeekFrom::Start(self.current_pos))?;
+            self.needs_initial_seek = false;
+        }
+
+        let remaining = usize::try_from(self.remaining()).unwrap_or(usize::MAX);
         let to_write = cmp::min(buf.len(), remaining);
 
         let bytes_written = self.inner.write(&buf[..to_write])?;
@@ -330,36 +367,18 @@ impl<W: Write> Write for RangeWriter<W> {
 
 impl<W: Write + Seek> Seek for RangeWriter<W> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let target_pos = match pos {
-            SeekFrom::Start(pos) => self.start_pos.saturating_add(pos),
-            SeekFrom::End(offset) => {
-                if offset >= 0 {
-                    self.end_pos.saturating_add(offset as u64)
-                } else {
-                    self.end_pos.saturating_sub((-offset) as u64)
-                }
-            }
-            SeekFrom::Current(offset) => {
-                if offset >= 0 {
-                    self.current_pos.saturating_add(offset as u64)
-                } else {
-                    self.current_pos.saturating_sub((-offset) as u64)
-                }
-            }
-        };
+        let target_pos = resolve_range_seek(self.start_pos, self.current_pos, self.end_pos, pos)?;
 
-        // Clamp to range bounds
-        let clamped_pos = cmp::max(self.start_pos, cmp::min(target_pos, self.end_pos));
+        self.inner.seek(SeekFrom::Start(target_pos))?;
+        self.current_pos = target_pos;
+        self.needs_initial_seek = false;
 
-        self.inner.seek(SeekFrom::Start(clamped_pos))?;
-        self.current_pos = clamped_pos;
-
-        Ok(clamped_pos - self.start_pos)
+        Ok(target_pos - self.start_pos)
     }
 }
 
 /// Implementation of DataInput for RangeReader
-impl<R: Read> DataInput for RangeReader<R> {
+impl<R: Read + Seek> DataInput for RangeReader<R> {
     fn read_u8(&mut self) -> Result<u8> {
         if self.remaining() < 1 {
             return Err(ZiporaError::io_error("Range exhausted"));
@@ -472,8 +491,9 @@ impl<R> MultiRangeReader<R> {
     pub fn total_length(&self) -> u64 {
         self.ranges
             .iter()
-            .map(|(start, end)| end.saturating_sub(*start))
-            .sum()
+            .fold(0u64, |acc, (start, end)| {
+                acc.saturating_add(end.saturating_sub(*start))
+            })
     }
 
     /// Get the current range being read
@@ -495,29 +515,45 @@ impl<R> MultiRangeReader<R> {
 
 impl<R: Read + Seek> Read for MultiRangeReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.current_range >= self.ranges.len() {
-            return Ok(0); // No more ranges
+        if buf.is_empty() {
+            return Ok(0);
         }
 
-        let (start, end) = self.ranges[self.current_range];
-        let absolute_pos = start + self.current_pos;
+        let (start, end, absolute_pos) = loop {
+            if self.current_range >= self.ranges.len() {
+                return Ok(0); // No more ranges
+            }
 
-        if absolute_pos >= end {
-            // Current range exhausted, move to next
+            let (start, end) = self.ranges[self.current_range];
+            let absolute_pos = start.saturating_add(self.current_pos);
+
+            if absolute_pos < end {
+                break (start, end, absolute_pos);
+            }
+
+            // Current range exhausted, move to next iteratively
             if !self.next_range() {
                 return Ok(0);
             }
-            return self.read(buf);
-        }
+        };
 
         // Seek to current position in range
         self.inner.seek(SeekFrom::Start(absolute_pos))?;
 
         // Read limited by range end
-        let remaining_in_range = (end - absolute_pos) as usize;
+        let remaining_in_range = usize::try_from(end - absolute_pos).unwrap_or(usize::MAX);
         let to_read = cmp::min(buf.len(), remaining_in_range);
 
         let bytes_read = self.inner.read(&mut buf[..to_read])?;
+        if bytes_read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!(
+                    "Range ({}..{}) extends past end of underlying stream at offset {}",
+                    start, end, absolute_pos
+                ),
+            ));
+        }
         self.current_pos += bytes_read as u64;
 
         Ok(bytes_read)
@@ -715,5 +751,103 @@ mod tests {
         reader.reset().unwrap();
         reader.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"Wo");
+    }
+
+    #[test]
+    fn test_c9_rs1_new_positions_inner_reader_and_writer_to_start() {
+        let mut reader = RangeReader::new(Cursor::new(b"Hello, World!"), 7, 5);
+        let mut s = String::new();
+        reader.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "World");
+
+        let mut buf = [0u8; 20];
+        {
+            let mut writer = RangeWriter::new(Cursor::new(&mut buf[..]), 5, 5);
+            writer.write_all(b"Hello").unwrap();
+            writer.flush().unwrap();
+        }
+        assert_eq!(&buf[..5], &[0u8; 5]);
+        assert_eq!(&buf[5..10], b"Hello");
+        assert_eq!(&buf[10..], &[0u8; 10]);
+    }
+
+    #[test]
+    fn test_c9_rs2_multi_range_reader_skips_empty_ranges_and_errors_past_eof() {
+        let data = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+        // A range extending past the underlying stream's EOF must error rather than
+        // silently truncating and dropping subsequent valid ranges.
+        let mut bad_reader =
+            MultiRangeReader::new(Cursor::new(&data[..]), vec![(0, 3), (100, 103), (6, 9)]);
+        let mut out = String::new();
+        let err = bad_reader
+            .read_to_string(&mut out)
+            .expect_err("range (100..103) past 26-byte EOF must return UnexpectedEof");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+
+        // Iterating across many empty ranges must not recurse per empty range.
+        #[cfg(miri)]
+        let empty_count = 256usize;
+        #[cfg(not(miri))]
+        let empty_count = 200_000usize;
+
+        let mut ranges = vec![(0, 0); empty_count];
+        ranges.push((0, 3));
+        ranges.push((6, 9));
+        let mut mr = MultiRangeReader::new(Cursor::new(&data[..]), ranges);
+        let mut text = String::new();
+        mr.read_to_string(&mut text).unwrap();
+        assert_eq!(text, "ABCGHI");
+    }
+
+    #[test]
+    fn test_c9_rs3_seek_i64_min_and_out_of_bounds_return_invalid_input() {
+        let data = b"Hello, World!";
+        let mut reader = RangeReader::new(Cursor::new(&data[..]), 7, 5);
+
+        let r_cur = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            reader.seek(SeekFrom::Current(i64::MIN))
+        }));
+        assert!(
+            matches!(r_cur, Ok(Err(ref e)) if e.kind() == io::ErrorKind::InvalidInput),
+            "SeekFrom::Current(i64::MIN) must return Err(InvalidInput) without panicking: {r_cur:?}"
+        );
+
+        let r_end = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            reader.seek(SeekFrom::End(i64::MIN))
+        }));
+        assert!(
+            matches!(r_end, Ok(Err(ref e)) if e.kind() == io::ErrorKind::InvalidInput),
+            "SeekFrom::End(i64::MIN) must return Err(InvalidInput) without panicking: {r_end:?}"
+        );
+
+        assert_eq!(
+            reader.seek(SeekFrom::Current(-1)).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            reader.seek(SeekFrom::Start(6)).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        let mut buf = [0u8; 20];
+        let mut writer = RangeWriter::new(Cursor::new(&mut buf[..]), 5, 5);
+        let w_cur = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            writer.seek(SeekFrom::Current(i64::MIN))
+        }));
+        assert!(
+            matches!(w_cur, Ok(Err(ref e)) if e.kind() == io::ErrorKind::InvalidInput),
+            "RangeWriter SeekFrom::Current(i64::MIN) must return Err(InvalidInput): {w_cur:?}"
+        );
+    }
+
+    #[test]
+    fn test_c9_rs5_multi_range_total_length_saturates_on_overflow() {
+        let mr = MultiRangeReader::new(
+            Cursor::new(&b""[..]),
+            vec![(0, u64::MAX), (0, u64::MAX)],
+        );
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mr.total_length()));
+        assert_eq!(res.expect("total_length must not panic on overflow"), u64::MAX);
     }
 }
