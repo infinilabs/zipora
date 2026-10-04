@@ -1049,10 +1049,17 @@ where
     // SIMD-OPTIMIZED BULK OPERATIONS
     //==========================================================================
 
-    /// Create with SIMD-optimized zero initialization
+    /// Create a vector with room for `capacity` elements, backed by a new
+    /// temporary file in `std::env::temp_dir()` that is deleted on drop.
     ///
-    /// # Performance
-    /// 6-10x faster than standard initialization for large capacities (≥256 bytes)
+    /// The backing file is created at its full size up front, and bytes
+    /// added by extending a file read back as zeros, so no separate
+    /// zero-fill pass (SIMD or otherwise) runs; the name is kept for API
+    /// compatibility.
+    ///
+    /// # Errors
+    /// Returns an error if `capacity` elements plus the header do not fit
+    /// in `usize` bytes, or if the file cannot be created, sized or mapped.
     pub fn with_capacity_simd(capacity: usize) -> Result<Self>
     where
         T: Copy + 'static,
@@ -1072,23 +1079,9 @@ where
             counter
         ));
 
-        let config = MmapVecConfig::default();
+        let config = MmapVecConfig::default().with_initial_capacity(capacity);
         let mut vec = Self::create(&file_path, config)?;
         vec.is_temp_file = true; // Mark as temporary for cleanup
-
-        // Zero-initialize using SIMD (6-10x faster for large allocations)
-        if capacity > 0 && !std::mem::needs_drop::<T>() {
-            let size_bytes = capacity * std::mem::size_of::<T>();
-            if size_bytes >= 64 {
-                // SIMD threshold
-                // SAFETY: data_ptr valid, size_bytes <= capacity * sizeof(T), mapping valid for vec lifetime
-                let slice = unsafe {
-                    std::slice::from_raw_parts_mut(vec.data_ptr()?.as_ptr() as *mut u8, size_bytes)
-                };
-
-                fast_fill(slice, 0);
-            }
-        }
 
         Ok(vec)
     }
@@ -2351,5 +2344,43 @@ mod tests {
         dest.copy_from_simd(&source).unwrap();
         assert_eq!(dest.len(), source.len());
         assert_eq!(dest.as_slice(), source.as_slice());
+    }
+
+    /// C9.1 F1: `with_capacity_simd` ignored its argument. It always
+    /// created the default 1024-element file and then zero-filled
+    /// `capacity` elements through the data pointer, so any request above
+    /// 1024 elements wrote past the end of the mapping. The requested
+    /// capacity must size the (zero-filled) file.
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f1_with_capacity_simd_honours_capacity() {
+        // Small request first: in bounds even on the unfixed code, which
+        // reports the default capacity of 1024 here.
+        let small = MmapVec::<u64>::with_capacity_simd(10).unwrap();
+        assert_eq!(small.capacity(), 10, "requested capacity ignored");
+        drop(small);
+
+        let big = MmapVec::<u64>::with_capacity_simd(5000).unwrap();
+        assert_eq!(big.capacity(), 5000);
+        assert!(big.is_empty());
+        let bytes = std::fs::read(big.path()).unwrap();
+        assert_eq!(bytes.len(), HEADER_SIZE + 5000 * 8);
+        assert!(bytes[HEADER_SIZE..].iter().all(|&b| b == 0));
+    }
+
+    /// C9.1 F1: a capacity whose byte size overflows `usize` must be an
+    /// `Err`. The unfixed code multiplied without a check; a debug build
+    /// panics there, which this test catches and reports.
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f1_with_capacity_simd_rejects_overflowing_capacity() {
+        let result = std::panic::catch_unwind(|| {
+            MmapVec::<u64>::with_capacity_simd(usize::MAX).map(|v| v.capacity())
+        });
+        assert!(
+            matches!(result, Ok(Err(_))),
+            "expected Err, got {:?}",
+            result
+        );
     }
 }
