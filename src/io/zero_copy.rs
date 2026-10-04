@@ -66,6 +66,10 @@ impl ZeroCopyBuffer {
     }
 
     /// Create a new zero-copy buffer using a secure memory pool
+    ///
+    /// Limitation: the backing storage is a heap `Vec<u8>` whose bytes are
+    /// zeroed on drop; it is not allocated from [`SecureMemoryPool`] with
+    /// `mlock` or guard pages.
     pub fn with_secure_pool(capacity: usize) -> Result<Self> {
         let pool = SecureMemoryPool::new(crate::memory::SecurePoolConfig::small_secure())?;
         Self::with_pool(capacity, Some(pool))
@@ -170,7 +174,14 @@ impl ZeroCopyBuffer {
             return Ok(0);
         }
 
+        let max_len = writable.len();
         let bytes_read = reader.read(writable)?;
+        if bytes_read > max_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "reader returned more bytes than the destination slice length",
+            ));
+        }
         self.write_pos += bytes_read;
         Ok(bytes_read)
     }
@@ -192,9 +203,24 @@ impl ZeroCopyBuffer {
             return Ok(0);
         }
 
+        let max_len = readable.len();
         let bytes_written = writer.write(readable)?;
+        if bytes_written > max_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "writer reported more bytes written than the source slice length",
+            ));
+        }
         self.read_pos += bytes_written;
         Ok(bytes_written)
+    }
+}
+
+impl Drop for ZeroCopyBuffer {
+    fn drop(&mut self) {
+        if self._pool.is_some() {
+            self.buffer.fill(0);
+        }
     }
 }
 
@@ -283,7 +309,11 @@ impl<R: Read> ZeroCopyReader<R> {
         })
     }
 
-    /// Create a new zero-copy reader with secure memory pool
+    /// Create a new zero-copy reader with a zero-on-drop buffer
+    ///
+    /// Limitation: delegates to [`ZeroCopyBuffer::with_secure_pool`], which
+    /// zeros the internal `Vec<u8>` on drop rather than allocating from
+    /// [`SecureMemoryPool`].
     pub fn with_secure_buffer(inner: R, capacity: usize) -> Result<Self> {
         Ok(Self {
             inner,
@@ -391,6 +421,12 @@ impl<R: Read> ZeroCopyReader<R> {
                         "unexpected end of stream while skipping",
                     )));
                 }
+                Ok(bytes_read) if bytes_read > to_skip => {
+                    return Err(ZiporaError::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "reader returned more bytes than requested while skipping",
+                    )));
+                }
                 Ok(bytes_read) => len -= bytes_read,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(ZiporaError::Io(e)),
@@ -400,20 +436,14 @@ impl<R: Read> ZeroCopyReader<R> {
         Ok(())
     }
 
-    /// Validate UTF-8 in the current buffer using SIMD
+    /// Validate UTF-8 in the current buffer
     ///
-    /// This method validates the buffered data without consuming it, using
-    /// hardware-accelerated UTF-8 validation (15+ GB/s with AVX2).
+    /// Validates the currently buffered slice via [`std::str::from_utf8`]
+    /// without consuming it.
     ///
     /// # Returns
     /// - `Ok(true)` if all buffered data is valid UTF-8
     /// - `Ok(false)` if buffered data contains invalid UTF-8
-    /// - `Err` only for internal errors
-    ///
-    /// # Performance
-    /// - AVX2: 15+ GB/s validation throughput
-    /// - SSE4.2: 8-12 GB/s
-    /// - Scalar fallback: 2-3 GB/s
     ///
     /// # Example
     ///
@@ -446,7 +476,8 @@ impl<R: Read> ZeroCopyReader<R> {
     /// using hardware acceleration (25 GB/s with SSE4.2 on x86_64).
     ///
     /// # Returns
-    /// CRC32C checksum value (properly initialized and finalized)
+    /// CRC32C checksum value (properly initialized and finalized; `0` for an
+    /// empty buffer)
     ///
     /// # Performance
     /// - x86_64 SSE4.2: 25 GB/s with hardware CRC instruction
@@ -470,25 +501,18 @@ impl<R: Read> ZeroCopyReader<R> {
     /// let crc = reader.checksum_buffer_crc32c().unwrap();
     /// ```
     pub fn checksum_buffer_crc32c(&self) -> Result<u32> {
-        let buffered_data = self.buffer.readable_slice();
-        if buffered_data.is_empty() {
-            return Ok(0xFFFFFFFF); // Standard CRC32C initial value
-        }
-
-        checksum::crc32c_hash(buffered_data)
+        checksum::crc32c_hash(self.buffer.readable_slice())
     }
 
-    /// Validate UTF-8 and compute checksum in one pass
+    /// Validate UTF-8 and compute CRC32C checksum of the current buffer
     ///
-    /// This method performs both UTF-8 validation and CRC32C checksum computation
-    /// on buffered data in a single pass, which can be more cache-efficient than
-    /// separate operations.
+    /// Performs [`std::str::from_utf8`] validation followed by
+    /// [`checksum::crc32c_hash`] over the currently buffered slice without
+    /// consuming it.
     ///
     /// # Returns
-    /// Tuple of (is_valid_utf8, crc32c_checksum)
-    ///
-    /// # Performance
-    /// Performs both operations in a single pass over the data for better cache locality.
+    /// Tuple of `(is_valid_utf8, crc32c_checksum)`, where an empty buffer
+    /// yields `(true, 0)`.
     ///
     /// # Example
     ///
@@ -503,17 +527,12 @@ impl<R: Read> ZeroCopyReader<R> {
     /// // Ensure some data is buffered
     /// let _ = reader.peek(10);
     ///
-    /// // Validate and checksum in one pass
+    /// // Validate and checksum buffered data
     /// let (is_valid, crc) = reader.validate_and_checksum().unwrap();
     /// assert!(is_valid);
     /// ```
     pub fn validate_and_checksum(&self) -> Result<(bool, u32)> {
         let buffered_data = self.buffer.readable_slice();
-        if buffered_data.is_empty() {
-            return Ok((true, 0xFFFFFFFF));
-        }
-
-        // Perform both operations on the same data for cache efficiency
         let is_valid = std::str::from_utf8(buffered_data).is_ok();
         let crc = checksum::crc32c_hash(buffered_data)?;
 
@@ -731,11 +750,17 @@ impl<W: Write> ZeroCopyWrite for ZeroCopyWriter<W> {
     }
 }
 
-/// Vectored I/O operations for efficient bulk transfers
+/// Vectored I/O operations for sequential slice-by-slice transfers
 pub struct VectoredIO;
 
 impl VectoredIO {
-    /// Read data into multiple buffers in a single system call
+    /// Read data into a list of slices by calling [`Read::read`] on each
+    /// non-empty slice in order.
+    ///
+    /// Stops on EOF (`Ok(0)`), on a short read (`n < slice.len()`), or on an
+    /// error. If an error occurs after at least one byte has already been
+    /// read into `bufs`, returns `Ok(total)` so the bytes already transferred
+    /// are not lost; otherwise propagates the error.
     pub fn read_vectored<R: Read>(
         reader: &mut R,
         bufs: &mut [IoSliceMut<'_>],
@@ -765,7 +790,13 @@ impl VectoredIO {
         Ok(total)
     }
 
-    /// Write data from multiple buffers in a single system call
+    /// Write data from a list of slices by calling [`Write::write`] on each
+    /// non-empty slice in order.
+    ///
+    /// Stops on `Ok(0)`, on a short write (`n < slice.len()`), or on an
+    /// error. If an error occurs after at least one byte has already been
+    /// written from `bufs`, returns `Ok(total)` so the caller can account for
+    /// the bytes already sent; otherwise propagates the error.
     pub fn write_vectored<W: Write>(writer: &mut W, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
         // Fallback implementation for writers that don't support vectored I/O
         let mut total = 0;
@@ -808,9 +839,21 @@ pub mod mmap {
     }
 
     impl MmapZeroCopyReader {
-        /// Create a new memory-mapped zero-copy reader
+        /// Create a new memory-mapped zero-copy reader.
+        ///
+        /// Limitation: `Mmap::map` cannot prevent another handle or process
+        /// from modifying or truncating the underlying file while this reader
+        /// is alive. `memmap2` 0.9.9 (`src/lib.rs:681-687`) documents any
+        /// concurrent file modification as undefined behaviour (the backing
+        /// pages are exposed as `&[u8]`), and at the OS level reading pages
+        /// past the new end of a truncated file raises `SIGBUS`, which safe
+        /// Rust cannot catch. Only map files that will not be modified or
+        /// truncated while the reader exists.
         pub fn new(file: File) -> Result<Self> {
-            // SAFETY: File is valid and open for reading, mmap follows standard OS guarantees for read-only memory maps
+            // SAFETY: `Mmap::map` requires that the mapped file is not
+            // concurrently modified or truncated while the `Mmap` is alive
+            // (`memmap2` 0.9.9 `src/lib.rs:681-687`); the caller upholds that
+            // external precondition as documented under `Limitation:` above.
             let mmap = unsafe {
                 Mmap::map(&file).map_err(|e| {
                     ZiporaError::io_error(format!("Failed to memory map file: {}", e))
@@ -1246,11 +1289,11 @@ mod tests {
         let cursor = Cursor::new(data);
         let reader = ZeroCopyReader::new(cursor).unwrap();
 
-        // Compute checksum of empty buffer
+        // Compute checksum of empty buffer: finalized CRC32C of &[] is 0
         let crc = reader.checksum_buffer_crc32c().unwrap();
         assert_eq!(
-            crc, 0xFFFFFFFF,
-            "Empty buffer should return initial CRC value"
+            crc, 0,
+            "Empty buffer should return finalized CRC32C of empty slice (0)"
         );
     }
 
@@ -1338,8 +1381,9 @@ mod tests {
 
     #[test]
     fn test_zero_copy_reader_large_data_validation() {
-        // Test with larger data to exercise SIMD paths
-        let large_text = "Hello, World! 世界 🦀 ".repeat(1000);
+        // Test with larger data to exercise SIMD paths (scaled under Miri)
+        let reps = if cfg!(miri) { 64 } else { 1000 };
+        let large_text = "Hello, World! 世界 🦀 ".repeat(reps);
         let cursor = Cursor::new(large_text.as_bytes());
         let mut reader = ZeroCopyReader::new(cursor).unwrap();
 
@@ -1357,6 +1401,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_mmap_zero_copy_reader() {
         use std::io::Write;
         use tempfile::NamedTempFile;
@@ -1748,7 +1793,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
-    #[cfg_attr(miri, ignore)] // maps a real file, which Miri cannot execute
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_c9_z4_mmap_read_rejects_huge_len() {
         // `pos + len` overflowed here too: zc_read must report "not
         // available" instead of panicking.
@@ -1760,7 +1805,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
-    #[cfg_attr(miri, ignore)] // maps a real file, which Miri cannot execute
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_c9_z4_mmap_advance_rejects_huge_len() {
         let (_file, mut r) = z4_mmap_reader();
         let advance = no_panic(|| r.zc_advance(usize::MAX).is_err());
@@ -1824,5 +1869,286 @@ mod tests {
             wb.written.is_empty(),
             "Drop must not re-attempt flush_buffer after into_inner failed"
         );
+    }
+
+    #[test]
+    fn test_c9_z5_empty_buffer_crc32c_is_finalized() {
+        // Regression (C9 Z5): `checksum_buffer_crc32c` and
+        // `validate_and_checksum` returned the unfinalized initial state
+        // 0xFFFFFFFF on an empty buffer, contradicting their documented
+        // contract ("properly initialized and finalized") and `crc32c_hash(&[]) == 0`.
+        let expected_empty = checksum::crc32c_hash(b"").unwrap();
+        assert_eq!(expected_empty, 0);
+
+        let mut reader = ZeroCopyReader::new(Cursor::new(b"abc".to_vec())).unwrap();
+        assert_eq!(
+            reader.checksum_buffer_crc32c().unwrap(),
+            expected_empty,
+            "fresh empty buffer must return finalized CRC32C (0)"
+        );
+        assert_eq!(
+            reader.validate_and_checksum().unwrap(),
+            (true, expected_empty),
+            "validate_and_checksum on empty buffer must return (true, 0)"
+        );
+
+        // Buffer and then consume all bytes so the buffer becomes empty again.
+        let _ = reader.peek(3).unwrap();
+        let mut sink = [0u8; 3];
+        reader.read_exact(&mut sink).unwrap();
+        assert_eq!(reader.checksum_buffer_crc32c().unwrap(), expected_empty);
+        assert_eq!(reader.validate_and_checksum().unwrap(), (true, expected_empty));
+    }
+
+    /// Buggy `Read`/`Write` mock that reports `buf.len() + 1` bytes transferred.
+    struct OverreportingIo;
+
+    impl Read for OverreportingIo {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            Ok(buf.len() + 1)
+        }
+    }
+
+    impl Write for OverreportingIo {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len() + 1)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_c9_z5_overreporting_read_and_write_rejected() {
+        // Regression (C9 Z5): `fill_once`, `drain_once`, and `skip_bytes`
+        // trusted the byte count returned by `Read::read` / `Write::write`.
+        // An over-reported count pushed `write_pos > capacity` or
+        // `read_pos > write_pos` or underflowed `len -= bytes_read`.
+        let mut buf = ZeroCopyBuffer::new(16).unwrap();
+        let fill_err = buf.fill_from(&mut OverreportingIo).unwrap_err();
+        assert_eq!(io_kind(&fill_err), Some(io::ErrorKind::InvalidData));
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.write_available(), 16);
+
+        buf.writable_slice()[..4].copy_from_slice(b"test");
+        buf.zc_commit(4).unwrap();
+        let drain_err = buf.drain_to(&mut OverreportingIo).unwrap_err();
+        assert_eq!(io_kind(&drain_err), Some(io::ErrorKind::InvalidData));
+        assert_eq!(buf.available(), 4);
+
+        let mut reader = ZeroCopyReader::with_capacity(OverreportingIo, 0).unwrap();
+        let skip_res = no_panic(|| reader.skip_bytes(4));
+        let skip_err = skip_res.expect("skip_bytes must not panic").unwrap_err();
+        assert_eq!(io_kind(&skip_err), Some(io::ErrorKind::InvalidData));
+    }
+
+    #[test]
+    fn test_c9_vectored_read_partial_progress_and_interrupted() {
+        // Guard (C9 exit criterion b): 1-byte-per-call reader across multiple
+        // IoSliceMut buffers, Interrupted before and after partial progress,
+        // and Ok(0) (EOF) before and after partial progress.
+        let mut one_byte = ChunkedReader {
+            data: b"ABCD".to_vec(),
+            pos: 0,
+            chunk: 1,
+        };
+        let mut empty: [u8; 0] = [];
+        let mut b1 = [0u8; 1];
+        let mut b2 = [0u8; 1];
+        let mut b3 = [0u8; 2];
+        let mut bufs = [
+            IoSliceMut::new(&mut empty),
+            IoSliceMut::new(&mut b1),
+            IoSliceMut::new(&mut b2),
+            IoSliceMut::new(&mut b3),
+        ];
+        // The first two 1-byte buffers are filled completely; the third 2-byte
+        // buffer gets a 1-byte short read and stops the loop so the filled
+        // prefix (3 bytes) stays contiguous.
+        let n = VectoredIO::read_vectored(&mut one_byte, &mut bufs).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(&b1, b"A");
+        assert_eq!(&b2, b"B");
+        assert_eq!(&b3, b"C\0");
+
+        // Interrupted before any progress (first non-empty slice) returns Err(Interrupted).
+        let mut eintr_first = FlakyReader::new(b"XY", 1, io::ErrorKind::Interrupted, true);
+        let mut s1 = [0u8; 1];
+        let mut s2 = [0u8; 1];
+        let err = VectoredIO::read_vectored(
+            &mut eintr_first,
+            &mut [IoSliceMut::new(&mut s1), IoSliceMut::new(&mut s2)],
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Interrupted);
+
+        // Interrupted after partial progress (first 1-byte slice succeeds,
+        // second slice hits Interrupted) returns Ok(1) so the first byte is not lost.
+        let mut eintr_second = FlakyReader::new(b"XY", 1, io::ErrorKind::Interrupted, false);
+        let mut s1 = [0u8; 1];
+        let mut s2 = [0u8; 1];
+        let n = VectoredIO::read_vectored(
+            &mut eintr_second,
+            &mut [IoSliceMut::new(&mut s1), IoSliceMut::new(&mut s2)],
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(&s1, b"X");
+        assert_eq!(&s2, b"\0");
+
+        // Ok(0) (EOF) after filling the first slice stops and returns Ok(2);
+        // Ok(0) at immediate EOF returns Ok(0).
+        let mut short_eof = Cursor::new(b"HI".to_vec());
+        let mut a1 = [0u8; 2];
+        let mut a2 = [0u8; 2];
+        let n = VectoredIO::read_vectored(
+            &mut short_eof,
+            &mut [IoSliceMut::new(&mut a1), IoSliceMut::new(&mut a2)],
+        )
+        .unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(&a1, b"HI");
+        assert_eq!(&a2, b"\0\0");
+        let n_eof = VectoredIO::read_vectored(
+            &mut short_eof,
+            &mut [IoSliceMut::new(&mut a1), IoSliceMut::new(&mut a2)],
+        )
+        .unwrap();
+        assert_eq!(n_eof, 0);
+    }
+
+    /// A writer with a fixed byte capacity that returns `Ok(0)` once full and
+    /// optionally fails with `kind` on the call specified by `fail_on_call`.
+    struct BoundedMockWriter {
+        written: Vec<u8>,
+        max_total: usize,
+        chunk: usize,
+        call_count: usize,
+        fail_on_call: Option<(usize, io::ErrorKind)>,
+    }
+
+    impl Write for BoundedMockWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let call = self.call_count;
+            self.call_count += 1;
+            if let Some((target_call, kind)) = self.fail_on_call
+                && call == target_call
+            {
+                return Err(io::Error::new(kind, "mock writer error"));
+            }
+            let remaining = self.max_total.saturating_sub(self.written.len());
+            let n = buf.len().min(self.chunk).min(remaining);
+            self.written.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_c9_vectored_write_partial_progress_and_interrupted() {
+        // Guard (C9 exit criterion b): 1-byte-per-call writer across multiple
+        // IoSlice buffers, Interrupted before and after partial progress, and
+        // Ok(0) before and after partial progress.
+        let mut one_byte = ChunkedWriter {
+            written: Vec::new(),
+            chunk: 1,
+        };
+        let slices = [
+            IoSlice::new(b""),
+            IoSlice::new(b"A"),
+            IoSlice::new(b"B"),
+            IoSlice::new(b"CD"),
+        ];
+        // Writes the two 1-byte slices completely, then accepts 1 of 2 bytes
+        // from "CD" and stops so the 3 reported bytes are a contiguous prefix.
+        let n = VectoredIO::write_vectored(&mut one_byte, &slices).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(one_byte.written, b"ABC");
+
+        // Interrupted before any progress (call 0) returns Err(Interrupted).
+        let mut eintr_first = BoundedMockWriter {
+            written: Vec::new(),
+            max_total: 16,
+            chunk: 1,
+            call_count: 0,
+            fail_on_call: Some((0, io::ErrorKind::Interrupted)),
+        };
+        let err = VectoredIO::write_vectored(
+            &mut eintr_first,
+            &[IoSlice::new(b"X"), IoSlice::new(b"Y")],
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Interrupted);
+        assert!(eintr_first.written.is_empty());
+
+        // Interrupted after partial progress (call 1) returns Ok(1).
+        let mut eintr_second = BoundedMockWriter {
+            written: Vec::new(),
+            max_total: 16,
+            chunk: 1,
+            call_count: 0,
+            fail_on_call: Some((1, io::ErrorKind::Interrupted)),
+        };
+        let n = VectoredIO::write_vectored(
+            &mut eintr_second,
+            &[IoSlice::new(b"X"), IoSlice::new(b"Y")],
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(eintr_second.written, b"X");
+
+        // Ok(0) after the first slice returns Ok(2); Ok(0) on the first slice returns Ok(0).
+        let mut write_zero = BoundedMockWriter {
+            written: Vec::new(),
+            max_total: 2,
+            chunk: 4,
+            call_count: 0,
+            fail_on_call: None,
+        };
+        let n = VectoredIO::write_vectored(
+            &mut write_zero,
+            &[IoSlice::new(b"AB"), IoSlice::new(b"CD")],
+        )
+        .unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(write_zero.written, b"AB");
+        let n_zero = VectoredIO::write_vectored(
+            &mut write_zero,
+            &[IoSlice::new(b"CD"), IoSlice::new(b"EF")],
+        )
+        .unwrap();
+        assert_eq!(n_zero, 0);
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_mmap_zero_copy_reader_empty_file() {
+        // Guard (C9 zero-length file): MmapZeroCopyReader::new on a 0-byte file
+        // must succeed with an empty slice and never panic.
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let file = temp_file.reopen().unwrap();
+        let mut reader = mmap::MmapZeroCopyReader::new(file).unwrap();
+
+        assert_eq!(reader.len(), 0);
+        assert!(reader.is_empty());
+        assert_eq!(reader.position(), 0);
+        assert_eq!(reader.as_slice(), b"");
+        assert_eq!(reader.remaining_slice(), b"");
+        assert_eq!(reader.zc_available(), 0);
+        assert_eq!(reader.zc_read(0).unwrap(), Some(&b""[..]));
+        assert_eq!(reader.zc_read(1).unwrap(), None);
+        assert_eq!(reader.zc_ensure(8).unwrap(), 0);
+        reader.zc_advance(0).unwrap();
+        assert!(reader.zc_advance(1).is_err());
+        reader.set_position(0).unwrap();
+        assert!(reader.set_position(1).is_err());
+
+        let mut buf = [0u8; 4];
+        assert_eq!(reader.read(&mut buf).unwrap(), 0);
     }
 }
