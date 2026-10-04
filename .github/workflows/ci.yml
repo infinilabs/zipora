@@ -37,19 +37,49 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-cargo-
 
     - name: Clippy (all targets, all features, deny warnings)
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+    - name: Test (debug, all features)
+      run: cargo test --locked --all-features
+
+    - name: Test (release, all features, lib)
+      run: cargo test --locked --release --all-features --lib
+
+    - name: Test (doctests)
+      run: cargo test --locked --doc
+
+  # The job above builds the committed Cargo.lock. This one runs
+  # `cargo update` first, so it tests the newest versions Cargo.toml allows
+  # and shows drift between lock refreshes (Makefile `update` target). It does
+  # not block merges. Pattern from the Cargo book, "Verifying Latest
+  # Dependencies" (guide/continuous-integration.html).
+  latest_deps:
+    name: Latest Dependencies
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: allow
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config
+
+    - name: Update Cargo.lock to the latest compatible versions
+      run: cargo update --verbose
 
     - name: Test (debug, all features)
       run: cargo test --all-features
-
-    - name: Test (release, all features, lib)
-      run: cargo test --release --all-features --lib
-
-    - name: Test (doctests)
-      run: cargo test --doc
 
