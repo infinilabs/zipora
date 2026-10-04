@@ -195,6 +195,10 @@ impl SimdStringSearch {
 
     /// Find any character from a set in haystack
     ///
+    /// `chars` may have any length. On the SSE4.2 tier a set of up to 16
+    /// bytes is matched with PCMPESTRI; a larger set is matched through a
+    /// 256-entry membership table.
+    ///
     /// # Example
     ///
     /// ```
@@ -534,6 +538,11 @@ unsafe fn sse42_strstr_long(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// Find any character from set using SSE4.2
+///
+/// A set of up to 16 bytes is matched with PCMPESTRI in equal-any mode; a
+/// larger set through a 256-entry membership table, because PCMPESTRI
+/// compares against at most 16 set bytes. Runs the scalar search when the
+/// CPU lacks SSE4.2.
 #[cfg(target_arch = "x86_64")]
 pub fn sse42_multi_search(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     if chars.is_empty() {
@@ -543,39 +552,49 @@ pub fn sse42_multi_search(haystack: &[u8], chars: &[u8]) -> Option<usize> {
         return scalar_multi_search(haystack, chars);
     }
 
-    // SAFETY: SSE4.2 feature detected above, haystack and chars are valid slice references
+    // SAFETY: SSE4.2 was detected at runtime just above; that is the only
+    // precondition of `sse42_multi_search_impl`.
     unsafe { sse42_multi_search_impl(haystack, chars) }
 }
 
+/// SSE4.2 body of [`sse42_multi_search`]. It loads only full 16-byte chunks
+/// that lie inside `haystack` and scans the rest with scalar code.
+///
+/// # Safety
+///
+/// The CPU must support SSE4.2. There are no requirements on the slices.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.2")]
 unsafe fn sse42_multi_search_impl(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     const CHUNK_SIZE: usize = 16;
-    let chars_len = chars.len().min(16); // PCMPESTRI supports up to 16 characters
+    if chars.len() > CHUNK_SIZE {
+        // PCMPESTRI compares against at most 16 set bytes.
+        return table_multi_search(haystack, chars);
+    }
+    let chars_len = chars.len();
 
     // Load character set
     let mut chars_bytes = [0u8; 16];
-    chars_bytes[..chars_len].copy_from_slice(&chars[..chars_len]);
-    // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from chars_bytes.as_ptr(), len == 16
+    chars_bytes[..chars_len].copy_from_slice(chars);
+    // SAFETY: `chars_bytes` is a 16-byte stack array, so the unaligned
+    // 16-byte load reads only its bytes.
     let chars_vec = unsafe { _mm_loadu_si128(chars_bytes.as_ptr() as *const __m128i) };
 
     let mut offset = 0;
     let len = haystack.len();
 
     while offset + CHUNK_SIZE <= len {
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from haystack.as_ptr(), offset + 16 <= len checked by loop condition
+        // SAFETY: the loop condition gives `offset + 16 <= haystack.len()`,
+        // so the unaligned 16-byte load stays inside `haystack`.
         let chunk = unsafe { _mm_loadu_si128(haystack.as_ptr().add(offset) as *const __m128i) };
 
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
-        let idx = {
-            _mm_cmpestri(
-                chars_vec,
-                chars_len as i32,
-                chunk,
-                CHUNK_SIZE as i32,
-                _SIDD_CMP_EQUAL_ANY | _SIDD_UBYTE_OPS,
-            )
-        };
+        let idx = _mm_cmpestri(
+            chars_vec,
+            chars_len as i32,
+            chunk,
+            CHUNK_SIZE as i32,
+            _SIDD_CMP_EQUAL_ANY | _SIDD_UBYTE_OPS,
+        );
 
         if idx < CHUNK_SIZE as i32 {
             return Some(offset + idx as usize);
@@ -589,6 +608,17 @@ unsafe fn sse42_multi_search_impl(haystack: &[u8], chars: &[u8]) -> Option<usize
         .iter()
         .position(|&b| chars.contains(&b))
         .map(|i| offset + i)
+}
+
+/// Byte-set search through a 256-entry membership table, for sets that do
+/// not fit in one PCMPESTRI operand.
+#[cfg(target_arch = "x86_64")]
+fn table_multi_search(haystack: &[u8], chars: &[u8]) -> Option<usize> {
+    let mut member = [false; 256];
+    for &c in chars {
+        member[usize::from(c)] = true;
+    }
+    haystack.iter().position(|&b| member[usize::from(b)])
 }
 
 /// Compare strings using SSE4.2 PCMPESTRI
@@ -1270,5 +1300,84 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Checks every byte-set search reachable from this module against a
+    /// naive scan. `what` is formatted only when an assertion fails.
+    fn assert_any_of_agrees(haystack: &[u8], chars: &[u8], what: (&str, usize, usize, usize)) {
+        let expected = haystack.iter().position(|b| chars.contains(b));
+        assert_eq!(scalar_multi_search(haystack, chars), expected, "scalar {what:?}");
+        assert_eq!(find_any_of(haystack, chars), expected, "find_any_of {what:?}");
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("sse4.2") {
+                assert_eq!(sse42_multi_search(haystack, chars), expected, "sse42 {what:?}");
+            }
+        }
+    }
+
+    /// C9 S2: the auditor's inputs. The 17th byte of the set ('X') must count
+    /// both inside a full 16-byte chunk and before a hit in the tail.
+    #[test]
+    fn test_c9_s2_find_any_of_uses_every_byte_of_a_17_byte_set() {
+        let chars = b"0123456789abcdefX";
+        assert_eq!(scalar_multi_search(&[b'X'; 16], chars), Some(0));
+        assert_eq!(find_any_of(&[b'X'; 16], chars), Some(0));
+        assert_eq!(find_any_of(b"XXXXXXXXXXXXXXXXa", chars), Some(0));
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("sse4.2") {
+                assert_eq!(sse42_multi_search(&[b'X'; 16], chars), Some(0));
+                assert_eq!(sse42_multi_search(b"XXXXXXXXXXXXXXXXa", chars), Some(0));
+            }
+        }
+    }
+
+    /// C9 S2: sets of 1..=40 distinct bytes. The planted member is the
+    /// first, the middle or the last one of the set (the last is past the
+    /// 16th byte once the set has more than 16), at the edges of 16-byte
+    /// chunks or in the tail. Also sets with duplicates, a NUL member and all
+    /// 256 byte values.
+    #[test]
+    fn test_c9_s2_find_any_of_matches_scalar_for_set_sizes_1_to_40() {
+        let (lens, spots): (&[usize], &[usize]) = if cfg!(miri) {
+            (&[0, 15, 16, 17, 33], &[0, 15, 16, usize::MAX])
+        } else {
+            (
+                &[0, 1, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65],
+                &[0, 1, 15, 16, 17, 31, 32, usize::MAX],
+            )
+        };
+        let filler = b'~'; // outside every set below
+        for k in 1..=40usize {
+            let set: Vec<u8> = (0..k).map(|i| b'!' + i as u8).collect();
+            for &len in lens {
+                let background = vec![filler; len];
+                assert_any_of_agrees(&background, &set, ("absent", k, len, 0));
+                for member in [set[0], set[k / 2], set[k - 1]] {
+                    for &spot in spots {
+                        let at = if spot == usize::MAX { len.wrapping_sub(1) } else { spot };
+                        if at < len {
+                            let mut haystack = background.clone();
+                            haystack[at] = member;
+                            assert_any_of_agrees(&haystack, &set, ("planted", k, len, at));
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut duplicates = vec![b'q'; 20];
+        duplicates.push(b'Q');
+        let mut haystack = vec![filler; 40];
+        haystack[37] = b'Q';
+        assert_any_of_agrees(&haystack, &duplicates, ("duplicates", 21, 40, 37));
+        let mut with_nul: Vec<u8> = (b'A'..=b'T').collect();
+        with_nul.push(0);
+        let mut haystack = vec![filler; 40];
+        haystack[20] = 0;
+        assert_any_of_agrees(&haystack, &with_nul, ("nul member", 21, 40, 20));
+        let all: Vec<u8> = (0..=255u8).collect();
+        assert_any_of_agrees(&[filler; 33], &all, ("all bytes", 256, 33, 0));
     }
 }
