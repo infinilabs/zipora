@@ -12,13 +12,48 @@
 .PHONY: test test_debug test_release test_simd_base64
 .PHONY: bench bench_all bench_avx512 bench_fsa bench_io bench_serialization
 .PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
+.PHONY: miri_cspp miri_core miri_simd miri_string miri_scalar
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity
 .PHONY: unsafe_audit api_honesty index_audit unwrap_audit
 .PHONY: clean update outdated audit help
 
 CARGO := cargo
-CARGO_MIRI := cargo +nightly miri
+
+# Miri target features and target dirs (S21-R4).
+#
+# Under Miri, is_x86_feature_detected! reports exactly the target features the
+# crate was compiled with, so the build flags decide which SIMD kernels Miri
+# executes. On x86_64 hosts every miri_* target therefore builds with the
+# flags below. They are the rustflags of the maintainer's gitignored
+# .cargo/config.toml, so a clean checkout gets the same Miri coverage as a
+# checkout that has that file. MIRI_SCALAR=1 builds with no target flags
+# instead, so the scalar fallbacks are Miri-checked too (see miri_scalar);
+# SSE2 is part of the x86_64 baseline, so SSE2 kernels still run in that
+# build. A RUSTFLAGS variable, even an empty one, overrides rustflags from any
+# .cargo/config.toml, so neither build depends on that file. Each build has
+# its own target dir, so switching between them does not force a full
+# rebuild. Other hosts build both with no target flags.
+#
+# Neither build runs the SIMD arms of simd_dispatch!/simd_feature_check! (both
+# macros compile them out under cfg(miri)), code selected through CpuFeatures
+# (its detection returns all-false under cfg(miri)), code behind a has_*()
+# helper that returns false under cfg!(miri), or any AVX-512 code (haswell has
+# none). The miri_cspp, miri_simd, miri_string and miri_algorithms comments
+# say which #[target_feature] kernels their suites run; the miri_core and
+# miri_pool suites run none in either build.
+ifeq ($(shell uname -m),x86_64)
+MIRI_SIMD_RUSTFLAGS := -C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt
+endif
+ifdef MIRI_SCALAR
+MIRI_RUSTFLAGS :=
+MIRI_TARGET_DIR := target/miri-scalar
+else
+MIRI_RUSTFLAGS := $(MIRI_SIMD_RUSTFLAGS)
+MIRI_TARGET_DIR := target/miri-simd
+endif
+MIRI_ENV := RUSTFLAGS="$(MIRI_RUSTFLAGS)" CARGO_TARGET_DIR=$(MIRI_TARGET_DIR)
+CARGO_MIRI := $(MIRI_ENV) cargo +nightly miri
 
 # =============================================================================
 # BUILD
@@ -97,9 +132,11 @@ miri_tests:
 		exit 1; \
 	fi
 
+# run_miri_tests.sh calls cargo itself; MIRI_ENV hands it the target flags
+# and target dir.
 miri_full:
 	@if [ -x "./run_miri_tests.sh" ]; then \
-		./run_miri_tests.sh full; \
+		$(MIRI_ENV) ./run_miri_tests.sh full; \
 	else \
 		echo "Error: run_miri_tests.sh not found or not executable"; \
 		exit 1; \
@@ -115,6 +152,8 @@ miri_full:
 # deref); the crate is fine under the newer Tree Borrows aliasing model.
 # ignore-leaks: crossbeam-epoch's static global collector queue is never
 # torn down at process exit (known upstream; their Miri CI does the same).
+# The default build runs one #[target_feature] kernel, sse4_2_search_byte in
+# fsa/fast_search.rs; MIRI_SCALAR=1 runs its scalar code instead.
 miri_cspp:
 	MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" \
 	$(CARGO_MIRI) test --lib fsa::cspp_trie_concurrent -- --test-threads=1
@@ -173,52 +212,97 @@ miri_pool:
 	$(CARGO_MIRI) test --lib memory::simd_ops
 	$(CARGO_MIRI) test --lib memory::prefetch
 
-# SIMD-adjacent modules under Miri: all dispatch (macros, cached has_* bools,
-# ifunc resolvers) routes to scalar under cfg(miri), so the surrounding index
-# arithmetic, table lookups, and buffer handling get real Miri coverage.
+# SIMD-adjacent modules under Miri. These three modules pick their kernels
+# through has_popcnt() (bit_ops.rs), has_avx2()/has_sse2() (simd_search.rs,
+# directly or through the simd::isa tokens built on them) and
+# resolve_decode_into() (stream_vbyte.rs), which all return the scalar choice
+# under cfg!(miri). So in both builds none of their #[target_feature] kernels
+# runs; Miri checks the scalar tiers and the index arithmetic, table lookups
+# and buffer handling around them. That is also why miri_scalar does not
+# repeat this target.
 miri_simd:
 	$(CARGO_MIRI) test --lib algorithms::bit_ops
 	$(CARGO_MIRI) test --lib compression::stream_vbyte
 	$(CARGO_MIRI) test --lib algorithms::simd_search
 
-# src/algorithms under Miri (plan.md S20-R10). Two Miri runs, and make stops at
-# the first failing one: read the output for two `test result:` lines before
-# calling the target green. Tests with large inputs run smaller under
+# src/algorithms under Miri (plan.md S20-R10, S21-R4). Two Miri runs, and make
+# stops at the first failing one: read the output for two `test result:` lines
+# before calling the target green. Tests with large inputs run smaller under
 # cfg(miri).
 #
-# Run 1, Stacked Borrows: every algorithms:: test except radix_sort.
-# -Zmiri-disable-isolation: the external_sort tests write their runs to a temp
-# directory named after SystemTime::now(), and isolation blocks both the clock
-# (the first error is clock_gettime with REALTIME) and the file system.
+# Run 1, Stacked Borrows with the leak check on: every algorithms:: test except
+# the MIRI_RADIX_CROSSBEAM tests. -Zmiri-disable-isolation: the external_sort
+# tests write their runs to a temp directory named after SystemTime::now(), and
+# isolation blocks both the clock (the first error is clock_gettime with
+# REALTIME) and the file system.
 #
-# Run 2, Tree Borrows: radix_sort. Under Stacked Borrows its first test stops
-# inside crossbeam-epoch (internal.rs, Local::element_of), the violation
-# miri_cspp also avoids with Tree Borrows: AdvancedRadixSort's default config
-# owns a SecureMemoryPool, whose Drop pins an epoch. -Zmiri-ignore-leaks:
-# rayon's global-pool threads are never joined, and crossbeam-epoch's global
-# collector keeps each thread's Local and its sealed bags, so without the flag
-# the run fails after every test has passed. It also turns off Miri's leak
-# check for run 2. The `integer-to-pointer cast` warnings point into
-# crossbeam-epoch's atomic.rs.
+# Run 2, Tree Borrows: the MIRI_RADIX_CROSSBEAM tests, selected by exact name.
+# Nine of them drop a SecureMemoryPool (AdvancedRadixSort's default config owns
+# one, and its Drop pins an epoch) and four run a rayon pool. Under Stacked
+# Borrows each stops inside crossbeam-epoch (internal.rs, Local::element_of),
+# the violation miri_cspp also avoids with Tree Borrows. Under Tree Borrows
+# each passes and then fails Miri's leak check. Every leaked allocation is made
+# inside crossbeam-epoch and belongs to its static global collector, which is
+# never dropped: each thread's Local, and the nodes of the collector's bag
+# queue (its first node, and one per sealed bag that an exiting thread hands
+# over). So -Zmiri-ignore-leaks turns the leak check off for these 13 tests
+# only. The `integer-to-pointer cast` warnings point into crossbeam-epoch's
+# atomic.rs. A new radix_sort test that drops a SecureMemoryPool or runs a
+# rayon pool stops in run 1 with that Stacked Borrows violation: add it to
+# MIRI_RADIX_CROSSBEAM.
 #
-# Which SIMD code runs depends on the build's target features: under Miri,
-# is_x86_feature_detected! reports only the features enabled at compile time.
-# This checkout's .cargo/config.toml (gitignored) sets target-cpu=haswell and
-# +avx2,+bmi2,+popcnt, so the AVX2 kernels in simd_merge and the SSE4.1
-# kernels in simd_set_intersect / simd_set_union run in run 1, and
-# count_digits_avx2_bmi2 in radix_sort/advanced.rs runs in run 2 (so it is
-# checked under Tree Borrows only). Without that file those dispatchers take
-# their scalar code. No AVX-512 code runs: it is gated off under cfg(miri),
-# and haswell has none.
+# The default build runs the three AVX2 kernels in simd_merge and the SSE4.1
+# kernels in simd_set_intersect and simd_set_union in run 1, and
+# count_digits_avx2_bmi2 (radix_sort/advanced.rs) in run 2, so that one is
+# checked under Tree Borrows only. MIRI_SCALAR=1 runs their scalar code. The
+# simd_search and bit_ops kernels take their scalar code in both builds (see
+# miri_simd).
 #
-# Measured on this checkout (S20-R10, AMD EPYC 7B13): real 18m15s. Run 1: 255
-# passed, 2 ignored, 605 s. Run 2: 41 passed in about 8 min of wall time; its
-# "finished in 194s" is Miri's virtual clock, because run 2 keeps isolation on.
+# Measured (S21-R4, AMD EPYC 7B13, clean checkout, busy shared host): real
+# 21m34s including the build. Run 1: 284 passed, 2 ignored, finished in
+# 808 s. Run 2: 13 passed; its "finished in 166s" is Miri's virtual clock,
+# because run 2 keeps isolation on. MIRI_SCALAR=1: run 1 finished in 686 s,
+# run 2 passed 13.
+MIRI_RADIX_CROSSBEAM := \
+	test_advanced_algorithm_trait \
+	test_advanced_radix_sort_forced_strategy \
+	test_advanced_radix_sort_parallel \
+	test_advanced_radix_sort_strings \
+	test_advanced_radix_sort_u32_large \
+	test_advanced_radix_sort_u32_simple \
+	test_advanced_radix_sort_u64 \
+	test_advanced_radix_sort_u64_random_simd \
+	test_memory_pool_integration \
+	test_phase_times_tracking \
+	test_s20_r3_parallel_merge_tree_stable_and_matches_std \
+	test_s20_r3b_radix_sort_parallel_path_and_used_parallel \
+	test_s21_r1_advanced_radix_sort_reports_the_path_that_ran
 miri_algorithms:
 	MIRIFLAGS="-Zmiri-disable-isolation" \
-	$(CARGO_MIRI) test --lib algorithms:: -- --skip algorithms::radix_sort:: --test-threads=1
+	$(CARGO_MIRI) test --lib algorithms:: -- --test-threads=1 \
+		$(foreach t,$(MIRI_RADIX_CROSSBEAM),--skip algorithms::radix_sort::tests::$(t))
 	MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" \
-	$(CARGO_MIRI) test --lib algorithms::radix_sort:: -- --test-threads=1
+	$(CARGO_MIRI) test --lib -- --test-threads=1 --exact \
+		$(foreach t,$(MIRI_RADIX_CROSSBEAM),algorithms::radix_sort::tests::$(t))
+
+# src/string under Miri (S21-R2, S21-R4). One run with the default MIRIFLAGS:
+# Stacked Borrows, with isolation and the leak check on. The default build runs
+# eleven #[target_feature] kernels: hash_avx2 and hash_sse2 (fast_str.rs), and
+# the SSE4.2 and AVX2 strchr/strstr/multi-search/strcmp kernels
+# (simd_search.rs). MIRI_SCALAR=1 runs only hash_sse2. Neither build runs the
+# bmi2_string_ops kernels or unicode.rs's is_ascii_simd: both are selected
+# through CpuFeatures.
+miri_string:
+	$(CARGO_MIRI) test --lib string:: -- --test-threads=1
+
+# The suites whose #[target_feature] kernels differ between the two builds,
+# rebuilt with no target features (MIRI_SCALAR=1, target/miri-scalar), so the
+# scalar code those kernels replace is Miri-checked too. miri_core, miri_pool
+# and miri_simd run no #[target_feature] kernel in either build, so they are
+# not repeated. Which kernels miri_tests and miri_full run in each build has
+# not been fully measured.
+miri_scalar:
+	$(MAKE) --no-print-directory MIRI_SCALAR=1 miri_cspp miri_string miri_algorithms
 
 # =============================================================================
 # FUZZING (plan.md 6.1) — requires: cargo install cargo-fuzz; nightly toolchain
@@ -368,9 +452,15 @@ help:
 	@echo ""
 	@echo "  safety_tests     Container safety tests"
 	@echo "  miri_tests       Miri memory safety (needs nightly)"
+	@echo "  miri_full        Miri via run_miri_tests.sh full"
+	@echo "  miri_core        Miri on the container and hash-map cores"
 	@echo "  miri_cspp        Miri on ConcurrentCsppTrie (races/UB, small scale)"
 	@echo "  miri_pool        Miri on the memory pools (layout/provenance UB)"
-	@echo "  miri_algorithms  Miri on src/algorithms (Tree Borrows for radix_sort)"
+	@echo "  miri_simd        Miri on bit_ops, stream_vbyte, simd_search"
+	@echo "  miri_string      Miri on src/string"
+	@echo "  miri_algorithms  Miri on src/algorithms (Tree Borrows for 13 radix tests)"
+	@echo "  miri_scalar      miri_cspp/string/algorithms with no target features"
+	@echo "                   (miri_* build with haswell features on x86_64)"
 	@echo "  tsan_cspp        TSAN stress on ConcurrentCsppTrie (needs nightly + rust-src)"
 	@echo ""
 	@echo "  format           rustfmt"
