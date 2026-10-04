@@ -151,8 +151,10 @@ impl SimdStringSearch {
     ///
     /// # Performance
     ///
-    /// - SSE4.2: 2-8x faster depending on pattern length
-    /// - Hybrid strategy: PCMPESTRI for short patterns, chunked for long
+    /// - SSE4.2 tier: needles of up to 32 bytes are matched by their first
+    ///   `min(n, 8)` bytes with one PCMPESTRI per 16-byte window, longer
+    ///   needles by their first byte; candidates are compared in full
+    /// - Scalar tier: `slice::windows`
     ///
     /// # Example
     ///
@@ -332,6 +334,11 @@ unsafe fn sse42_strchr_impl(haystack: &[u8], ch: u8) -> Option<usize> {
 }
 
 /// Find pattern using SSE4.2 PCMPESTRI with hybrid strategy
+///
+/// Needles of up to 32 bytes are matched by their first `min(n, 8)` bytes
+/// with PCMPESTRI (17..=32-byte needles through their first 16 bytes),
+/// longer needles by their first byte; every candidate is compared in full.
+/// Runs the scalar search when the CPU lacks SSE4.2.
 #[cfg(target_arch = "x86_64")]
 pub fn sse42_strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
@@ -344,104 +351,114 @@ pub fn sse42_strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         return scalar_strstr(haystack, needle);
     }
 
-    // SAFETY: SSE4.2 feature detected above, haystack and needle are valid slice references
+    // SAFETY: SSE4.2 was detected at runtime just above; that is the only
+    // precondition of `sse42_strstr_impl`.
     unsafe { sse42_strstr_impl(haystack, needle) }
 }
 
+/// Picks the SSE4.2 substring kernel by needle length.
+///
+/// # Safety
+///
+/// The CPU must support SSE4.2. There are no requirements on the slices.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.2")]
 unsafe fn sse42_strstr_impl(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    let needle_len = needle.len();
-
-    // Strategy selection based on needle length
-    if needle_len <= 16 {
-        // Single PCMPESTRI operation
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], slices valid by caller
-        unsafe { sse42_strstr_short(haystack, needle) }
-    } else if needle_len <= 32 {
-        // Cascaded PCMPESTRI operations
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], slices valid by caller
-        unsafe { sse42_strstr_medium(haystack, needle) }
-    } else {
-        // Chunked processing with first-byte filter
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], slices valid by caller
-        unsafe { sse42_strstr_long(haystack, needle) }
+    match needle.len() {
+        0 => Some(0),
+        // SAFETY: SSE4.2 support is this function's own precondition, and it
+        // is the only precondition of `sse42_strstr_short`.
+        1..=16 => unsafe { sse42_strstr_short(haystack, needle) },
+        // SAFETY: as above, for `sse42_strstr_medium`.
+        17..=32 => unsafe { sse42_strstr_medium(haystack, needle) },
+        // SAFETY: as above, for `sse42_strstr_long`.
+        _ => unsafe { sse42_strstr_long(haystack, needle) },
     }
 }
 
-/// Short pattern search (≤16 bytes): single PCMPESTRI
+/// Short-needle search (1..=16 bytes): PCMPESTRI in equal-ordered mode on
+/// the first `p = min(n, 8)` bytes of the `n`-byte needle, over 16-byte
+/// windows of `haystack`.
+///
+/// A window with 16 bytes left is loaded straight from `haystack`; the last
+/// window, with fewer bytes left, is first copied into a zeroed stack
+/// buffer, so no load reads past the end of the slice.
+///
+/// PCMPESTRI returns the first window offset at which the `p` prefix bytes
+/// match. That candidate is compared against the whole needle; if it
+/// fails, the next window starts one byte after it. A 16-byte window
+/// without a candidate rules out the `17 - p` offsets at which the prefix
+/// fits inside it, so the next window starts `17 - p` (at least 9) bytes
+/// on. A shorter last window holds every remaining start position, so the
+/// search ends there. Needles longer than 16 bytes go to [`scalar_strstr`].
+///
+/// The kernel does not depend on whether PCMPESTRI also reports a prefix
+/// that runs off the end of a 16-byte window (hardware does, Miri does
+/// not): such a report is one more candidate to compare.
+///
+/// # Safety
+///
+/// The CPU must support SSE4.2. There are no requirements on the slices.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.2")]
 unsafe fn sse42_strstr_short(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    const CHUNK_SIZE: usize = 16;
+    const WINDOW: usize = 16;
+    // Needle bytes matched by PCMPESTRI; a longer prefix rules out fewer
+    // offsets per window, a shorter one yields more false candidates.
+    const MAX_PREFIX: usize = 8;
     let needle_len = needle.len();
+    if needle_len == 0 {
+        return Some(0);
+    }
+    if needle_len > WINDOW {
+        return scalar_strstr(haystack, needle);
+    }
+    let last_start = haystack.len().checked_sub(needle_len)?;
+    let prefix_len = needle_len.min(MAX_PREFIX);
+    // Offsets 0..=WINDOW - prefix_len of a 16-byte window hold the whole
+    // prefix; a window without a candidate rules all of them out.
+    let miss_step = WINDOW - prefix_len + 1;
 
-    // Load needle (pad with zeros if < 16 bytes)
-    let mut needle_bytes = [0u8; 16];
-    needle_bytes[..needle_len].copy_from_slice(needle);
-    // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from needle_bytes.as_ptr(), len == 16
-    let needle_vec = unsafe { _mm_loadu_si128(needle_bytes.as_ptr() as *const __m128i) };
+    // Load the prefix (padded with zeros to 16 bytes)
+    let mut prefix_bytes = [0u8; WINDOW];
+    prefix_bytes[..prefix_len].copy_from_slice(&needle[..prefix_len]);
+    // SAFETY: `prefix_bytes` is a 16-byte stack array, so the unaligned
+    // 16-byte load reads only its bytes.
+    let prefix_vec = unsafe { _mm_loadu_si128(prefix_bytes.as_ptr() as *const __m128i) };
 
-    let mut offset = 0;
-    let search_limit = haystack.len().saturating_sub(needle_len);
-
-    while offset <= search_limit {
-        let remaining = haystack.len() - offset;
-        let chunk_len = remaining.min(CHUNK_SIZE);
-
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from haystack.as_ptr(), offset <= search_limit checked by loop condition
-        let chunk = unsafe { _mm_loadu_si128(haystack.as_ptr().add(offset) as *const __m128i) };
-
-        // _SIDD_CMP_EQUAL_ORDERED: Match ordered substring
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
-        let idx = {
-            _mm_cmpestri(
-                needle_vec,
-                needle_len as i32,
-                chunk,
-                chunk_len as i32,
-                _SIDD_CMP_EQUAL_ORDERED | _SIDD_UBYTE_OPS,
-            )
+    let mut start = 0;
+    while start <= last_start {
+        let rest = &haystack[start..];
+        let window_len = rest.len().min(WINDOW);
+        let window = if window_len == WINDOW {
+            // SAFETY: `rest` has at least 16 bytes (`window_len == 16`), so
+            // the unaligned 16-byte load stays inside `haystack`.
+            unsafe { _mm_loadu_si128(rest.as_ptr() as *const __m128i) }
+        } else {
+            let mut tail = [0u8; WINDOW];
+            tail[..window_len].copy_from_slice(rest);
+            // SAFETY: `tail` is a 16-byte stack array.
+            unsafe { _mm_loadu_si128(tail.as_ptr() as *const __m128i) }
         };
 
-        if idx < chunk_len as i32 {
-            // Verify match (PCMPESTRI may give false positives at boundaries)
-            let match_pos = offset + idx as usize;
-            if match_pos + needle_len <= haystack.len()
-                && &haystack[match_pos..match_pos + needle_len] == needle
-            {
-                return Some(match_pos);
+        // _SIDD_CMP_EQUAL_ORDERED: Match ordered substring. The result is the
+        // first candidate offset inside the window, or 16 for none.
+        let idx = _mm_cmpestri(
+            prefix_vec,
+            prefix_len as i32,
+            window,
+            window_len as i32,
+            _SIDD_CMP_EQUAL_ORDERED | _SIDD_UBYTE_OPS,
+        ) as usize;
+
+        if idx < window_len {
+            let candidate = start + idx;
+            if haystack.get(candidate..candidate + needle_len) == Some(needle) {
+                return Some(candidate);
             }
-        }
-
-        offset += 1; // Slide by 1 byte for overlapping matches
-    }
-
-    None
-}
-
-/// Medium pattern search (17-32 bytes): cascaded PCMPESTRI
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse4.2")]
-unsafe fn sse42_strstr_medium(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    // Use first 16 bytes for initial match, then verify rest
-    let needle_len = needle.len();
-    let first_16 = &needle[..16];
-
-    let mut offset = 0;
-    let search_limit = haystack.len().saturating_sub(needle_len);
-
-    while offset <= search_limit {
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], slice valid from haystack
-        if let Some(match_pos) = unsafe { sse42_strstr_short(&haystack[offset..], first_16) } {
-            let absolute_pos = offset + match_pos;
-            // Verify full pattern
-            if absolute_pos + needle_len <= haystack.len()
-                && &haystack[absolute_pos..absolute_pos + needle_len] == needle
-            {
-                return Some(absolute_pos);
-            }
-            offset = absolute_pos + 1;
+            start = candidate + 1;
+        } else if window_len == WINDOW {
+            start += miss_step;
         } else {
             break;
         }
@@ -450,24 +467,67 @@ unsafe fn sse42_strstr_medium(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     None
 }
 
-/// Long pattern search (>32 bytes): chunked with first-byte filter
+/// Medium pattern search (17-32 bytes): finds candidates for the first 16
+/// needle bytes with [`sse42_strstr_short`], then compares the whole needle.
+///
+/// # Safety
+///
+/// The CPU must support SSE4.2. There are no requirements on the slices; a
+/// needle of 16 bytes or fewer is passed to [`sse42_strstr_short`] whole.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.2")]
+unsafe fn sse42_strstr_medium(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    let needle_len = needle.len();
+    let Some(first_16) = needle.get(..16) else {
+        // SAFETY: SSE4.2 support is this function's own precondition.
+        return unsafe { sse42_strstr_short(haystack, needle) };
+    };
+    let last_start = haystack.len().checked_sub(needle_len)?;
+    // A prefix candidate at or before `last_start` ends at or before
+    // `last_start + 16 <= haystack.len()`.
+    let prefix_area = &haystack[..last_start + first_16.len()];
+
+    let mut offset = 0;
+    while offset <= last_start {
+        // SAFETY: SSE4.2 support is this function's own precondition.
+        let found = unsafe { sse42_strstr_short(&prefix_area[offset..], first_16) }?;
+        let candidate = offset + found;
+        if haystack.get(candidate..candidate + needle_len) == Some(needle) {
+            return Some(candidate);
+        }
+        offset = candidate + 1;
+    }
+
+    None
+}
+
+/// Long pattern search (>32 bytes): finds candidates for the first needle
+/// byte with [`sse42_strchr_impl`], then compares the whole needle.
+///
+/// # Safety
+///
+/// The CPU must support SSE4.2. There are no requirements on the slices.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.2")]
 unsafe fn sse42_strstr_long(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    let first_byte = needle[0];
+    let Some(&first_byte) = needle.first() else {
+        return Some(0);
+    };
+    let last_start = haystack.len().checked_sub(needle.len())?;
+    // Only positions up to `last_start` can start a match.
+    let starts = &haystack[..=last_start];
 
-    // Use PCMPESTRI to find first byte candidates
     let mut offset = 0;
-    // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], slice valid from haystack
-    while let Some(match_pos) = unsafe { sse42_strchr_impl(&haystack[offset..], first_byte) } {
-        let absolute_pos = offset + match_pos;
+    while offset <= last_start {
+        // SAFETY: SSE4.2 support is this function's own precondition, and it
+        // is the only precondition of `sse42_strchr_impl`.
+        let found = unsafe { sse42_strchr_impl(&starts[offset..], first_byte) }?;
+        let candidate = offset + found;
         // Verify full pattern with scalar comparison
-        if absolute_pos + needle.len() <= haystack.len()
-            && &haystack[absolute_pos..absolute_pos + needle.len()] == needle
-        {
-            return Some(absolute_pos);
+        if haystack.get(candidate..candidate + needle.len()) == Some(needle) {
+            return Some(candidate);
         }
-        offset = absolute_pos + 1;
+        offset = candidate + 1;
     }
 
     None
@@ -928,5 +988,287 @@ mod tests {
         // Should still work correctly with scalar fallback
         assert_eq!(searcher.find_char(b"hello", b'e'), Some(1));
         assert_eq!(searcher.find_pattern(b"hello world", b"world"), Some(6));
+    }
+
+    /// Reference substring search for the C9 differential tests.
+    fn reference_find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.is_empty() {
+            return Some(0);
+        }
+        haystack.windows(needle.len()).position(|w| w == needle)
+    }
+
+    /// Checks every substring search reachable from this module against
+    /// `reference_find`. `what` is formatted only when an assertion fails.
+    fn assert_strstr_agrees(haystack: &[u8], needle: &[u8], what: (&str, usize, usize, usize)) {
+        let expected = reference_find(haystack, needle);
+        assert_eq!(scalar_strstr(haystack, needle), expected, "scalar_strstr {what:?}");
+        assert_eq!(find_pattern(haystack, needle), expected, "find_pattern {what:?}");
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("sse4.2") {
+                assert_eq!(sse42_strstr(haystack, needle), expected, "sse42_strstr {what:?}");
+            }
+        }
+    }
+
+    /// Deterministic text over {a, b}: short needles occur often and windows
+    /// end in partial matches of every length.
+    fn ab_text(len: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                b'a' + (state & 1) as u8
+            })
+            .collect()
+    }
+
+    /// C9 S1: haystacks shorter than 16 bytes and absent needles of 1..=16
+    /// bytes. The SSE4.2 short-needle kernel must not read past the end of
+    /// the haystack (each haystack is its own exact-size heap allocation, so
+    /// Miri and ASan see any over-read).
+    #[test]
+    fn test_c9_s1_sse42_strstr_short_haystacks_absent_needles_stay_in_bounds() {
+        for len in 1..=20usize {
+            let haystack = vec![b'a'; len];
+            for n in 1..=len.min(16) {
+                let needle = vec![b'b'; n];
+                assert_eq!(find_pattern(&haystack, &needle), None, "len {len} n {n}");
+                #[cfg(target_arch = "x86_64")]
+                {
+                    if is_x86_feature_detected!("sse4.2") {
+                        assert_eq!(sse42_strstr(&haystack, &needle), None, "len {len} n {n}");
+                    }
+                }
+            }
+        }
+        // The `find_pattern` doc example: an 11-byte haystack.
+        let haystack = b"hello world".to_vec();
+        assert_eq!(find_pattern(&haystack, b"world"), Some(6));
+        assert_eq!(find_pattern(&haystack, b"worlds"), None);
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("sse4.2") {
+                assert_eq!(sse42_strstr(&haystack, b"world"), Some(6));
+                assert_eq!(sse42_strstr(&haystack, b"worlds"), None);
+            }
+        }
+    }
+
+    /// C9 S1/S4: the windowed SSE4.2 search returns what a naive search
+    /// returns. Haystack lengths 0..=64, needle lengths 1..=17; each needle is
+    /// planted at offset 0, at 15 and at 17 - n (across the 15/16 window
+    /// boundary), at len - n, or left out. Two backgrounds: all 'a' with the
+    /// needle a^(n-1)b, so every 16-byte window ends in a partial match, and
+    /// a pseudo-random a/b text. Hardware PCMPESTRI reports a needle that
+    /// runs off the end of a 16-byte window, Miri's does not, so the Miri run
+    /// checks that the kernel does not depend on those reports.
+    #[test]
+    fn test_c9_s1_strstr_matches_reference_search() {
+        for len in 0..=64usize {
+            for n in 1..=17usize {
+                let starts = [0, 15, 17usize.saturating_sub(n), len.saturating_sub(n)];
+
+                let mut needle = vec![b'a'; n];
+                needle[n - 1] = b'b';
+                let background = vec![b'a'; len];
+                assert_strstr_agrees(&background, &needle, ("a-background absent", len, n, 0));
+                for &at in &starts {
+                    if at + n <= len {
+                        let mut haystack = background.clone();
+                        haystack[at..at + n].copy_from_slice(&needle);
+                        assert_strstr_agrees(&haystack, &needle, ("a-background", len, n, at));
+                    }
+                }
+
+                let text = ab_text(len, (len * 64 + n) as u64);
+                for &at in &starts {
+                    if at + n <= len {
+                        let present = text[at..at + n].to_vec();
+                        assert_strstr_agrees(&text, &present, ("ab-text", len, n, at));
+                    }
+                }
+                let mut absent = needle.clone();
+                absent[n - 1] = b'c';
+                assert_strstr_agrees(&text, &absent, ("ab-text absent", len, n, 0));
+            }
+        }
+    }
+
+    /// C9 S1 (native, Linux): the haystack ends exactly where a `PROT_NONE`
+    /// page begins, so any load past its end faults. The searches run in a
+    /// child process (this test binary, re-run with `PROBE_ENV` set and
+    /// `--exact`), so a fault shows up as a failed assertion here instead of
+    /// killing the whole test run. Miri cannot run `mmap`/`mprotect`, and the
+    /// in-bounds property is checked under Miri by the tests above.
+    #[cfg(all(target_os = "linux", not(miri)))]
+    #[test]
+    fn test_c9_s1_search_ending_at_protected_page_does_not_fault() {
+        const PROBE_ENV: &str = "ZIPORA_C9_S1_PAGE_END_PROBE";
+        const NAME: &str = "test_c9_s1_search_ending_at_protected_page_does_not_fault";
+        if std::env::var_os(PROBE_ENV).is_some() {
+            page_end_probe();
+            return;
+        }
+        let module = module_path!();
+        let module = module.split_once("::").map_or(module, |(_, rest)| rest);
+        let exact_name = format!("{module}::{NAME}");
+        let exe = std::env::current_exe().expect("path of the test binary");
+        let output = std::process::Command::new(exe)
+            .args([exact_name.as_str(), "--exact", "--test-threads=1", "--nocapture"])
+            .env(PROBE_ENV, "1")
+            .output()
+            .expect("spawn the page-end probe");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "page-end probe child failed: {}\n--- child stdout ---\n{stdout}\n--- child stderr ---\n{stderr}",
+            output.status
+        );
+    }
+
+    /// Child-process body of the page-end test: every search entry point on
+    /// a haystack whose last byte is the last byte of a readable page.
+    #[cfg(all(target_os = "linux", not(miri)))]
+    fn page_end_probe() {
+        // SAFETY: `sysconf` has no preconditions.
+        let page = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) })
+            .expect("page size");
+        let map_len = 2 * page;
+        // SAFETY: anonymous private mapping with no address hint and no fd.
+        let base = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                map_len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        assert_ne!(base, libc::MAP_FAILED, "mmap failed");
+        let base = base.cast::<u8>();
+        // SAFETY: `base + page` is the page-aligned start of the second page
+        // of the mapping created above.
+        let rc = unsafe { libc::mprotect(base.add(page).cast(), page, libc::PROT_NONE) };
+        assert_eq!(rc, 0, "mprotect failed");
+        // SAFETY: the first page is mapped read/write and `page` bytes long.
+        unsafe { base.write_bytes(b'a', page) };
+        let hay_len = page.min(4096);
+        {
+            // SAFETY: the last `hay_len` bytes of the first page are mapped,
+            // initialised above, and not written while `haystack` is alive;
+            // the mapping is unmapped only after this block.
+            let haystack: &[u8] =
+                unsafe { std::slice::from_raw_parts(base.add(page - hay_len), hay_len) };
+            for n in 1..=40usize {
+                let absent = vec![b'b'; n];
+                let mut near_miss = vec![b'a'; n];
+                near_miss[n - 1] = b'b';
+                assert_eq!(find_pattern(haystack, &absent), None, "absent n {n}");
+                assert_eq!(find_pattern(haystack, &near_miss), None, "near miss n {n}");
+                #[cfg(target_arch = "x86_64")]
+                {
+                    if is_x86_feature_detected!("sse4.2") {
+                        assert_eq!(sse42_strstr(haystack, &absent), None, "absent n {n}");
+                        assert_eq!(sse42_strstr(haystack, &near_miss), None, "near miss n {n}");
+                    }
+                }
+            }
+            assert_eq!(find_char(haystack, b'b'), None);
+            assert_eq!(find_any_of(haystack, b"bcd"), None);
+            assert_eq!(find_any_of(haystack, b"0123456789bcdefghij"), None);
+            assert_eq!(compare_strings(haystack, haystack), Ordering::Equal);
+            #[cfg(target_arch = "x86_64")]
+            {
+                if is_x86_feature_detected!("sse4.2") {
+                    assert_eq!(sse42_strchr(haystack, b'b'), None);
+                    assert_eq!(sse42_multi_search(haystack, b"bcd"), None);
+                    assert_eq!(sse42_strcmp(haystack, haystack), Ordering::Equal);
+                }
+            }
+        }
+        // SAFETY: `base`/`map_len` describe the mapping created above, and no
+        // reference into it outlives the block above.
+        let rc = unsafe { libc::munmap(base.cast(), map_len) };
+        assert_eq!(rc, 0, "munmap failed");
+    }
+
+    /// C9 S4: time per search over a 64 KiB haystack that does not contain
+    /// the needle. A measurement, not a pass/fail check; run it with
+    /// `cargo test --release --lib -- --ignored --nocapture test_c9_s4`.
+    #[test]
+    #[ignore = "timing measurement; run with --release -- --ignored --nocapture"]
+    fn test_c9_s4_strstr_timing_64k_absent_needle() {
+        use std::hint::black_box;
+        use std::time::{Duration, Instant};
+
+        const ITERS: u32 = 200;
+        fn per_search(f: &dyn Fn() -> Option<usize>) -> Duration {
+            let start = Instant::now();
+            for _ in 0..ITERS {
+                black_box(f());
+            }
+            start.elapsed() / ITERS
+        }
+
+        let haystack: Vec<u8> = (0..65_536u32).map(|i| b'a' + (i % 23) as u8).collect();
+        for n in [1usize, 2, 4, 8, 12, 16] {
+            let mut needle: Vec<u8> = (0..n).map(|i| b'a' + (i % 23) as u8).collect();
+            needle[n - 1] = b'Z'; // never in the haystack
+            let scalar = per_search(&|| scalar_strstr(black_box(&haystack), black_box(&needle)));
+            #[cfg(target_arch = "x86_64")]
+            {
+                if is_x86_feature_detected!("sse4.2") {
+                    assert_eq!(sse42_strstr(&haystack, &needle), None);
+                    let sse = per_search(&|| sse42_strstr(black_box(&haystack), black_box(&needle)));
+                    println!("needle {n:2} B: sse42_strstr {sse:?}/search, scalar_strstr {scalar:?}/search");
+                    continue;
+                }
+            }
+            println!("needle {n:2} B: scalar_strstr {scalar:?}/search (no SSE4.2)");
+        }
+    }
+
+    /// C9 S3: needles of 17..=32 bytes take `sse42_strstr_medium`, longer
+    /// ones `sse42_strstr_long`. Needles are planted at the edges of 16-byte
+    /// windows, after a decoy that matches the first 16 bytes only, or left
+    /// out.
+    #[test]
+    fn test_c9_s3_sse42_strstr_medium_and_long_needles_match_reference() {
+        for n in 17..=40usize {
+            let mut needle: Vec<u8> = (0..n).map(|i| b'a' + (i % 7) as u8).collect();
+            needle[n - 1] = b'z';
+            let mut decoy = needle.clone();
+            decoy[n - 1] = b'y';
+            for len in [n - 1, n, n + 1, n + 15, n + 16, n + 17, 96] {
+                let background = vec![b'a'; len];
+                assert_strstr_agrees(&background, &needle, ("absent", len, n, 0));
+                for at in [0usize, 1, 15, 16, 31, 32, len.saturating_sub(n)] {
+                    if at + n <= len {
+                        let mut haystack = background.clone();
+                        haystack[at..at + n].copy_from_slice(&needle);
+                        assert_strstr_agrees(&haystack, &needle, ("planted", len, n, at));
+                    }
+                }
+                if 2 * n < len {
+                    let mut haystack = background.clone();
+                    haystack[..n].copy_from_slice(&decoy);
+                    haystack[n + 1..2 * n + 1].copy_from_slice(&needle);
+                    assert_strstr_agrees(&haystack, &needle, ("after decoy", len, n, n + 1));
+                }
+                let text = ab_text(len, (len * 64 + n) as u64);
+                assert_strstr_agrees(&text, &needle, ("ab-text absent", len, n, 0));
+                if n <= len {
+                    let at = len - n;
+                    let present = text[at..].to_vec();
+                    assert_strstr_agrees(&text, &present, ("ab-text", len, n, at));
+                }
+            }
+        }
     }
 }
