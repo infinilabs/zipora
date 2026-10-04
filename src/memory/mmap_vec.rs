@@ -21,9 +21,7 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::cache_layout::AccessPattern;
-use crate::memory::simd_ops::{
-    fast_compare, fast_copy_cache_optimized, fast_fill, fast_prefetch_range,
-};
+use crate::memory::simd_ops::{fast_copy_cache_optimized, fast_fill, fast_prefetch_range};
 use crate::simd::{AdaptiveSimdSelector, Operation};
 use bytemuck::Pod;
 use memmap2::{MmapMut, MmapOptions};
@@ -1404,10 +1402,12 @@ where
         Ok(())
     }
 
-    /// Compare a range with another MmapVec using SIMD
+    /// Compare `self[range]` with `other[..range.len()]` using `T::eq`.
     ///
-    /// # Performance
-    /// 8-12x faster with SIMD comparison for large ranges
+    /// Uses standard slice equality (`PartialEq`), which specializes to
+    /// vectorized byte comparison for integer types while respecting `T::eq`
+    /// for floats (`-0.0 == 0.0`, `NaN != NaN`) and custom `PartialEq`
+    /// implementations regardless of range length.
     pub fn compare_range_simd(&self, range: std::ops::Range<usize>, other: &Self) -> Result<bool>
     where
         T: PartialEq + Copy,
@@ -1430,13 +1430,10 @@ where
             .get(..count)
             .ok_or_else(|| ZiporaError::invalid_data("Invalid range"))?;
 
-        // Use SIMD comparison for large ranges
-        if std::mem::size_of_val(mine) >= 64 {
-            Ok(fast_compare(pod_bytes(mine)?, pod_bytes(theirs)?) == 0)
-        } else {
-            // Standard comparison for small ranges
-            Ok(mine == theirs)
-        }
+        // Byte equality is not value equality (`-0.0 == 0.0`, `NaN != NaN`,
+        // custom `PartialEq`), and standard slice equality already
+        // specializes to `memcmp` for integer types where that is sound.
+        Ok(mine == theirs)
     }
 
     /// Internal: Monitor SIMD operation performance
@@ -2893,5 +2890,95 @@ mod tests {
             MmapVec::<()>::calculate_file_size(usize::MAX).ok(),
             Some(80)
         );
+    }
+
+    /// C9.1 F7: `compare_range_simd` used `PartialEq` below 64 bytes (`len =
+    /// 7` `f64`s) and byte comparison (`fast_compare`) from 64 bytes (`len =
+    /// 8` `f64`s) upward, so `0.0` vs `-0.0`, `NaN` vs `NaN`, and custom
+    /// `PartialEq` types changed answer at the 64-byte boundary instead of
+    /// matching `a.as_slice() == b.as_slice()`.
+    #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f7_compare_range_simd_respects_partial_eq() {
+        #[repr(transparent)]
+        #[derive(Clone, Copy)]
+        struct Mod2(u64);
+        // SAFETY: `#[repr(transparent)]` over `u64`: size 8, no padding, and
+        // the all-zero bit pattern is a valid value.
+        unsafe impl bytemuck::Zeroable for Mod2 {}
+        // SAFETY: as above, every bit pattern is a valid `u64`; `Mod2` is
+        // `Copy + 'static` and holds no pointers or padding bytes.
+        unsafe impl bytemuck::Pod for Mod2 {}
+        impl PartialEq for Mod2 {
+            fn eq(&self, other: &Self) -> bool {
+                self.0 % 2 == other.0 % 2
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let mut mismatches = Vec::new();
+        for len in [7usize, 8] {
+            let mut pos = MmapVec::<f64>::create(
+                dir.path().join(format!("pos_{len}.mmap")),
+                MmapVecConfig::default(),
+            )
+            .unwrap();
+            let mut neg = MmapVec::<f64>::create(
+                dir.path().join(format!("neg_{len}.mmap")),
+                MmapVecConfig::default(),
+            )
+            .unwrap();
+            let mut nan_a = MmapVec::<f64>::create(
+                dir.path().join(format!("nana_{len}.mmap")),
+                MmapVecConfig::default(),
+            )
+            .unwrap();
+            let mut nan_b = MmapVec::<f64>::create(
+                dir.path().join(format!("nanb_{len}.mmap")),
+                MmapVecConfig::default(),
+            )
+            .unwrap();
+            let mut mod_a = MmapVec::<Mod2>::create(
+                dir.path().join(format!("moda_{len}.mmap")),
+                MmapVecConfig::default(),
+            )
+            .unwrap();
+            let mut mod_b = MmapVec::<Mod2>::create(
+                dir.path().join(format!("modb_{len}.mmap")),
+                MmapVecConfig::default(),
+            )
+            .unwrap();
+            for _ in 0..len {
+                pos.push(0.0f64).unwrap();
+                neg.push(-0.0f64).unwrap();
+                nan_a.push(f64::NAN).unwrap();
+                nan_b.push(f64::NAN).unwrap();
+                mod_a.push(Mod2(0)).unwrap();
+                mod_b.push(Mod2(2)).unwrap();
+            }
+
+            for (label, got, want) in [
+                (
+                    "0.0 vs -0.0",
+                    pos.compare_range_simd(0..len, &neg).unwrap(),
+                    pos.as_slice() == neg.as_slice(),
+                ),
+                (
+                    "NaN vs NaN",
+                    nan_a.compare_range_simd(0..len, &nan_b).unwrap(),
+                    nan_a.as_slice() == nan_b.as_slice(),
+                ),
+                (
+                    "Mod2(0) vs Mod2(2)",
+                    mod_a.compare_range_simd(0..len, &mod_b).unwrap(),
+                    mod_a.as_slice() == mod_b.as_slice(),
+                ),
+            ] {
+                if got != want {
+                    mismatches.push(format!("{label} at len {len}: got {got}, want {want}"));
+                }
+            }
+        }
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
     }
 }
