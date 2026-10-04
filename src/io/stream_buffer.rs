@@ -1,11 +1,18 @@
 //! Advanced buffered stream wrapper with configurable buffering strategies
 //!
-//! This module provides high-performance stream buffering with multiple optimization
-//! strategies inspired by production systems. Features include adaptive buffering,
-//! page-aligned allocations, and branch prediction optimization.
+//! This module provides stream buffering with configurable buffer sizing,
+//! adaptive growth, and optional read-ahead.
+//!
+//! # Limitation
+//! [`StreamBufferConfig::page_alignment`] rounds buffer capacities up to a
+//! power-of-two multiple using standard heap allocation (`Vec<u8>`) rather than
+//! OS page-aligned allocation, and [`StreamBufferConfig::use_secure_pool`]
+//! initializes a [`SecureMemoryPool`] handle without allocating the stream
+//! buffer slice from it.
 
 use std::cmp;
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
+use std::mem::ManuallyDrop;
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
@@ -21,9 +28,17 @@ pub struct StreamBufferConfig {
     pub max_capacity: usize,
     /// Growth factor when buffer needs to expand (default: 1.618 - golden ratio)
     pub growth_factor: f64,
-    /// Page alignment for better memory performance (default: 4096)
+    /// Capacity rounding alignment in bytes (default: 4096; must be a non-zero power of two).
+    ///
+    /// # Limitation
+    /// Rounds the buffer length up to a multiple of `page_alignment` using standard heap
+    /// allocation (`Vec<u8>`); the base pointer alignment is not elevated to `page_alignment`.
     pub page_alignment: usize,
-    /// Whether to use secure memory pool for allocations
+    /// Whether to initialize a [`SecureMemoryPool`] alongside the stream buffer.
+    ///
+    /// # Limitation
+    /// The internal `Box<[u8]>` stream buffer is allocated on the standard heap rather than
+    /// from the [`SecureMemoryPool`].
     pub use_secure_pool: bool,
     /// Minimum read size to trigger bulk operations
     pub bulk_read_threshold: usize,
@@ -49,6 +64,31 @@ impl Default for StreamBufferConfig {
 }
 
 impl StreamBufferConfig {
+    /// Validate configuration parameters before allocating buffers.
+    pub fn validate(&self) -> Result<()> {
+        if self.initial_capacity == 0 {
+            return Err(ZiporaError::invalid_data(
+                "StreamBufferConfig::initial_capacity must be greater than 0",
+            ));
+        }
+        if self.max_capacity < self.initial_capacity {
+            return Err(ZiporaError::invalid_data(
+                "StreamBufferConfig::max_capacity must be >= initial_capacity",
+            ));
+        }
+        if self.page_alignment == 0 || !self.page_alignment.is_power_of_two() {
+            return Err(ZiporaError::invalid_data(
+                "StreamBufferConfig::page_alignment must be a non-zero power of two",
+            ));
+        }
+        if !self.growth_factor.is_finite() || self.growth_factor <= 1.0 {
+            return Err(ZiporaError::invalid_data(
+                "StreamBufferConfig::growth_factor must be finite and > 1.0",
+            ));
+        }
+        Ok(())
+    }
+
     /// Create a performance-optimized configuration
     pub fn performance_optimized() -> Self {
         Self {
@@ -107,7 +147,9 @@ impl<R: Read> StreamBufferedReader<R> {
     }
 
     /// Create a new buffered reader with custom configuration
-    pub fn with_config(inner: R, config: StreamBufferConfig) -> Result<Self> {
+    pub fn with_config(inner: R, mut config: StreamBufferConfig) -> Result<Self> {
+        config.validate()?;
+
         let pool = if config.use_secure_pool {
             Some(SecureMemoryPool::new(
                 crate::memory::SecurePoolConfig::small_secure(),
@@ -118,6 +160,7 @@ impl<R: Read> StreamBufferedReader<R> {
 
         // Allocate aligned buffer
         let buffer = Self::allocate_aligned_buffer(config.initial_capacity, config.page_alignment)?;
+        config.max_capacity = cmp::max(config.max_capacity, buffer.len());
 
         Ok(Self {
             inner,
@@ -145,13 +188,24 @@ impl<R: Read> StreamBufferedReader<R> {
         Self::with_config(inner, StreamBufferConfig::low_latency())
     }
 
-    /// Allocate page-aligned buffer for optimal performance
+    /// Allocate buffer with capacity rounded up to `alignment`.
     fn allocate_aligned_buffer(size: usize, alignment: usize) -> Result<Box<[u8]>> {
-        // Round up to alignment boundary
-        let aligned_size = (size + alignment - 1) & !(alignment - 1);
+        if size == 0 {
+            return Err(ZiporaError::invalid_data(
+                "buffer size must be greater than 0",
+            ));
+        }
+        if alignment == 0 || !alignment.is_power_of_two() {
+            return Err(ZiporaError::invalid_data(
+                "buffer alignment must be a non-zero power of two",
+            ));
+        }
+        let mask = alignment - 1;
+        let aligned_size = size
+            .checked_add(mask)
+            .map(|n| n & !mask)
+            .ok_or_else(|| ZiporaError::invalid_data("aligned buffer size overflow"))?;
 
-        // For simplicity, use regular allocation
-        // In production, could use posix_memalign or similar
         let buffer = vec![0u8; aligned_size].into_boxed_slice();
         Ok(buffer)
     }
@@ -208,9 +262,22 @@ impl<R: Read> StreamBufferedReader<R> {
         self.fill_buffer_simd(min_needed)
     }
 
-    /// Fill buffer using SIMD memcpy for internal data movement
-    fn fill_buffer_simd(&mut self, min_needed: usize) -> Result<usize> {
-        // Move any remaining data to beginning of buffer
+    fn read_inner_retry_interrupted(inner: &mut R, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            match inner.read(buf) {
+                Ok(n) => return Ok(n),
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn fill_buffer_io(&mut self, min_needed: usize) -> io::Result<usize> {
+        if self.end - self.pos >= min_needed {
+            return Ok(self.end - self.pos);
+        }
+
+        // Move any remaining unread data to the beginning of the buffer
         if self.pos > 0 {
             let remaining = self.end - self.pos;
             if remaining > 0 {
@@ -220,35 +287,18 @@ impl<R: Read> StreamBufferedReader<R> {
             self.pos = 0;
         }
 
-        // Calculate read size with read-ahead if enabled
-        let read_size = if self.config.enable_readahead {
-            let readahead_size = min_needed * self.config.readahead_multiplier;
-            cmp::min(
-                cmp::max(min_needed, readahead_size),
-                self.buffer.len() - self.end,
-            )
-        } else {
-            cmp::min(min_needed, self.buffer.len() - self.end)
-        };
-
-        if read_size == 0 {
-            // Buffer is full but we need more data - grow buffer if possible
-            return self.grow_buffer_and_retry(min_needed);
+        // If `min_needed` exceeds the current buffer capacity, grow the buffer first
+        if min_needed > self.buffer.len() {
+            self.grow_buffer_to(min_needed).map_err(io::Error::other)?;
         }
 
-        // Read data from the underlying stream. One `read` is not enough: a
-        // pipe, a socket or any hand-written reader may return fewer bytes
-        // than it has, and the caller asked for `min_needed`, not for
-        // "whatever arrives first". A short read used to look exactly like
-        // EOF to `read_slice`, which then reported `Ok(None)` with the data
-        // still in flight. Keep reading until the request is met or the
-        // source really is at EOF.
-        let limit = self.end + read_size;
-        while self.end < limit {
-            let bytes_read = self
-                .inner
-                .read(&mut self.buffer[self.end..limit])
-                .map_err(|e| ZiporaError::io_error(format!("Failed to fill buffer: {}", e)))?;
+        while self.end - self.pos < min_needed {
+            if self.end >= self.buffer.len() {
+                self.grow_buffer_to(min_needed).map_err(io::Error::other)?;
+            }
+
+            let bytes_read =
+                Self::read_inner_retry_interrupted(&mut self.inner, &mut self.buffer[self.end..])?;
 
             if bytes_read == 0 {
                 // Genuine EOF; report what we managed to buffer.
@@ -257,50 +307,54 @@ impl<R: Read> StreamBufferedReader<R> {
 
             self.end += bytes_read;
             self.total_read += bytes_read as u64;
-
-            // Read-ahead is opportunistic: never block for more than the
-            // caller actually needs.
-            if self.end - self.pos >= min_needed {
-                break;
-            }
         }
 
         Ok(self.end - self.pos)
     }
 
-    /// Grow buffer when more space is needed
-    fn grow_buffer_and_retry(&mut self, min_needed: usize) -> Result<usize> {
-        let current_capacity = self.buffer.len();
-        let new_capacity = cmp::min(
-            cmp::max(
-                (current_capacity as f64 * self.config.growth_factor) as usize,
-                current_capacity + min_needed,
-            ),
-            self.config.max_capacity,
-        );
+    /// Fill buffer using SIMD memcpy for internal data movement
+    fn fill_buffer_simd(&mut self, min_needed: usize) -> Result<usize> {
+        self.fill_buffer_io(min_needed)
+            .map_err(|e| ZiporaError::io_error(format!("Failed to fill buffer: {}", e)))
+    }
 
-        if new_capacity <= current_capacity {
+    /// Grow buffer so its capacity is at least `min_needed` (up to `max_capacity`).
+    fn grow_buffer_to(&mut self, min_needed: usize) -> Result<()> {
+        let current_capacity = self.buffer.len();
+        if min_needed > self.config.max_capacity || current_capacity >= self.config.max_capacity {
+            return Err(ZiporaError::io_error(format!(
+                "Buffer at maximum capacity ({} bytes), cannot satisfy request for {} bytes",
+                self.config.max_capacity, min_needed
+            )));
+        }
+
+        let scaled = (current_capacity as f64 * self.config.growth_factor) as usize;
+        let grown = cmp::max(scaled, current_capacity.saturating_add(1));
+        let target = cmp::min(cmp::max(grown, min_needed), self.config.max_capacity);
+
+        let mask = self.config.page_alignment - 1;
+        let new_capacity = match target.checked_add(mask).map(|n| n & !mask) {
+            Some(aligned) if aligned <= self.config.max_capacity => aligned,
+            _ => self.config.max_capacity,
+        };
+
+        if new_capacity <= current_capacity || new_capacity < min_needed {
             return Err(ZiporaError::io_error(format!(
                 "Buffer at maximum capacity ({} bytes), cannot satisfy request for {} bytes",
                 current_capacity, min_needed
             )));
         }
 
-        // Allocate new larger buffer
-        let mut new_buffer =
-            Self::allocate_aligned_buffer(new_capacity, self.config.page_alignment)?;
-
-        // Copy existing data
+        let mut new_buffer = vec![0u8; new_capacity].into_boxed_slice();
         let existing_data = self.end - self.pos;
-        new_buffer[..existing_data].copy_from_slice(&self.buffer[self.pos..self.end]);
+        if existing_data > 0 {
+            new_buffer[..existing_data].copy_from_slice(&self.buffer[self.pos..self.end]);
+        }
 
-        // Update state
         self.buffer = new_buffer;
         self.end = existing_data;
         self.pos = 0;
-
-        // Try filling again
-        self.fill_buffer(min_needed)
+        Ok(())
     }
 
     /// Fast path for reading a single byte
@@ -333,7 +387,7 @@ impl<R: Read> StreamBufferedReader<R> {
         // Ensure we have enough data in buffer
         self.ensure_buffered(len)?;
 
-        if self.pos + len <= self.end {
+        if self.end - self.pos >= len {
             let slice = &self.buffer[self.pos..self.pos + len];
             self.pos += len;
             Ok(Some(slice))
@@ -342,67 +396,54 @@ impl<R: Read> StreamBufferedReader<R> {
         }
     }
 
-    /// Bulk read optimization for large reads
-    pub fn read_bulk(&mut self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() >= self.config.bulk_read_threshold {
-            // For large reads, bypass buffer and read directly
-            let buffered = self.end - self.pos;
-            if buffered > 0 {
-                let to_copy = cmp::min(buffered, buf.len());
-                buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
-                self.pos += to_copy;
-
-                if to_copy == buf.len() {
-                    return Ok(to_copy);
-                }
-
-                // Read remaining directly from underlying stream
-                let remaining = self
-                    .inner
-                    .read(&mut buf[to_copy..])
-                    .map_err(|e| ZiporaError::io_error(format!("Bulk read failed: {}", e)))?;
-                self.total_read += remaining as u64;
-                Ok(to_copy + remaining)
-            } else {
-                // Read directly from underlying stream
-                let bytes_read = self
-                    .inner
-                    .read(buf)
-                    .map_err(|e| ZiporaError::io_error(format!("Bulk read failed: {}", e)))?;
-                self.total_read += bytes_read as u64;
-                Ok(bytes_read)
-            }
-        } else {
-            // Use normal buffered read for smaller requests
-            self.read_buffered(buf)
-        }
-    }
-
-    /// Normal buffered read implementation
-    fn read_buffered(&mut self, buf: &mut [u8]) -> Result<usize> {
+    fn read_bulk_io(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
 
-        let mut total_read = 0;
-        let mut remaining = buf;
-
-        while !remaining.is_empty() {
-            // Ensure we have data in buffer
-            let available = self.ensure_buffered(remaining.len())?;
-            if available == 0 {
-                break; // End of stream
-            }
-
-            // Copy data from buffer
-            let to_copy = cmp::min(available, remaining.len());
-            remaining[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
+        // If we already have buffered data, return it immediately without issuing
+        // a second (potentially blocking or failing) read on `self.inner`.
+        let buffered = self.end - self.pos;
+        if buffered > 0 {
+            let to_copy = cmp::min(buffered, buf.len());
+            buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
             self.pos += to_copy;
-            total_read += to_copy;
-            remaining = &mut remaining[to_copy..];
+            return Ok(to_copy);
         }
 
-        Ok(total_read)
+        if buf.len() >= self.config.bulk_read_threshold {
+            let bytes_read = Self::read_inner_retry_interrupted(&mut self.inner, buf)?;
+            self.total_read += bytes_read as u64;
+            Ok(bytes_read)
+        } else {
+            self.read_buffered(buf)
+        }
+    }
+
+    /// Bulk read optimization for large reads
+    pub fn read_bulk(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.read_bulk_io(buf)
+            .map_err(|e| ZiporaError::io_error(format!("Bulk read failed: {}", e)))
+    }
+
+    /// Normal buffered read implementation
+    fn read_buffered(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        if self.pos >= self.end {
+            let available = self.fill_buffer_io(1)?;
+            if available == 0 {
+                return Ok(0);
+            }
+        }
+
+        let available = self.end - self.pos;
+        let to_copy = cmp::min(available, buf.len());
+        buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
+        self.pos += to_copy;
+        Ok(to_copy)
     }
 
     /// Read data with SIMD memcpy optimization
@@ -435,33 +476,24 @@ impl<R: Read> StreamBufferedReader<R> {
             return Ok(0);
         }
 
-        let mut total_read = 0;
-        let mut remaining = buf;
-
-        while !remaining.is_empty() {
-            // Ensure we have data in buffer
-            let available = self.ensure_buffered(remaining.len())?;
+        if self.pos >= self.end {
+            let available = self.fill_buffer(1)?;
             if available == 0 {
-                break; // End of stream
+                return Ok(0);
             }
-
-            // Copy data from buffer using SIMD
-            let to_copy = cmp::min(available, remaining.len());
-            let src_slice = &self.buffer[self.pos..self.pos + to_copy];
-            let dst_slice = &mut remaining[..to_copy];
-
-            // Use SIMD-optimized copy
-            if simd_ops::fast_copy(src_slice, dst_slice).is_err() {
-                // Fallback to standard copy if SIMD fails
-                dst_slice.copy_from_slice(src_slice);
-            }
-
-            self.pos += to_copy;
-            total_read += to_copy;
-            remaining = &mut remaining[to_copy..];
         }
 
-        Ok(total_read)
+        let available = self.end - self.pos;
+        let to_copy = cmp::min(available, buf.len());
+        let src_slice = &self.buffer[self.pos..self.pos + to_copy];
+        let dst_slice = &mut buf[..to_copy];
+
+        if simd_ops::fast_copy(src_slice, dst_slice).is_err() {
+            dst_slice.copy_from_slice(src_slice);
+        }
+
+        self.pos += to_copy;
+        Ok(to_copy)
     }
 
     /// Validate UTF-8 in buffered data
@@ -507,40 +539,58 @@ impl<R: Read> StreamBufferedReader<R> {
 
 impl<R: Read> Read for StreamBufferedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.read_bulk(buf).map_err(io::Error::other)
+        self.read_bulk_io(buf)
     }
 }
 
 impl<R: Read> BufRead for StreamBufferedReader<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if self.pos >= self.end {
-            self.fill_buffer(1).map_err(io::Error::other)?;
+            self.fill_buffer_io(1)?;
         }
         Ok(&self.buffer[self.pos..self.end])
     }
 
     fn consume(&mut self, amt: usize) {
-        self.pos = cmp::min(self.pos + amt, self.end);
+        self.pos = cmp::min(self.pos.saturating_add(amt), self.end);
     }
 }
 
 impl<R: Read + Seek> Seek for StreamBufferedReader<R> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        // For seek operations, we need to invalidate the buffer
+        let result = match pos {
+            SeekFrom::Current(offset) => {
+                let buffered = (self.end - self.pos) as u64;
+                let buffered_i64 = i64::try_from(buffered).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "buffered read-ahead overflows i64",
+                    )
+                })?;
+                let adjusted = offset.checked_sub(buffered_i64).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "seek offset overflow")
+                })?;
+                self.inner.seek(SeekFrom::Current(adjusted))?
+            }
+            other => self.inner.seek(other)?,
+        };
         self.pos = 0;
         self.end = 0;
-        self.inner.seek(pos)
+        Ok(result)
     }
 }
 
+type FlushRawFn<W> = fn(&mut W, &mut [u8], &mut usize, &mut u64) -> io::Result<()>;
+
 /// High-performance buffered writer with configurable strategies
 pub struct StreamBufferedWriter<W> {
-    inner: W,
+    inner: ManuallyDrop<W>,
     buffer: Box<[u8]>,
     pos: usize, // Current position in buffer
     config: StreamBufferConfig,
     total_written: u64,
     _pool: Option<Arc<SecureMemoryPool>>,
+    flush_on_drop: Option<FlushRawFn<W>>,
 }
 
 impl<W: Write> StreamBufferedWriter<W> {
@@ -550,7 +600,9 @@ impl<W: Write> StreamBufferedWriter<W> {
     }
 
     /// Create a new buffered writer with custom configuration
-    pub fn with_config(inner: W, config: StreamBufferConfig) -> Result<Self> {
+    pub fn with_config(inner: W, mut config: StreamBufferConfig) -> Result<Self> {
+        config.validate()?;
+
         let pool = if config.use_secure_pool {
             Some(SecureMemoryPool::new(
                 crate::memory::SecurePoolConfig::small_secure(),
@@ -563,15 +615,67 @@ impl<W: Write> StreamBufferedWriter<W> {
             config.initial_capacity,
             config.page_alignment,
         )?;
+        config.max_capacity = cmp::max(config.max_capacity, buffer.len());
 
         Ok(Self {
-            inner,
+            inner: ManuallyDrop::new(inner),
             buffer,
             pos: 0,
             config,
             total_written: 0,
             _pool: pool,
+            flush_on_drop: Some(Self::flush_raw),
         })
+    }
+
+    fn flush_raw(
+        inner: &mut W,
+        buffer: &mut [u8],
+        pos: &mut usize,
+        total_written: &mut u64,
+    ) -> io::Result<()> {
+        let mut written = 0;
+        let len = *pos;
+        let mut ret = Ok(());
+
+        while written < len {
+            match inner.write(&buffer[written..len]) {
+                Ok(0) => {
+                    ret = Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "failed to write buffered data",
+                    ));
+                    break;
+                }
+                Ok(n) => {
+                    written += n;
+                    *total_written += n as u64;
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => {
+                    ret = Err(e);
+                    break;
+                }
+            }
+        }
+
+        if written > 0 {
+            if written < *pos {
+                buffer.copy_within(written..*pos, 0);
+            }
+            *pos -= written;
+        }
+
+        ret
+    }
+
+    fn flush_buffer_io(&mut self) -> io::Result<()> {
+        Self::flush_raw(
+            &mut self.inner,
+            &mut self.buffer,
+            &mut self.pos,
+            &mut self.total_written,
+        )
     }
 
     /// Get the underlying writer
@@ -587,7 +691,11 @@ impl<W: Write> StreamBufferedWriter<W> {
     /// Consume this buffered writer and return the underlying writer
     pub fn into_inner(mut self) -> io::Result<W> {
         self.flush()?;
-        Ok(self.inner)
+        self.flush_on_drop = None;
+        // SAFETY: Setting `self.flush_on_drop = None` prevents `Drop::drop` from touching
+        // or dropping `self.inner`, and `into_inner` consumes `self` by value so `self.inner`
+        // is taken exactly once.
+        Ok(unsafe { ManuallyDrop::take(&mut self.inner) })
     }
 
     /// Get buffer capacity
@@ -622,6 +730,9 @@ impl<W: Write> StreamBufferedWriter<W> {
     #[cold]
     fn write_byte_slow(&mut self, byte: u8) -> Result<()> {
         self.flush_buffer()?;
+        if self.buffer.is_empty() {
+            return Err(ZiporaError::io_error("writer buffer has zero capacity"));
+        }
         self.buffer[0] = byte;
         self.pos = 1;
         Ok(())
@@ -629,52 +740,71 @@ impl<W: Write> StreamBufferedWriter<W> {
 
     /// Flush internal buffer to underlying writer
     fn flush_buffer(&mut self) -> Result<()> {
-        if self.pos > 0 {
-            self.inner
-                .write_all(&self.buffer[..self.pos])
-                .map_err(|e| ZiporaError::io_error(format!("Failed to flush buffer: {}", e)))?;
-            self.total_written += self.pos as u64;
-            self.pos = 0;
+        self.flush_buffer_io()
+            .map_err(|e| ZiporaError::io_error(format!("Failed to flush buffer: {}", e)))
+    }
+}
+
+impl<W> Drop for StreamBufferedWriter<W> {
+    fn drop(&mut self) {
+        if let Some(flush_fn) = self.flush_on_drop.take() {
+            let _ = flush_fn(
+                &mut self.inner,
+                &mut self.buffer,
+                &mut self.pos,
+                &mut self.total_written,
+            );
+            // SAFETY: `self.flush_on_drop` was `Some`, which means `into_inner` did not
+            // take `self.inner`, so `self.inner` is initialized and dropped once here.
+            unsafe {
+                ManuallyDrop::drop(&mut self.inner);
+            }
         }
-        Ok(())
     }
 }
 
 impl<W: Write> Write for StreamBufferedWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if buf.len() >= self.config.bulk_read_threshold {
-            // For large writes, flush buffer and write directly
-            self.flush_buffer().map_err(io::Error::other)?;
+        if buf.is_empty() {
+            return Ok(0);
+        }
 
-            let written = self.inner.write(buf)?;
-            self.total_written += written as u64;
-            Ok(written)
-        } else {
-            // Use buffered write for smaller data
-            let mut remaining = buf;
-            let mut total_written = 0;
+        // If the incoming write does not fit in the remaining buffer space,
+        // flush existing buffered bytes BEFORE copying any bytes from `buf`
+        // so a flush error never partially buffers `buf`.
+        if buf.len() > self.buffer.len() - self.pos {
+            self.flush_buffer_io()?;
+        }
 
-            while !remaining.is_empty() {
-                let available = self.buffer.len() - self.pos;
-                if available == 0 {
-                    self.flush_buffer().map_err(io::Error::other)?;
-                    continue;
+        if buf.len() >= self.config.bulk_read_threshold || buf.len() >= self.buffer.len() {
+            self.flush_buffer_io()?;
+
+            loop {
+                match self.inner.write(buf) {
+                    Ok(written) => {
+                        self.total_written += written as u64;
+                        return Ok(written);
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) => return Err(e),
                 }
-
-                let to_copy = cmp::min(available, remaining.len());
-                self.buffer[self.pos..self.pos + to_copy].copy_from_slice(&remaining[..to_copy]);
-                self.pos += to_copy;
-                total_written += to_copy;
-                remaining = &remaining[to_copy..];
             }
-
-            Ok(total_written)
+        } else {
+            self.buffer[self.pos..self.pos + buf.len()].copy_from_slice(buf);
+            self.pos += buf.len();
+            Ok(buf.len())
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.flush_buffer().map_err(io::Error::other)?;
-        self.inner.flush()
+        self.flush_buffer_io()?;
+        loop {
+            match self.inner.flush() {
+                Ok(()) => return Ok(()),
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
     }
 }
 
@@ -1116,5 +1246,364 @@ mod tests {
         let mut buf = vec![0u8; 100];
         let bytes_read = reader.read_simd_optimized(&mut buf).unwrap();
         assert!(bytes_read > 0 || reader.total_read() == data.len() as u64);
+    }
+
+    fn miri_fast_config() -> StreamBufferConfig {
+        StreamBufferConfig {
+            initial_capacity: 4096,
+            max_capacity: 64 * 1024,
+            growth_factor: 2.0,
+            page_alignment: 4096,
+            use_secure_pool: false,
+            bulk_read_threshold: 8192,
+            enable_readahead: true,
+            readahead_multiplier: 2,
+        }
+    }
+
+    #[test]
+    fn test_c9_sb1_writer_drop_flushes_buffered_bytes() {
+        let mut out = Vec::new();
+        {
+            let mut w = StreamBufferedWriter::with_config(&mut out, miri_fast_config()).unwrap();
+            w.write_all(b"hello").unwrap();
+        }
+        assert_eq!(out, b"hello");
+
+        let mut out2 = Vec::new();
+        let mut w2 = StreamBufferedWriter::with_config(&mut out2, miri_fast_config()).unwrap();
+        w2.write_all(b"world").unwrap();
+        let inner = w2.into_inner().unwrap();
+        assert_eq!(inner.as_slice(), b"world");
+    }
+
+    #[test]
+    fn test_c9_sb2_read_returns_available_bytes_without_blocking_for_full_buffer() {
+        struct OneChunkThenPanicReader {
+            calls: usize,
+        }
+
+        impl Read for OneChunkThenPanicReader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.calls += 1;
+                assert_eq!(self.calls, 1, "inner read called a second time when data was already available");
+                let msg = b"hello";
+                buf[..msg.len()].copy_from_slice(msg);
+                Ok(msg.len())
+            }
+        }
+
+        let mut r = StreamBufferedReader::with_config(
+            OneChunkThenPanicReader { calls: 0 },
+            miri_fast_config(),
+        )
+        .unwrap();
+        let mut buf = [0u8; 64];
+        assert_eq!(r.read(&mut buf).unwrap(), 5);
+        assert_eq!(&buf[..5], b"hello");
+
+        let mut r_simd = StreamBufferedReader::with_config(
+            OneChunkThenPanicReader { calls: 0 },
+            miri_fast_config(),
+        )
+        .unwrap();
+        let mut buf_simd = [0u8; 64];
+        assert_eq!(r_simd.read_simd_optimized(&mut buf_simd).unwrap(), 5);
+        assert_eq!(&buf_simd[..5], b"hello");
+
+        let mut r_bulk = StreamBufferedReader::with_config(
+            OneChunkThenPanicReader { calls: 0 },
+            miri_fast_config(),
+        )
+        .unwrap();
+        let mut first = [0u8; 2];
+        assert_eq!(r_bulk.read(&mut first).unwrap(), 2);
+        assert_eq!(&first, b"he");
+        let mut large = vec![0u8; 8192];
+        assert_eq!(r_bulk.read(&mut large).unwrap(), 3);
+        assert_eq!(&large[..3], b"llo");
+    }
+
+    #[test]
+    fn test_c9_sb3_seek_accounts_for_buffered_readahead_and_preserves_buffer_on_err() {
+        let mut r =
+            StreamBufferedReader::with_config(Cursor::new(b"0123456789".to_vec()), miri_fast_config())
+                .unwrap();
+
+        let mut b = [0u8; 1];
+        r.read_exact(&mut b).unwrap();
+        assert_eq!(&b, b"0");
+        assert_eq!(r.stream_position().unwrap(), 1);
+
+        r.read_exact(&mut b).unwrap();
+        assert_eq!(&b, b"1");
+
+        // Now position is 2, with "23456789" buffered. Seek forward 2 bytes -> 4.
+        assert_eq!(r.seek(SeekFrom::Current(2)).unwrap(), 4);
+        r.read_exact(&mut b).unwrap();
+        assert_eq!(&b, b"4");
+
+        // Failed seek before start must not discard buffered read-ahead ("56789")
+        assert!(r.seek(SeekFrom::Current(-100)).is_err());
+        r.read_exact(&mut b).unwrap();
+        assert_eq!(&b, b"5");
+    }
+
+    #[test]
+    fn test_c9_sb4_read_retries_interrupted_preserves_error_kind_and_never_loses_buffered_bytes() {
+        enum Step {
+            Bytes(&'static [u8]),
+            Err(io::ErrorKind),
+        }
+
+        struct ScriptedReader {
+            steps: Vec<Step>,
+            idx: usize,
+        }
+
+        impl Read for ScriptedReader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if self.idx >= self.steps.len() {
+                    return Ok(0);
+                }
+                let step = &self.steps[self.idx];
+                self.idx += 1;
+                match step {
+                    Step::Bytes(data) => {
+                        let n = cmp::min(buf.len(), data.len());
+                        buf[..n].copy_from_slice(&data[..n]);
+                        Ok(n)
+                    }
+                    Step::Err(kind) => Err(io::Error::new(*kind, "scripted error")),
+                }
+            }
+        }
+
+        // (a) Interrupted is retried transparently
+        let mut r1 = StreamBufferedReader::with_config(
+            ScriptedReader {
+                steps: vec![
+                    Step::Bytes(b"abc"),
+                    Step::Err(io::ErrorKind::Interrupted),
+                    Step::Bytes(b"defghij"),
+                ],
+                idx: 0,
+            },
+            miri_fast_config(),
+        )
+        .unwrap();
+        let mut out1 = [0u8; 10];
+        r1.read_exact(&mut out1).unwrap();
+        assert_eq!(&out1, b"abcdefghij");
+
+        // (b) Bulk read after partial buffer does not lose buffered bytes or collapse ErrorKind
+        let mut r2 = StreamBufferedReader::with_config(
+            ScriptedReader {
+                steps: vec![
+                    Step::Bytes(b"ab"),
+                    Step::Err(io::ErrorKind::WouldBlock),
+                    Step::Bytes(b"cdef"),
+                ],
+                idx: 0,
+            },
+            miri_fast_config(),
+        )
+        .unwrap();
+        let mut collected = Vec::new();
+        let mut first = [0u8; 1];
+        r2.read_exact(&mut first).unwrap();
+        collected.push(first[0]);
+
+        let mut saw_would_block = false;
+        let mut large = vec![0u8; 8192];
+        loop {
+            match r2.read(&mut large) {
+                Ok(0) => break,
+                Ok(n) => collected.extend_from_slice(&large[..n]),
+                Err(e) => {
+                    assert_eq!(e.kind(), io::ErrorKind::WouldBlock);
+                    saw_would_block = true;
+                }
+            }
+        }
+        assert!(saw_would_block);
+        assert_eq!(collected, b"abcdef");
+    }
+
+    #[test]
+    fn test_c9_sb5_writer_partial_flush_and_write_error_do_not_duplicate_bytes() {
+        struct ScriptedWriter {
+            out: Vec<u8>,
+            call: usize,
+            mode_partial_flush: bool,
+        }
+
+        impl Write for ScriptedWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.call += 1;
+                if self.mode_partial_flush {
+                    if self.call == 1 {
+                        let n = cmp::min(2, buf.len());
+                        self.out.extend_from_slice(&buf[..n]);
+                        return Ok(n);
+                    }
+                    if self.call == 2 {
+                        return Err(io::Error::new(io::ErrorKind::WouldBlock, "would block"));
+                    }
+                } else if self.call == 1 {
+                    return Err(io::Error::new(io::ErrorKind::WouldBlock, "would block"));
+                }
+                self.out.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        // (a) Partial flush followed by WouldBlock does not duplicate the 2 written bytes on retry
+        let mut w1 = StreamBufferedWriter::with_config(
+            ScriptedWriter {
+                out: Vec::new(),
+                call: 0,
+                mode_partial_flush: true,
+            },
+            miri_fast_config(),
+        )
+        .unwrap();
+        w1.write_all(b"abcdef").unwrap();
+        let err = w1.flush().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+        w1.flush().unwrap();
+        assert_eq!(w1.get_ref().out, b"abcdef");
+
+        // (b) Write that triggers a failing flush does not partially buffer the new slice
+        let mut w2 = StreamBufferedWriter::with_config(
+            ScriptedWriter {
+                out: Vec::new(),
+                call: 0,
+                mode_partial_flush: false,
+            },
+            miri_fast_config(),
+        )
+        .unwrap();
+        assert_eq!(w2.write(&[b'a'; 4000]).unwrap(), 4000);
+        let err = w2.write(&[b'b'; 200]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(w2.write(&[b'b'; 200]).unwrap(), 200);
+        w2.flush().unwrap();
+        assert_eq!(w2.get_ref().out.len(), 4200);
+        assert!(w2.get_ref().out[..4000].iter().all(|&b| b == b'a'));
+        assert!(w2.get_ref().out[4000..].iter().all(|&b| b == b'b'));
+    }
+
+    #[test]
+    fn test_c9_sb6_read_slice_above_initial_capacity_grows_buffer_before_eof() {
+        let data: Vec<u8> = (0..10_000).map(|i| (i % 251) as u8).collect();
+        let mut r =
+            StreamBufferedReader::with_config(Cursor::new(data.clone()), miri_fast_config()).unwrap();
+
+        let slice = r
+            .read_slice(5000)
+            .unwrap()
+            .expect("read_slice(5000) must grow buffer from 4096 and return Some");
+        assert_eq!(slice, &data[..5000]);
+    }
+
+    #[test]
+    fn test_c9_sb7_invalid_config_and_huge_ensure_buffered_return_err_without_panic() {
+        let zero_cap = StreamBufferConfig {
+            initial_capacity: 0,
+            ..miri_fast_config()
+        };
+        let zero_align = StreamBufferConfig {
+            page_alignment: 0,
+            ..miri_fast_config()
+        };
+        let non_pow2_align = StreamBufferConfig {
+            page_alignment: 3000,
+            ..miri_fast_config()
+        };
+        let bad_max = StreamBufferConfig {
+            initial_capacity: 8192,
+            max_capacity: 4096,
+            ..miri_fast_config()
+        };
+        let bad_growth = StreamBufferConfig {
+            growth_factor: 1.0,
+            ..miri_fast_config()
+        };
+
+        for cfg in [zero_cap, zero_align, non_pow2_align, bad_max, bad_growth] {
+            let r_res = std::panic::catch_unwind(|| {
+                StreamBufferedReader::with_config(Cursor::new(b"x"), cfg.clone())
+            });
+            assert!(r_res.expect("reader with_config must not panic").is_err());
+
+            let w_res = std::panic::catch_unwind(|| {
+                StreamBufferedWriter::with_config(Vec::<u8>::new(), cfg.clone())
+            });
+            assert!(w_res.expect("writer with_config must not panic").is_err());
+        }
+
+        let mut r =
+            StreamBufferedReader::with_config(Cursor::new(b"abc"), miri_fast_config()).unwrap();
+        let huge = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            r.ensure_buffered(usize::MAX)
+        }));
+        assert!(
+            huge.expect("ensure_buffered(usize::MAX) must not panic on overflow")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_c9_sb8_fill_buf_reads_full_buffer_capacity_per_inner_read() {
+        struct CountingReader {
+            data: Vec<u8>,
+            pos: usize,
+            calls: usize,
+        }
+
+        impl Read for CountingReader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.calls += 1;
+                if self.pos >= self.data.len() {
+                    return Ok(0);
+                }
+                let n = cmp::min(buf.len(), self.data.len() - self.pos);
+                buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+                self.pos += n;
+                Ok(n)
+            }
+        }
+
+        let mut data = vec![b'x'; 4095];
+        data.push(b'\n');
+
+        let cfg = StreamBufferConfig {
+            enable_readahead: false,
+            readahead_multiplier: 1,
+            ..miri_fast_config()
+        };
+        let mut r = StreamBufferedReader::with_config(
+            CountingReader {
+                data,
+                pos: 0,
+                calls: 0,
+            },
+            cfg,
+        )
+        .unwrap();
+
+        let mut line = Vec::new();
+        let n = r.read_until(b'\n', &mut line).unwrap();
+        assert_eq!(n, 4096);
+        assert!(
+            r.get_ref().calls <= 4,
+            "fill_buf should fill up to buffer capacity per read call, got {} calls",
+            r.get_ref().calls
+        );
     }
 }
