@@ -208,7 +208,9 @@ impl ZeroCopyRead for ZeroCopyBuffer {
     }
 
     fn zc_advance(&mut self, len: usize) -> Result<()> {
-        if self.read_pos + len > self.write_pos {
+        // `len > available()` rather than `read_pos + len > write_pos`: the
+        // sum overflows for a huge `len` (C9 Z4).
+        if len > self.available() {
             return Err(ZiporaError::invalid_data(
                 "Cannot advance past available data",
             ));
@@ -236,7 +238,9 @@ impl ZeroCopyWrite for ZeroCopyBuffer {
     }
 
     fn zc_commit(&mut self, len: usize) -> Result<()> {
-        if self.write_pos + len > self.buffer.len() {
+        // `len > write_available()` rather than `write_pos + len > capacity`,
+        // which overflows for a huge `len` (C9 Z4).
+        if len > self.write_available() {
             return Err(ZiporaError::invalid_data(
                 "Cannot commit past buffer capacity",
             ));
@@ -824,7 +828,9 @@ pub mod mmap {
 
     impl ZeroCopyRead for MmapZeroCopyReader {
         fn zc_read(&mut self, len: usize) -> Result<Option<&[u8]>> {
-            if self.pos + len <= self.mmap.len() {
+            // Compared with the bytes left, so `pos + len` below cannot
+            // overflow (C9 Z4).
+            if len <= self.zc_available() {
                 let slice = &self.mmap[self.pos..self.pos + len];
                 Ok(Some(slice))
             } else {
@@ -833,7 +839,7 @@ pub mod mmap {
         }
 
         fn zc_advance(&mut self, len: usize) -> Result<()> {
-            if self.pos + len > self.mmap.len() {
+            if len > self.zc_available() {
                 return Err(ZiporaError::invalid_data(
                     "Cannot advance past mapped region",
                 ));
@@ -1646,5 +1652,88 @@ mod tests {
         let wb = Some(io::ErrorKind::WouldBlock);
         assert_eq!(io_kind(&w.zc_write(4).unwrap_err()), wb, "zc_write");
         assert_eq!(io_kind(&w.zc_ensure_write(4).unwrap_err()), wb, "zc_ensure_write");
+    }
+
+    /// Runs `f` and returns its result, or `None` if it panicked, so a test
+    /// can assert "returns Err" where the unfixed code panicked.
+    fn no_panic<T>(f: impl FnOnce() -> T) -> Option<T> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).ok()
+    }
+
+    #[test]
+    fn test_c9_z4_advance_rejects_huge_len() {
+        // Regression (C9 Z4): `read_pos + len` was unchecked: a panic in debug
+        // builds, and in release zc_advance(usize::MAX) moved the cursor back
+        // by one and returned Ok.
+        let mut b = ZeroCopyBuffer::new(16).unwrap();
+        b.zc_commit(4).unwrap();
+        b.zc_advance(1).unwrap();
+        let advance = no_panic(|| b.zc_advance(usize::MAX).is_err());
+        assert_eq!(advance, Some(true), "ZeroCopyBuffer::zc_advance(usize::MAX)");
+        assert_eq!(b.read_position(), 1);
+        b.zc_advance(3).unwrap(); // the exact boundary is still accepted
+        assert!(b.is_empty());
+
+        let mut r = ZeroCopyReader::with_capacity(Cursor::new(vec![7u8; 8]), 16).unwrap();
+        assert_eq!(r.zc_ensure(8).unwrap(), 8);
+        r.zc_advance(1).unwrap();
+        let advance = no_panic(|| r.zc_advance(usize::MAX).is_err());
+        assert_eq!(advance, Some(true), "ZeroCopyReader::zc_advance(usize::MAX)");
+        assert_eq!(r.zc_available(), 7);
+    }
+
+    #[test]
+    fn test_c9_z4_commit_rejects_huge_len() {
+        // `write_pos + len` was unchecked the same way; in release,
+        // zc_commit(usize::MAX) left write_pos below read_pos, so the next
+        // `available()` underflowed.
+        let mut b = ZeroCopyBuffer::new(16).unwrap();
+        b.zc_commit(4).unwrap();
+        let commit = no_panic(|| b.zc_commit(usize::MAX).is_err());
+        assert_eq!(commit, Some(true), "ZeroCopyBuffer::zc_commit(usize::MAX)");
+        assert_eq!(b.write_position(), 4);
+        b.zc_commit(12).unwrap(); // the exact boundary is still accepted
+        assert!(b.is_full());
+
+        let mut w = ZeroCopyWriter::with_capacity(Vec::new(), 16).unwrap();
+        w.zc_commit(1).unwrap();
+        let commit = no_panic(|| w.zc_commit(usize::MAX).is_err());
+        assert_eq!(commit, Some(true), "ZeroCopyWriter::zc_commit(usize::MAX)");
+        assert_eq!(w.zc_write_available(), 15);
+    }
+
+    /// A memory-mapped reader over a 10-byte temporary file, at offset 1.
+    /// The file handle is returned too so it outlives the reader.
+    #[cfg(feature = "mmap")]
+    fn z4_mmap_reader() -> (tempfile::NamedTempFile, mmap::MmapZeroCopyReader) {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(b"0123456789").unwrap();
+        let mut r = mmap::MmapZeroCopyReader::new(f.reopen().unwrap()).unwrap();
+        r.zc_advance(1).unwrap();
+        (f, r)
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    #[cfg_attr(miri, ignore)] // maps a real file, which Miri cannot execute
+    fn test_c9_z4_mmap_read_rejects_huge_len() {
+        // `pos + len` overflowed here too: zc_read must report "not
+        // available" instead of panicking.
+        let (_file, mut r) = z4_mmap_reader();
+        let read = no_panic(|| matches!(r.zc_read(usize::MAX), Ok(None)));
+        assert_eq!(read, Some(true), "zc_read(usize::MAX) must return Ok(None)");
+        assert_eq!(r.zc_read(9).unwrap(), Some(&b"123456789"[..]));
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    #[cfg_attr(miri, ignore)] // maps a real file, which Miri cannot execute
+    fn test_c9_z4_mmap_advance_rejects_huge_len() {
+        let (_file, mut r) = z4_mmap_reader();
+        let advance = no_panic(|| r.zc_advance(usize::MAX).is_err());
+        assert_eq!(advance, Some(true), "zc_advance(usize::MAX) must return Err");
+        assert_eq!(r.position(), 1);
+        r.zc_advance(9).unwrap(); // the exact boundary is still accepted
+        assert_eq!(r.zc_available(), 0);
     }
 }
