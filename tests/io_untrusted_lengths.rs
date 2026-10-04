@@ -11,9 +11,13 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
-use zipora::io::{DataInput, ReaderDataInput, VarInt};
+use zipora::io::{
+    ComplexTypeConfig, ComplexTypeSerializer, DataInput, ReaderDataInput, SerializableType,
+    SliceDataInput, VarInt,
+};
 
 struct CountingAlloc;
 
@@ -84,13 +88,112 @@ fn test_c9_di1_stream_length_prefix_allocates_at_most_the_read_ahead() {
     let mut data = Vec::new();
     VarInt::write_to(&mut data, 1 << 30).unwrap();
     data.extend_from_slice(b"abc");
-    let (result, max_alloc) = max_alloc_during(|| {
-        ReaderDataInput::new(Cursor::new(data)).read_length_prefixed_bytes()
-    });
+    let (result, max_alloc) =
+        max_alloc_during(|| ReaderDataInput::new(Cursor::new(data)).read_length_prefixed_bytes());
     assert!(result.is_err());
     assert!(
         max_alloc <= READ_AHEAD,
         "largest single allocation was {} bytes",
+        max_alloc
+    );
+}
+
+/// `00 00 01 00`: a little-endian u32 element count of 65536 with nothing
+/// behind it.
+const COUNT_65536: [u8; 4] = [0, 0, 1, 0];
+
+/// Bound for a hash collection read from a stream, which cannot report its
+/// remaining length: the capacity reserved is within the read-ahead budget,
+/// and hashbrown rounds the bucket count up to a power of two at a 7/8 load
+/// factor, which stays below 2 * 8/7 of the budget plus one 16-byte group.
+const HASHED_READ_AHEAD: usize = 3 * READ_AHEAD;
+
+#[test]
+fn test_c9_ct1_hash_collection_count_is_not_trusted_for_capacity() {
+    let (map, max_alloc) =
+        max_alloc_during(|| HashMap::<u8, u8>::deserialize(&mut SliceDataInput::new(&COUNT_65536)));
+    assert!(map.is_err());
+    assert!(
+        max_alloc < 4096,
+        "HashMap from a slice: largest allocation {} bytes",
+        max_alloc
+    );
+
+    let (set, max_alloc) =
+        max_alloc_during(|| HashSet::<u8>::deserialize(&mut SliceDataInput::new(&COUNT_65536)));
+    assert!(set.is_err());
+    assert!(
+        max_alloc < 4096,
+        "HashSet from a slice: largest allocation {} bytes",
+        max_alloc
+    );
+
+    let (map, max_alloc) = max_alloc_during(|| {
+        HashMap::<u8, u8>::deserialize(&mut ReaderDataInput::new(Cursor::new(COUNT_65536)))
+    });
+    assert!(map.is_err());
+    assert!(
+        max_alloc <= HASHED_READ_AHEAD,
+        "HashMap from a stream: largest allocation {} bytes",
+        max_alloc
+    );
+
+    let (set, max_alloc) = max_alloc_during(|| {
+        HashSet::<u8>::deserialize(&mut ReaderDataInput::new(Cursor::new(COUNT_65536)))
+    });
+    assert!(set.is_err());
+    assert!(
+        max_alloc <= HASHED_READ_AHEAD,
+        "HashSet from a stream: largest allocation {} bytes",
+        max_alloc
+    );
+}
+
+#[test]
+fn test_c9_ct2_batch_count_is_not_trusted_for_capacity() {
+    // Default config: the count is followed by type metadata, which is
+    // missing here.
+    let (batch, max_alloc) = max_alloc_during(|| {
+        ComplexTypeSerializer::default().deserialize_batch::<(u32, String)>(&COUNT_65536)
+    });
+    assert!(batch.is_err());
+    assert!(
+        max_alloc < 4096,
+        "batch with metadata: largest allocation {} bytes",
+        max_alloc
+    );
+
+    // `fast()` config: no metadata, the elements are missing.
+    let (batch, max_alloc) = max_alloc_during(|| {
+        ComplexTypeSerializer::new(ComplexTypeConfig::fast())
+            .deserialize_batch::<(u32, String)>(&COUNT_65536)
+    });
+    assert!(batch.is_err());
+    assert!(
+        max_alloc < 4096,
+        "batch without metadata: largest allocation {} bytes",
+        max_alloc
+    );
+}
+
+#[test]
+fn test_c9_sp1_vec_count_is_not_trusted_for_capacity() {
+    let (vec, max_alloc) =
+        max_alloc_during(|| Vec::<String>::deserialize(&mut SliceDataInput::new(&COUNT_65536)));
+    assert!(vec.is_err());
+    assert!(
+        max_alloc < 4096,
+        "Vec from a slice: largest allocation {} bytes",
+        max_alloc
+    );
+
+    let (vec, max_alloc) = max_alloc_during(|| {
+        Vec::<String>::deserialize(&mut ReaderDataInput::new(Cursor::new(COUNT_65536)))
+    });
+    assert!(vec.is_err());
+    assert!(
+        max_alloc <= READ_AHEAD,
+        "Vec from a stream: largest allocation {} bytes",
         max_alloc
     );
 }

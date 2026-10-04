@@ -5,6 +5,7 @@
 //! Uses recursive template patterns and procedural macros for type-safe serialization.
 
 use crate::error::{Result, ZiporaError};
+use crate::io::data_input::prealloc_capacity;
 use crate::io::smart_ptr::SerializableType;
 use crate::io::{DataInput, DataOutput};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -223,7 +224,16 @@ impl<K: SerializableType + Hash + Eq, V: SerializableType> ComplexSerialize for 
 
     fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
         let len = input.read_u32()? as usize;
-        let mut map = HashMap::with_capacity(len);
+        // `len` is untrusted: reserve within the read-ahead budget and let
+        // the map grow as entries arrive. hashbrown stores one control byte
+        // per bucket next to each entry, hence the `+ 1`, and rounds the
+        // bucket count up to a power of two at a 7/8 load factor, so the
+        // allocation is at most about 2 * 8/7 of the budget.
+        let mut map = HashMap::with_capacity(prealloc_capacity(
+            len,
+            std::mem::size_of::<(K, V)>() + 1,
+            input.remaining_bytes(),
+        ));
 
         for _ in 0..len {
             let key = K::deserialize(input)?;
@@ -252,7 +262,12 @@ impl<T: SerializableType + Hash + Eq> ComplexSerialize for HashSet<T> {
 
     fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
         let len = input.read_u32()? as usize;
-        let mut set = HashSet::with_capacity(len);
+        // Untrusted `len`: see the HashMap impl above.
+        let mut set = HashSet::with_capacity(prealloc_capacity(
+            len,
+            std::mem::size_of::<T>() + 1,
+            input.remaining_bytes(),
+        ));
 
         for _ in 0..len {
             set.insert(T::deserialize(input)?);
@@ -510,11 +525,19 @@ impl ComplexTypeSerializer {
     }
 
     /// Deserialize a batch of objects
+    ///
+    /// The element count is read from `bytes` and is not trusted: the
+    /// metadata is checked first, and the result vector reserves at most the
+    /// read-ahead budget (and at most one element per remaining byte) before
+    /// it grows with the decoded values.
+    ///
+    /// Limitation: a type whose encoding is zero bytes long, such as `()`,
+    /// consumes no input per element, so a 4-byte count makes this loop run
+    /// up to `u32::MAX` times.
     pub fn deserialize_batch<T: ComplexSerialize>(&self, bytes: &[u8]) -> Result<Vec<T>> {
         let mut input = crate::io::SliceDataInput::new(bytes);
 
         let count = input.read_u32()? as usize;
-        let mut values = Vec::with_capacity(count);
 
         let version = if self.config.include_metadata && count > 0 {
             // Read type metadata once for the entire batch
@@ -530,6 +553,12 @@ impl ComplexTypeSerializer {
         } else {
             T::version()
         };
+
+        let mut values = Vec::with_capacity(prealloc_capacity(
+            count,
+            std::mem::size_of::<T>(),
+            input.remaining_bytes(),
+        ));
 
         // Deserialize each value
         for _ in 0..count {

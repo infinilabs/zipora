@@ -41,6 +41,22 @@ fn check_len_available(len: usize, remaining: Option<u64>) -> Result<()> {
     }
 }
 
+/// Capacity to reserve before decoding `count` elements of `elem_size`
+/// bytes each, where `count` was read from the input.
+///
+/// The result is at most `MAX_READ_AHEAD_ALLOC / elem_size` elements, so the
+/// reservation stays within the read-ahead budget whatever `count` claims,
+/// and at most `remaining` (the source's [`DataInput::remaining_bytes`]),
+/// because each element that encodes to at least one byte needs one of
+/// those bytes. The collection grows past this capacity as decoded elements
+/// arrive, so elements that encode to zero bytes still decode correctly;
+/// they only lose the pre-allocation.
+pub(crate) fn prealloc_capacity(count: usize, elem_size: usize, remaining: Option<u64>) -> usize {
+    let by_memory = MAX_READ_AHEAD_ALLOC / elem_size.max(1);
+    let by_input = remaining.map_or(usize::MAX, |r| usize::try_from(r).unwrap_or(usize::MAX));
+    count.min(by_memory).min(by_input)
+}
+
 /// Trait for reading structured data from various sources
 pub trait DataInput {
     /// Read a single byte
@@ -64,13 +80,15 @@ pub trait DataInput {
     /// Upper bound on the number of bytes that can still be read, if the
     /// source knows one.
     ///
-    /// [`read_vec`](Self::read_vec) and the deserializers in this module
-    /// consult it before sizing a buffer from a length or count read from the
-    /// input, so a corrupt prefix fails with an error instead of allocating
-    /// memory the input cannot back. `None` (the default) means the source
-    /// does not know; readers then grow their buffers in bounded steps as the
-    /// bytes arrive. Implementations must never report fewer bytes than can
-    /// actually be read.
+    /// [`read_vec`](Self::read_vec) consults it before sizing a buffer from a
+    /// length read from the input, so a corrupt prefix fails with an error
+    /// instead of allocating memory the input cannot back, and the container
+    /// deserializers in `complex_types` and `smart_ptr` use it to cap the
+    /// capacity they reserve for an element count read from the input.
+    /// `None` (the default) means the source does not know; readers then
+    /// grow their buffers in bounded steps as the bytes arrive.
+    /// Implementations must never report fewer bytes than can actually be
+    /// read.
     fn remaining_bytes(&self) -> Option<u64> {
         None
     }
@@ -815,7 +833,12 @@ mod tests {
             data.extend_from_slice(&payload);
             data.push(0xAA);
             let mut input = ReaderDataInput::new(TrickleReader::new(data));
-            assert_eq!(input.read_length_prefixed_bytes().unwrap(), payload, "len {}", len);
+            assert_eq!(
+                input.read_length_prefixed_bytes().unwrap(),
+                payload,
+                "len {}",
+                len
+            );
             assert_eq!(input.read_u8().unwrap(), 0xAA, "len {}", len);
         }
     }
@@ -865,5 +888,21 @@ mod tests {
             (skipped.is_err(), input.pos())
         });
         assert_eq!(r.ok(), Some((true, 1)));
+    }
+
+    #[test]
+    fn test_c9_ct1_prealloc_capacity_is_bounded() {
+        // The read-ahead budget caps a huge count: 64 KiB / 8 B = 8192.
+        assert_eq!(prealloc_capacity(usize::MAX, 8, None), 8192);
+        assert_eq!(prealloc_capacity(usize::MAX, 1, Some(u64::MAX)), 65_536);
+        // A count within the budget is kept.
+        assert_eq!(prealloc_capacity(10, 8, None), 10);
+        // A source that knows its length caps the count at its bytes left.
+        assert_eq!(prealloc_capacity(1000, 1, Some(5)), 5);
+        assert_eq!(prealloc_capacity(1000, 1, Some(0)), 0);
+        // Zero-sized elements do not divide by zero.
+        assert_eq!(prealloc_capacity(7, 0, None), 7);
+        // Elements larger than the budget get no pre-allocation.
+        assert_eq!(prealloc_capacity(3, MAX_READ_AHEAD_ALLOC + 1, None), 0);
     }
 }

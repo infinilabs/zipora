@@ -5,6 +5,7 @@
 //! Supports null handling, reference counting, and circular reference detection.
 
 use crate::error::{Result, ZiporaError};
+use crate::io::data_input::prealloc_capacity;
 use crate::io::{DataInput, DataOutput};
 use std::collections::HashMap;
 // Hash import removed as it's not used in this module
@@ -554,7 +555,13 @@ impl<T: SerializableType> SerializableType for Vec<T> {
 
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         let len = input.read_u32()? as usize;
-        let mut vec = Vec::with_capacity(len);
+        // `len` is untrusted: reserve within the read-ahead budget and let
+        // the vector grow as elements arrive.
+        let mut vec = Vec::with_capacity(prealloc_capacity(
+            len,
+            std::mem::size_of::<T>(),
+            input.remaining_bytes(),
+        ));
         for _ in 0..len {
             vec.push(T::deserialize(input)?);
         }
