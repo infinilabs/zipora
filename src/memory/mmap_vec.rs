@@ -1165,6 +1165,66 @@ where
     // SIMD-OPTIMIZED BULK OPERATIONS
     //==========================================================================
 
+    /// Create a temporary vector in `dir` by trying candidate file names from
+    /// `next_name` with `create_new(true)` (`O_EXCL`), retrying on
+    /// `ErrorKind::AlreadyExists` (up to 256 attempts) and removing the file
+    /// if initialization fails.
+    fn create_temp_in(
+        capacity: usize,
+        dir: &Path,
+        mut next_name: impl FnMut() -> String,
+    ) -> Result<Self> {
+        const MAX_ATTEMPTS: usize = 256;
+        let file_len = Self::calculate_file_size(capacity)?;
+        let config = MmapVecConfig::default().with_initial_capacity(capacity);
+
+        let mut last_exists = None;
+        let mut opened = None;
+        for _ in 0..MAX_ATTEMPTS {
+            let file_path = dir.join(next_name());
+            match OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&file_path)
+            {
+                Ok(file) => {
+                    opened = Some((file, file_path));
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    last_exists = Some(e);
+                }
+                Err(e) => {
+                    return Err(ZiporaError::io_error(format!(
+                        "Failed to create temporary file: {}",
+                        e
+                    )));
+                }
+            }
+        }
+        let (file, file_path) = opened.ok_or_else(|| {
+            ZiporaError::io_error(format!(
+                "Failed to create unique temporary file after {} attempts: {}",
+                MAX_ATTEMPTS,
+                last_exists
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "path already exists".to_string())
+            ))
+        })?;
+
+        match Self::from_new_file(file, file_path.clone(), config, file_len) {
+            Ok(mut vec) => {
+                vec.is_temp_file = true;
+                Ok(vec)
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&file_path);
+                Err(e)
+            }
+        }
+    }
+
     /// Create a vector with room for `capacity` elements, backed by a new
     /// temporary file in `std::env::temp_dir()` that is deleted on drop.
     ///
@@ -1180,26 +1240,17 @@ where
     where
         T: Copy + 'static,
     {
-        // Create a temporary file for the SIMD-optimized vector
-        // Use thread ID + timestamp + random to avoid conflicts in parallel tests
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
 
         let temp_dir = std::env::temp_dir();
+        let pid = std::process::id();
         let thread_id = std::thread::current().id();
-        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let file_path = temp_dir.join(format!(
-            "mmap_vec_simd_{}_{:?}_{}.dat",
-            std::process::id(),
-            thread_id,
-            counter
-        ));
-
-        let config = MmapVecConfig::default().with_initial_capacity(capacity);
-        let mut vec = Self::create(&file_path, config)?;
-        vec.is_temp_file = true; // Mark as temporary for cleanup
-
-        Ok(vec)
+        Self::create_temp_in(capacity, &temp_dir, || {
+            let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let rand = fastrand::u64(..);
+            format!("mmap_vec_simd_{pid}_{thread_id:?}_{counter}_{rand:016x}.dat")
+        })
     }
 
     /// Push multiple elements with SIMD optimization
@@ -2980,5 +3031,131 @@ mod tests {
             }
         }
         assert!(mismatches.is_empty(), "{mismatches:#?}");
+    }
+
+    /// C9.1 F8: `with_capacity_simd` used a predictable path in
+    /// `std::env::temp_dir()` without `create_new(true)` (`O_EXCL`), so a
+    /// symlink planted at the next predicted path had its target truncated
+    /// and overwritten; and if mapping initialization failed before
+    /// `is_temp_file = true` (e.g. a misaligned `Page8k` mapping), the
+    /// newly created temporary file was leaked on disk.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error() {
+        let dir = tempdir().unwrap();
+        let victim = dir.path().join("victim.dat");
+        std::fs::write(&victim, b"precious").unwrap();
+
+        let prefix = format!(
+            "mmap_vec_simd_{}_{:?}_",
+            std::process::id(),
+            std::thread::current().id()
+        );
+        let first = MmapVec::<u64>::with_capacity_simd(4).unwrap();
+        let first_name = first
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap()
+            .to_string();
+        let rest = first_name.strip_prefix(&prefix).unwrap();
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let counter: u64 = digits.parse().unwrap();
+
+        let predicted = std::env::temp_dir().join(format!("{prefix}{}.dat", counter + 1));
+        let _ = std::fs::remove_file(&predicted);
+        std::os::unix::fs::symlink(&victim, &predicted).unwrap();
+
+        let second = MmapVec::<u64>::with_capacity_simd(4);
+        let second_ok = second.is_ok();
+        drop(second);
+        drop(first);
+        let _ = std::fs::remove_file(&predicted);
+        let victim_bytes = std::fs::read(&victim).unwrap();
+
+        // Check temp-file cleanup when `from_new_file` fails after creating
+        // the file (here via a misaligned `Page8k` mapping on 4 KiB pages).
+        let files_with_prefix = || -> std::collections::BTreeSet<PathBuf> {
+            std::fs::read_dir(std::env::temp_dir())
+                .unwrap()
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with(&prefix))
+                })
+                .collect()
+        };
+        let before = files_with_prefix();
+        // SAFETY: sysconf has no preconditions; _SC_PAGESIZE is a valid name.
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let mut saw_misaligned = false;
+        if let Ok(page) = usize::try_from(page)
+            && page > 0
+            && page < 8192
+        {
+            let mut fillers = Vec::new();
+            let mut keep = Vec::new();
+            for _ in 0..256 {
+                match MmapVec::<Page8k>::with_capacity_simd(1) {
+                    Ok(v) => keep.push(v),
+                    Err(ZiporaError::Misaligned { required: 8192, .. }) => {
+                        saw_misaligned = true;
+                        break;
+                    }
+                    Err(_) => {}
+                }
+                fillers.push(MmapMut::map_anon(page).unwrap());
+            }
+            drop(keep);
+        } else {
+            saw_misaligned = true;
+        }
+        let leaked: Vec<PathBuf> = files_with_prefix().difference(&before).cloned().collect();
+        for p in &leaked {
+            let _ = std::fs::remove_file(p);
+        }
+
+        assert!(
+            second_ok && victim_bytes == b"precious" && saw_misaligned && leaked.is_empty(),
+            "second_ok: {second_ok}, victim_bytes len: {} (expected b\"precious\"), saw_misaligned: {saw_misaligned}, leaked temp files: {}",
+            victim_bytes.len(),
+            leaked.len()
+        );
+    }
+
+    /// C9.1 F8, GREEN-only: `create_temp_in` is new in this commit. When a
+    /// candidate path is an existing symlink (or regular file), `create_new`
+    /// (`O_EXCL`) rejects it with `AlreadyExists` without following the
+    /// symlink, retries the next candidate, and fails if every attempt
+    /// collides.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_c9_f8_create_temp_in_retries_past_existing_symlink() {
+        let dir = tempdir().unwrap();
+        let victim = dir.path().join("victim.dat");
+        std::fs::write(&victim, b"precious").unwrap();
+        let symlink = dir.path().join("slot0.dat");
+        std::os::unix::fs::symlink(&victim, &symlink).unwrap();
+
+        let mut step = 0usize;
+        let vec = MmapVec::<u64>::create_temp_in(4, dir.path(), || {
+            let name = format!("slot{step}.dat");
+            step += 1;
+            name
+        })
+        .unwrap();
+        assert_eq!(step, 2);
+        assert_eq!(vec.path(), dir.path().join("slot1.dat"));
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+        drop(vec);
+        assert!(!dir.path().join("slot1.dat").exists());
+
+        // Exhausting all 256 attempts against the symlink must return Err
+        // without touching the symlink target.
+        assert!(MmapVec::<u64>::create_temp_in(4, dir.path(), || "slot0.dat".to_string()).is_err());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
     }
 }
