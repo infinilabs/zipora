@@ -38,9 +38,16 @@ impl Version {
     }
 
     /// Convert to u32 (packed format)
-    /// Format: 0xMMmmpppp where MM=major, mm=minor, pppp=patch
+    /// Format: 0xMMmmpppp where MM=major, mm=minor, pppp=patch.
+    ///
+    /// Limitation: the 32-bit packed representation allocates 8 bits each to
+    /// `major` and `minor`, so values above `255` saturate to `255` here
+    /// rather than overflowing into adjacent fields. [`SerializableType`] for
+    /// [`Version`] preserves the full `u16` range of all three fields.
     pub const fn to_u32(self) -> u32 {
-        ((self.major as u32) << 24) | ((self.minor as u32) << 16) | (self.patch as u32)
+        let major = if self.major > 0xFF { 0xFF } else { self.major };
+        let minor = if self.minor > 0xFF { 0xFF } else { self.minor };
+        ((major as u32) << 24) | ((minor as u32) << 16) | (self.patch as u32)
     }
 
     /// Check if this version is compatible with another version
@@ -78,12 +85,26 @@ impl std::fmt::Display for Version {
 
 impl SerializableType for Version {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
-        output.write_u32(self.to_u32())
+        if self.major < 0xFF && self.minor < 0xFF {
+            output.write_u32(self.to_u32())
+        } else {
+            let sentinel = 0xFFFF_0000u32 | (self.patch as u32);
+            output.write_u32(sentinel)?;
+            output.write_u16(self.major)?;
+            output.write_u16(self.minor)
+        }
     }
 
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         let packed = input.read_u32()?;
-        Ok(Version::from_u32(packed))
+        if (packed >> 16) == 0xFFFF {
+            let major = input.read_u16()?;
+            let minor = input.read_u16()?;
+            let patch = (packed & 0xFFFF) as u16;
+            Ok(Version::new(major, minor, patch))
+        } else {
+            Ok(Version::from_u32(packed))
+        }
     }
 }
 
@@ -295,6 +316,7 @@ pub trait VersionedSerialize: Sized {
 
     /// Serialize with version information
     fn serialize_versioned<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+        Self::current_version().serialize(output)?;
         let mut manager = VersionManager::new(Self::current_version());
         self.serialize_with_manager(&mut manager, output)
     }
@@ -302,6 +324,14 @@ pub trait VersionedSerialize: Sized {
     /// Deserialize with version information
     fn deserialize_versioned<I: DataInput>(input: &mut I) -> Result<Self> {
         let version = Version::deserialize(input)?;
+        if !Self::supports_version(&version) {
+            return Err(ZiporaError::invalid_data(format!(
+                "Unsupported version: {} (current: {}, min supported: {})",
+                version,
+                Self::current_version(),
+                Self::min_supported_version()
+            )));
+        }
         let mut manager = VersionManager::new(Self::current_version());
         manager.set_reading_version(version);
         Self::deserialize_with_manager(&mut manager, input)
@@ -323,7 +353,7 @@ pub trait VersionedSerialize: Sized {
     /// Check if a version is supported for reading
     fn supports_version(version: &Version) -> bool {
         version >= &Self::min_supported_version()
-            && version.is_compatible_with(&Self::current_version())
+            && Self::current_version().is_compatible_with(version)
     }
 }
 pub type MigrationFn = Box<dyn Fn(&[u8]) -> Result<Vec<u8>>>;
@@ -349,44 +379,80 @@ impl MigrationRegistry {
         self.migrations.insert((from, to), Box::new(migration));
     }
 
+    /// Return the shortest deterministic sequence of migration steps from `from` to `to`.
+    fn shortest_path(&self, from: Version, to: Version) -> Option<Vec<(Version, Version)>> {
+        if from == to {
+            return Some(Vec::new());
+        }
+        if self.migrations.contains_key(&(from, to)) {
+            return Some(vec![(from, to)]);
+        }
+
+        let mut queue = std::collections::VecDeque::new();
+        let mut prev: HashMap<Version, Version> = HashMap::new();
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(from);
+        queue.push_back(from);
+
+        while let Some(curr) = queue.pop_front() {
+            let mut next_versions: Vec<Version> = self
+                .migrations
+                .keys()
+                .filter_map(|&(start, end)| {
+                    if start == curr && !visited.contains(&end) {
+                        Some(end)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            next_versions.sort_unstable();
+
+            for next in next_versions {
+                prev.insert(next, curr);
+                if next == to {
+                    let mut steps = Vec::new();
+                    let mut node = to;
+                    while let Some(&parent) = prev.get(&node) {
+                        steps.push((parent, node));
+                        if parent == from {
+                            break;
+                        }
+                        node = parent;
+                    }
+                    steps.reverse();
+                    return Some(steps);
+                }
+                visited.insert(next);
+                queue.push_back(next);
+            }
+        }
+
+        None
+    }
+
+    fn has_migration_path(&self, from: Version, to: Version) -> bool {
+        self.shortest_path(from, to).is_some()
+    }
+
     /// Apply migration to upgrade data
     pub fn migrate_data(&self, data: &[u8], from: Version, to: Version) -> Result<Vec<u8>> {
         if from == to {
             return Ok(data.to_vec());
         }
 
-        if let Some(migration) = self.migrations.get(&(from, to)) {
-            migration(data)
-        } else {
-            // Try to find a migration path
-            self.find_migration_path(data, from, to)
-        }
-    }
+        let steps = self.shortest_path(from, to).ok_or_else(|| {
+            ZiporaError::invalid_data(format!("No migration path from {} to {}", from, to))
+        })?;
 
-    /// Find a migration path through intermediate versions
-    fn find_migration_path(&self, data: &[u8], from: Version, to: Version) -> Result<Vec<u8>> {
-        // Simple implementation - could be made more sophisticated
-        for &(start, end) in self.migrations.keys() {
-            if start == from && end <= to {
-                let migrate_fn = self.migrations.get(&(start, end)).ok_or_else(|| {
-                    ZiporaError::invalid_data(format!(
-                        "No migration path from {} to {}",
-                        start, end
-                    ))
-                })?;
-                let intermediate = migrate_fn(data)?;
-                if end == to {
-                    return Ok(intermediate);
-                } else {
-                    return self.find_migration_path(&intermediate, end, to);
-                }
-            }
+        let mut current = data.to_vec();
+        for (start, end) in steps {
+            let migrate_fn = self.migrations.get(&(start, end)).ok_or_else(|| {
+                ZiporaError::invalid_data(format!("No migration path from {} to {}", start, end))
+            })?;
+            current = migrate_fn(&current)?;
         }
-
-        Err(ZiporaError::invalid_data(format!(
-            "No migration path from {} to {}",
-            from, to
-        )))
+        Ok(current)
     }
 }
 
@@ -490,13 +556,7 @@ impl VersionedSerializer {
     /// Serialize a versioned object to bytes
     pub fn serialize_to_bytes<T: VersionedSerialize>(&self, value: &T) -> Result<Vec<u8>> {
         let mut output = crate::io::VecDataOutput::new();
-
-        // Write version header
-        T::current_version().serialize(&mut output)?;
-
-        // Serialize the object
         value.serialize_versioned(&mut output)?;
-
         Ok(output.into_vec())
     }
 
@@ -507,31 +567,55 @@ impl VersionedSerializer {
         // Read version header
         let stored_version = Version::deserialize(&mut input)?;
         let current_version = T::current_version();
+        let can_migrate = stored_version != current_version
+            && self.config.enable_migrations
+            && self
+                .migration_registry
+                .has_migration_path(stored_version, current_version);
 
-        // Check version compatibility
-        if self.config.strict_version_checking && !T::supports_version(&stored_version) {
-            return Err(ZiporaError::invalid_data(format!(
-                "Unsupported version: {} (current: {})",
-                stored_version, current_version
-            )));
+        if !can_migrate {
+            if self.config.strict_version_checking && !T::supports_version(&stored_version) {
+                return Err(ZiporaError::invalid_data(format!(
+                    "Unsupported version: {} (current: {})",
+                    stored_version, current_version
+                )));
+            }
+
+            if stored_version < T::min_supported_version() {
+                return Err(ZiporaError::invalid_data(format!(
+                    "Version {} is below minimum supported version {}",
+                    stored_version,
+                    T::min_supported_version()
+                )));
+            }
+
+            if stored_version.major() != current_version.major() {
+                return Err(ZiporaError::invalid_data(format!(
+                    "Incompatible major version: {} (current: {})",
+                    stored_version, current_version
+                )));
+            }
+
+            if stored_version > current_version && !self.config.allow_forward_compatibility {
+                return Err(ZiporaError::invalid_data(format!(
+                    "Forward version {} not allowed (current: {})",
+                    stored_version, current_version
+                )));
+            }
         }
 
-        // Check version skew
-        let version_diff = if stored_version > current_version {
-            stored_version.minor() - current_version.minor()
-        } else {
-            current_version.minor() - stored_version.minor()
-        };
-
-        if version_diff > self.config.max_version_skew {
-            return Err(ZiporaError::invalid_data(format!(
-                "Version skew too large: {}",
-                version_diff
-            )));
+        if stored_version.major() == current_version.major() {
+            let version_diff = stored_version.minor().abs_diff(current_version.minor());
+            if version_diff > self.config.max_version_skew {
+                return Err(ZiporaError::invalid_data(format!(
+                    "Version skew too large: {}",
+                    version_diff
+                )));
+            }
         }
 
         // Apply migration if needed
-        let data = if stored_version != current_version && self.config.enable_migrations {
+        let data = if can_migrate {
             let remaining_bytes = if let Some(pos) = input.position() {
                 &bytes[pos as usize..]
             } else {
@@ -768,5 +852,232 @@ mod tests {
 
         assert!(current.supports_feature(&feature_v1));
         assert!(!current.supports_feature(&feature_v2));
+    }
+
+    #[test]
+    fn test_c9_vs1_supports_older_same_major_and_rejects_newer_without_forward_compat() {
+        #[derive(Debug, PartialEq)]
+        struct T11(u32);
+
+        impl VersionedSerialize for T11 {
+            fn current_version() -> Version {
+                Version::new(1, 1, 0)
+            }
+
+            fn serialize_with_manager<O: DataOutput>(
+                &self,
+                _manager: &mut VersionManager,
+                output: &mut O,
+            ) -> Result<()> {
+                output.write_u32(self.0)
+            }
+
+            fn deserialize_with_manager<I: DataInput>(
+                _manager: &mut VersionManager,
+                input: &mut I,
+            ) -> Result<Self> {
+                Ok(Self(input.read_u32()?))
+            }
+        }
+
+        let mut ser = VersionedSerializer::default();
+        ser.register_migration(Version::new(1, 0, 0), Version::new(1, 1, 0), |data| {
+            let mut inp = SliceDataInput::new(data);
+            let v = inp.read_u32()?;
+            let mut out = VecDataOutput::new();
+            out.write_u32(v + 10)?;
+            Ok(out.into_vec())
+        });
+
+        // Older same-major 1.0.0 data (0x0100_0000 LE = [0, 0, 0, 1]) + payload 7u32 LE.
+        let v10_bytes = [0u8, 0, 0, 1, 7, 0, 0, 0];
+        let migrated = ser
+            .deserialize_from_bytes::<T11>(&v10_bytes)
+            .expect("1.0.0 data must be accepted and migrated to 1.1.0");
+        assert_eq!(migrated, T11(17));
+
+        // Newer 1.2.0 data (0x0102_0000 LE = [0, 0, 2, 1]) must be rejected when forward compat is false.
+        let v12_bytes = [0u8, 0, 2, 1, 7, 0, 0, 0];
+        assert!(
+            ser.deserialize_from_bytes::<T11>(&v12_bytes).is_err(),
+            "newer 1.2.0 data must be rejected when allow_forward_compatibility is false"
+        );
+    }
+
+    #[test]
+    fn test_c9_vs2_skew_check_rejects_underflow_and_major_mismatch() {
+        #[derive(Debug, PartialEq)]
+        struct T10(u32);
+
+        impl VersionedSerialize for T10 {
+            fn current_version() -> Version {
+                Version::new(1, 0, 0)
+            }
+
+            fn serialize_with_manager<O: DataOutput>(
+                &self,
+                _manager: &mut VersionManager,
+                output: &mut O,
+            ) -> Result<()> {
+                output.write_u32(self.0)
+            }
+
+            fn deserialize_with_manager<I: DataInput>(
+                _manager: &mut VersionManager,
+                input: &mut I,
+            ) -> Result<Self> {
+                Ok(Self(input.read_u32()?))
+            }
+        }
+
+        let ser = VersionedSerializer::new(VersionConfig::flexible());
+
+        // Header 0.9.0 ([0, 0, 9, 0]) vs current 1.0.0: previously `0 - 9` panicked in debug.
+        let res_09 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ser.deserialize_from_bytes::<T10>(&[0, 0, 9, 0, 7, 0, 0, 0])
+        }));
+        assert!(
+            matches!(res_09, Ok(Err(_))),
+            "0.9.0 header must return Err without panicking: {res_09:?}"
+        );
+
+        // Header 9.0.0 ([0, 0, 0, 9]) vs current 1.0.0: different major version must be rejected.
+        assert!(
+            ser.deserialize_from_bytes::<T10>(&[0, 0, 0, 9, 7, 0, 0, 0])
+                .is_err(),
+            "9.0.0 header must be rejected when current is 1.0.0"
+        );
+    }
+
+    #[test]
+    fn test_c9_vs3_migration_path_handles_cycles_and_dead_ends() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        // 1. Cycle 1.0 -> 2.0 -> 1.0 when searching for unreachable 3.0 must terminate cleanly.
+        let calls = Rc::new(Cell::new(0usize));
+        let mut cyc_reg = MigrationRegistry::new();
+        let c1 = calls.clone();
+        cyc_reg.register_migration(Version::new(1, 0, 0), Version::new(2, 0, 0), move |d| {
+            let n = c1.get() + 1;
+            c1.set(n);
+            if n > 50 {
+                return Err(ZiporaError::invalid_data("infinite migration cycle"));
+            }
+            Ok(d.to_vec())
+        });
+        let c2 = calls.clone();
+        cyc_reg.register_migration(Version::new(2, 0, 0), Version::new(1, 0, 0), move |d| {
+            let n = c2.get() + 1;
+            c2.set(n);
+            if n > 50 {
+                return Err(ZiporaError::invalid_data("infinite migration cycle"));
+            }
+            Ok(d.to_vec())
+        });
+        assert!(
+            cyc_reg
+                .migrate_data(&[1, 2, 3], Version::new(1, 0, 0), Version::new(3, 0, 0))
+                .is_err()
+        );
+        assert!(
+            calls.get() <= 2,
+            "cycle detection must not repeatedly run migrations (ran {} times)",
+            calls.get()
+        );
+
+        // 2. Dead-end branch 1.0 -> 1.5 alongside valid path 1.0 -> 2.0 -> 3.0 must always succeed.
+        for _ in 0..32 {
+            let mut reg = MigrationRegistry::new();
+            reg.register_migration(Version::new(1, 0, 0), Version::new(1, 5, 0), |d| {
+                Ok(d.to_vec())
+            });
+            reg.register_migration(Version::new(1, 0, 0), Version::new(2, 0, 0), |d| {
+                let mut v = d.to_vec();
+                v.push(2);
+                Ok(v)
+            });
+            reg.register_migration(Version::new(2, 0, 0), Version::new(3, 0, 0), |d| {
+                let mut v = d.to_vec();
+                v.push(3);
+                Ok(v)
+            });
+            let out = reg
+                .migrate_data(&[1], Version::new(1, 0, 0), Version::new(3, 0, 0))
+                .expect("valid migration path 1.0 -> 2.0 -> 3.0 must be found");
+            assert_eq!(out, vec![1, 2, 3]);
+        }
+    }
+
+    #[test]
+    fn test_c9_vs4_large_major_and_minor_versions_round_trip() {
+        for v in [
+            Version::new(2, 256, 0),
+            Version::new(256, 0, 0),
+            Version::new(255, 255, 65535),
+            Version::new(u16::MAX, u16::MAX, u16::MAX),
+        ] {
+            let mut out = VecDataOutput::new();
+            v.serialize(&mut out).unwrap();
+            let bytes = out.into_vec();
+            let mut inp = SliceDataInput::new(&bytes);
+            let back = Version::deserialize(&mut inp).unwrap();
+            assert_eq!(back, v);
+        }
+
+        // Packed u32 saturates minor at 255 rather than spilling into major.
+        let packed = Version::new(2, 256, 0).to_u32();
+        assert_eq!(Version::from_u32(packed).major(), 2);
+    }
+
+    #[test]
+    fn test_c9_vs5_serialize_versioned_and_deserialize_versioned_round_trip_and_validate() {
+        #[derive(Debug, PartialEq)]
+        struct VItem {
+            val: u32,
+        }
+
+        impl VersionedSerialize for VItem {
+            fn current_version() -> Version {
+                Version::new(1, 1, 0)
+            }
+
+            fn serialize_with_manager<O: DataOutput>(
+                &self,
+                _manager: &mut VersionManager,
+                output: &mut O,
+            ) -> Result<()> {
+                output.write_u32(self.val)
+            }
+
+            fn deserialize_with_manager<I: DataInput>(
+                _manager: &mut VersionManager,
+                input: &mut I,
+            ) -> Result<Self> {
+                Ok(Self {
+                    val: input.read_u32()?,
+                })
+            }
+        }
+
+        let item = VItem { val: 42 };
+        let mut out = VecDataOutput::new();
+        item.serialize_versioned(&mut out).unwrap();
+        let bytes = out.into_vec();
+
+        let mut inp = SliceDataInput::new(&bytes);
+        let back = VItem::deserialize_versioned(&mut inp).unwrap();
+        assert_eq!(back, item);
+
+        // Unsupported major version 2.0.0 must be rejected by deserialize_versioned.
+        let mut bad_out = VecDataOutput::new();
+        Version::new(2, 0, 0).serialize(&mut bad_out).unwrap();
+        bad_out.write_u32(42).unwrap();
+        let bad_bytes = bad_out.into_vec();
+        let mut bad_inp = SliceDataInput::new(&bad_bytes);
+        assert!(
+            VItem::deserialize_versioned(&mut bad_inp).is_err(),
+            "deserialize_versioned must reject unsupported version 2.0.0"
+        );
     }
 }
