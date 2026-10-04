@@ -14,6 +14,11 @@ use std::hash::Hash;
 /// Trait for complex type serialization with metadata
 pub trait ComplexSerialize: Sized {
     /// Get the type identifier for versioning
+    ///
+    /// Limitation: the built-in impls name the container kind and, for
+    /// tuples, the arity (`tuple0` to `tuple12`). Element types are not part
+    /// of the id, so metadata written for `(u32, u32)` also passes the type
+    /// check of `(u64, u64)`.
     fn type_id() -> &'static str;
 
     /// Get the version of this type's serialization format
@@ -32,6 +37,11 @@ pub trait ComplexSerialize: Sized {
     }
 
     /// Deserialize with type metadata validation
+    ///
+    /// The type id must equal [`type_id`](Self::type_id). The version is
+    /// passed to [`deserialize_with_version`](Self::deserialize_with_version),
+    /// which decides which versions it can read; the built-in impls read
+    /// only version 1.
     fn deserialize_with_metadata<I: DataInput>(input: &mut I) -> Result<Self> {
         // Read and validate type metadata
         let type_id = input.read_length_prefixed_string()?;
@@ -54,6 +64,19 @@ pub trait ComplexSerialize: Sized {
     fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self>;
 }
 
+/// The built-in impls have a single encoding, version 1, which is what
+/// [`ComplexSerialize::version`] returns for them.
+fn check_builtin_version(type_id: &str, version: u32) -> Result<()> {
+    if version == 1 {
+        Ok(())
+    } else {
+        Err(ZiporaError::invalid_data(format!(
+            "{} has no serialization version {}; only version 1 exists",
+            type_id, version
+        )))
+    }
+}
+
 // Tuple implementations using recursive patterns
 macro_rules! impl_tuple_serialize {
     () => {
@@ -64,16 +87,17 @@ macro_rules! impl_tuple_serialize {
                 Ok(()) // Empty tuple, nothing to serialize
             }
 
-            fn deserialize_with_version<I: DataInput>(_input: &mut I, _version: u32) -> Result<Self> {
+            fn deserialize_with_version<I: DataInput>(_input: &mut I, version: u32) -> Result<Self> {
+                check_builtin_version("tuple0", version)?;
                 Ok(()) // Empty tuple, nothing to deserialize
             }
         }
     };
 
-    ($($T:ident),*) => {
+    ($id:literal; $($T:ident),*) => {
         impl<$($T: SerializableType),*> ComplexSerialize for ($($T,)*) {
             fn type_id() -> &'static str {
-                "tuple" // Simplified for now
+                $id
             }
 
             fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
@@ -86,7 +110,8 @@ macro_rules! impl_tuple_serialize {
                 Ok(())
             }
 
-            fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
+            fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
+                check_builtin_version($id, version)?;
                 Ok(($(
                     $T::deserialize(input)?,
                 )*))
@@ -97,18 +122,18 @@ macro_rules! impl_tuple_serialize {
 
 // Implement for tuples of different arities
 impl_tuple_serialize!();
-impl_tuple_serialize!(T0);
-impl_tuple_serialize!(T0, T1);
-impl_tuple_serialize!(T0, T1, T2);
-impl_tuple_serialize!(T0, T1, T2, T3);
-impl_tuple_serialize!(T0, T1, T2, T3, T4);
-impl_tuple_serialize!(T0, T1, T2, T3, T4, T5);
-impl_tuple_serialize!(T0, T1, T2, T3, T4, T5, T6);
-impl_tuple_serialize!(T0, T1, T2, T3, T4, T5, T6, T7);
-impl_tuple_serialize!(T0, T1, T2, T3, T4, T5, T6, T7, T8);
-impl_tuple_serialize!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9);
-impl_tuple_serialize!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
-impl_tuple_serialize!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
+impl_tuple_serialize!("tuple1"; T0);
+impl_tuple_serialize!("tuple2"; T0, T1);
+impl_tuple_serialize!("tuple3"; T0, T1, T2);
+impl_tuple_serialize!("tuple4"; T0, T1, T2, T3);
+impl_tuple_serialize!("tuple5"; T0, T1, T2, T3, T4);
+impl_tuple_serialize!("tuple6"; T0, T1, T2, T3, T4, T5);
+impl_tuple_serialize!("tuple7"; T0, T1, T2, T3, T4, T5, T6);
+impl_tuple_serialize!("tuple8"; T0, T1, T2, T3, T4, T5, T6, T7);
+impl_tuple_serialize!("tuple9"; T0, T1, T2, T3, T4, T5, T6, T7, T8);
+impl_tuple_serialize!("tuple10"; T0, T1, T2, T3, T4, T5, T6, T7, T8, T9);
+impl_tuple_serialize!("tuple11"; T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
+impl_tuple_serialize!("tuple12"; T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
 
 // Array implementations with const generics
 impl<T: SerializableType, const N: usize> ComplexSerialize for [T; N] {
@@ -126,7 +151,8 @@ impl<T: SerializableType, const N: usize> ComplexSerialize for [T; N] {
         Ok(())
     }
 
-    fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
+    fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
+        check_builtin_version("array", version)?;
         let length = input.read_u32()? as usize;
         if length != N {
             return Err(ZiporaError::invalid_data(format!(
@@ -172,7 +198,8 @@ impl<T: SerializableType> ComplexSerialize for Option<T> {
         }
     }
 
-    fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
+    fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
+        check_builtin_version("option", version)?;
         let marker = input.read_u8()?;
         match marker {
             0 => Ok(None),
@@ -201,7 +228,8 @@ impl<T: SerializableType, E: SerializableType> ComplexSerialize for std::result:
         }
     }
 
-    fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
+    fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
+        check_builtin_version("result", version)?;
         let marker = input.read_u8()?;
         match marker {
             0 => Ok(Err(E::deserialize(input)?)),
@@ -227,7 +255,8 @@ impl<K: SerializableType + Hash + Eq, V: SerializableType> ComplexSerialize for 
         Ok(())
     }
 
-    fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
+    fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
+        check_builtin_version("hashmap", version)?;
         let len = input.read_u32()? as usize;
         // `len` is untrusted: reserve within the read-ahead budget and let
         // the map grow as entries arrive. hashbrown stores one control byte
@@ -265,7 +294,8 @@ impl<T: SerializableType + Hash + Eq> ComplexSerialize for HashSet<T> {
         Ok(())
     }
 
-    fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
+    fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
+        check_builtin_version("hashset", version)?;
         let len = input.read_u32()? as usize;
         // Untrusted `len`: see the HashMap impl above.
         let mut set = HashSet::with_capacity(prealloc_capacity(
@@ -298,7 +328,8 @@ impl<K: SerializableType + Ord, V: SerializableType> ComplexSerialize for BTreeM
         Ok(())
     }
 
-    fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
+    fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
+        check_builtin_version("btreemap", version)?;
         let len = input.read_u32()? as usize;
         let mut map = BTreeMap::new();
 
@@ -327,7 +358,8 @@ impl<T: SerializableType + Ord> ComplexSerialize for BTreeSet<T> {
         Ok(())
     }
 
-    fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
+    fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
+        check_builtin_version("btreeset", version)?;
         let len = input.read_u32()? as usize;
         let mut set = BTreeSet::new();
 
@@ -401,11 +433,21 @@ impl<T: SerializableType + Ord> SerializableType for BTreeSet<T> {
 pub struct ComplexTypeConfig {
     /// Include type metadata in serialization
     pub include_metadata: bool,
-    /// Validate type compatibility on deserialization
+    /// Validate type compatibility on deserialization: the type id in the
+    /// metadata must equal `T::type_id()`.
+    ///
+    /// Limitation: type ids do not encode element types; see
+    /// [`ComplexSerialize::type_id`].
     pub validate_types: bool,
-    /// Handle version mismatches gracefully
+    /// Handle version mismatches gracefully: accept a version in the
+    /// metadata that differs from `T::version()` and pass it to
+    /// `T::deserialize_with_version`. When false, such data is rejected.
+    /// The built-in impls read only version 1 either way.
     pub allow_version_skew: bool,
     /// Optimize for space efficiency
+    ///
+    /// Limitation: no serializer reads this flag; it has no effect on the
+    /// encoding.
     pub space_optimized: bool,
 }
 
@@ -498,14 +540,44 @@ impl ComplexTypeSerializer {
     }
 
     /// Deserialize a complex type from bytes
+    ///
+    /// With `include_metadata`, the type id and version are read here rather
+    /// than through [`ComplexSerialize::deserialize_with_metadata`], so that
+    /// the config applies: the type id is compared with `T::type_id()` only
+    /// when `validate_types` is set, and a version other than `T::version()`
+    /// is rejected unless `allow_version_skew` is set.
     pub fn deserialize_from_bytes<T: ComplexSerialize>(&self, bytes: &[u8]) -> Result<T> {
         let mut input = crate::io::SliceDataInput::new(bytes);
 
         if self.config.include_metadata {
-            T::deserialize_with_metadata(&mut input)
+            let type_id = input.read_length_prefixed_string()?;
+            if self.config.validate_types && type_id != T::type_id() {
+                return Err(ZiporaError::invalid_data(format!(
+                    "Type mismatch: expected {}, got {}",
+                    T::type_id(),
+                    type_id
+                )));
+            }
+            let version = input.read_u32()?;
+            self.check_version::<T>(version)?;
+            T::deserialize_with_version(&mut input, version)
         } else {
             T::deserialize_with_version(&mut input, T::version())
         }
+    }
+
+    /// Reject a version other than `T::version()` unless the config allows
+    /// version skew.
+    fn check_version<T: ComplexSerialize>(&self, version: u32) -> Result<()> {
+        if !self.config.allow_version_skew && version != T::version() {
+            return Err(ZiporaError::invalid_data(format!(
+                "Version mismatch for {}: expected {}, got {}",
+                T::type_id(),
+                T::version(),
+                version
+            )));
+        }
+        Ok(())
     }
 
     /// Serialize multiple objects efficiently
@@ -554,7 +626,9 @@ impl ComplexTypeSerializer {
                     type_id
                 )));
             }
-            input.read_u32()?
+            let version = input.read_u32()?;
+            self.check_version::<T>(version)?;
+            version
         } else {
             T::version()
         };
@@ -625,7 +699,15 @@ macro_rules! impl_complex_serialize {
                 Ok(())
             }
 
-            fn deserialize_with_version<I: DataInput>(input: &mut I, _version: u32) -> Result<Self> {
+            fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
+                if version != <Self as ComplexSerialize>::version() {
+                    return Err($crate::error::ZiporaError::invalid_data(format!(
+                        "{} has no serialization version {}; only version {} exists",
+                        stringify!($struct_name),
+                        version,
+                        <Self as ComplexSerialize>::version()
+                    )));
+                }
                 Ok(Self {
                     $(
                         $field: <$field_type>::deserialize(input)?,
@@ -891,6 +973,10 @@ mod tests {
         let mut input = SliceDataInput::new(&bytes);
         let result = <(u64, String)>::deserialize_with_metadata(&mut input);
 
+        // Both types report "tuple2", so the type check passes. The error
+        // comes from reading the String's length out of the bytes after the
+        // u64 and running out of input. test_c9_ct3_tuple_arity_is_checked
+        // covers type ids that differ.
         assert!(result.is_err());
     }
 
@@ -945,5 +1031,142 @@ mod tests {
             <[DropCounter; 3]>::deserialize_with_version(&mut SliceDataInput::new(&bytes), 1);
         assert!(result.is_err());
         assert_eq!(DROPS.with(|drops| drops.get()), 1);
+    }
+
+    #[test]
+    fn test_c9_ct3_tuple_arity_is_checked() {
+        let mut output = VecDataOutput::new();
+        (1u32, 2u32).serialize_with_metadata(&mut output).unwrap();
+        let bytes = output.into_vec();
+        let result = <(u64,)>::deserialize_with_metadata(&mut SliceDataInput::new(&bytes));
+        assert!(
+            result.is_err(),
+            "a pair must not decode as a 1-tuple: {result:?}"
+        );
+    }
+
+    /// Metadata (type id, version) followed by the data of `(1u32, 2u32)`.
+    fn pair_with_header(type_id: &str, version: u32) -> Vec<u8> {
+        let mut output = VecDataOutput::new();
+        output.write_length_prefixed_string(type_id).unwrap();
+        output.write_u32(version).unwrap();
+        (1u32, 2u32).serialize_data(&mut output).unwrap();
+        output.into_vec()
+    }
+
+    /// A type with two encodings: version 1 stores a u8, version 2 a u32.
+    #[derive(Debug, PartialEq)]
+    struct Versioned(u32);
+
+    impl ComplexSerialize for Versioned {
+        fn type_id() -> &'static str {
+            "versioned"
+        }
+
+        fn version() -> u32 {
+            2
+        }
+
+        fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+            output.write_u32(self.0)
+        }
+
+        fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
+            match version {
+                1 => Ok(Versioned(u32::from(input.read_u8()?))),
+                2 => Ok(Versioned(input.read_u32()?)),
+                _ => Err(ZiporaError::invalid_data("Versioned: unknown version")),
+            }
+        }
+    }
+
+    /// Version-1 `Versioned` data (the value 5 as one byte) with metadata.
+    fn versioned_v1_with_header() -> Vec<u8> {
+        let mut output = VecDataOutput::new();
+        output.write_length_prefixed_string("versioned").unwrap();
+        output.write_u32(1).unwrap();
+        output.write_u8(5).unwrap();
+        output.into_vec()
+    }
+
+    #[test]
+    fn test_c9_ct3_unknown_version_is_rejected() {
+        // The built-in tuple impl has only version 1, so version 2 is
+        // rejected even when the serializer allows version skew.
+        let bytes = pair_with_header(<(u32, u32)>::type_id(), 2);
+        let result = <(u32, u32)>::deserialize_with_metadata(&mut SliceDataInput::new(&bytes));
+        assert!(result.is_err(), "version 2 must be rejected: {result:?}");
+        let result = ComplexTypeSerializer::default().deserialize_from_bytes::<(u32, u32)>(&bytes);
+        assert!(result.is_err(), "version 2 must be rejected: {result:?}");
+        let result = ComplexTypeSerializer::new(ComplexTypeConfig::compatible())
+            .deserialize_from_bytes::<(u32, u32)>(&bytes);
+        assert!(result.is_err(), "version 2 must be rejected: {result:?}");
+    }
+
+    #[test]
+    fn test_c9_ct3_impl_macro_rejects_unknown_version() {
+        let test_struct = TestStruct {
+            id: 7,
+            name: "x".to_string(),
+            active: true,
+        };
+        let mut output = VecDataOutput::new();
+        test_struct.serialize_data(&mut output).unwrap();
+        let data = output.into_vec();
+        let result = TestStruct::deserialize_with_version(&mut SliceDataInput::new(&data), 2);
+        assert!(result.is_err(), "version 2 must be rejected: {result:?}");
+        let result = TestStruct::deserialize_with_version(&mut SliceDataInput::new(&data), 1);
+        assert_eq!(result.unwrap(), test_struct);
+    }
+
+    #[test]
+    fn test_c9_ct3_validate_types_false_accepts_other_type_id() {
+        let legacy = pair_with_header("legacy", 1);
+        let lenient = ComplexTypeSerializer::new(ComplexTypeConfig {
+            validate_types: false,
+            ..ComplexTypeConfig::default()
+        });
+        assert_eq!(
+            lenient
+                .deserialize_from_bytes::<(u32, u32)>(&legacy)
+                .unwrap(),
+            (1, 2)
+        );
+        let result = ComplexTypeSerializer::default().deserialize_from_bytes::<(u32, u32)>(&legacy);
+        assert!(result.is_err(), "the type id must be checked: {result:?}");
+    }
+
+    #[test]
+    fn test_c9_ct3_version_skew_requires_allow_version_skew() {
+        let v1 = versioned_v1_with_header();
+        let result = ComplexTypeSerializer::default().deserialize_from_bytes::<Versioned>(&v1);
+        assert!(
+            result.is_err(),
+            "version 1 needs allow_version_skew: {result:?}"
+        );
+        let compatible = ComplexTypeSerializer::new(ComplexTypeConfig::compatible());
+        assert_eq!(
+            compatible.deserialize_from_bytes::<Versioned>(&v1).unwrap(),
+            Versioned(5)
+        );
+    }
+
+    #[test]
+    fn test_c9_ct3_batch_version_skew_requires_allow_version_skew() {
+        // Batch: count 1, metadata ("versioned", version 1), one byte of data.
+        let mut output = VecDataOutput::new();
+        output.write_u32(1).unwrap();
+        output.write_bytes(&versioned_v1_with_header()).unwrap();
+        let batch = output.into_vec();
+        let result = ComplexTypeSerializer::default().deserialize_batch::<Versioned>(&batch);
+        assert!(
+            result.is_err(),
+            "version 1 needs allow_version_skew: {result:?}"
+        );
+        let compatible = ComplexTypeSerializer::new(ComplexTypeConfig::compatible());
+        assert_eq!(
+            compatible.deserialize_batch::<Versioned>(&batch).unwrap(),
+            vec![Versioned(5)]
+        );
     }
 }
