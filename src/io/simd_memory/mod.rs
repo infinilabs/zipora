@@ -1,6 +1,7 @@
 //! # SIMD Memory Operations
 //!
-//! Hardware-accelerated search operations using SSE4.2 PCMPESTRI instructions.
+//! Search operations with SSE4.2 PCMPESTRI kernels on x86_64 and scalar
+//! code everywhere else.
 //!
 //! ## Modules
 //!
@@ -8,15 +9,17 @@
 //!
 //! ## Performance
 //!
-//! - **Character search**: 2-4x faster than memchr
-//! - **Pattern search**: 2-8x faster than naive search
+//! Limitation: no speedup over `memchr` or a naive search is claimed.
 //!
 //! ## Architecture
 //!
-//! - **6-Tier SIMD Framework**: AVX-512 → AVX2 → SSE4.2 → SSE2 → NEON → Scalar
-//! - **Runtime CPU Detection**: Optimal implementation selection
-//! - **PCMPESTRI Instructions**: Hardware string comparison with early exit
-//! - **Zero Unsafe in Public APIs**: Memory safety guaranteed
+//! - **Two tiers**: SSE4.2 and scalar; the AVX2, AVX-512 and NEON tier
+//!   names exist in [`SearchTier`] but are never selected
+//! - **Runtime CPU Detection**: the SSE4.2 tier is used when the CPU has
+//!   SSE4.2 and [`SearchConfig::enable_sse42`] is set
+//! - **PCMPESTRI Instructions**: character, pattern and byte-set search;
+//!   string comparison uses SSE2 PCMPEQB
+//! - **In-bounds loads**: no SIMD load reads outside the caller's slices
 
 pub mod search;
 

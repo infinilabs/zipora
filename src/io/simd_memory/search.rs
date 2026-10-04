@@ -1,52 +1,76 @@
 //! # SSE4.2 PCMPESTRI String Search
 //!
-//! Hardware-accelerated string search using SSE4.2 PCMPESTRI instructions.
+//! String search with SSE4.2 PCMPESTRI kernels on x86_64 and scalar code
+//! everywhere else.
 //!
 //! ## Architecture
 //!
-//! - **6-Tier SIMD Framework**: SSE4.2 → AVX2 → AVX-512 → NEON → Scalar
-//! - **PCMPESTRI Instructions**: Hardware string comparison with early exit
-//! - **Hybrid Strategy**: Size-based algorithm selection for optimal performance
-//! - **Zero Unsafe in Public APIs**: Memory safety guaranteed
+//! - **Two tiers**: SSE4.2 (x86_64, detected at runtime) and scalar. The
+//!   [`SearchTier::AVX2`], [`SearchTier::AVX512`] and [`SearchTier::NEON`]
+//!   variants are never selected; see [`SearchTier`].
+//! - **PCMPESTRI Instructions**: `find_char`, `find_pattern` and
+//!   `find_any_of` use PCMPESTRI; `compare_strings` uses SSE2 PCMPEQB.
+//! - **Hybrid Strategy**: needles of up to 32 bytes are matched by their
+//!   first `min(n, 8)` bytes with PCMPESTRI (17..=32-byte needles through
+//!   their first 16 bytes), longer needles by their first byte; every
+//!   candidate is compared in full.
+//! - **In-bounds loads**: every 16-byte load lies inside the caller's
+//!   slice; a window shorter than 16 bytes is copied into a zeroed stack
+//!   buffer first.
 //!
-//! ## Performance Targets
+//! ## Performance
 //!
-//! - **Character search**: 2-4x faster than memchr
-//! - **Pattern search**: 2-8x faster than naive search
-//! - **String comparison**: 3-6x faster for short strings
+//! The substring kernel runs one PCMPESTRI per 16-byte window on the first
+//! `p = min(n, 8)` bytes of an `n`-byte needle. After a window without a
+//! candidate it moves `17 - p` (at least 9) bytes on, and one byte past a
+//! rejected candidate, instead of one byte per PCMPESTRI. Limitation: no
+//! speedup over `memchr` or the scalar code is claimed; the ignored test
+//! `test_c9_s4_strstr_timing_64k_absent_needle` prints timings for one
+//! input on the machine that runs it.
 
 use std::cmp::Ordering;
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+#[cfg(target_arch = "x86_64")]
 use crate::system::cpu_features::get_cpu_features;
 
 /// SIMD tier for string search operations
+///
+/// [`SimdStringSearch::tier`] reports [`SearchTier::SSE42`] or
+/// [`SearchTier::Scalar`], the two sets of kernels this module has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchTier {
     /// Scalar fallback (portable)
     Scalar,
     /// SSE4.2 PCMPESTRI (x86_64)
     SSE42,
-    /// AVX2 optimized (x86_64)
+    /// AVX2 (x86_64). Limitation: never selected; this module has no AVX2
+    /// kernels, so AVX2 hosts get [`SearchTier::SSE42`]. The variant is kept
+    /// so that existing `match`es keep compiling.
     AVX2,
-    /// AVX-512 optimized (x86_64, avx512 feature)
+    /// AVX-512 (x86_64). Limitation: never selected; this module has no
+    /// AVX-512 kernels. The variant is kept so that existing `match`es keep
+    /// compiling.
     AVX512,
-    /// ARM NEON (ARM64)
+    /// ARM NEON (aarch64). Limitation: never selected; this module has no
+    /// NEON kernels, so aarch64 hosts get [`SearchTier::Scalar`]. The variant
+    /// is kept so that existing `match`es keep compiling.
     NEON,
 }
 
 /// Configuration for SIMD string search
 #[derive(Debug, Clone)]
 pub struct SearchConfig {
-    /// Enable SSE4.2 PCMPESTRI if available
+    /// Allow the SSE4.2 PCMPESTRI kernels when the CPU has SSE4.2. With
+    /// `false`, every operation runs the scalar code.
     pub enable_sse42: bool,
-    /// Enable AVX2 if available
+    /// Limitation: no effect; this module has no AVX2 kernels.
     pub enable_avx2: bool,
-    /// Enable AVX-512 if available
+    /// Limitation: no effect; this module has no AVX-512 kernels.
     pub enable_avx512: bool,
-    /// Enable ARM NEON if available
+    /// Limitation: no effect; this module has no NEON kernels.
     pub enable_neon: bool,
 }
 
@@ -78,29 +102,17 @@ impl SimdStringSearch {
         Self { tier }
     }
 
-    /// Detect optimal SIMD tier based on CPU features
+    /// Picks [`SearchTier::SSE42`] when `config.enable_sse42` is set and the
+    /// CPU has SSE4.2 (x86_64 only), [`SearchTier::Scalar`] otherwise.
     fn detect_optimal_tier(config: &SearchConfig) -> SearchTier {
-        let features = get_cpu_features();
-
         #[cfg(target_arch = "x86_64")]
         {
-            if config.enable_avx512 && features.has_avx512f {
-                return SearchTier::AVX512;
-            }
-            if config.enable_avx2 && features.has_avx2 {
-                return SearchTier::AVX2;
-            }
-            if config.enable_sse42 && features.has_sse42 {
+            if config.enable_sse42 && get_cpu_features().has_sse42 {
                 return SearchTier::SSE42;
             }
         }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            if config.enable_neon && features.has_neon {
-                return SearchTier::NEON;
-            }
-        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = config;
 
         SearchTier::Scalar
     }
@@ -114,8 +126,9 @@ impl SimdStringSearch {
     ///
     /// # Performance
     ///
-    /// - SSE4.2: 2-4x faster than scalar for long strings
-    /// - Processes 16 bytes per iteration with PCMPESTRI
+    /// - SSE4.2 tier: one PCMPESTRI per 16-byte chunk, scalar code for the
+    ///   last `haystack.len() % 16` bytes
+    /// - Scalar tier: `Iterator::position`
     ///
     /// # Example
     ///
@@ -128,23 +141,13 @@ impl SimdStringSearch {
     /// assert_eq!(pos, Some(6));
     /// ```
     pub fn find_char(&self, haystack: &[u8], ch: u8) -> Option<usize> {
-        match self.tier {
-            #[cfg(target_arch = "x86_64")]
-            SearchTier::SSE42 => sse42_strchr(haystack, ch),
-            #[cfg(target_arch = "x86_64")]
-            SearchTier::AVX2 | SearchTier::AVX512 => {
-                // Fall back to SSE4.2 for character search
-                // AVX2/AVX-512 don't provide significant benefit for single character
-                if is_x86_feature_detected!("sse4.2") {
-                    sse42_strchr(haystack, ch)
-                } else {
-                    scalar_strchr(haystack, ch)
-                }
+        #[cfg(target_arch = "x86_64")]
+        {
+            if self.tier == SearchTier::SSE42 {
+                return sse42_strchr(haystack, ch);
             }
-            #[cfg(target_arch = "aarch64")]
-            SearchTier::NEON => neon_strchr(haystack, ch),
-            _ => scalar_strchr(haystack, ch),
         }
+        scalar_strchr(haystack, ch)
     }
 
     /// Find first occurrence of pattern in haystack
@@ -175,22 +178,13 @@ impl SimdStringSearch {
             return None;
         }
 
-        match self.tier {
-            #[cfg(target_arch = "x86_64")]
-            SearchTier::SSE42 => sse42_strstr(haystack, needle),
-            #[cfg(target_arch = "x86_64")]
-            SearchTier::AVX2 | SearchTier::AVX512 => {
-                // Use SSE4.2 for short patterns, AVX2 for long
-                if needle.len() <= 16 && is_x86_feature_detected!("sse4.2") {
-                    sse42_strstr(haystack, needle)
-                } else {
-                    scalar_strstr(haystack, needle)
-                }
+        #[cfg(target_arch = "x86_64")]
+        {
+            if self.tier == SearchTier::SSE42 {
+                return sse42_strstr(haystack, needle);
             }
-            #[cfg(target_arch = "aarch64")]
-            SearchTier::NEON => neon_strstr(haystack, needle),
-            _ => scalar_strstr(haystack, needle),
         }
+        scalar_strstr(haystack, needle)
     }
 
     /// Find any character from a set in haystack
@@ -215,29 +209,23 @@ impl SimdStringSearch {
             return None;
         }
 
-        match self.tier {
-            #[cfg(target_arch = "x86_64")]
-            SearchTier::SSE42 => sse42_multi_search(haystack, chars),
-            #[cfg(target_arch = "x86_64")]
-            SearchTier::AVX2 | SearchTier::AVX512 => {
-                if is_x86_feature_detected!("sse4.2") {
-                    sse42_multi_search(haystack, chars)
-                } else {
-                    scalar_multi_search(haystack, chars)
-                }
+        #[cfg(target_arch = "x86_64")]
+        {
+            if self.tier == SearchTier::SSE42 {
+                return sse42_multi_search(haystack, chars);
             }
-            #[cfg(target_arch = "aarch64")]
-            SearchTier::NEON => neon_multi_search(haystack, chars),
-            _ => scalar_multi_search(haystack, chars),
         }
+        scalar_multi_search(haystack, chars)
     }
 
     /// Compare two strings lexicographically
     ///
     /// # Performance
     ///
-    /// - SSE4.2: 3-6x faster for short strings
-    /// - Uses PCMPESTRI for 16-byte chunks
+    /// - SSE4.2 tier: SSE2 PCMPEQB over 16-byte chunks of the common prefix
+    ///   (not PCMPESTRI); strings shorter than 16 bytes are compared by the
+    ///   scalar loop
+    /// - Scalar tier: `<[u8]>::cmp`
     ///
     /// # Example
     ///
@@ -250,21 +238,13 @@ impl SimdStringSearch {
     /// assert_eq!(result, Ordering::Less);
     /// ```
     pub fn compare_strings(&self, s1: &[u8], s2: &[u8]) -> Ordering {
-        match self.tier {
-            #[cfg(target_arch = "x86_64")]
-            SearchTier::SSE42 => sse42_strcmp(s1, s2),
-            #[cfg(target_arch = "x86_64")]
-            SearchTier::AVX2 | SearchTier::AVX512 => {
-                if is_x86_feature_detected!("sse4.2") {
-                    sse42_strcmp(s1, s2)
-                } else {
-                    scalar_strcmp(s1, s2)
-                }
+        #[cfg(target_arch = "x86_64")]
+        {
+            if self.tier == SearchTier::SSE42 {
+                return sse42_strcmp(s1, s2);
             }
-            #[cfg(target_arch = "aarch64")]
-            SearchTier::NEON => neon_strcmp(s1, s2),
-            _ => scalar_strcmp(s1, s2),
         }
+        scalar_strcmp(s1, s2)
     }
 }
 
@@ -280,17 +260,26 @@ impl Default for SimdStringSearch {
 
 /// Find character using SSE4.2 PCMPESTRI
 ///
-/// Uses _mm_cmpestri with _SIDD_CMP_EQUAL_ANY mode for hardware-accelerated search
+/// Uses _mm_cmpestri with _SIDD_CMP_EQUAL_ANY mode on each full 16-byte
+/// chunk and scalar code for the remaining bytes. Runs the scalar search
+/// when the CPU lacks SSE4.2.
 #[cfg(target_arch = "x86_64")]
 pub fn sse42_strchr(haystack: &[u8], ch: u8) -> Option<usize> {
     if !is_x86_feature_detected!("sse4.2") {
         return scalar_strchr(haystack, ch);
     }
 
-    // SAFETY: SSE4.2 feature detected above, haystack is valid slice reference
+    // SAFETY: SSE4.2 was detected at runtime just above; that is the only
+    // precondition of `sse42_strchr_impl`.
     unsafe { sse42_strchr_impl(haystack, ch) }
 }
 
+/// SSE4.2 body of [`sse42_strchr`]. It loads only full 16-byte chunks that
+/// lie inside `haystack` and scans the rest with scalar code.
+///
+/// # Safety
+///
+/// The CPU must support SSE4.2. There are no requirements on `haystack`.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.2")]
 unsafe fn sse42_strchr_impl(haystack: &[u8], ch: u8) -> Option<usize> {
@@ -299,7 +288,8 @@ unsafe fn sse42_strchr_impl(haystack: &[u8], ch: u8) -> Option<usize> {
     // Create needle vector with single character
     let mut needle_bytes = [0u8; 16];
     needle_bytes[0] = ch;
-    // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from needle_bytes.as_ptr(), len == 16
+    // SAFETY: `needle_bytes` is a 16-byte stack array, so the unaligned
+    // 16-byte load reads only its bytes.
     let needle = unsafe { _mm_loadu_si128(needle_bytes.as_ptr() as *const __m128i) };
 
     let mut offset = 0;
@@ -307,21 +297,19 @@ unsafe fn sse42_strchr_impl(haystack: &[u8], ch: u8) -> Option<usize> {
 
     // Process 16-byte chunks
     while offset + CHUNK_SIZE <= len {
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from haystack.as_ptr(), offset + 16 <= len checked by loop condition
+        // SAFETY: the loop condition gives `offset + 16 <= haystack.len()`,
+        // so the unaligned 16-byte load stays inside `haystack`.
         let chunk = unsafe { _mm_loadu_si128(haystack.as_ptr().add(offset) as *const __m128i) };
 
         // _SIDD_CMP_EQUAL_ANY: Match any character in needle
         // _SIDD_UBYTE_OPS: Operate on unsigned bytes
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
-        let idx = {
-            _mm_cmpestri(
-                needle,
-                1, // needle length = 1
-                chunk,
-                CHUNK_SIZE as i32,
-                _SIDD_CMP_EQUAL_ANY | _SIDD_UBYTE_OPS,
-            )
-        };
+        let idx = _mm_cmpestri(
+            needle,
+            1, // needle length = 1
+            chunk,
+            CHUNK_SIZE as i32,
+            _SIDD_CMP_EQUAL_ANY | _SIDD_UBYTE_OPS,
+        );
 
         if idx < CHUNK_SIZE as i32 {
             return Some(offset + idx as usize);
@@ -621,17 +609,30 @@ fn table_multi_search(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     haystack.iter().position(|&b| member[usize::from(b)])
 }
 
-/// Compare strings using SSE4.2 PCMPESTRI
+/// Compare strings with SSE2 PCMPEQB over 16-byte chunks
+///
+/// Despite the name it uses no PCMPESTRI: it is gated on SSE4.2 together
+/// with the other kernels of this module. Runs the scalar comparison when
+/// the CPU lacks SSE4.2.
 #[cfg(target_arch = "x86_64")]
 pub fn sse42_strcmp(s1: &[u8], s2: &[u8]) -> Ordering {
     if !is_x86_feature_detected!("sse4.2") {
         return scalar_strcmp(s1, s2);
     }
 
-    // SAFETY: SSE4.2 feature detected above, s1 and s2 are valid slice references
+    // SAFETY: SSE4.2 was detected at runtime just above; that is the only
+    // precondition of `sse42_strcmp_impl`.
     unsafe { sse42_strcmp_impl(s1, s2) }
 }
 
+/// SIMD body of [`sse42_strcmp`]. It loads only full 16-byte chunks of the
+/// common prefix, which lie inside both slices.
+///
+/// # Safety
+///
+/// The CPU must support SSE4.2 (the function is compiled with that target
+/// feature, although it executes only SSE2 instructions). There are no
+/// requirements on the slices.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.2")]
 unsafe fn sse42_strcmp_impl(s1: &[u8], s2: &[u8]) -> Ordering {
@@ -642,15 +643,14 @@ unsafe fn sse42_strcmp_impl(s1: &[u8], s2: &[u8]) -> Ordering {
 
     // Compare 16-byte chunks
     while offset + CHUNK_SIZE <= min_len {
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointers valid from s1/s2.as_ptr(), offset + 16 <= min_len checked by loop condition
+        // SAFETY: the loop condition gives `offset + 16 <= min_len <=
+        // s1.len()`, so the unaligned 16-byte load stays inside `s1`.
         let chunk1 = unsafe { _mm_loadu_si128(s1.as_ptr().add(offset) as *const __m128i) };
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointers valid from s1/s2.as_ptr(), offset + 16 <= min_len checked by loop condition
+        // SAFETY: likewise `offset + 16 <= min_len <= s2.len()`.
         let chunk2 = unsafe { _mm_loadu_si128(s2.as_ptr().add(offset) as *const __m128i) };
 
         // Check for difference using PCMPEQB
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
         let cmp = _mm_cmpeq_epi8(chunk1, chunk2);
-        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vector valid from load above
         let mask = _mm_movemask_epi8(cmp);
 
         if mask != 0xFFFF {
@@ -676,34 +676,6 @@ unsafe fn sse42_strcmp_impl(s1: &[u8], s2: &[u8]) -> Ordering {
     }
 
     s1.len().cmp(&s2.len())
-}
-
-// ============================================================================
-// ARM NEON Implementation (Placeholder)
-// ============================================================================
-
-#[cfg(target_arch = "aarch64")]
-pub fn neon_strchr(haystack: &[u8], ch: u8) -> Option<usize> {
-    // TODO: Implement NEON-optimized character search
-    scalar_strchr(haystack, ch)
-}
-
-#[cfg(target_arch = "aarch64")]
-pub fn neon_strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    // TODO: Implement NEON-optimized pattern search
-    scalar_strstr(haystack, needle)
-}
-
-#[cfg(target_arch = "aarch64")]
-pub fn neon_multi_search(haystack: &[u8], chars: &[u8]) -> Option<usize> {
-    // TODO: Implement NEON-optimized multi-character search
-    scalar_multi_search(haystack, chars)
-}
-
-#[cfg(target_arch = "aarch64")]
-pub fn neon_strcmp(s1: &[u8], s2: &[u8]) -> Ordering {
-    // TODO: Implement NEON-optimized string comparison
-    scalar_strcmp(s1, s2)
 }
 
 // ============================================================================
@@ -1379,5 +1351,40 @@ mod tests {
         assert_any_of_agrees(&haystack, &with_nul, ("nul member", 21, 40, 20));
         let all: Vec<u8> = (0..=255u8).collect();
         assert_any_of_agrees(&[filler; 33], &all, ("all bytes", 256, 33, 0));
+    }
+
+    /// C9 S5/S6: `tier()` names the kernels that actually run. This module
+    /// has SSE4.2 kernels and scalar code only, so no other tier is reported.
+    #[test]
+    fn test_c9_s5_tier_names_the_kernels_that_run() {
+        let tier = SimdStringSearch::new().tier();
+        #[cfg(target_arch = "x86_64")]
+        {
+            let expected = if get_cpu_features().has_sse42 {
+                SearchTier::SSE42
+            } else {
+                SearchTier::Scalar
+            };
+            assert_eq!(tier, expected);
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            assert_eq!(tier, SearchTier::Scalar);
+        }
+    }
+
+    /// C9 S5: `enable_sse42: false` must keep SSE4.2 code from running, even
+    /// with the other flags at their defaults.
+    #[test]
+    fn test_c9_s5_enable_sse42_false_selects_scalar() {
+        let searcher = SimdStringSearch::with_config(SearchConfig {
+            enable_sse42: false,
+            ..SearchConfig::default()
+        });
+        assert_eq!(searcher.tier(), SearchTier::Scalar);
+        assert_eq!(searcher.find_char(b"hello", b'l'), Some(2));
+        assert_eq!(searcher.find_pattern(b"hello world", b"world"), Some(6));
+        assert_eq!(searcher.find_any_of(b"hello", b"ol"), Some(2));
+        assert_eq!(searcher.compare_strings(b"abc", b"abd"), Ordering::Less);
     }
 }
