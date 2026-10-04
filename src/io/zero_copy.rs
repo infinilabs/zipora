@@ -584,8 +584,12 @@ impl<R: Read> ZeroCopyRead for ZeroCopyReader<R> {
 }
 
 /// Zero-copy writer wrapper that provides direct buffer access
-pub struct ZeroCopyWriter<W> {
-    inner: W,
+///
+/// Buffered data is flushed when the writer is dropped; any error during drop
+/// is ignored (matching [`std::io::BufWriter`]). Call [`Write::flush`] or
+/// [`ZeroCopyWriter::into_inner`] explicitly to handle flush errors.
+pub struct ZeroCopyWriter<W: Write> {
+    inner: Option<W>,
     buffer: ZeroCopyBuffer,
 }
 
@@ -598,25 +602,44 @@ impl<W: Write> ZeroCopyWriter<W> {
     /// Create a new zero-copy writer with specified buffer capacity
     pub fn with_capacity(inner: W, capacity: usize) -> Result<Self> {
         Ok(Self {
-            inner,
+            inner: Some(inner),
             buffer: ZeroCopyBuffer::new(capacity)?,
         })
     }
 
     /// Get the underlying writer
     pub fn get_ref(&self) -> &W {
-        &self.inner
+        match &self.inner {
+            Some(inner) => inner,
+            None => unreachable!("ZeroCopyWriter::inner is only taken in into_inner"),
+        }
     }
 
     /// Get a mutable reference to the underlying writer
     pub fn get_mut(&mut self) -> &mut W {
-        &mut self.inner
+        match &mut self.inner {
+            Some(inner) => inner,
+            None => unreachable!("ZeroCopyWriter::inner is only taken in into_inner"),
+        }
     }
 
-    /// Consume this writer and return the underlying writer
+    /// Consume this writer, flushing buffered data before returning the
+    /// underlying writer.
+    ///
+    /// Limitation: because this method consumes `self` and returns
+    /// [`io::Result<W>`], a non-[`io::ErrorKind::Interrupted`] flush failure
+    /// drops `self` and any remaining unwritten bytes. Call [`Write::flush`]
+    /// first if you need to retry or inspect the writer on error.
     pub fn into_inner(mut self) -> io::Result<W> {
-        self.flush()?;
-        Ok(self.inner)
+        let flush_res = self.flush();
+        // Take `inner` before `self` drops so `Drop::drop` does not attempt a
+        // second `flush_buffer` after an error.
+        let inner = self.inner.take();
+        flush_res?;
+        match inner {
+            Some(inner) => Ok(inner),
+            None => unreachable!("ZeroCopyWriter::inner is only taken in into_inner"),
+        }
     }
 
     /// Flush the internal buffer to the underlying writer
@@ -625,8 +648,11 @@ impl<W: Write> ZeroCopyWriter<W> {
     /// returned with its kind, and the bytes not yet written stay buffered,
     /// so a later flush (after `WouldBlock`, say) writes each byte once.
     fn flush_buffer(&mut self) -> io::Result<()> {
+        let Some(inner) = self.inner.as_mut() else {
+            return Ok(());
+        };
         while !self.buffer.is_empty() {
-            match self.buffer.drain_once(&mut self.inner) {
+            match self.buffer.drain_once(inner) {
                 Ok(0) => {
                     return Err(io::Error::new(
                         io::ErrorKind::WriteZero,
@@ -643,12 +669,18 @@ impl<W: Write> ZeroCopyWriter<W> {
     }
 }
 
+impl<W: Write> Drop for ZeroCopyWriter<W> {
+    fn drop(&mut self) {
+        let _ = self.flush_buffer();
+    }
+}
+
 impl<W: Write> Write for ZeroCopyWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // For large writes, flush buffer and write directly
         if buf.len() >= self.buffer.capacity() / 2 {
             self.flush_buffer()?;
-            return self.inner.write(buf);
+            return self.get_mut().write(buf);
         }
 
         // Try to fit in buffer
@@ -658,7 +690,7 @@ impl<W: Write> Write for ZeroCopyWriter<W> {
 
         // If still doesn't fit, write directly
         if self.buffer.write_available() < buf.len() {
-            return self.inner.write(buf);
+            return self.get_mut().write(buf);
         }
 
         // Write to buffer
@@ -671,7 +703,7 @@ impl<W: Write> Write for ZeroCopyWriter<W> {
 
     fn flush(&mut self) -> io::Result<()> {
         self.flush_buffer()?;
-        self.inner.flush()
+        self.get_mut().flush()
     }
 }
 
@@ -1461,6 +1493,7 @@ mod tests {
 
     /// A writer that accepts at most `chunk` bytes per call and fails with
     /// `kind` on every other call, starting with the first.
+    #[derive(Debug)]
     struct FlakyWriter {
         written: Vec<u8>,
         chunk: usize,
@@ -1735,5 +1768,61 @@ mod tests {
         assert_eq!(r.position(), 1);
         r.zc_advance(9).unwrap(); // the exact boundary is still accepted
         assert_eq!(r.zc_available(), 0);
+    }
+
+    #[test]
+    fn test_c9_z3_drop_flushes_buffered_writes() {
+        // Regression (C9 Z3): ZeroCopyWriter had no Drop impl, so buffered
+        // bytes from both Write::write and zc_write/zc_commit were silently
+        // discarded when the writer went out of scope without an explicit flush.
+        let mut out = Vec::new();
+        {
+            let mut w = ZeroCopyWriter::with_capacity(&mut out, 1024).unwrap();
+            w.write_all(b"hello ").unwrap();
+            let buf = w.zc_write(5).unwrap().unwrap();
+            buf.copy_from_slice(b"world");
+            w.zc_commit(5).unwrap();
+        }
+        assert_eq!(out, b"hello world", "Drop must flush buffered bytes");
+    }
+
+    #[test]
+    fn test_c9_z3_drop_retries_interrupted_and_into_inner_flushes_once() {
+        // Drop must retry Interrupted through flush_buffer and ignore any
+        // terminal flush error without panicking; into_inner must flush and
+        // return the inner writer without Drop flushing a second time.
+        let mut flaky = FlakyWriter::new(3, io::ErrorKind::Interrupted);
+        {
+            let mut w = ZeroCopyWriter::with_capacity(&mut flaky, 1024).unwrap();
+            w.write_all(b"drop-eintr").unwrap();
+        }
+        assert_eq!(
+            flaky.written, b"drop-eintr",
+            "Drop must retry Interrupted until the buffer is drained"
+        );
+
+        // A failing writer during Drop must not panic.
+        let mut broken = FlakyWriter::new(0, io::ErrorKind::BrokenPipe);
+        {
+            let mut w = ZeroCopyWriter::with_capacity(&mut broken, 64).unwrap();
+            w.write_all(b"ignored").unwrap();
+        }
+
+        // into_inner flushes buffered data and returns the inner writer.
+        let mut w = ZeroCopyWriter::with_capacity(Vec::new(), 64).unwrap();
+        w.write_all(b"into-inner").unwrap();
+        assert_eq!(w.into_inner().unwrap(), b"into-inner");
+
+        // If into_inner's flush fails (WouldBlock on first call), Drop must not
+        // perform a second flush_buffer call that would write on the next call.
+        let mut wb = FlakyWriter::new(8, io::ErrorKind::WouldBlock);
+        let mut w = ZeroCopyWriter::with_capacity(&mut wb, 64).unwrap();
+        w.write_all(b"once").unwrap();
+        let err = w.into_inner().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+        assert!(
+            wb.written.is_empty(),
+            "Drop must not re-attempt flush_buffer after into_inner failed"
+        );
     }
 }
