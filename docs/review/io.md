@@ -4,15 +4,16 @@ Rules for this ledger:
 
 - **Citation format (`S21-R3`)**: Every statement about source code cites `commit:path:line` (or `commit:path:start-end`), verified against `git show <commit>:<path>`. Line numbers inside fenced `cargo test` / Miri / AddressSanitizer panic tracebacks are verbatim output of the command shown above them; when a RED run spliced a fix commit's test module onto a parent commit's production file, the splice line offset between the spliced file and the fix commit is stated in §2.3 and above the pasted output.
 - **Elision format (`S21-R3`)**: Every elided block in pasted command output uses the standard bracketed line-count marker with the exact line count removed.
-- **Scope**: `db3c514..a807faf` (36 code/build commits on `main`, plus this ledger and baseline ratchet commit):
+- **Scope**: `db3c514..a807faf` (36 code/build commits on `main`, `73a25d0` initial ledger and baseline ratchet commit, and `0e8c6ba..125b80a` `S22` re-review remediation commits in §10):
   - **S21 carry-overs (`be12f99..b088f15`, 4 commits)**: `S21-R2` Miri scaling for `test_sse42_strstr_window_skip_matches_a_reference_search` (`be12f99`), committing `Cargo.lock` and wiring `--locked` into `make sanity` and CI (`ba31803`), `S21-R1` `AdvancedRadixSort` parallel reporting (`adf8204`), and `S21-R4` `Makefile` haswell + scalar Miri targets (`b088f15`).
   - **Phase D audit script fix (`d611d4b`, 1 commit)**: `scripts/audit_common.py` now recognizes `#[cfg(all(test, ...))]` items as test code.
   - **C9.1 `src/error.rs` + `src/memory/mmap_vec.rs` (`aae0586..7bac7ba`, 7 commits)**: `ZiporaError::Misaligned`, Miri test gating, `F1`–`F9`, runtime alignment and mapping-length checks before `from_raw_parts`, `SIGBUS` `Limitation:` documentation, and `MAP_SHARED` + `madvise` persistence tests.
   - **C9 `src/io/zero_copy.rs` + `src/io/mmap.rs` (`e1b61bc..ed335fa`, 6 commits)**: `Z1`–`Z5`, `VectoredIO` partial-progress and `Interrupted` retry tests, `I1`–`I4`, empty-file handling, `SIGBUS` `Limitation:` documentation, and `MAP_SHARED` + `madvise` tests.
   - **C9 `src/io/simd_memory/` + `src/io/simd_validation/` + `src/io/endian.rs` (`83f4848..ac7a59b`, 5 commits)**: `S1`–`S6` (SSE4.2 `strstr` page-boundary overread fix, `find_any_of` >16-byte set fix, window-skip `strstr`, honest tier reporting), `C1`/`C3`/`C4` (`aarch64` CRC32C intrinsics, Miri SSE4.2 test, `crc32c_update` doctest), and `E1`–`E5` (`EndianConvert: bytemuck::Pod` soundness bound + `compile_fail` doctest, SIMD direction fix, SSE2 `u32` byte-swap, `write_endianness_magic(Big)` fix).
   - **C9 `src/io/` readers, writers, serialization, versioning, range streams, varint, stream buffer (`376ad6b..a807faf`, 13 commits)**: `DI-1`–`DI-3`, `CT-1`–`CT-5`, `SP-1`–`SP-6`, `DO-1`, `VS-1`–`VS-5`, `RS-1`–`RS-5`, `VV-1`–`VV-6`, `SB-1`–`SB-9`, and `tests/io_untrusted_lengths.rs`.
+  - **S22 Stage 10 re-review remediation (`0e8c6ba..125b80a`, 5 commits, §10)**: `S22-R1` (2 MiB debug stack `max_depth` sizing and shared context forwarding), `S22-R2` (wire-format and API break disclosures), `S22-R3` (cached validated `data_ptr` and `#[inline]` hot accessors in `MmapVec`), `S22-R4` (64 MiB known-input preallocation cap in `DataInput::read_vec`), `S22-R5` (`MappingKind::ReadOnly(Mmap)` `PROT_READ` mapping for read-only `MmapVec`), `S22-R7` (SSE2 `PCMPEQB` + `PMOVMSKB` for `strchr`, Miri test scaling, and `make miri_io`), and `S22-R8` (`checked_u32_len`, `StreamBufferConfig::growth_factor.is_finite() && <= 16.0`, and `ZeroCopyReader`/`ZeroCopyWriter`/`VectoredIO` over-reported byte checks).
 
-## 1. Commits (`db3c514..a807faf`)
+## 1. Commits (`db3c514..125b80a`)
 
 | # | Commit | Parent | Date | Subject | Files | +/− |
 |---|---|---|---|---|---|---|
@@ -52,24 +53,30 @@ Rules for this ledger:
 | 34 | `1423bc3` | `4f08691` | 2026-10-04 | fix(io): position range streams on construction and validate seeks and multi-range reads (C9 RS-1 RS-2 RS-3 RS-4 RS-5) | 1 | +197 / −63 |
 | 35 | `6c8fab3` | `1423bc3` | 2026-10-04 | fix(io): fix GroupVarint 64-bit tags, 65-bit delta encoding, LEB128 10th-byte overflow, and i64::MIN strategy panics (C9 VV-1 VV-2 VV-3 VV-4 VV-5 VV-6) | 2 | +208 / −52 |
 | 36 | `a807faf` | `6c8fab3` | 2026-10-04 | fix(io): fix StreamBufferedReader/Writer drop flush, non-blocking read, seek, retry, and config validation (C9 SB-1 SB-2 SB-3 SB-4 SB-5 SB-6 SB-7 SB-8 SB-9) | 1 | +666 / −177 |
+| 37 | `73a25d0` | `a807faf` | 2026-10-04 | docs(review): add Stage 10 io/mmap_vec review ledger and ratchet baselines (C9) | 3 | +5581 / −7 |
+| 38 | `0e8c6ba` | `73a25d0` | 2026-10-05 | fix(io): size max_depth presets for 2 MiB stacks and check u32 collection lengths (S22-R1, S22-R8) | 2 | +256 / −27 |
+| 39 | `d28462f` | `0e8c6ba` | 2026-10-05 | perf(io): reserve full capacity up to 64 MiB when remaining_bytes is known (S22-R4) | 1 | +67 / −22 |
+| 40 | `4790f48` | `d28462f` | 2026-10-05 | fix(mmap_vec): map read-only vectors with PROT_READ and inline validated slice access (S22-R3, S22-R5, S22-R7, S22-R8) | 1 | +236 / −89 |
+| 41 | `5b33f98` | `4790f48` | 2026-10-05 | fix(io): disclose wire-format/API changes and guard zero_copy/stream_buffer bounds (S22-R2, S22-R8) | 6 | +168 / −19 |
+| 42 | `125b80a` | `5b33f98` | 2026-10-05 | perf(io): use SSE2 PCMPEQB for strchr and add make miri_io target (S22-R7) | 9 | +137 / −67 |
 
 ## 2. Verification Boundary and Method
 
 ### 2.1 What Miri Can and Cannot Cover in `C9`
 
 - **Cannot run under Miri (verified natively and under AddressSanitizer `-Zsanitizer=address`)**:
-  - Miri cannot execute OS file-mapping or virtual-memory syscalls (`mmap`, `munmap`, `madvise`, `msync`, `mlock`, `munlock`, `mprotect`). Every test that opens a real file-backed mapping through `memmap2::Mmap` / `MmapMut` (`MmapVec` in `a807faf:src/memory/mmap_vec.rs:1707-3474`, `MemoryMappedInput` / `MemoryMappedOutput` in `a807faf:src/io/mmap.rs:991-1831`, `MmapZeroCopyReader` in `a807faf:src/io/zero_copy.rs:950-2086`, and `MmapDataInput` in `a807faf:src/io/data_input.rs:677-885`) or calls `libc::mmap` / `libc::mprotect` (`test_c9_s1_search_ending_at_protected_page_does_not_fault` in `a807faf:src/io/simd_memory/search.rs:1111-1180`) is annotated with `#[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]` (or `#[cfg_attr(miri, ignore)]`).
-  - All 57 `memory::mmap_vec` tests, all 303 `io::` lib tests (including all 32 `io::mmap` tests and all 47 `io::zero_copy` tests), all 14 `error::` tests, and all 4 `tests/io_untrusted_lengths.rs` integration tests were executed natively and under AddressSanitizer (`CARGO_TARGET_DIR=target/asan RUSTFLAGS="-Zsanitizer=address" cargo +nightly test --target x86_64-unknown-linux-gnu`, §9.1).
-- **Covered under Miri (both `target/miri-simd` with `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt` and `target/miri-scalar` with `RUSTFLAGS=""`, §9.2–§9.3)**:
-  - In `src/memory/mmap_vec.rs`: pure header validation, alignment/padding arithmetic, and capacity/layout bounds helpers (`MmapHeader::validate`, `counts_from_header`, `mapped_capacity_for`, `calculate_file_size` — 4 tests in `memory::mmap_vec::tests`: `test_c9_1_mapped_capacity_for_checks_layout`, `test_c9_f5_counts_from_header_validates`, `test_c9_f6_guard_calculate_file_size_is_checked`, `test_c9_f9_header_validates_alignment_and_endianness_flags`).
-  - In `src/io/mmap.rs`: all 10 `BufferedIo` small-file and error-path tests (with `MIRIFLAGS="-Zmiri-disable-isolation"` so `tempfile::NamedTempFile` can open regular files without `mmap`).
-  - In `src/io/zero_copy.rs`: all 43 non-mmap tests (`ZeroCopyBuffer`, `ZeroCopyReader`, `ZeroCopyWriter`, `VectoredIO`).
-  - In `src/io/simd_memory/`, `src/io/simd_validation/`, `src/io/endian.rs`: all SSE4.2 `#[target_feature(enable = "sse4.2")]` search and CRC32C intrinsics (in `target/miri-simd`), all SSE2 `#[target_feature(enable = "sse2")]` endian byte-swap intrinsics, and all scalar fallbacks (in `target/miri-scalar`).
-  - In `src/io/{data_input,data_output,complex_types,smart_ptr,versioning,range_stream,var_int,var_int_variants,stream_buffer}.rs` and `tests/io_untrusted_lengths.rs`: all non-mmap unit and integration tests (85 `test_c9_` lib tests pass + 28 ignored under Miri SIMD and Miri Scalar, plus 4/4 in `tests/io_untrusted_lengths.rs`).
+  - Miri cannot execute OS file-mapping or virtual-memory syscalls (`mmap`, `munmap`, `madvise`, `msync`, `mlock`, `munlock`, `mprotect`). Every test that opens a real file-backed mapping through `memmap2::Mmap` / `MmapMut` (`MmapVec` in `a807faf:src/memory/mmap_vec.rs:1707-3474`, `MemoryMappedInput` / `MemoryMappedOutput` in `a807faf:src/io/mmap.rs:991-1831`, `MmapZeroCopyReader` in `a807faf:src/io/zero_copy.rs:950-2086`, and `MmapDataInput` in `a807faf:src/io/data_input.rs:677-885`) or calls `libc::mmap` / `libc::mprotect` (`test_c9_s1_search_ending_at_protected_page_does_not_fault` in `a807faf:src/io/simd_memory/search.rs:1111-1180`) is annotated with `#[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]` (or `#[cfg_attr(miri, ignore)]` / `#[cfg(all(target_os = "linux", not(miri)))]`).
+  - At `a807faf`, all 57 `memory::mmap_vec` tests, all 296 `io::` unit tests (including all 27 `io::mmap` tests and all 47 `io::zero_copy` tests) plus the 2 `io::simd_validation::checksum::benches` tests (298 `io::` tests total; 301 after `S22`), all 14 `error::` tests, and all 4 `tests/io_untrusted_lengths.rs` integration tests were executed natively and under AddressSanitizer (`CARGO_TARGET_DIR=target/asan RUSTFLAGS="-Zsanitizer=address" cargo +nightly test --target x86_64-unknown-linux-gnu`, §9.1).
+- **Covered under Miri (both `target/miri-simd` with `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt` and `target/miri-scalar` with `RUSTFLAGS=""`, §9.2–§9.3 and §10)**:
+  - In `src/memory/mmap_vec.rs`: at `a807faf`, 4 pure header/layout tests ran under Miri (`test_c9_1_mapped_capacity_for_checks_layout`, `test_c9_f5_counts_from_header_validates`, `test_c9_f6_guard_calculate_file_size_is_checked`, `test_c9_f9_header_validates_alignment_and_endianness_flags`). In `S22` (`4790f48`), `test_c9_f1_with_capacity_simd_rejects_overflowing_capacity` and `test_c9_f9_create_rejects_read_only_config` (which return `Err` before reaching `mmap`) were also un-ignored under Miri (6/58 `memory::mmap_vec::` tests run under `make miri_io`).
+  - In `src/io/mmap.rs`: all 10 `BufferedIo` small-file and error-path tests (with `MIRIFLAGS="-Zmiri-disable-isolation"` so `tempfile::NamedTempFile` can open regular files without `mmap`; 17 real-mmap tests are ignored).
+  - In `src/io/zero_copy.rs`: all 43 non-mmap tests (`ZeroCopyBuffer`, `ZeroCopyReader`, `ZeroCopyWriter`, `VectoredIO`; 4 real-mmap tests are ignored).
+  - In `src/io/simd_memory/`, `src/io/simd_validation/`, `src/io/endian.rs`: all SSE4.2 `#[target_feature(enable = "sse4.2")]` search and CRC32C intrinsics (in `target/miri-simd`), all SSE2 `#[target_feature(enable = "sse2")]` endian and `strchr` intrinsics, and all scalar fallbacks (in `target/miri-scalar`).
+  - In `src/io/{data_input,data_output,complex_types,smart_ptr,versioning,range_stream,var_int,var_int_variants,stream_buffer}.rs` and `tests/io_untrusted_lengths.rs`: at `a807faf`, §9.2–§9.3 ran the filtered `test_c9_` subset (85 `test_c9_` lib tests passed + 28 ignored under Miri SIMD and Miri Scalar, covering 46 of the 167 non-mmap tests in the nine reader/writer files, plus 4/4 in `tests/io_untrusted_lengths.rs`), because `io::data_input::tests::test_mmap_data_input` lacked a Miri skip and ~13 unscaled `io::` tests exceeded bounded Miri wall time (`S22-R7`). In `S22` (`d28462f` + `S22-R7`, §10), `test_mmap_data_input` is ignored under Miri, `test_c9_do1_file_append_bytes_written_counts_new_bytes_only` is un-ignored under Miri, the slow `io::` tests are scaled under `cfg!(miri)`, and `make miri_io` / `make MIRI_SCALAR=1 miri_io` run the full `io::` (276 passed, 25 ignored) and `memory::mmap_vec::` (6 passed, 52 ignored) suites in ~3.5 minutes per build.
 
 ### 2.2 `tmpfs` and `madvise` Testing Contract
 
-On Linux `tmpfs` (`/tmp`), `madvise` hints (`MADV_SEQUENTIAL`, `MADV_RANDOM`, `MADV_WILLNEED`, `MADV_DONTNEED`, `MADV_HUGEPAGE`) may be silent no-ops regarding physical page residency. Accordingly, `test_c9_madvise_knobs_and_map_shared_survive_remap_and_reopen` (`7bac7ba:src/memory/mmap_vec.rs:3413-3473`) and `test_c9_map_shared_persistence_without_explicit_flush_and_madvise_patterns` (`ed335fa:src/io/mmap.rs:1776-1830`) assert that every configuration and `madvise` call succeeds and that written data survives drop, remap, and reopen without an explicit `sync()`/`flush()`, without asserting on `mincore` or page-residency side effects.
+On Linux `tmpfs` (`/tmp`), `madvise` hints (`MADV_SEQUENTIAL`, `MADV_RANDOM`, `MADV_WILLNEED`, `MADV_HUGEPAGE`) may be silent no-ops regarding physical page residency, and both `MmapVec::apply_madvise` (`7bac7ba:src/memory/mmap_vec.rs:973-990`) and `StandardMmap` (`ed335fa:src/io/mmap.rs:255-315`) treat `madvise` as best-effort and discard its return value (`let _ = map.advise(...)` / `let _ = unsafe { libc::madvise(...) }`; `MADV_DONTNEED` is not used by either module, and `StandardMmap::attempt_hugepage_optimization` in `ed335fa:src/io/mmap.rs:256-259` only issues `MADV_HUGEPAGE` when `file_size >= 2 MiB`). Accordingly, `test_c9_madvise_knobs_and_map_shared_survive_remap_and_reopen` (`7bac7ba:src/memory/mmap_vec.rs:3421-3473`) and `test_c9_map_shared_persistence_without_explicit_flush_and_madvise_patterns` (`ed335fa:src/io/mmap.rs:1799-1830`) exercise every `AccessPattern` configuration and assert that `MAP_SHARED` writes survive drop, remap, and reopen without an explicit `sync()`/`flush()`, without asserting on `madvise` return codes, `mincore`, or page-residency side effects.
 
 ### 2.3 Toolchain, Host, and Independent RED Splicing
 
@@ -81,27 +88,20 @@ On Linux `tmpfs` (`/tmp`), `madvise` hints (`MADV_SEQUENTIAL`, `MADV_RANDOM`, `M
 
 #### `be12f99` — test(string): scale the strstr-window test under Miri (S21-R2)
 
-test_sse42_strstr_window_skip_matches_a_reference_search (added in
-11d1f39) makes 1,991 sse42_strstr calls on a 4,096-byte haystack. With
-the SSE4.2 tier enabled at compile time, Miri completed 332 of them in
-600 s (db3c514 commit message), so `miri string::` needed a --skip for
-this test.
+`test_sse42_strstr_window_skip_matches_a_reference_search` (added in `11d1f39:src/string/simd_search.rs:1052`, at `db3c514:src/string/simd_search.rs:1141`) makes 1,991 `sse42_strstr` calls on a 4,096-byte haystack. With the SSE4.2 tier enabled at compile time, Miri completed 332 of them in 600 s (`db3c514` commit message), so `miri string::` needed a `--skip` for this test.
 
-Under cfg!(miri) the test now uses:
+Under `cfg!(miri)` (`be12f99:src/string/simd_search.rs:1165-1198`) the test now uses:
 
-  haystack          4,096 B -> 96 B (six 16-byte windows)
-  samples per len   64 -> 2   (needle lengths 2..=24, unchanged)
-  tail needles      every length -> every 7th length (tails 2..=32,
-                    unchanged)
-  calls             1,991 (1,472 sampled + 23 absent + 496 tail)
-                    -> 154 (46 sampled + 23 absent + 85 tail)
+- haystack: 4,096 B -> 96 B (six 16-byte windows)
+- samples per len: 64 -> 2 (needle lengths 2..=24, unchanged)
+- tail needles: every length -> every 7th length (tails 2..=32, unchanged)
+- calls: 1,991 (1,472 sampled + 23 absent + 496 tail) -> 154 (46 sampled + 23 absent + 85 tail)
 
 Native runs keep the old sizes.
 
-```text
-Proof, main checkout at db3c514 plus this change, gitignored
-.cargo/config.toml present (target-cpu=haswell), no --skip:
+Proof, main checkout at `db3c514` plus this change, gitignored `.cargo/config.toml` present (`target-cpu=haswell`), no `--skip`:
 
+```text
   $ MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-disable-isolation" \
       cargo +nightly miri test --lib string:: -- --test-threads=1
   11:06:42 running 152 tests
@@ -111,53 +111,28 @@ Proof, main checkout at db3c514 plus this change, gitignored
   [... 36 lines elided ...]
   11:12:14 test result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 2845 filtered out; finished in 352.83s
   ## exit=0 wall=366s
-
-(Timestamps are prefixed by the capture script. The test itself took
-77 s in that run; run alone it reported "finished in 74.42s".)
-
-The run without the haswell config is in the S21-R4 commit, which puts
-the flags in the Makefile miri targets.
 ```
+
+(Timestamps are prefixed by the capture script. The test itself took 77 s in that run; run alone it reported "finished in 74.42s".)
+
+The run without the haswell config is in the `S21-R4` commit (`b088f15`), which puts the flags in the `Makefile` Miri targets.
 
 #### `ba31803` — build: commit Cargo.lock; the gate and CI build with --locked
 
-Cargo.lock was gitignored (.gitignore:8 and ba31803:Makefile:17, "leave it for
-libraries"). The Rust project dropped that advice in August 2023 ("Change
-in Guidance on Committing Lockfiles"), and a library's lockfile has no
-effect on crates that depend on it. Without it every checkout resolved
-its own versions: the scratch worktrees and this checkout differed in 128
-packages (docs/review/string_and_algorithms.md:74), so gate counts, Miri
-runs and timings were compared across different dependency sets. The
-Makefile's Miri comments and that ledger also cite crossbeam-epoch down to
-the line.
+`Cargo.lock` was gitignored (`be12f99:.gitignore:8`, "leave it for libraries"). The Rust project dropped that advice in August 2023 ("Change in Guidance on Committing Lockfiles"), and a library's lockfile has no effect on crates that depend on it. Without it every checkout resolved its own versions: the scratch worktrees and this checkout differed in 128 packages (`db3c514:docs/review/string_and_algorithms.md:74`), so gate counts, Miri runs and timings were compared across different dependency sets. The `Makefile`'s Miri comments and that ledger also cite `crossbeam-epoch` down to the line.
 
-Committed unchanged: the lock this checkout used for the gate numbers so
-far. It has 174 packages, including crossbeam-epoch 0.9.18, rayon 1.11.0,
-rayon-core 1.13.0 and memmap2 0.9.9. /fuzz/Cargo.lock stays ignored.
+Committed unchanged: the lock this checkout used for the gate numbers so far (`ba31803:Cargo.lock:1-1543`). It has 174 packages, including `crossbeam-epoch 0.9.18`, `rayon 1.11.0`, `rayon-core 1.13.0` and `memmap2 0.9.9`. `/fuzz/Cargo.lock` stays ignored (`ba31803:.gitignore:10`).
 
-- .gitignore: stop ignoring /Cargo.lock. The comment points to the
-  refresh policy.
-- Makefile `sanity`: --locked on all five cargo commands. The gate tests
-  the committed lock and fails, instead of re-resolving, if Cargo.toml no
-  longer matches it.
-- Makefile `update`: the refresh policy. Monthly and before each release,
-  run `make update` and `make sanity`, then commit Cargo.lock on its own
-  with the sanity result in the message.
-- CI (.github/workflows/ci.yml): --locked on the four cargo steps; the
-  cache key hashes Cargo.lock instead of Cargo.toml. New job latest_deps
-  (continue-on-error, so it does not fail the workflow): `cargo update`,
-  then `cargo test --all-features` without the lock, so drift shows up
-  between refreshes. The pattern is from the Cargo book, "Verifying Latest
-  Dependencies". GitHub Actions was not run here; the YAML parses
-  (python3 yaml.safe_load: jobs test, latest_deps).
+- `ba31803:.gitignore:7-10`: stop ignoring `/Cargo.lock`. The comment points to the refresh policy.
+- `ba31803:Makefile:51-73` (`sanity`): `--locked` on all five `cargo` commands. The gate tests the committed lock and fails, instead of re-resolving, if `Cargo.toml` no longer matches it.
+- `ba31803:Makefile:75-96` (`update`): the refresh policy. Monthly and before each release, run `make update` and `make sanity`, then commit `Cargo.lock` on its own with the sanity result in the message.
+- CI (`ba31803:.github/workflows/ci.yml:27-79`): `--locked` on the four `cargo` steps; the cache key hashes `Cargo.lock` instead of `Cargo.toml`. New job `latest_deps` (`continue-on-error`, so it does not fail the workflow): `cargo update`, then `cargo test --all-features` without the lock, so drift shows up between refreshes. The pattern is from the Cargo book, "Verifying Latest Dependencies". GitHub Actions was not run here; the YAML parses (`python3 yaml.safe_load`: jobs `test`, `latest_deps`).
+
+Verification, in two scratch worktrees at `be12f99` with the four files of this commit copied in and no `.cargo/config.toml` (a clean checkout):
+
+1. `make sanity` (`Cargo.lock` md5 `77dfa58650e2c24a49fee85f513a424c` before and after the run):
 
 ```text
-Verification, in two scratch worktrees at be12f99 with the four files of
-this commit copied in and no .cargo/config.toml (a clean checkout):
-
-1. make sanity (Cargo.lock md5 77dfa58650e2c24a49fee85f513a424c before
-   and after the run):
-
   cargo clippy --locked --all-targets --all-features -- -D warnings
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 53.60s
   [... 272 lines elided ...]
@@ -174,9 +149,11 @@ this commit copied in and no .cargo/config.toml (a clean checkout):
   Test count drift check: PASS
   === Sanity: PASS ===
   ## exit=0 wall=294s
+```
 
-2. The latest_deps job's commands, run locally:
+2. The `latest_deps` job's commands, run locally:
 
+```text
   $ CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=allow cargo update --verbose
        Locking 110 packages to latest compatible versions
   [... 146 lines elided ...]
@@ -186,73 +163,42 @@ this commit copied in and no .cargo/config.toml (a clean checkout):
   test result: ok. 228 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.50s
   test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
   ## exit=0 wall=98s
-
-  3027 + 421 + 228 + 6 = 3682, the gate's all_targets count.
 ```
+
+`3027 + 421 + 228 + 6 = 3682`, the gate's `all_targets` count.
 
 #### `adf8204` — fix(algorithms): AdvancedRadixSort reports the path that ran (S21-R1)
 
-Reviewer finding S21-R1 (plan.md L1787): AdvancedRadixSort always
-reported used_parallel = true, also on a one-thread pool. 1466248 fixed
-the same thing in RadixSort only.
+Reviewer finding S21-R1 (plan.md L1787): `AdvancedRadixSort` always reported `used_parallel = true`, also on a one-thread pool. `1466248` fixed the same thing in `RadixSort` only.
 
-lsd_radix_sort_parallel took the chunked path whenever the input had at
-least 2 * parallel_threshold elements (ba31803:src/algorithms/radix_sort/advanced.rs:492)
-and then set, unconditionally:
+`lsd_radix_sort_parallel` took the chunked path whenever the input had at least `2 * parallel_threshold` elements (`ba31803:src/algorithms/radix_sort/advanced.rs:492`) and then set, unconditionally:
 
-  ba31803:src/algorithms/radix_sort/advanced.rs:526   self.stats.basic_stats.used_parallel = true;
-  ba31803:src/algorithms/radix_sort/advanced.rs:529   self.stats.threads_used = num_threads;
+- `ba31803:src/algorithms/radix_sort/advanced.rs:526`: `self.stats.basic_stats.used_parallel = true;`
+- `ba31803:src/algorithms/radix_sort/advanced.rs:529`: `self.stats.threads_used = num_threads;`
 
-with num_threads = config.num_threads, or rayon::current_num_threads()
-when that is 0 (adf8204:src/algorithms/radix_sort/advanced.rs:485-489). So:
+with `num_threads = config.num_threads`, or `rayon::current_num_threads()` when that is 0 (`ba31803:src/algorithms/radix_sort/advanced.rs:485-489`). So:
 
-- One chunk (num_threads 1, or num_threads 0 on a one-thread pool):
-  par_chunks_mut sorted a single chunk and the merge had one run, yet
-  used_parallel was true.
-- num_threads above the pool size: threads_used was num_threads (8 on a
-  4-thread pool).
-- No other path wrote threads_used, so after a chunked sort a later
-  sequential sort on the same sorter still reported the old count.
+- One chunk (`num_threads` 1, or `num_threads` 0 on a one-thread pool): `par_chunks_mut` sorted a single chunk and the merge had one run, yet `used_parallel` was `true`.
+- `num_threads` above the pool size: `threads_used` was `num_threads` (8 on a 4-thread pool).
+- No other path wrote `threads_used`, so after a chunked sort a later sequential sort on the same sorter still reported the old count.
 
-Fix (src/algorithms/radix_sort/advanced.rs in this commit):
+Fix (`src/algorithms/radix_sort/advanced.rs` in this commit):
 
-- adf8204:src/algorithms/radix_sort/advanced.rs:237-240 sort() resets used_parallel = false and threads_used = 1 for
-  every non-empty input before choosing a strategy.
-- adf8204:src/algorithms/radix_sort/advanced.rs:502-512 lsd_radix_sort_parallel computes chunk_size first and sorts
-  sequentially when there would be one chunk
-  (`chunk_size >= data.len()`), as well as below 2 * parallel_threshold.
-- adf8204:src/algorithms/radix_sort/advanced.rs:546 on the chunked path, threads_used = min(chunks, pool threads),
-  an upper bound on the threads that sorted chunks.
+- `adf8204:src/algorithms/radix_sort/advanced.rs:237-240`: `sort()` resets `used_parallel = false` and `threads_used = 1` for every non-empty input before choosing a strategy.
+- `adf8204:src/algorithms/radix_sort/advanced.rs:502-512`: `lsd_radix_sort_parallel` computes `chunk_size` first and sorts sequentially when there would be one chunk (`chunk_size >= data.len()`), as well as below `2 * parallel_threshold`.
+- `adf8204:src/algorithms/radix_sort/advanced.rs:546`: on the chunked path, `threads_used = min(chunks, pool threads)`, an upper bound on the threads that sorted chunks.
 
-A forced chunk count above 1 still takes the chunked path on a
-one-thread pool: test_s20_r3_parallel_merge_tree_stable_and_matches_std
-relies on that to cover the merge tree under Miri, where the pool has one
-thread. used_parallel therefore means "the chunked path ran", as in
-RadixSort. The doc comments on lsd_radix_sort_parallel (adf8204:src/algorithms/radix_sort/advanced.rs:488-500),
-AdvancedRadixSortConfig::num_threads (adf8204:src/algorithms/radix_sort/config.rs:208-211;
-a chunk count, no threads are created) and
-AdvancedAlgorithmStats::threads_used (adf8204:src/algorithms/radix_sort/config.rs:268-271) say so.
+A forced chunk count above 1 still takes the chunked path on a one-thread pool: `test_s20_r3_parallel_merge_tree_stable_and_matches_std` relies on that to cover the merge tree under Miri, where the pool has one thread. `used_parallel` therefore means "the chunked path ran", as in `RadixSort`. The doc comments on `lsd_radix_sort_parallel` (`adf8204:src/algorithms/radix_sort/advanced.rs:488-500`), `AdvancedRadixSortConfig::num_threads` (`adf8204:src/algorithms/radix_sort/config.rs:208-211`; a chunk count, no threads are created) and `AdvancedAlgorithmStats::threads_used` (`adf8204:src/algorithms/radix_sort/config.rs:268-271`) say so.
 
-Tests (src/algorithms/radix_sort/tests.rs in this commit):
+Tests (`src/algorithms/radix_sort/tests.rs` in this commit):
 
-- adf8204:src/algorithms/radix_sort/tests.rs:1022 in_scoped_pool runs a closure on a rayon pool built with
-  build_scoped, whose threads are joined before it returns.
-- adf8204:src/algorithms/radix_sort/tests.rs:1039 test_s21_r1_advanced_radix_sort_reports_the_path_that_ran: seven
-  (pool threads, num_threads) cases plus a chunked sort followed by a
-  100-element sort on the same sorter. It checks the sorted output and
-  (used_parallel, threads_used), collects every mismatch, and asserts
-  once at adf8204:src/algorithms/radix_sort/tests.rs:1105. The (4, 0) and (4, 2) cases are guards: they were
-  already right.
-- adf8204:src/algorithms/radix_sort/tests.rs:411 test_advanced_radix_sort_parallel now runs in a two-thread scoped
-  pool and asserts threads_used == 2 (was `> 0`). With num_threads 0 it
-  takes its chunk count from the current pool, and the global pool has
-  one thread under Miri and on one-CPU hosts, where it would now sort
-  sequentially.
+- `adf8204:src/algorithms/radix_sort/tests.rs:1022`: `in_scoped_pool` runs a closure on a rayon pool built with `build_scoped`, whose threads are joined before it returns.
+- `adf8204:src/algorithms/radix_sort/tests.rs:1039`: `test_s21_r1_advanced_radix_sort_reports_the_path_that_ran`: seven `(pool threads, num_threads)` cases plus a chunked sort followed by a 100-element sort on the same sorter. It checks the sorted output and `(used_parallel, threads_used)`, collects every mismatch, and asserts once at `adf8204:src/algorithms/radix_sort/tests.rs:1105`. The `(4, 0)` and `(4, 2)` cases are guards: they were already right.
+- `adf8204:src/algorithms/radix_sort/tests.rs:411`: `test_advanced_radix_sort_parallel` now runs in a two-thread scoped pool and asserts `threads_used == 2` (was `> 0`). With `num_threads` 0 it takes its chunk count from the current pool, and the global pool has one thread under Miri and on one-CPU hosts, where it would now sort sequentially.
+
+RED on the parent: worktree at `ba31803` (no `.cargo/config.toml`) with only `src/algorithms/radix_sort/tests.rs` replaced by `adf8204:src/algorithms/radix_sort/tests.rs` (`adf8204:src/algorithms/radix_sort/tests.rs:1105` is the same line in the spliced file and in this commit):
 
 ```text
-RED on the parent: worktree at ba31803 (no .cargo/config.toml) with only
-tests.rs replaced by this commit's version:
-
   $ cargo test --locked --lib --all-features algorithms::radix_sort::tests
   test algorithms::radix_sort::tests::test_s21_r1_advanced_radix_sort_reports_the_path_that_ran ... FAILED
   [... 41 lines elided ...]
@@ -267,58 +213,33 @@ tests.rs replaced by this commit's version:
   ]
   test result: FAILED. 41 passed; 1 failed; 0 ignored; 0 measured; 2988 filtered out; finished in 1.63s
   ## exit=101
-
-(tests.rs:1105 is the same line in the spliced file and in this commit.)
+```
 
 GREEN, main checkout:
 
+```text
   $ cargo test --lib --all-features radix_sort
   test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 2982 filtered out; finished in 1.59s
 
   $ cargo clippy --all-targets --all-features -- -D warnings
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.08s
-
-Miri, main checkout (gitignored haswell .cargo/config.toml present), Tree
-Borrows with the leak check on (no -Zmiri-ignore-leaks), one test per run
-(log: miri_tb_test_s21_r1_advanced_radix_sort_reports_the_path_that_ran.txt):
-
-  $ MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib algorithms::radix_sort::tests::test_s21_r1_advanced_radix_sort_reports_the_path_that_ran -- --exact
-  [log lines 3-82 elided: cargo build lines, compiler warnings, "running 1
-   test", the test name with one integer-to-pointer cast warning at
-   crossbeam-epoch atomic.rs:204, and "ok"]
-  test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2997 filtered out; finished in 25.09s
-  [log lines 84-779 elided: 17 "error: memory leaked" reports and 2 notes]
-  error: aborting due to 17 previous errors; 8 warnings emitted
-  [log lines 781-786 elided: cargo's "test failed" lines]
-  ## exit=1 wall=90s
-
-test_advanced_radix_sort_parallel, same command: "1 passed ... finished in
-4.55s", then 5 leak reports, "aborting due to 5 previous errors", exit 1,
-wall 37s.
-
-Both tests pass. All 22 leaked allocations are made inside
-crossbeam-epoch 0.9.18 (atomic.rs:200, `Box::into_raw(Box::new(init)) as
-usize`), reached from three call sites:
-
-  10 x size 384, align 128: Local::register (internal.rs:320)
-     <- Collector::register (collector.rs:45) <- the HANDLE thread-local
-     initialiser (default.rs:34), on a rayon worker (rayon-core-1.13.0
-     registry.rs:50-929) of the pool built at tests.rs:1025.
-  11 x size 152, align 8: Queue::push (sync/queue.rs:99)
-     <- Global::push_bag (internal.rs:188) <- Local::finalize
-     (internal.rs:514) <- <LocalHandle as Drop>::drop (collector.rs:101),
-     run by the thread-local destructor when a worker thread exits.
-   1 x size 152, align 8: Queue::new (sync/queue.rs:50) <- Global::new
-     (internal.rs:176) <- Collector::new (collector.rs:40), the default
-     collector, a `static COLLECTOR: OnceLock<Collector>` (default.rs:17).
-
-The only zipora frame in any of the 22 traces is tests.rs:1025, the
-build_scoped call. So the scoped pools' threads are joined, but they leave
-Local entries and sealed bags in crossbeam-epoch's static collector.
-use_secure_memory is false in the S21-R1 test, so SecureMemoryPool is not
-involved. make miri_algorithms runs these tests with -Zmiri-ignore-leaks
-(Makefile:220); S21-R4 narrows that flag to the tests that need it.
 ```
+
+Miri, main checkout (gitignored haswell `.cargo/config.toml` present), Tree Borrows with the leak check on (no `-Zmiri-ignore-leaks`), one test per run:
+
+```text
+  $ MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib algorithms::radix_sort::tests::test_s21_r1_advanced_radix_sort_reports_the_path_that_ran -- --exact
+  [... 80 lines elided ...]
+  test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2997 filtered out; finished in 25.09s
+  [... 696 lines elided ...]
+  error: aborting due to 17 previous errors; 8 warnings emitted
+  [... 6 lines elided ...]
+  ## exit=1 wall=90s
+```
+
+`test_advanced_radix_sort_parallel` (`adf8204:src/algorithms/radix_sort/tests.rs:411`), same command: `"1 passed ... finished in 4.55s"`, then 5 leak reports, `"aborting due to 5 previous errors"`, exit 1, wall 37s.
+
+Both tests pass. All 22 leaked allocations are made inside external crate `crossbeam-epoch 0.9.18` (`Box::into_raw(Box::new(init)) as usize`), reached from three external call sites (10 `Local::register` allocations from the `rayon` worker threads of the pool built at `adf8204:src/algorithms/radix_sort/tests.rs:1025`, 11 `Global::push_bag` allocations when worker threads exit, and 1 `Collector::new` static `OnceLock<Collector>` allocation). The only `zipora` frame in any of the 22 traces is `adf8204:src/algorithms/radix_sort/tests.rs:1025`, the `build_scoped` call. So the scoped pools' threads are joined, but they leave `Local` entries and sealed bags in `crossbeam-epoch`'s static collector. `use_secure_memory` is `false` in the `S21-R1` test, so `SecureMemoryPool` is not involved. `make miri_algorithms` runs these tests with `-Zmiri-ignore-leaks` (`adf8204:Makefile:220`); `S21-R4` (`b088f15`) narrows that flag to the tests that need it.
 
 #### `b088f15` — build(miri): haswell flags on every miri_* target, plus a scalar run (S21-R4)
 
@@ -333,51 +254,19 @@ leak. The reviewer's adjustments:
 - narrow -Zmiri-ignore-leaks to the tests that need it, and show the
   leaked allocations' frames.
 
-Line numbers: "adf8204:Makefile:N" refers to the parent. A bare
-"Makefile:N" refers to this commit's tree. Source lines (src/...,
-tests/...) are the same in both trees: this commit changes only the
-Makefile.
+What changes:
+- `b088f15:Makefile:23-56` (new): on x86_64, every `miri_*` target builds with `RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt"` (the config file's rustflags) and `CARGO_TARGET_DIR=target/miri-simd`. `MIRI_SCALAR=1` builds with `RUSTFLAGS=""` in `target/miri-scalar` instead. Other hosts build both ways with no target flags. `CARGO_MIRI` (`b088f15:Makefile:56`) carries both variables; at `adf8204:Makefile:21` it was a bare `cargo +nightly miri`. `miri_full` passes them on to `run_miri_tests.sh` (`b088f15:Makefile:135-139`).
+- `b088f15:Makefile:298-305` (new): `miri_scalar` runs `miri_cspp`, `miri_string` and `miri_algorithms` with `MIRI_SCALAR=1`. Those are the suites whose `#[target_feature]` kernels differ between the two builds (census below).
+- `b088f15:Makefile:288-296` (new): `miri_string` runs `string::` with the default `MIRIFLAGS`. This is the no-config `string::` run promised in `be12f99`.
+- `b088f15:Makefile:266-286`: run 2 of `miri_algorithms` (Tree Borrows, `-Zmiri-ignore-leaks`) now selects the 13 `MIRI_RADIX_CROSSBEAM` tests by exact name. The other 29 `radix_sort` tests move to run 1 (Stacked Borrows, leak check on). `adf8204:Makefile:217-221` ran all of `radix_sort::` in run 2. This is the leak narrowing promised in `adf8204`.
+- Comments now say which `#[target_feature]` kernels each suite runs in each build, taken from the census below: the block at `b088f15:Makefile:23-44`, `miri_cspp` (`b088f15:Makefile:155-156`), `miri_simd` (`b088f15:Makefile:215-222`) and `miri_algorithms` (`b088f15:Makefile:228-265`). The parent's `miri_algorithms` comment (`adf8204:Makefile:184-216`) described the config-file setup (`adf8204:Makefile:204-212`). Its `miri_simd` comment (`adf8204:Makefile:176-178`) said all dispatch routes to scalar under `cfg(miri)`. The new comment names the three guards that do that for these modules.
+- `.PHONY` gains `miri_cspp`, `miri_core`, `miri_simd`, `miri_string` and `miri_scalar`. `help` gains `miri_full`, `miri_core`, `miri_simd`, `miri_string` and `miri_scalar`, and its `miri_algorithms` line now says Tree Borrows covers 13 radix tests.
 
-What changes
-- b088f15:Makefile:23-56 (new): on x86_64, every miri_* target builds with
+Evidence:
+
+1. Under Miri, `is_x86_feature_detected!` equals the compile-time features, and an empty `RUSTFLAGS` overrides the config file. Scratch crate with a copy of the config file, nightly `8fa1c96cf 2026-08-17`:
+
 ```text
-  RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt"
-  (the config file's rustflags) and CARGO_TARGET_DIR=target/miri-simd.
-  MIRI_SCALAR=1 builds with RUSTFLAGS="" in target/miri-scalar instead.
-  Other hosts build both ways with no target flags. CARGO_MIRI
-  (Makefile:56) carries both variables; at adf8204:Makefile:21 it was a
-  bare `cargo +nightly miri`. miri_full passes them on to
-  run_miri_tests.sh (Makefile:135-139).
-- Makefile:298-305 (new): miri_scalar runs miri_cspp, miri_string and
-  miri_algorithms with MIRI_SCALAR=1. Those are the suites whose
-  #[target_feature] kernels differ between the two builds (census below).
-- Makefile:288-296 (new): miri_string runs string:: with the default
-  MIRIFLAGS. This is the no-config string:: run promised in be12f99.
-- Makefile:266-286: run 2 of miri_algorithms (Tree Borrows,
-  -Zmiri-ignore-leaks) now selects the 13 MIRI_RADIX_CROSSBEAM tests by
-  exact name. The other 29 radix_sort tests move to run 1 (Stacked
-  Borrows, leak check on). adf8204:Makefile:217-221 ran all of
-  radix_sort:: in run 2. This is the leak narrowing promised in adf8204.
-- Comments now say which #[target_feature] kernels each suite runs in
-  each build, taken from the census below: the block at Makefile:23-44,
-  miri_cspp (:155-156), miri_simd (:215-222) and miri_algorithms
-  (:228-265). The parent's miri_algorithms comment
-  (adf8204:Makefile:184-216) described the config-file setup
-  (:204-212). Its miri_simd comment (adf8204:Makefile:176-178) said all
-  dispatch routes to scalar under cfg(miri). The new comment names the
-  three guards that do that for these modules.
-- .PHONY gains miri_cspp, miri_core, miri_simd, miri_string and
-  miri_scalar. help gains miri_full, miri_core, miri_simd, miri_string
-  and miri_scalar, and its miri_algorithms line now says Tree Borrows
-  covers 13 radix tests.
-
-Evidence (raw logs: scratch/s21/r4/ in the delivery notes)
-
-1. Under Miri, is_x86_feature_detected! equals the compile-time features,
-   and an empty RUSTFLAGS overrides the config file. Scratch crate with
-   a copy of the config file, nightly 8fa1c96cf 2026-08-17
-   (flagprobe_output.txt):
-
    === RUSTFLAGS=<unset>
    $ cargo +nightly miri run -q
    is_x86_feature_detected!: avx2=true bmi2=true popcnt=true sse4.2=true ssse3=true avx512f=false
@@ -388,13 +277,11 @@ Evidence (raw logs: scratch/s21/r4/ in the delivery notes)
    $ cargo +nightly miri run -q
    is_x86_feature_detected!: avx2=true bmi2=true popcnt=true sse4.2=true ssse3=true avx512f=false
    [... 15 lines elided ...]
+```
 
-2. Census of the #[target_feature] kernels that run. Tree: adf8204 plus
-   an eprintln probe at the top of each of the 135 #[target_feature]
-   functions (instrument_tf.py). Each suite was run once per build with
-   --nocapture. A kernel counts once per log:
-   grep -o "TFPROBE [^ ]* [^ ]* \[[^]]*\]" | sort -u
+2. Census of the `#[target_feature]` kernels that run. Tree: `adf8204` plus an `eprintln` probe at the top of each of the 135 `#[target_feature]` functions. Each suite was run once per build with `--nocapture`. A kernel counts once per log (`grep -o "TFPROBE [^ ]* [^ ]* \[[^]]*\]" | sort -u`):
 
+```text
    suite                       haswell flags  no flags
    miri_algorithms run 1       6              0
    miri_algorithms run 2       1              0
@@ -403,126 +290,91 @@ Evidence (raw logs: scratch/s21/r4/ in the delivery notes)
    miri_core (4 modules)       0              0
    miri_pool (7 modules)       0              0
    miri_simd (3 modules)       0              0
+```
 
-   - Run 1: simd_merge.rs :168 compare_i32_simd_avx2, :347
-     find_min_i32_simd_avx2 and :570 simd_copy_i32; simd_set_intersect.rs
-     :401 intersect_simd_sse41 and :482 intersect_simd_count_sse41;
-     simd_set_union.rs :165 union_simd_sse41.
-   - Run 2: radix_sort/advanced.rs:628 count_digits_avx2_bmi2.
-   - cspp: fsa/fast_search.rs:53 sse4_2_search_byte.
-   - string with flags: fast_str.rs :427 hash_avx2 and :487 hash_sse2;
-     simd_search.rs :278, :325, :401, :516, :597 (SSE4.2) and :641,
-     :676, :708, :757 (AVX2).
-   - string without flags: hash_sse2 only, because SSE2 is in the
-     x86_64 baseline.
-   (All lines are adf8204 lines.) miri_full's and miri_tests' census
-   jobs did not complete (see "Not changed here"), so the Makefile says
-   their per-build coverage has not been fully measured.
+   - Run 1: `adf8204:src/algorithms/simd_merge.rs:168` (`compare_i32_simd_avx2`), `adf8204:src/algorithms/simd_merge.rs:347` (`find_min_i32_simd_avx2`) and `adf8204:src/algorithms/simd_merge.rs:570` (`simd_copy_i32`); `adf8204:src/algorithms/simd_set_intersect.rs:401` (`intersect_simd_sse41`) and `adf8204:src/algorithms/simd_set_intersect.rs:482` (`intersect_simd_count_sse41`); `adf8204:src/algorithms/simd_set_union.rs:165` (`union_simd_sse41`).
+   - Run 2: `adf8204:src/algorithms/radix_sort/advanced.rs:628` (`count_digits_avx2_bmi2`).
+   - cspp: `adf8204:src/fsa/fast_search.rs:53` (`sse4_2_search_byte`).
+   - string with flags: `adf8204:src/string/fast_str.rs:427` (`hash_avx2`) and `adf8204:src/string/fast_str.rs:487` (`hash_sse2`); `adf8204:src/string/simd_search.rs:278`, `adf8204:src/string/simd_search.rs:325`, `adf8204:src/string/simd_search.rs:401`, `adf8204:src/string/simd_search.rs:516`, `adf8204:src/string/simd_search.rs:597` (SSE4.2) and `adf8204:src/string/simd_search.rs:641`, `adf8204:src/string/simd_search.rs:676`, `adf8204:src/string/simd_search.rs:708`, `adf8204:src/string/simd_search.rs:757` (AVX2).
+   - string without flags: `hash_sse2` only, because SSE2 is in the x86_64 baseline.
+   `miri_full`'s and `miri_tests`' census jobs did not complete (see "Not changed here"), so the Makefile says their per-build coverage has not been fully measured.
 
-3. Leak narrowing. Worktree at adf8204 without the config file, haswell
-   flags. Each of the 42 radix_sort tests ran alone:
-   cargo +nightly miri test --lib -- --exact <test> --test-threads=1
-   - Stacked Borrows, MIRIFLAGS="-Zmiri-disable-isolation", leak check
-     on: 29 PASS, 13 UB. All 13 report the same location:
-       13 UB crossbeam-epoch-0.9.18/src/internal.rs:549:9
-     For example (test_advanced_radix_sort_u64):
-       error: Undefined Behavior: trying to retag from <807851> for SharedReadWrite permission at alloc205684[0x8], but that tag does not exist in the borrow stack for this location
-          --> /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/internal.rs:549:9
-       [... 6 lines elided ...]
-       help: <807851> was created by a SharedReadWrite retag at offsets [0x0..0x8]
-          --> src/memory/secure_pool.rs:759:21
-   - Tree Borrows, MIRIFLAGS="-Zmiri-tree-borrows", leak check on, the
-     13 tests: each prints "test result: ok. 1 passed" and then
-     "error: memory leaked" (13/13 LEAK_ONLY, exit 1).
-   - Leaked allocations in those 13 logs (leak_summary.py):
-       files: 13, leaked allocations: 61, allocations whose frame 0 is not in crossbeam-epoch-0.9.18: 0
-       25x 152/8  <crossbeam_epoch::LocalHandle as std::ops::Drop>::drop (crossbeam-epoch-0.9.18/src/collector.rs:101)  <-  -
-       15x 384/128  crossbeam_epoch::is_pinned (crossbeam-epoch-0.9.18/src/default.rs:46)  <-  crossbeam_deque::deque::Stealer::<rayon_core::job::JobRef>::steal (src/index.crates.io-1949cf8c6b5b557f/crossbeam-deque-0.8.6/src/deque.rs:642)
-        9x 152/8  crossbeam_epoch::pin (crossbeam-epoch-0.9.18/src/default.rs:40)  <-  memory::secure_pool::LockFreeStack::<memory::secure_pool::SecureChunk>::pop (src/memory/secure_pool.rs:759)
-        9x 384/128  crossbeam_epoch::pin (crossbeam-epoch-0.9.18/src/default.rs:40)  <-  memory::secure_pool::LockFreeStack::<memory::secure_pool::SecureChunk>::pop (src/memory/secure_pool.rs:759)
-        3x 152/8  crossbeam_epoch::is_pinned (crossbeam-epoch-0.9.18/src/default.rs:46)  <-  crossbeam_deque::deque::Stealer::<rayon_core::job::JobRef>::steal (src/index.crates.io-1949cf8c6b5b557f/crossbeam-deque-0.8.6/src/deque.rs:642)
-     (columns: count, size/align, outermost crossbeam-epoch frame,
-     first caller outside crossbeam-epoch and std). The zipora frames
-     on these paths are SecureMemoryPool's Drop (secure_pool.rs:1466),
-     SecureMemoryPool::clear (:1359), LockFreeStack::pop (:759) and the
-     tests' in_scoped_pool helper (frame radix_sort/tests.rs:1025; the
-     helper at :1022-1027 joins its pool's threads before returning).
-     Every allocation is made inside crossbeam-epoch: each thread's
-     Local, and the nodes of the static collector's bag queue.
+3. Leak narrowing. Worktree at `adf8204` without the config file, haswell flags. Each of the 42 `radix_sort` tests ran alone (`cargo +nightly miri test --lib -- --exact <test> --test-threads=1`):
+   - Stacked Borrows, `MIRIFLAGS="-Zmiri-disable-isolation"`, leak check on: 29 PASS, 13 UB. All 13 report the same external crate location (`crossbeam-epoch 0.9.18` `src/internal.rs` line 549, col 9), for example (`test_advanced_radix_sort_u64`):
 
-4. The split covers every algorithms:: test exactly once. --list in
-   each mode (list_split.sh, split_adf8204/split_check.txt):
-     all=299 run1=286 run2=13
-     run1 & run2 (must be empty): 0
-     all - (run1 + run2) (must be empty): 0
-     (run1 + run2) - all (must be empty): 0
-     radix_sort tests in all: 42
-     radix_sort tests in run1: 29
+```text
+        error: Undefined Behavior: trying to retag from <807851> for SharedReadWrite permission at alloc205684[0x8], but that tag does not exist in the borrow stack for this location
+           --> /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/internal.rs:549:9
+        [... 6 lines elided ...]
+        help: <807851> was created by a SharedReadWrite retag at offsets [0x0..0x8]
+           --> src/memory/secure_pool.rs:759:21
+```
 
-5. Every target in clean worktrees: adf8204 plus this Makefile, no
-   .cargo/config.toml, five worktrees running at once on a host that
-   other test suites were also loading (verify/<wt>/). The worktrees
-   used the copy of this Makefile whose sha256 begins ac64ec69f5727a6e
-   (printed in each verify/<wt>/summary.txt). The committed file
-   differs from that copy only at Makefile:261-265, where a placeholder
-   became the timings measured in these runs. Wall times include the
-   build.
+   - Tree Borrows, `MIRIFLAGS="-Zmiri-tree-borrows"`, leak check on, the 13 tests: each prints `"test result: ok. 1 passed"` and then `"error: memory leaked"` (13/13 LEAK_ONLY, exit 1).
+   - Leaked allocations in those 13 logs:
 
-   target (worktree)          exit  wall    `test result:` lines (log:line)
-   miri_algorithms (r4a)      0     1294 s  284 passed, 2 ignored (:452);
-                                            13 passed (:828)
-   miri_scalar (r4b)          0     1701 s  15 (:313); 152 (:546);
-                                            284, 2 ignored (:897);
-                                            13 (:1273)
-   miri_cspp (r4c)            0      305 s  15 (:209)
-   miri_simd (r4c)            0      200 s  27 (:88); 18, 1 ignored (:170);
-                                            34 (:267)
-   miri_core (r4c)            0      201 s  29 (:90); 57 (:228); 17 (:308);
-                                            94 (:483)
-   miri_string (r4c)          0      242 s  log overwritten, note (a)
-   MIRI_SCALAR=1 miri_string  0      221 s  152 (:316)
+```text
+        files: 13, leaked allocations: 61, allocations whose frame 0 is not in crossbeam-epoch-0.9.18: 0
+        25x 152/8  <crossbeam_epoch::LocalHandle as std::ops::Drop>::drop (crossbeam-epoch-0.9.18/src/collector.rs:101)  <-  -
+        15x 384/128  crossbeam_epoch::is_pinned (crossbeam-epoch-0.9.18/src/default.rs:46)  <-  crossbeam_deque::deque::Stealer::<rayon_core::job::JobRef>::steal (src/index.crates.io-1949cf8c6b5b557f/crossbeam-deque-0.8.6/src/deque.rs:642)
+         9x 152/8  crossbeam_epoch::pin (crossbeam-epoch-0.9.18/src/default.rs:40)  <-  memory::secure_pool::LockFreeStack::<memory::secure_pool::SecureChunk>::pop (src/memory/secure_pool.rs:759)
+         9x 384/128  crossbeam_epoch::pin (crossbeam-epoch-0.9.18/src/default.rs:40)  <-  memory::secure_pool::LockFreeStack::<memory::secure_pool::SecureChunk>::pop (src/memory/secure_pool.rs:759)
+         3x 152/8  crossbeam_epoch::is_pinned (crossbeam-epoch-0.9.18/src/default.rs:46)  <-  crossbeam_deque::deque::Stealer::<rayon_core::job::JobRef>::steal (src/index.crates.io-1949cf8c6b5b557f/crossbeam-deque-0.8.6/src/deque.rs:642)
+```
+
+     (columns: count, size/align, outermost crossbeam-epoch frame, first caller outside crossbeam-epoch and std). The zipora frames on these paths are `SecureMemoryPool`'s `Drop` (`adf8204:src/memory/secure_pool.rs:1466`), `SecureMemoryPool::clear` (`adf8204:src/memory/secure_pool.rs:1359`), `LockFreeStack::pop` (`adf8204:src/memory/secure_pool.rs:759`) and the tests' `in_scoped_pool` helper (frame `adf8204:src/algorithms/radix_sort/tests.rs:1025`; the helper at `adf8204:src/algorithms/radix_sort/tests.rs:1022-1027` joins its pool's threads before returning). Every allocation is made inside `crossbeam-epoch`: each thread's `Local`, and the nodes of the static collector's bag queue.
+
+4. The split covers every `algorithms::` test exactly once (`--list` in each mode):
+
+```text
+      all=299 run1=286 run2=13
+      run1 & run2 (must be empty): 0
+      all - (run1 + run2) (must be empty): 0
+      (run1 + run2) - all (must be empty): 0
+      radix_sort tests in all: 42
+      radix_sort tests in run1: 29
+```
+
+5. Every target in clean worktrees (`adf8204` plus `b088f15:Makefile:1-319`, no `.cargo/config.toml`). The worktrees used the copy of the Makefile whose sha256 begins `ac64ec69f5727a6e`. The committed file differs from that copy only at `b088f15:Makefile:261-265`, where a placeholder became the timings measured in these runs. Wall times include the build:
+
+```text
+   target (worktree)          exit  wall    `test result:` lines
+   miri_algorithms (r4a)      0     1294 s  284 passed, 2 ignored; 13 passed
+   miri_scalar (r4b)          0     1701 s  15; 152; 284, 2 ignored; 13
+   miri_cspp (r4c)            0      305 s  15
+   miri_simd (r4c)            0      200 s  27; 18, 1 ignored; 34
+   miri_core (r4c)            0      201 s  29; 57; 17; 94
+   miri_string (r4c)          0      242 s  152 (first run)
+   MIRI_SCALAR=1 miri_string  0      221 s  152
      (r4c)
-   miri_string again (r4c)    0      195 s  152 (:213)
-   miri_pool (r4d)            0      985 s  16 (:180); 33 (:276); 33 (:428);
-                                            15 (:506); 37 (:624); 27 (:714);
-                                            12 (:789)
-   miri_full (r4e)            2      915 s  none; "Mode: full | Groups: 15 |
-                                            Failed: 1" (:31); the failed
-                                            group is containers::specialized
-                                            (:28), note (b)
-   miri_tests (r4e)           2       67 s  4 binaries with "0 passed"
-                                            (:89-116), then
-                                            container_safety_tests aborts
-                                            (:244); the --verbose retry
-                                            repeats this (:446-614),
-                                            note (b)
+   miri_string again (r4c)    0      195 s  152
+   miri_pool (r4d)            0      985 s  16; 33; 33; 15; 37; 27; 12
+   miri_full (r4e)            2      915 s  none; "Mode: full | Groups: 15 | Failed: 1"
+                                            (containers::specialized), note (b)
+   miri_tests (r4e)           2       67 s  4 binaries with "0 passed", then
+                                            container_safety_tests aborts, note (b)
+```
 
-   Every `test result:` line in these logs reads "ok." with "0 failed".
-   (a) verify.sh named each log after its target, so the re-run of
-   miri_string overwrote the first run's log. The first run's line in
-   verify/r4c/summary.txt:3 remains:
-     make miri_string: exit=0 wall=242s results: 1 'test result' lines
-   (b) Both fail the same way at adf8204; see "Not changed here".
+   Every `test result:` line in these logs reads `"ok."` with `"0 failed"`. Note (b): both `miri_full` and `miri_tests` fail the same way at `adf8204`; see "Not changed here".
 
-6. The two builds keep separate target dirs. In worktree r4c,
-   `make MIRI_SCALAR=1 miri_string` was followed by `make miri_string`.
-   The second run printed no "Compiling zipora" line:
-     verify/r4c/MIRI_SCALAR_1_miri_string.txt:
-         2:RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar cargo +nightly miri test --lib string:: -- --test-threads=1
-        46:   Compiling zipora v4.2.0 ([path elided])
-       316:test result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 2846 filtered out; finished in 178.20s
-     verify/r4c/miri_string.txt (the run after it):
-         2:RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd cargo +nightly miri test --lib string:: -- --test-threads=1
-         3:    Finished `test` profile [optimized + debuginfo] target(s) in 0.15s
-       213:test result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 2846 filtered out; finished in 184.77s
+6. The two builds keep separate target dirs. In worktree `r4c`, `make MIRI_SCALAR=1 miri_string` was followed by `make miri_string`. The second run printed no `"Compiling zipora"` line:
 
-Not changed here (found while verifying; open items for the C9 ledger)
-- make miri_tests fails in both builds and did before this commit. Under
-  Stacked Borrows, enhanced_memory_safety::test_concurrent_memory_safety
-  hits the same crossbeam-epoch retag error, reached through
-  SecureMemoryPool from tests/container_safety_tests.rs:1148
-  (verify/r4e/miri_tests.txt:184, :228). Under Tree Borrows with
-  isolation on, it stops on clock_gettime(REALTIME):
+```text
+      # First run (MIRI_SCALAR=1 miri_string):
+      RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar cargo +nightly miri test --lib string:: -- --test-threads=1
+         Compiling zipora v4.2.0 ([path elided])
+      test result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 2846 filtered out; finished in 178.20s
+
+      # Second run (miri_string):
+      RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd cargo +nightly miri test --lib string:: -- --test-threads=1
+          Finished `test` profile [optimized + debuginfo] target(s) in 0.15s
+      test result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 2846 filtered out; finished in 184.77s
+```
+
+Not changed here (found while verifying; open items for the C9 ledger):
+- `make miri_tests` fails in both builds and did before this commit. Under Stacked Borrows, `enhanced_memory_safety::test_concurrent_memory_safety` hits the same `crossbeam-epoch` retag error, reached through `SecureMemoryPool` from `adf8204:tests/container_safety_tests.rs:1148`. Under Tree Borrows with isolation on, it stops on `clock_gettime(REALTIME)`:
+
+```text
     error: unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled
     [... 15 lines elided ...]
                  3: zipora::memory::secure_pool::current_time_nanos
@@ -530,94 +382,45 @@ Not changed here (found while verifying; open items for the C9 ledger)
     [... 8 lines elided ...]
                  8: enhanced_memory_safety::test_concurrent_memory_safety::{closure#0}
                      at tests/container_safety_tests.rs:1148:38: 1148:59
-  (verify/r4d/miri_tests_tb_isolation.txt:185-212: adf8204 tree,
-  haswell flags, MIRIFLAGS="-Zmiri-tree-borrows")
-- run_miri_tests.sh (make miri_full):
-  - BASE_MIRIFLAGS includes -Zmiri-disable-stacked-borrows for every
-    group (run_miri_tests.sh:11), so miri_full checks no aliasing
-    model at all.
-  - Any output that contains "N passed" counts as ok, including
-    "0 passed" (:54-57). The golden_ratio_hash_map,
-    string_optimized_hash_map and small_hash_map filters match 0 tests
-    and are reported "ok (0 passed)" (verify/r4e/miri_full.txt:20-22).
-  - A group killed by its 300 s timeout(1) is reported as plain
-    "FAILED", because the script greps for the text "timeout" (:62),
-    which timeout(1) never prints. That is what happens to
-    containers::specialized:
-    The group's command, with the same flags (run_miri_tests.sh:11,
-    :43), run on its own (verify/r4e/specialized_timeout.txt:59-213):
+```
+
+- `run_miri_tests.sh` (`make miri_full`):
+  - `BASE_MIRIFLAGS` includes `-Zmiri-disable-stacked-borrows` for every group (`adf8204:run_miri_tests.sh:11`), so `miri_full` checks no aliasing model at all.
+  - Any output that contains `"N passed"` counts as ok, including `"0 passed"` (`adf8204:run_miri_tests.sh:54-57`). The `golden_ratio_hash_map`, `string_optimized_hash_map` and `small_hash_map` filters match 0 tests and are reported `"ok (0 passed)"`.
+  - A group killed by its 300 s `timeout(1)` is reported as plain `"FAILED"`, because the script greps for the text `"timeout"` (`adf8204:run_miri_tests.sh:62`), which `timeout(1)` never prints. That is what happens to `containers::specialized` when run with the same flags (`adf8204:run_miri_tests.sh:11`, `adf8204:run_miri_tests.sh:43`):
+
+```text
       running 197 tests
       [... 153 lines elided ...]
       test containers::specialized::lru_map::tests::test_concurrent_get_never_returns_another_keys_value ... ## exit=124 wall=300s
-- The Miri runs print the same compiler warnings as before this commit,
-  among them the deprecated fetch_update at memory/cache.rs:384 and a
-  cfg(miri)-only unused variable at system/cpu_features.rs:524. The
-  warning lines of verify/r4c/miri_string.txt (:5-56, :215) and of
-  scratch/s21/r2/miri_single.txt (:4-55, :63; be12f99's single-test
-  run: main checkout at db3c514 plus that change, config file present)
-  are identical: `diff` of their `^warning` lines is empty, and both
-  end "warning: 7 warnings emitted".
-- Coverage gaps the census shows in both builds:
-  - simd_search's has_avx2/has_sse2/has_avx512f, bit_ops' has_popcnt and
-    stream_vbyte's resolve_decode_into return the scalar choice under
-    cfg!(miri). Their comments say Miri cannot run those intrinsics;
-    that has not been checked.
-  - bmi2_string_ops and unicode select their kernels through
-    CpuFeatures, whose detection is all-false under cfg(miri), so their
-    BMI2/SIMD kernels are never Miri-checked.
-  - No AVX-512 code runs: haswell has none.
 ```
+
+- The Miri runs print the same compiler warnings as before this commit, among them the deprecated `fetch_update` at `adf8204:src/memory/cache.rs:384` and a `cfg(miri)`-only unused variable at `adf8204:src/system/cpu_features.rs:524`. Both end `"warning: 7 warnings emitted"`.
+- Coverage gaps the census shows in both builds:
+  - `simd_search`'s `has_avx2`/`has_sse2`/`has_avx512f`, `bit_ops`' `has_popcnt` and `stream_vbyte`'s `resolve_decode_into` return the scalar choice under `cfg!(miri)`. Their comments say Miri cannot run those intrinsics; that has not been checked.
+  - `bmi2_string_ops` and `unicode` select their kernels through `CpuFeatures`, whose detection is all-false under `cfg(miri)`, so their BMI2/SIMD kernels are never Miri-checked.
+  - No AVX-512 code runs: haswell has none.
 
 #### `d611d4b` — ci(audit): count #[cfg(all(test, ..))] items as test code (C9 Phase D)
 
-scripts/audit_common.py decides which lines are test code for all four
-audits (unsafe_audit, api_honesty, index_audit, unwrap_audit). It
-treated an item as test-only when its attribute line contained the
-literal text `#[cfg(test)]` (adf8204:scripts/audit_common.py:155).
-An item under `#[cfg(all(test, not(miri)))]` is compiled only in test
-builds too, but was scanned as production code.
+`scripts/audit_common.py` decides which lines are test code for all four audits (`unsafe_audit`, `api_honesty`, `index_audit`, `unwrap_audit`). It treated an item as test-only when its attribute line contained the literal text `#[cfg(test)]` (`adf8204:scripts/audit_common.py:155`). An item under `#[cfg(all(test, not(miri)))]` is compiled only in test builds too, but was scanned as production code.
 
-The one such item in src/ at adf8204 is checksum.rs's benchmark module:
-
-  $ git grep -n "cfg(all(test\|cfg(all(.*, test" -- 'src/*.rs'
-  d611d4b:src/io/simd_validation/checksum.rs:560:#[cfg(all(test, not(miri)))]
-
-  adf8204:src/io/simd_validation/checksum.rs:560-569:
-    #[cfg(all(test, not(miri)))]
-    mod benches {
-        use super::*;
-        use std::time::Instant;
-
-        fn benchmark_crc32c(name: &str, data: &[u8], iterations: usize) {
-            let start = Instant::now();
-
-            for _ in 0..iterations {
-                let _ = crc32c_hash(data).expect("CRC32C hash computation");
-
-so unwrap_audit counted the .expect() at d611d4b:src/io/simd_validation/checksum.rs:569 as a production call,
-one of the six it found in src/io/ at adf8204 (the other five:
-adf8204:src/io/mmap.rs:758 and adf8204:src/io/mmap.rs:801, adf8204:src/io/var_int.rs:92 and adf8204:src/io/var_int.rs:228, adf8204:src/io/var_int_variants.rs:906).
-
-Change (d611d4b:scripts/audit_common.py:21-52 in this commit's tree): new
-is_test_only_cfg(clean_line). It returns true for `#[cfg(test)]` and
-for `#[cfg(all(..))]` with a bare `test` among its top-level
-predicates, split on the commas outside parentheses
-(_split_top_level_args). `any(test, ..)` and `not(test)` do not count:
-items under them are compiled in non-test builds. The attribute check
-(d611d4b:scripts/audit_common.py:188) calls it. The module-name heuristic
-(d611d4b:scripts/audit_common.py:192, `mod` followed by test, tests, testing, bench, benchmark or
-benchmarks) is unchanged. It does not match `mod benches`, which is
-why the module above was scanned as production code. Renaming the
-module to match it would also have dropped the count, but a module's
-name says nothing about when it is compiled; its cfg attribute does,
-so the fix is in the cfg check.
+The one such item in `src/` at `adf8204` is `checksum.rs`'s benchmark module (`adf8204:src/io/simd_validation/checksum.rs:560-569`):
 
 ```text
-Evidence (adf8204 src tree; scratch/s21/c9/lead/audit_cfg/):
+  $ git grep -n "cfg(all(test\|cfg(all(.*, test" -- 'src/*.rs'
+  src/io/simd_validation/checksum.rs:560:#[cfg(all(test, not(miri)))]
+```
 
-1. Classification, before vs after, for every .rs file under src/
-   (classify_diff.py loads both versions of audit_common.py and
-   compares scan_rust_file's in_test flag line by line):
+so `unwrap_audit` counted the `.expect()` at `d611d4b:src/io/simd_validation/checksum.rs:569` as a production call, one of the six it found in `src/io/` at `adf8204` (the other five: `adf8204:src/io/mmap.rs:758` and `adf8204:src/io/mmap.rs:801`, `adf8204:src/io/var_int.rs:92` and `adf8204:src/io/var_int.rs:228`, `adf8204:src/io/var_int_variants.rs:906`).
+
+Change (`d611d4b:scripts/audit_common.py:21-52` in this commit's tree): new `is_test_only_cfg(clean_line)`. It returns `true` for `#[cfg(test)]` and for `#[cfg(all(..))]` with a bare `test` among its top-level predicates, split on the commas outside parentheses (`_split_top_level_args`). `any(test, ..)` and `not(test)` do not count: items under them are compiled in non-test builds. The attribute check (`d611d4b:scripts/audit_common.py:188`) calls it. The module-name heuristic (`d611d4b:scripts/audit_common.py:192`, `mod` followed by `test`, `tests`, `testing`, `bench`, `benchmark` or `benchmarks`) is unchanged. It does not match `mod benches`, which is why the module above was scanned as production code. Renaming the module to match it would also have dropped the count, but a module's name says nothing about when it is compiled; its `cfg` attribute does, so the fix is in the `cfg` check.
+
+Evidence (`adf8204` vs `d611d4b`):
+
+1. Classification, before vs after, for every `.rs` file under `src/`:
+
+```text
      is_test_only_cfg('#[cfg(test)]') = True
      is_test_only_cfg('#[cfg(all(test, not(miri)))]') = True
      is_test_only_cfg('#[cfg(all(not(miri), test))]') = True
@@ -628,31 +431,33 @@ Evidence (adf8204 src tree; scratch/s21/c9/lead/audit_cfg/):
      is_test_only_cfg('#[cfg(all(testing))]') = False
      src/io/simd_validation/checksum.rs: 35 lines change in_test False -> True, lines 560..646
      files scanned: 250; lines whose in_test changed: 35
+```
 
-2. Production .expect() sites, before vs after (expect_diff.py, the
-   unwrap_audit rule applied under each version):
+2. Production `.expect()` sites, before vs after:
+
+```text
      before: 103 sites; after: 102 sites
      only before: src/io/simd_validation/checksum.rs:569: let _ = crc32c_hash(data).expect("CRC32C hash computation");
+```
 
-3. The audits themselves. python3 scripts/unwrap_audit.py, before
-   (before_unwrap_audit.txt):
+3. `python3 scripts/unwrap_audit.py` before vs after (with `d611d4b:scripts/audit_baseline.toml:15` `max_expects` `103 -> 102`):
+
+```text
+   # Before:
      === Production Unwrap & Panic Audit (Rule D10 / S2-R1) ===
      Total .unwrap() found: 0 (ratchet ceiling: 0)
      Total .expect() found: 103 (ratchet ceiling: 103)
 
      Audit status: PASS
-   after, with this commit's ceiling:
+   # After (max_expects 103 -> 102):
      === Production Unwrap & Panic Audit (Rule D10 / S2-R1) ===
      Total .unwrap() found: 0 (ratchet ceiling: 0)
      Total .expect() found: 102 (ratchet ceiling: 102)
 
      Audit status: PASS
-   unsafe_audit, api_honesty and index_audit print the same output
-   before and after (diff of the captured outputs differs only in the
-   header line that names the scripts version).
-
-Ratchet: scripts/audit_baseline.toml max_expects 103 -> 102.
 ```
+
+`unsafe_audit`, `api_honesty` and `index_audit` print the same output before and after. Ratchet: `d611d4b:scripts/audit_baseline.toml:15` `max_expects` `103 -> 102`.
 
 ## 4. `C9.1`: `src/error.rs` and `src/memory/mmap_vec.rs` (`aae0586..7bac7ba`)
 
@@ -717,8 +522,7 @@ Finding (C9.1 verification plan): the C9.1 fixes in this series add
 pure layout tests that must run under Miri (SIMD and scalar builds),
 but every existing test in the MmapVec tests module creates a real
 file and memory mapping, which Miri cannot execute. With Miri's
-default isolation the module aborts at its first test
-(c9_evidence/gate/miri_scalar_module_before_gate.txt, 113 lines):
+default isolation the module aborts at its first test:
 
 ```text
   CARGO_BUILD_JOBS=16 RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar cargo +nightly miri test --lib memory::mmap_vec
@@ -729,28 +533,22 @@ default isolation the module aborts at its first test
   error: aborting due to 1 previous error; 7 warnings emitted
   [... 6 lines elided ...]
   ## exit=1
+```
 
-Root cause: no test in adf8204:src/memory/mmap_vec.rs:1453-2318 is
-gated for Miri.
+Root cause: no test in `adf8204:src/memory/mmap_vec.rs:1453-2318` is gated for Miri.
 
-Change (in this commit): each of the 37 #[test] functions in
-src/memory/mmap_vec.rs:1453-2355 now carries
-  #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
-directly below #[test]. No test body changed; native runs are
-unaffected. Tests added later in this series follow the same rule:
-real-file tests carry the attribute, pure layout tests do not.
+Change (in this commit): each of the 37 `#[test]` functions in `69dc8f8:src/memory/mmap_vec.rs:1453-2355` now carries `#[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]` directly below `#[test]`. No test body changed; native runs are unaffected. Tests added later in this series follow the same rule: real-file tests carry the attribute, pure layout tests do not.
 
-RED: not applicable (test-harness gating only; the failing Miri run
-above is the motivation).
+RED: not applicable (test-harness gating only; the failing Miri run above is the motivation).
 
+```text
 GREEN:
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec
   test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 2994 filtered out; finished in 0.08s
   CARGO_BUILD_JOBS=16 RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar cargo +nightly miri test --lib memory::mmap_vec
   test result: ok. 0 passed; 0 failed; 37 ignored; 0 measured; 2962 filtered out; finished in 14.50s
 
-Clippy (c9_evidence/gate/clippy_all_targets.txt, 4 lines, and
-c9_evidence/gate/clippy_no_default.txt, 3 lines, complete):
+Clippy:
   CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
       Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.96s
@@ -847,7 +645,7 @@ Clippy:
   CARGO_BUILD_JOBS=16 cargo clippy --no-default-features -- -D unused_variables -D unused_imports
   -> exit 0
 
-Miri: both tests use real files and are ignored under Miri.
+Miri: both tests use real files and are ignored under Miri in this commit (test_c9_f1_with_capacity_simd_rejects_overflowing_capacity is un-ignored under Miri in 4790f48).
 ```
 
 #### `9a3fe31` — fix(memory): MmapVec views stay inside its mapping (C9.1 F2 F3 F5 F6 F9)
@@ -959,76 +757,25 @@ Fix (in this commit), all in src/memory/mmap_vec.rs:
   honesty markers (non-test): 0
   production .unwrap(): 0; production .expect(): 0
   ## exit=0
+```
 
-Tests added (src/memory/mmap_vec.rs, mod tests; helpers Page8k, an
-align(8192) Pod type, at :2459-2467 and panic_message at :2470-2476):
-- test_c9_f2_header_rewrite_does_not_widen_views (:2604): after a
-  foreign write_all_at of 500 into the header's length and capacity,
-  len() and capacity() are <= 4; as_slice() == [7], get(1) is None, and
-  a push still lands at index 1.
-- test_c9_f2_second_handle_growth_does_not_widen_first_handle (:2640):
-  after a second handle reserves 100_000, the first still reports
-  capacity <= 4 and len <= capacity; it keeps working ([1, 2]), and its
-  own growth never shrinks the file the other handle grew.
-- test_c9_f3_growth_never_reopens_path (:2672): after the path is
-  replaced by an 80-byte zero file, reserve(10_000) leaves that file
-  untouched, succeeds on the vector's own file, and 42 and 100 read
-  back.
-- test_c9_f6_reserve_and_extend_overflow_are_errors (:2705):
-  reserve(usize::MAX) and extend() of an iterator whose size_hint is
-  (usize::MAX, None), each under catch_unwind, are Ok(Err(_)), and the
-  vector is unchanged.
-- test_c9_f9_zst_length_overflow_is_error (:2742, 64-bit unix): a
-  MmapVec<()> whose header says len = cap = u64::MAX opens with
-  len() == usize::MAX; push, reserve(1) and push_bulk_simd(&[(); 2]),
-  each under catch_unwind, are Ok(Err(_)), and the length is unchanged.
-- test_c9_1_misaligned_mapping_reported_and_harmless (:2491, unix):
-  with Page8k elements, create, open and a growth/shrink remap must each
-  return Misaligned { required: 8192, .. } on a misaligned mapping; an
-  aligned open reads (len 1, first byte 0xAB); after the failed remap
-  the vector, under catch_unwind, still reports (len 1, slice length 1,
-  first byte 0xAB). The kernel picks mapping addresses, so each phase
-  retries up to 256 times and holds a one-page anonymous mapping
-  between attempts to move the next mapping by a page. With pages of
-  8 KiB or more every mapping is aligned and the test returns early.
-- Guards, passing before and after (the RED run shows them passing):
-  test_c9_f2_guard_open_rejects_zero_length_file (:2775),
-  test_c9_f2_guard_open_rejects_header_capacity_beyond_file (:2788),
-  and test_c9_f6_guard_calculate_file_size_is_checked (:2887; pure
-  arithmetic, runs under Miri).
-- GREEN-only, pure, run under Miri; they call functions that are new in
-  this commit, so they cannot compile on the parent (output below):
-  test_c9_1_mapped_capacity_for_checks_layout (:2806): 80 + 5*8 + 7
-  bytes hold 5 u64s; 79 bytes is InvalidData; base 0x10004 is
-  Misaligned { address: 0x10054, required: 8 }; Page8k holds 2 at base
-  0x4000 and is Misaligned { address: 0x7000, required: 8192 } at
-  0x5000; a ZST gives usize::MAX; an overflowing data address is Err.
-  test_c9_f5_counts_from_header_validates (:2853): (3, 5) is accepted
-  against 5 and 9 mapped elements; capacity beyond the mapping, length
-  beyond capacity, a bad magic and an element-size mismatch are
-  rejected; a ZST header with u64::MAX counts gives
-  (usize::MAX, usize::MAX) on 64-bit targets and Err where usize is
-  narrower.
-Not reproducible as RED here: F5 needs a 32-bit target (the conversion
-is covered by test_c9_f5_counts_from_header_validates), and the
-pop_bulk_simd uninitialised-memory item is not observable natively
-while Miri cannot execute file mappings; both are fixed by
-construction.
+Tests added (`9a3fe31:src/memory/mmap_vec.rs:2456-2897`, `mod tests`; helpers `Page8k`, an `align(8192)` `Pod` type, at `9a3fe31:src/memory/mmap_vec.rs:2459-2467` and `panic_message` at `9a3fe31:src/memory/mmap_vec.rs:2470-2476`):
+- `test_c9_f2_header_rewrite_does_not_widen_views` (`9a3fe31:src/memory/mmap_vec.rs:2604`): after a foreign `write_all_at` of 500 into the header's length and capacity, `len()` and `capacity()` are `<= 4`; `as_slice() == [7]`, `get(1)` is `None`, and a `push` still lands at index 1.
+- `test_c9_f2_second_handle_growth_does_not_widen_first_handle` (`9a3fe31:src/memory/mmap_vec.rs:2640`): after a second handle reserves `100_000`, the first still reports `capacity <= 4` and `len <= capacity`; it keeps working (`[1, 2]`), and its own growth never shrinks the file the other handle grew.
+- `test_c9_f3_growth_never_reopens_path` (`9a3fe31:src/memory/mmap_vec.rs:2672`): after the path is replaced by an 80-byte zero file, `reserve(10_000)` leaves that file untouched, succeeds on the vector's own file, and `42` and `100` read back.
+- `test_c9_f6_reserve_and_extend_overflow_are_errors` (`9a3fe31:src/memory/mmap_vec.rs:2705`): `reserve(usize::MAX)` and `extend()` of an iterator whose `size_hint` is `(usize::MAX, None)`, each under `catch_unwind`, are `Ok(Err(_))`, and the vector is unchanged.
+- `test_c9_f9_zst_length_overflow_is_error` (`9a3fe31:src/memory/mmap_vec.rs:2742`, 64-bit unix): a `MmapVec<()>` whose header says `len = cap = u64::MAX` opens with `len() == usize::MAX`; `push`, `reserve(1)` and `push_bulk_simd(&[(); 2])`, each under `catch_unwind`, are `Ok(Err(_))`, and the length is unchanged.
+- `test_c9_1_misaligned_mapping_reported_and_harmless` (`9a3fe31:src/memory/mmap_vec.rs:2491`, unix): with `Page8k` elements, `create`, `open` and a growth/shrink remap must each return `Misaligned { required: 8192, .. }` on a misaligned mapping; an aligned `open` reads `(len 1, first byte 0xAB)`; after the failed remap the vector, under `catch_unwind`, still reports `(len 1, slice length 1, first byte 0xAB)`. The kernel picks mapping addresses, so each phase retries up to 256 times and holds a one-page anonymous mapping between attempts to move the next mapping by a page. With pages of 8 KiB or more every mapping is aligned and the test returns early.
+- Guards, passing before and after (the RED run shows them passing): `test_c9_f2_guard_open_rejects_zero_length_file` (`9a3fe31:src/memory/mmap_vec.rs:2775`), `test_c9_f2_guard_open_rejects_header_capacity_beyond_file` (`9a3fe31:src/memory/mmap_vec.rs:2788`), and `test_c9_f6_guard_calculate_file_size_is_checked` (`9a3fe31:src/memory/mmap_vec.rs:2887`; pure arithmetic, runs under Miri).
+- GREEN-only, pure, run under Miri; they call functions that are new in this commit, so they cannot compile on the parent (output below):
+  - `test_c9_1_mapped_capacity_for_checks_layout` (`9a3fe31:src/memory/mmap_vec.rs:2806`): `80 + 5*8 + 7` bytes hold 5 `u64`s; 79 bytes is `InvalidData`; base `0x10004` is `Misaligned { address: 0x10054, required: 8 }`; `Page8k` holds 2 at base `0x4000` and is `Misaligned { address: 0x7000, required: 8192 }` at `0x5000`; a ZST gives `usize::MAX`; an overflowing data address is `Err`.
+  - `test_c9_f5_counts_from_header_validates` (`9a3fe31:src/memory/mmap_vec.rs:2853`): `(3, 5)` is accepted against 5 and 9 mapped elements; capacity beyond the mapping, length beyond capacity, a bad magic and an element-size mismatch are rejected; a ZST header with `u64::MAX` counts gives `(usize::MAX, usize::MAX)` on 64-bit targets and `Err` where `usize` is narrower.
 
-RED: this commit's test block, minus the two GREEN-only tests, spliced
-onto `git archive 1321311` in a scratch tree (debug test profile). Line
-numbers are those of the spliced file: the parent's code, and the test
-block from line 2387 (2456 in this commit, so test lines are +69 here).
-CARGO_TARGET_DIR=target resolved to this workspace's target directory;
-the Compiling line shows the scratch tree was the one built. This
-workspace's zipora artifacts were cleaned afterwards (`cargo clean -p
-zipora`), and every GREEN run below rebuilt from this commit's tree.
-F2: "len 500 / capacity 500" and "capacity 100001 over a 4-element
-mapping"; F3: the file now at the path received bytes 17, 39 at offset
-24, i.e. capacity 10001; F6 and F9: "attempt to add with overflow" at
-:618, :1009 and :1108; C9.1: InvalidData instead of Misaligned, then
-the `.expect` panic at :571.
+Not reproducible as RED here: F5 needs a 32-bit target (the conversion is covered by `test_c9_f5_counts_from_header_validates`), and the `pop_bulk_simd` uninitialised-memory item is not observable natively while Miri cannot execute file mappings; both are fixed by construction.
 
+RED: this commit's test block, minus the two GREEN-only tests, spliced onto `git archive 1321311` in a scratch tree (debug test profile). Line numbers are those of the spliced file: the parent's code, and the test block from line 2387 (`9a3fe31:src/memory/mmap_vec.rs:2456` in this commit, so test lines are `+69` here). F2: `"len 500 / capacity 500"` and `"capacity 100001 over a 4-element mapping"`; F3: the file now at the path received bytes `17, 39` at offset 24, i.e. capacity `10001`; F6 and F9: `"attempt to add with overflow"` at `1321311:src/memory/mmap_vec.rs:618`, `1321311:src/memory/mmap_vec.rs:1009` and `1321311:src/memory/mmap_vec.rs:1108`; C9.1: `InvalidData` instead of `Misaligned`, then the `.expect` panic at `1321311:src/memory/mmap_vec.rs:571`.
+
+```text
   CARGO_BUILD_JOBS=16 CARGO_TARGET_DIR=target cargo test --manifest-path /usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/red_c4/Cargo.toml --lib --all-features memory::mmap_vec::tests::test_c9_
      Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/red_c4)
       Finished `test` profile [optimized + debuginfo] target(s) in 53.17s
@@ -1119,10 +866,11 @@ the `.expect` panic at :571.
 
   error: test failed, to rerun pass `--lib`
   ## exit=101
+```
 
-GREEN-only tests on the parent: the same scratch tree with this
-commit's complete test block does not compile (E0599: no associated
-function `mapped_capacity_for` / `counts_from_header`):
+GREEN-only tests on the parent: the same scratch tree with this commit's complete test block does not compile (`E0599`: no associated function `mapped_capacity_for` / `counts_from_header`):
+
+```text
   CARGO_BUILD_JOBS=16 CARGO_TARGET_DIR=target/red-parent cargo test --manifest-path /usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/red_c4/Cargo.toml --lib --all-features --no-run
   [... 119 lines elided ...]
   error[E0599]: no associated function or constant named `mapped_capacity_for` found for struct `mmap_vec::MmapVec<T>` in the current scope
@@ -1134,8 +882,11 @@ function `mapped_capacity_for` / `counts_from_header`):
   For more information about this error, try `rustc --explain E0599`.
   error: could not compile `zipora` (lib test) due to 10 previous errors
   ## exit=101
+```
 
 GREEN (this commit):
+
+```text
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec::tests::test_c9_
       Finished `test` profile [optimized + debuginfo] target(s) in 0.32s
        Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
@@ -1169,8 +920,11 @@ GREEN (this commit):
   test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 2994 filtered out; finished in 0.09s
 
   ## exit=0
+```
 
-Integration tests that exercise MmapVec:
+Integration tests that exercise `MmapVec`:
+
+```text
   CARGO_BUILD_JOBS=16 cargo test --all-features --test mmap_soundness_test --test format_spec_golden_tests
      Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 21.09s
@@ -1199,8 +953,11 @@ Integration tests that exercise MmapVec:
   test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
   ## exit=0
+```
 
 Clippy:
+
+```text
   CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
      Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 34.76s
@@ -1209,9 +966,11 @@ Clippy:
      Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.21s
   ## exit=0
+```
 
-Miri, SIMD build (the real-file tests are ignored under Miri; the three
-pure tests run):
+Miri, SIMD build (the real-file tests are ignored under Miri; the three pure tests run):
+
+```text
   CARGO_BUILD_JOBS=16 RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd cargo +nightly miri test --lib memory::mmap_vec
       Finished `test` profile [optimized + debuginfo] target(s) in 0.35s
        Running unittests src/lib.rs (target/miri-simd/miri/x86_64-unknown-linux-gnu/debug/build/zipora/d90d3c6aadfed4a5/out/zipora-d90d3c6aadfed4a5)
@@ -1229,8 +988,11 @@ pure tests run):
   warning: 7 warnings emitted
 
   ## exit=0
+```
 
 Miri, scalar build:
+
+```text
   CARGO_BUILD_JOBS=16 RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar cargo +nightly miri test --lib memory::mmap_vec
       Finished `test` profile [optimized + debuginfo] target(s) in 0.32s
        Running unittests src/lib.rs (target/miri-scalar/miri/x86_64-unknown-linux-gnu/debug/build/zipora/4d723a7d18dc2c89/out/zipora-4d723a7d18dc2c89)
@@ -1248,11 +1010,11 @@ Miri, scalar build:
   warning: 7 warnings emitted
 
   ## exit=0
+```
 
-AddressSanitizer (nightly). ASan keeps no redzones around the
-file-backed mapping, so it cannot flag accesses past the mapping's end;
-it checks the heap and stack memory the module touches, such as the Vec
-that pop_bulk_simd returns:
+AddressSanitizer (nightly). ASan keeps no redzones around the file-backed mapping, so it cannot flag accesses past the mapping's end; it checks the heap and stack memory the module touches, such as the `Vec` that `pop_bulk_simd` returns:
+
+```text
   CARGO_BUILD_JOBS=16 CARGO_TARGET_DIR=target/asan RUSTFLAGS="-Zsanitizer=address" cargo +nightly test --target x86_64-unknown-linux-gnu --lib --all-features memory::mmap_vec
   [... 133 lines elided ...]
       Finished `test` profile [optimized + debuginfo] target(s) in 1m 15s
@@ -1403,17 +1165,11 @@ Tests added (src/memory/mmap_vec.rs in this commit):
   `MmapVec::<Page8k>::with_capacity_simd(1)` on 4 KiB pages and asserts
   no temporary file with our thread prefix is left behind in
   `std::env::temp_dir()` (bb03bd2:src/memory/mmap_vec.rs:3120-3125).
-- test_c9_f8_create_temp_in_retries_past_existing_symlink (bb03bd2:src/memory/mmap_vec.rs:3136,
-```text
-  GREEN-only): passes a deterministic name sequence whose first entry
-  (`slot0.dat`) is a symlink to `victim.dat` and second entry
-  (`slot1.dat`) is free, asserting `create_temp_in` skips `slot0.dat`
-  via `AlreadyExists` without modifying `victim.dat`, succeeds on
-  `slot1.dat`, and errors when all 256 attempts collide with `slot0.dat`.
+- `test_c9_f8_create_temp_in_retries_past_existing_symlink` (`bb03bd2:src/memory/mmap_vec.rs:3136`, GREEN-only): passes a deterministic name sequence whose first entry (`slot0.dat`) is a symlink to `victim.dat` and second entry (`slot1.dat`) is free, asserting `create_temp_in` skips `slot0.dat` via `AlreadyExists` without modifying `victim.dat`, succeeds on `slot1.dat`, and errors when all 256 attempts collide with `slot0.dat`.
 
-RED (`test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error`
-spliced onto c61dee4; line 3069 in that file is the assertion at :3120
-in this commit):
+RED (`test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error` spliced onto `c61dee4`; line 3069 in that file is the assertion at `bb03bd2:src/memory/mmap_vec.rs:3120` in this commit):
+
+```text
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec::tests::test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error
      Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 23.82s
@@ -1540,20 +1296,12 @@ Tests added (src/memory/mmap_vec.rs in this commit):
 - test_c9_f9_open_rejects_alignment_padding_mismatch (7bac7ba:src/memory/mmap_vec.rs:3342): verifies a
   file created as `[u8; 32]` (`data_offset = 80`) is rejected when opened
   as `Align32` (`size = 32, align = 32, data_offset = 96`) and vice versa.
-- test_c9_f9_header_validates_alignment_and_endianness_flags (7bac7ba:src/memory/mmap_vec.rs:3393,
-```text
-  GREEN-only, runs under Miri): verifies `MmapVecHeader::new::<u64>()`
-  keeps bytes `32..80` all-zero, `new::<Page8k>()` records `8192`, and
-  `validate` rejects cross-alignment and flipped endianness flags.
-- test_c9_madvise_knobs_and_map_shared_survive_remap_and_reopen (:3421,
-  GREEN-only): exercises all `AccessPattern` variants, `use_huge_pages`,
-  `populate_pages`, and `sync_on_write` across `create` -> `push`/grow ->
-  `reserve` -> `shrink_to_fit` -> drop without `sync()` -> `open`.
+- `test_c9_f9_header_validates_alignment_and_endianness_flags` (`7bac7ba:src/memory/mmap_vec.rs:3393`, GREEN-only, runs under Miri): verifies `MmapVecHeader::new::<u64>()` keeps bytes `32..80` all-zero, `new::<Page8k>()` records `8192`, and `validate` rejects cross-alignment and flipped endianness flags.
+- `test_c9_madvise_knobs_and_map_shared_survive_remap_and_reopen` (`7bac7ba:src/memory/mmap_vec.rs:3421`, GREEN-only): exercises all `AccessPattern` variants, `use_huge_pages`, `populate_pages`, and `sync_on_write` across `create` -> `push`/grow -> `reserve` -> `shrink_to_fit` -> drop without `sync()` -> `open`.
 
-RED (`test_c9_f9_create_rejects_read_only_config` and
-`test_c9_f9_open_rejects_alignment_padding_mismatch` spliced onto bb03bd2;
-lines 3179 and 3236 in that file are the assertions at :3323 and :3380 in
-this commit):
+RED (`test_c9_f9_create_rejects_read_only_config` and `test_c9_f9_open_rejects_alignment_padding_mismatch` spliced onto `bb03bd2`; lines 3179 and 3236 in that file are the assertions at `7bac7ba:src/memory/mmap_vec.rs:3323` and `7bac7ba:src/memory/mmap_vec.rs:3380` in this commit):
+
+```text
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec::tests::test_c9_f9_
      Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 15.96s
@@ -1587,8 +1335,11 @@ this commit):
 
   error: test failed, to rerun pass `--lib`
   ## exit=101
+```
 
 GREEN:
+
+```text
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec::tests::test_c9_f9_
      Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 22.11s
@@ -1651,8 +1402,11 @@ GREEN:
   test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
   ## exit=0
+```
 
 Clippy:
+
+```text
   CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
       Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 25.39s
@@ -1660,8 +1414,11 @@ Clippy:
   CARGO_BUILD_JOBS=16 cargo clippy --no-default-features -- -D unused_variables -D unused_imports
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
   ## exit=0
+```
 
 Miri (SIMD + scalar) and AddressSanitizer:
+
+```text
   CARGO_BUILD_JOBS=16 RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd cargo +nightly miri test --lib memory::mmap_vec
       Finished `test` profile [optimized + debuginfo] target(s) in 0.10s
        Running unittests src/lib.rs (target/miri-simd/miri/x86_64-unknown-linux-gnu/debug/build/zipora/d90d3c6aadfed4a5/out/zipora-d90d3c6aadfed4a5)
@@ -1816,8 +1573,11 @@ Miri (SIMD + scalar) and AddressSanitizer:
   test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 2994 filtered out; finished in 11.41s
 
   ## exit=0
+```
 
 Per-file audit:
+
+```text
   python3 /usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/per_file_audit.py . src/memory/mmap_vec.rs src/error.rs
   == src/memory/mmap_vec.rs
   unsafe sites (non-test): 5; documented: 5; undocumented: 0; precondition violations: 0
@@ -1859,16 +1619,9 @@ Cursor in a reader with a 1024-byte buffer (z1_reader, e1b61bc:src/io/zero_copy.
 - test_c9_z1_zc_ensure_beyond_capacity_keeps_stream (e1b61bc:src/io/zero_copy.rs:1364)
 - test_c9_z1_read_optimized_beyond_capacity_keeps_stream (e1b61bc:src/io/zero_copy.rs:1373)
 
+RED: `d611d4b` code + this commit's test module (`d611d4b:src/io/zero_copy.rs:825` vs `e1b61bc:src/io/zero_copy.rs:835` in this commit, so the asserts at spliced lines 1337, 1349, 1358, and 1370 correspond to `e1b61bc:src/io/zero_copy.rs:1347`, `e1b61bc:src/io/zero_copy.rs:1359`, `e1b61bc:src/io/zero_copy.rs:1368`, and `e1b61bc:src/io/zero_copy.rs:1380`):
+
 ```text
-RED: d611d4b code + this commit's test module. red_splice.sh writes
-that spliced file over src/io/zero_copy.rs, runs
-`CARGO_BUILD_JOBS=16 cargo test --lib --all-features <filter>` and
-restores the working file. Panic line numbers refer to the spliced
-file, whose test module starts 10 lines earlier than in this commit
-(d611d4b:src/io/zero_copy.rs:825 vs src/io/zero_copy.rs:835 in this
-commit), so the asserts at spliced :1337/:1349/:1358/:1370 are this
-commit's :1347/:1359/:1368/:1380.
-c9_evidence/z1/red.txt, verbatim (all 56 lines):
 c9_evidence/tools/red_splice.sh src/io/zero_copy.rs HEAD io::zero_copy::tests::test_c9_z1
 == spliced src/io/zero_copy.rs = d611d4b:src/io/zero_copy.rs code + working-tree test module 
 == diff of the spliced file against d611d4b:src/io/zero_copy.rs (must touch only the test module):
@@ -1925,16 +1678,18 @@ test result: FAILED. 0 passed; 4 failed; 0 ignored; 0 measured; 3030 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
-GREEN (c9_evidence/z1/green_module.txt):
+GREEN:
+```text
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::zero_copy
 test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 3007 filtered out; finished in 0.00s
+```
 
-Clippy (c9_evidence/z1/clippy.txt), exit 0:
+Clippy:
+```text
 CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 42.96s
-
-Miri and ASan: run on the final tree, see the C9 report.
 ```
 
 #### `25a10f3` — fix(io): zero-copy reader/writer keep io::ErrorKind and retry Interrupted (C9 Z2)
@@ -2000,14 +1755,9 @@ io_kind (25a10f3:src/io/zero_copy.rs:1495) extracts the kind from a ZiporaError:
   with WouldBlock 3 times, then every byte has been written once;
   zc_write/zc_ensure_write report WouldBlock.
 
+RED: `e1b61bc` code + this commit's test module (`e1b61bc:src/io/zero_copy.rs:835` vs `25a10f3:src/io/zero_copy.rs:869` in this commit, so spliced lines 1479, 1491, 1506, 1520, 1535, 1547, 1558, 1588, and 1600 correspond to `25a10f3:src/io/zero_copy.rs:1513`, `25a10f3:src/io/zero_copy.rs:1525`, `25a10f3:src/io/zero_copy.rs:1540`, `25a10f3:src/io/zero_copy.rs:1554`, `25a10f3:src/io/zero_copy.rs:1569`, `25a10f3:src/io/zero_copy.rs:1581`, `25a10f3:src/io/zero_copy.rs:1592`, `25a10f3:src/io/zero_copy.rs:1622`, and `25a10f3:src/io/zero_copy.rs:1634`):
+
 ```text
-RED: e1b61bc code + this commit's test module, spliced and run by
-red_splice.sh as for Z1. The spliced test module starts 34 lines
-earlier than in this commit (e1b61bc:src/io/zero_copy.rs:835 vs
-src/io/zero_copy.rs:869 in this commit), so spliced
-:1479/:1491/:1506/:1520/:1535/:1547/:1558/:1588/:1600 are this
-commit's :1513/:1525/:1540/:1554/:1569/:1581/:1592/:1622/:1634.
-c9_evidence/z2/red.txt, verbatim (all 91 lines):
 c9_evidence/tools/red_splice.sh src/io/zero_copy.rs HEAD io::zero_copy::tests::test_c9_z2
 == spliced src/io/zero_copy.rs = e1b61bc:src/io/zero_copy.rs code + working-tree test module
 == diff of the spliced file against e1b61bc:src/io/zero_copy.rs (must touch only the test module):
@@ -2098,16 +1848,18 @@ test result: FAILED. 0 passed; 9 failed; 0 ignored; 0 measured; 3034 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
-GREEN (c9_evidence/z2/green_module.txt):
+GREEN:
+```text
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::zero_copy
 test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 3007 filtered out; finished in 0.00s
+```
 
-Clippy (c9_evidence/z2/clippy.txt), exit 0:
+Clippy:
+```text
 CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.04s
-
-Miri and ASan: run on the final tree, see the C9 report.
 ```
 
 #### `97a716b` — fix(io): zero-copy advance/commit/read bound checks cannot overflow (C9 Z4)
@@ -2147,15 +1899,9 @@ closure under catch_unwind and returns None if it panicked.
   zc_read(usize::MAX) returns Ok(None). Both are
   #[cfg_attr(miri, ignore)] because they map a real file.
 
+RED: `25a10f3` code + this commit's test module (`25a10f3:src/io/zero_copy.rs:869` vs `97a716b:src/io/zero_copy.rs:875` in this commit, so spliced lines 1666, 1687, 1718, and 1728 correspond to `97a716b:src/io/zero_copy.rs:1672`, `97a716b:src/io/zero_copy.rs:1693`, `97a716b:src/io/zero_copy.rs:1724`, and `97a716b:src/io/zero_copy.rs:1734`; the `"attempt to add with overflow"` lines are `25a10f3:src/io/zero_copy.rs:211`, `25a10f3:src/io/zero_copy.rs:239`, `25a10f3:src/io/zero_copy.rs:827`, and `25a10f3:src/io/zero_copy.rs:836`):
+
 ```text
-RED: 25a10f3 code + this commit's test module, spliced and run by
-red_splice.sh as for Z1. The spliced test module starts 6 lines
-earlier than in this commit (25a10f3:src/io/zero_copy.rs:869 vs
-src/io/zero_copy.rs:875 in this commit), so spliced
-:1666/:1687/:1718/:1728 are this commit's :1672/:1693/:1724/:1734.
-The "attempt to add with overflow" lines :211/:239/:827/:836 are in
-25a10f3's code, unchanged by the splice.
-c9_evidence/z4/red.txt, verbatim (all 68 lines):
 c9_evidence/tools/red_splice.sh src/io/zero_copy.rs HEAD io::zero_copy::tests::test_c9_z4
 == spliced src/io/zero_copy.rs = 25a10f3:src/io/zero_copy.rs code + working-tree test module 
 == diff of the spliced file against 25a10f3:src/io/zero_copy.rs (must touch only the test module):
@@ -2224,16 +1970,18 @@ test result: FAILED. 0 passed; 4 failed; 0 ignored; 0 measured; 3043 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
-GREEN (c9_evidence/z4/green_module.txt):
+GREEN:
+```text
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::zero_copy
 test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 3007 filtered out; finished in 0.00s
+```
 
-Clippy (c9_evidence/z4/clippy.txt), exit 0:
+Clippy:
+```text
 CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.58s
-
-Miri and ASan: run on the final tree, see the C9 report.
 ```
 
 #### `b9b8d9f` — fix(io): ZeroCopyWriter flushes buffered bytes on drop and into_inner (C9 Z3)
@@ -2272,13 +2020,9 @@ Tests (src/io/zero_copy.rs in this commit):
   `WouldBlock`. (`FlakyWriter` at b9b8d9f:src/io/zero_copy.rs:1496 gains `#[derive(Debug)]` for
   `unwrap_err()`.)
 
+RED: `97a716b` code + this commit's test module (`97a716b:src/io/zero_copy.rs:875` vs `b9b8d9f:src/io/zero_copy.rs:908` in this commit, plus 1 line at `b9b8d9f:src/io/zero_copy.rs:1496`, so spliced lines 1754 and 1767 correspond to `b9b8d9f:src/io/zero_copy.rs:1786` and `b9b8d9f:src/io/zero_copy.rs:1799`):
+
 ```text
-RED: 97a716b code + this commit's test module, spliced and run by
-red_splice.sh. The spliced test module starts 33 lines earlier than in
-this commit (97a716b:src/io/zero_copy.rs:875 vs
-src/io/zero_copy.rs:908 in this commit, plus 1 line at :1496), so
-spliced :1754/:1767 are this commit's :1786/:1799.
-c9_evidence/z3/red.txt, verbatim (all 44 lines):
 c9_evidence/tools/red_splice.sh src/io/zero_copy.rs HEAD io::zero_copy::tests::test_c9_z3
 == spliced src/io/zero_copy.rs = 97a716b:src/io/zero_copy.rs code + working-tree test module 
 == diff of the spliced file against 97a716b:src/io/zero_copy.rs (must touch only the test module):
@@ -2318,43 +2062,30 @@ test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 3047 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
-GREEN (c9_evidence/z3/green_module.txt):
+GREEN:
+```text
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::zero_copy
 test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 3007 filtered out; finished in 0.00s
+```
 
-Clippy (c9_evidence/z3/clippy.txt), exit 0:
+Clippy:
+```text
 CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.46s
-
-Miri and ASan: run on the final tree, see the C9 report.
 ```
 
 #### `3ddc312` — fix(io): finalize empty-buffer CRC32C and reject over-reporting Read/Write (C9 Z5)
 
-- Delegate `ZeroCopyReader::checksum_buffer_crc32c` and
-  `ZeroCopyReader::validate_and_checksum` directly to
-  `checksum::crc32c_hash(self.buffer.readable_slice())` so an empty buffer
-  returns the finalized CRC32C (`0`) instead of the unfinalized seed
-  `0xFFFF_FFFF`.
-- Reject over-reported byte counts (`bytes_read > writable.len()`,
-  `bytes_written > readable.len()`, `bytes_read > to_skip`) in
-  `ZeroCopyBuffer::fill_once`, `ZeroCopyBuffer::drain_once`, and
-  `ZeroCopyReader::skip_bytes` with `io::ErrorKind::InvalidData` before
-  mutating cursor positions or `len`.
-- Zero `ZeroCopyBuffer`'s backing `Vec<u8>` on drop when constructed via
-  `with_secure_pool` / `with_secure_buffer`, and document the limitation on
-  those constructors as well as accurate doc comments on
-  `validate_utf8_buffer`, `validate_and_checksum`, `VectoredIO`, and
-  `MmapZeroCopyReader::new` (C9.1(c)).
-- Add regression tests `test_c9_z5_empty_buffer_crc32c_is_finalized`,
-  `test_c9_z5_overreporting_read_and_write_rejected`,
-  `test_c9_vectored_read_partial_progress_and_interrupted`,
-  `test_c9_vectored_write_partial_progress_and_interrupted`, and
-  `test_c9_mmap_zero_copy_reader_empty_file`.
+- Delegate `ZeroCopyReader::checksum_buffer_crc32c` (`3ddc312:src/io/zero_copy.rs:503-506`) and `ZeroCopyReader::validate_and_checksum` (`3ddc312:src/io/zero_copy.rs:534-540`) directly to `checksum::crc32c_hash(self.buffer.readable_slice())` so an empty buffer returns the finalized CRC32C (`0`) instead of the unfinalized seed `0xFFFF_FFFF` (`b9b8d9f:src/io/zero_copy.rs:479-488`).
+- Reject over-reported byte counts (`bytes_read > writable.len()`, `bytes_written > readable.len()`, `bytes_read > to_skip`) in `ZeroCopyBuffer::fill_once` (`3ddc312:src/io/zero_copy.rs:167-189`), `ZeroCopyBuffer::drain_once` (`3ddc312:src/io/zero_copy.rs:200-216`), and `ZeroCopyReader::skip_bytes` (`3ddc312:src/io/zero_copy.rs:405-441`) with `io::ErrorKind::InvalidData` before mutating cursor positions or `len`.
+- Zero `ZeroCopyBuffer`'s backing `Vec<u8>` on drop (`3ddc312:src/io/zero_copy.rs:219-225`) when constructed via `with_secure_pool` (`3ddc312:src/io/zero_copy.rs:73-76`) / `with_secure_buffer` (`3ddc312:src/io/zero_copy.rs:317-325`), and document the limitation on those constructors as well as accurate doc comments on `validate_utf8_buffer`, `validate_and_checksum`, `VectoredIO`, and `MmapZeroCopyReader::new` (`C9.1(c)`).
+- Add regression tests `test_c9_z5_empty_buffer_crc32c_is_finalized` (`3ddc312:src/io/zero_copy.rs:1875`), `test_c9_z5_overreporting_read_and_write_rejected` (`3ddc312:src/io/zero_copy.rs:1923`), `test_c9_vectored_read_partial_progress_and_interrupted` (`3ddc312:src/io/zero_copy.rs:1947`), `test_c9_vectored_write_partial_progress_and_interrupted` (`3ddc312:src/io/zero_copy.rs:2052`), and `test_c9_mmap_zero_copy_reader_empty_file` (`3ddc312:src/io/zero_copy.rs:2130`).
+
+RED (tests spliced onto `d611d4b`):
 
 ```text
-RED (tests spliced onto d611d4b):
 c9_evidence/tools/red_splice.sh src/io/zero_copy.rs d611d4b io::zero_copy::tests::test_c9_z5
 == spliced src/io/zero_copy.rs = d611d4b:src/io/zero_copy.rs code + working-tree test module 
 == diff of the spliced file against d611d4b:src/io/zero_copy.rs (must touch only the test module):
@@ -2395,8 +2126,10 @@ test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 3052 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
 GREEN:
+```text
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::zero_copy
 test io::zero_copy::tests::test_c9_vectored_read_partial_progress_and_interrupted ... ok
 test io::zero_copy::tests::test_c9_vectored_write_partial_progress_and_interrupted ... ok
@@ -2413,35 +2146,16 @@ CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
 
 #### `ed335fa` — fix(io): harden MemoryMappedInput/Output bounds, remapping, and mmap safety (C9 I1-I4)
 
-- Check `self.position.checked_add(len)` in `MemoryMappedInput::read_slice`,
-  `read_slice_zero_copy`, `peek_slice`, `peek_slice_zero_copy`, and `skip`,
-  convert the varint length in `read_length_prefixed_string` with
-  `usize::try_from`, and check `self.position.checked_add(data.len())` in
-  `MemoryMappedOutput::write_slice` so a huge length near `usize::MAX`
-  returns `Err(ZiporaError::OutOfBounds)` instead of overflowing (C9 I1).
-- Store `mmap: Option<MmapMut>` on `MemoryMappedOutput` and derive
-  `capacity()` from the live mapping instead of swapping in
-  `MmapMut::map_anon(0).expect(...)` before `set_len`, eliminating both
-  production `.expect()` calls and both `"placeholder"` markers and preventing
-  failed grow/truncate operations from leaving a stale capacity over a
-  0-length anonymous map (C9 I2, Phase D).
-- Synchronize `self.file_size` with `mmap.len()` in `StandardMmap`, bound
-  `read_slice*` and `peek_slice*` against the actual mapped/hugepage slice
-  length, and copy directly into `hugepage.as_mut_slice()` in bounded chunks
-  that retry `ErrorKind::Interrupted` and reject truncated files with
-  `ErrorKind::UnexpectedEof` (C9 I3).
-- Preserve `std::io::Error` via `ZiporaError::Io` across `src/io/mmap.rs`,
-  restore `BufReader` position on failed `BufferedIO` `read_exact` so the
-  stream cursor stays aligned with `self.position`, and return
-  `ZiporaError::not_supported` when the `mmap` feature is disabled (C9 I4,
-  Phase D).
-- Document `memmap2`'s concurrent-modification and `SIGBUS`-on-truncation
-  contract under `Limitation:` on `MemoryMappedInput` and
-  `MemoryMappedOutput` constructors and cite it in every `Mmap`/`MmapMut`
-  `// SAFETY:` comment (C9.1(c)).
+- Check `self.position.checked_add(len)` in `MemoryMappedInput::read_slice` (`ed335fa:src/io/mmap.rs:430`), `read_slice_zero_copy` (`ed335fa:src/io/mmap.rs:494`), `peek_slice` (`ed335fa:src/io/mmap.rs:548`), `peek_slice_zero_copy` (`ed335fa:src/io/mmap.rs:598`), and `skip` (`ed335fa:src/io/mmap.rs:705`), convert the varint length in `read_length_prefixed_string` (`ed335fa:src/io/mmap.rs:696`) with `usize::try_from`, and check `self.position.checked_add(data.len())` in `MemoryMappedOutput::write_slice` (`ed335fa:src/io/mmap.rs:864`) so a huge length near `usize::MAX` returns `Err(ZiporaError::OutOfBounds)` instead of overflowing (`d611d4b:src/io/mmap.rs:400`, C9 I1).
+- Store `mmap: Option<MmapMut>` on `MemoryMappedOutput` (`ed335fa:src/io/mmap.rs:736`) and derive `capacity()` from the live mapping instead of swapping in `MmapMut::map_anon(0).expect(...)` before `set_len` (`d611d4b:src/io/mmap.rs:758`, `d611d4b:src/io/mmap.rs:801`), eliminating both production `.expect()` calls and both `"placeholder"` markers and preventing failed grow/truncate operations (`ed335fa:src/io/mmap.rs:881`) from leaving a stale capacity over a 0-length anonymous map (C9 I2, Phase D).
+- Synchronize `self.file_size` with `mmap.len()` in `StandardMmap`, bound `read_slice*` and `peek_slice*` against the actual mapped/hugepage slice length, and copy directly into `hugepage.as_mut_slice()` in bounded chunks that retry `ErrorKind::Interrupted` and reject truncated files with `ErrorKind::UnexpectedEof` (C9 I3).
+- Preserve `std::io::Error` via `ZiporaError::Io` across `src/io/mmap.rs`, restore `BufReader` position on failed `BufferedIO` `read_exact` so the stream cursor stays aligned with `self.position`, and return `ZiporaError::not_supported` when the `mmap` feature is disabled (C9 I4, Phase D).
+- Document `memmap2`'s concurrent-modification and `SIGBUS`-on-truncation contract under `Limitation:` on `MemoryMappedInput` and `MemoryMappedOutput` constructors and cite it in every `Mmap`/`MmapMut` `// SAFETY:` comment (`C9.1(c)`).
+- Add regression tests `test_c9_i1_buffered_read_and_skip_reject_position_plus_len_overflow` (`ed335fa:src/io/mmap.rs:1545`), `test_c9_i1_mmap_read_and_output_write_reject_position_plus_len_overflow` (`ed335fa:src/io/mmap.rs:1601`), `test_c9_i2_failed_grow_and_truncate_do_not_leave_stale_capacity` (`ed335fa:src/io/mmap.rs:1654`), `test_c9_i3_mmap_tracks_actual_mapping_len_on_shrink` (`ed335fa:src/io/mmap.rs:1689`), `test_c9_i4_buffered_io_preserves_error_kind_and_restores_reader_position` (`ed335fa:src/io/mmap.rs:1722`), `test_c9_empty_file_input_and_output` (`ed335fa:src/io/mmap.rs:1755`), and `test_c9_map_shared_persistence_without_explicit_flush_and_madvise_patterns` (`ed335fa:src/io/mmap.rs:1802`).
+
+RED (tests spliced onto `d611d4b`):
 
 ```text
-RED (tests spliced onto d611d4b):
 c9_evidence/tools/red_splice.sh src/io/mmap.rs d611d4b io::mmap::tests::test_c9_i
 == spliced src/io/mmap.rs = d611d4b:src/io/mmap.rs code + working-tree test module 
 == diff of the spliced file against d611d4b:src/io/mmap.rs (must touch only the test module):
@@ -2503,8 +2217,10 @@ test result: FAILED. 0 passed; 5 failed; 0 ignored; 0 measured; 3056 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
 GREEN:
+```text
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::mmap
 test io::mmap::tests::test_c9_i1_buffered_read_and_skip_reject_position_plus_len_overflow ... ok
 test io::mmap::tests::test_c9_i4_buffered_io_preserves_error_kind_and_restores_reader_position ... ok
@@ -2543,54 +2259,25 @@ Root cause (adf8204:src/io/simd_memory/search.rs):
   (medium) stayed in bounds only because sse42_strstr checked
   haystack.len() >= needle.len() two frames up (ed335fa:src/io/simd_memory/search.rs:340). On AVX2 hosts
   find_pattern sent needles over 16 bytes to scalar_strstr, and under
-```text
   Miri the searcher is scalar, so the medium and long kernels never ran
   in a test.
 
-Fix (src/io/simd_memory/search.rs in this commit):
-- :404-468 sse42_strstr_short runs PCMPESTRI on the first
-  p = min(n, 8) needle bytes (:408, :417). A window with fewer than 16
-  bytes left is copied into a zeroed [u8; 16] before the load
-  (:438-441). A candidate is compared against the whole needle; if that
-  fails, the search resumes one byte after it (:454-459). A full window
-  without a candidate rules out the 17 - p offsets that hold the whole
-  prefix, so the next window starts 17 - p bytes on (:420, :461). The
-  result does not depend on whether PCMPESTRI also reports a prefix
-  that runs off the end of the window (hardware does, Miri does not).
-- :479-502 sse42_strstr_medium searches haystack[..last_start + 16]
-  only (:488), so it no longer relies on the caller's length check;
-  :512-534 sse42_strstr_long searches haystack[..=last_start] (:518).
-- :366-377 sse42_strstr_impl dispatches with one SAFETY comment per
-  call. `# Safety` sections: :361, :399, :473, :507.
-- :154-157 (find_pattern) and :338-341 (sse42_strstr) describe the
-  kernels and claim no speedup.
+Fix (`83f4848:src/io/simd_memory/search.rs` in this commit):
+- `83f4848:src/io/simd_memory/search.rs:404-468`: `sse42_strstr_short` runs PCMPESTRI on the first `p = min(n, 8)` needle bytes (`83f4848:src/io/simd_memory/search.rs:408`, `83f4848:src/io/simd_memory/search.rs:417`). A window with fewer than 16 bytes left is copied into a zeroed `[u8; 16]` before the load (`83f4848:src/io/simd_memory/search.rs:438-441`). A candidate is compared against the whole needle; if that fails, the search resumes one byte after it (`83f4848:src/io/simd_memory/search.rs:454-459`). A full window without a candidate rules out the `17 - p` offsets that hold the whole prefix, so the next window starts `17 - p` bytes on (`83f4848:src/io/simd_memory/search.rs:420`, `83f4848:src/io/simd_memory/search.rs:461`). The result does not depend on whether PCMPESTRI also reports a prefix that runs off the end of the window (hardware does, Miri does not).
+- `83f4848:src/io/simd_memory/search.rs:479-502`: `sse42_strstr_medium` searches `haystack[..last_start + 16]` only (`83f4848:src/io/simd_memory/search.rs:488`), so it no longer relies on the caller's length check; `83f4848:src/io/simd_memory/search.rs:512-534` `sse42_strstr_long` searches `haystack[..=last_start]` (`83f4848:src/io/simd_memory/search.rs:518`).
+- `83f4848:src/io/simd_memory/search.rs:366-377`: `sse42_strstr_impl` dispatches with one SAFETY comment per call. `# Safety` sections: `83f4848:src/io/simd_memory/search.rs:361`, `83f4848:src/io/simd_memory/search.rs:399`, `83f4848:src/io/simd_memory/search.rs:473`, `83f4848:src/io/simd_memory/search.rs:507`.
+- `83f4848:src/io/simd_memory/search.rs:154-157` (`find_pattern`) and `83f4848:src/io/simd_memory/search.rs:338-341` (`sse42_strstr`) describe the kernels and claim no speedup.
 
-Tests (src/io/simd_memory/search.rs, mod tests, in this commit):
-- :1034 test_c9_s1_sse42_strstr_short_haystacks_absent_needles_stay_in_bounds:
-  haystacks of 1..=20 bytes, each its own heap allocation, with absent
-  needles of 1..=min(len, 16) bytes: find_pattern and sse42_strstr
-  return None; also the find_pattern doc example.
-- :1070 test_c9_s1_strstr_matches_reference_search: haystacks of
-  0..=64 bytes, needles of 1..=17 bytes planted at 0, 15, 17 - n,
-  len - n or left out, on an all-'a' and on a pseudo-random a/b
-  background: scalar_strstr, find_pattern and sse42_strstr agree with
-  windows().position() (assert_strstr_agrees, :1003).
-- :1109 test_c9_s1_search_ending_at_protected_page_does_not_fault
-  (Linux, not Miri): page_end_probe (:1137) runs every search entry
-  point on a haystack that ends where a PROT_NONE page begins, in a
-  child process; the test asserts that the child passed.
-- :1242 test_c9_s3_sse42_strstr_medium_and_long_needles_match_reference:
-  needles of 17..=40 bytes planted at window edges, after a decoy that
-  differs in the last byte only, or left out; the same three searches
-  agree with the reference.
-- :1206 test_c9_s4_strstr_timing_64k_absent_needle (#[ignore]): prints
-  the time per search over a 64 KiB haystack without the needle.
+Tests (`83f4848:src/io/simd_memory/search.rs`, `mod tests`, in this commit):
+- `83f4848:src/io/simd_memory/search.rs:1034` (`test_c9_s1_sse42_strstr_short_haystacks_absent_needles_stay_in_bounds`): haystacks of `1..=20` bytes, each its own heap allocation, with absent needles of `1..=min(len, 16)` bytes: `find_pattern` and `sse42_strstr` return `None`; also the `find_pattern` doc example.
+- `83f4848:src/io/simd_memory/search.rs:1070` (`test_c9_s1_strstr_matches_reference_search`): haystacks of `0..=64` bytes, needles of `1..=17` bytes planted at `0`, `15`, `17 - n`, `len - n` or left out, on an all-`'a'` and on a pseudo-random `a`/`b` background: `scalar_strstr`, `find_pattern` and `sse42_strstr` agree with `windows().position()` (`assert_strstr_agrees`, `83f4848:src/io/simd_memory/search.rs:1003`).
+- `83f4848:src/io/simd_memory/search.rs:1109` (`test_c9_s1_search_ending_at_protected_page_does_not_fault`, Linux, not Miri): `page_end_probe` (`83f4848:src/io/simd_memory/search.rs:1137`) runs every search entry point on a haystack that ends where a `PROT_NONE` page begins, in a child process; the test asserts that the child passed.
+- `83f4848:src/io/simd_memory/search.rs:1242` (`test_c9_s3_sse42_strstr_medium_and_long_needles_match_reference`): needles of `17..=40` bytes planted at window edges, after a decoy that differs in the last byte only, or left out; the same three searches agree with the reference.
+- `83f4848:src/io/simd_memory/search.rs:1206` (`test_c9_s4_strstr_timing_64k_absent_needle`, `#[ignore]`): prints the time per search over a 64 KiB haystack without the needle.
 
-RED: the tests above, as committed, spliced into adf8204's search.rs
-(the parent of this commit); every other file at adf8204.
+RED: the tests above, as committed, spliced into `adf8204`'s `search.rs` (the parent of this commit); every other file at `adf8204`:
 
-Native (c9_evidence/S1/red_native_commit1_tests_on_adf8204.txt):
-
+```text
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::simd_memory::search::tests::test_c9_
 [... 4 lines elided ...]
 running 5 tests
@@ -2607,13 +2294,11 @@ test result: FAILED. 3 passed; 1 failed; 1 ignored; 0 measured; 3030 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
-Natively only the page-end test fails: the other over-reads land in
-mapped memory and return the right answer.
+Natively only the page-end test fails: the other over-reads land in mapped memory and return the right answer. Under Miri with the haswell features, one test per run since Miri stops at the first UB:
 
-Miri with the haswell features, one test per run since Miri stops at
-the first UB (c9_evidence/S1/red_miri_simd_*_on_adf8204.txt):
-
+```text
 RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd CARGO_BUILD_JOBS=16 cargo +nightly miri test --lib -- --exact io::simd_memory::search::tests::test_c9_s1_sse42_strstr_short_haystacks_absent_needles_stay_in_bounds
 [... 56 lines elided ...]
 running 1 test
@@ -2667,12 +2352,11 @@ help: alloc257838 was allocated here:
 error: aborting due to 1 previous error; 7 warnings emitted
 [... 6 lines elided ...]
 ## exit=1
+```
 
-The existing test_sse42_implementation (:943 in this commit) was UB
-under Miri on adf8204 too
-(c9_evidence/S1/red_existing_test_sse42_implementation_miri_simd.txt);
-it passes in the GREEN Miri run below:
+The existing `test_sse42_implementation` (`83f4848:src/io/simd_memory/search.rs:943` in this commit) was UB under Miri on `adf8204` too; it passes in the GREEN Miri run below:
 
+```text
 RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd CARGO_BUILD_JOBS=16 cargo +nightly miri test --lib -- --exact io::simd_memory::search::tests::test_sse42_implementation   # at adf8204 (unmodified)
 [... 56 lines elided ...]
 running 1 test
@@ -2691,10 +2375,11 @@ test io::simd_memory::search::tests::test_sse42_implementation ... error: Undefi
                  at src/io/simd_memory/search.rs:891:20: 891:58
 [... 12 lines elided ...]
 ## exit=1
+```
 
-The S3 test is not RED: on adf8204 it passes natively (above) and
-under Miri (c9_evidence/S1/miri_simd_s3_on_adf8204.txt):
+The S3 test is not RED: on `adf8204` it passes natively (above) and under Miri (the medium and long kernels were correct, as the audit said; the test closes the coverage gap):
 
+```text
 RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd CARGO_BUILD_JOBS=16 cargo +nightly miri test --lib -- --exact io::simd_memory::search::tests::test_c9_s3_sse42_strstr_medium_and_long_needles_match_reference
 [... 56 lines elided ...]
 running 1 test
@@ -2704,12 +2389,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3001 filtered out; f
 [... 3 lines elided ...]
 ## exit=0
 
-The medium and long kernels were correct, as the audit said; the test
-closes the coverage gap.
-
-GREEN, this commit's tree (c9_evidence/S1/green_native_commit1.txt,
-clippy_commit1.txt, green_miri_simd_commit1_search.txt):
-
+GREEN:
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::simd_memory io::simd_validation io::endian
 [... 4 lines elided ...]
 running 49 tests
@@ -2731,12 +2411,7 @@ test result: ok. 20 passed; 0 failed; 1 ignored; 0 measured; 2981 filtered out; 
 [... 3 lines elided ...]
 ## exit=0
 
-ASan was not run on this commit's tree.
-
-S4 timing, release build (c9_evidence/S4/before_final_test_text.txt,
-after_commit1.txt). Before: adf8204 plus the tests above. After: this
-commit.
-
+# S4 timing, release build (Before = adf8204 + tests; After = 83f4848):
 CARGO_BUILD_JOBS=16 cargo test --release --lib --all-features -- --ignored --nocapture test_c9_s4   # cwd: scratch/parent-adf8204 = adf8204 + the commit-1 tests (final text) appended to search.rs, no fix
 [... 5 lines elided ...]
 needle  1 B: sse42_strstr 102.97µs/search, scalar_strstr 204.625µs/search
@@ -2776,7 +2451,7 @@ fell relative to the chunks.
 
 Root cause (83f4848:src/io/simd_memory/search.rs; adf8204 lines in
 parentheses):
-- 83f4848:src/io/simd_memory/search.rs:554 (adf8204:src/io/simd_memory/search.rs:494) `let chars_len = chars.len().min(16);` and adf8204:src/io/simd_memory/search.rs:558
+- 83f4848:src/io/simd_memory/search.rs:554 (adf8204:src/io/simd_memory/search.rs:494) `let chars_len = chars.len().min(16);` and 83f4848:src/io/simd_memory/search.rs:558
   (adf8204:src/io/simd_memory/search.rs:498) copied only chars[..chars_len] into the PCMPESTRI
   operand, which the full-chunk loop (83f4848:src/io/simd_memory/search.rs:565-585; adf8204:src/io/simd_memory/search.rs:505-525) used;
 - 83f4848:src/io/simd_memory/search.rs:588-591 (adf8204:src/io/simd_memory/search.rs:528-531) the scalar tail tested
@@ -2806,10 +2481,9 @@ Tests (src/io/simd_memory/search.rs, mod tests, in this commit):
   0 to 65 bytes (5 lengths under Miri), or left out; also a set with
   duplicates, one with a NUL member and one with all 256 byte values.
 
-```text
-RED: the tests above, as committed, added to the parent commit's
-search.rs (c9_evidence/S2/red_native_commit2_tests_on_commit1_tree.txt):
+RED: the tests above, as committed, added to the parent commit's (`83f4848`) `search.rs`:
 
+```text
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::simd_memory::search::tests::test_c9_s2   # tree: commit-1 tree + the commit-2 tests (final text), no S2 fix
 [... 4 lines elided ...]
 running 2 tests
@@ -2830,9 +2504,7 @@ test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 3035 filtered ou
 [... 2 lines elided ...]
 ## exit=101
 
-GREEN, this commit's tree (c9_evidence/S2/green_native_commit2.txt,
-clippy_commit2.txt, green_miri_simd_commit2_s2.txt):
-
+GREEN:
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::simd_memory io::simd_validation io::endian
 [... 4 lines elided ...]
 running 51 tests
@@ -2857,8 +2529,6 @@ test io::simd_memory::search::tests::test_find_any_of_multiple ... ok
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3000 filtered out; finished in 213.45s
 [... 3 lines elided ...]
 ## exit=0
-
-ASan was not run on this commit's tree.
 ```
 
 #### `a85284e` — fix(io): SimdStringSearch reports SSE42/Scalar tiers and honors enable_sse42 (C9 S5 S6)
@@ -2876,66 +2546,29 @@ Findings:
   `# Safety` doc sections, and src/io/simd_memory/search.rs had 5 honesty markers on the
   NEON wrappers.
 
-Root cause (85588c3:src/io/simd_memory/search.rs and src/io/simd_memory/mod.rs; adf8204
-lines in parentheses):
-- 85588c3:src/io/simd_memory/search.rs:82-106 (adf8204:src/io/simd_memory/search.rs:82-106) detect_optimal_tier returned
-  SearchTier::AVX512 (85588c3:src/io/simd_memory/search.rs:88), SearchTier::AVX2 (85588c3:src/io/simd_memory/search.rs:91) or SearchTier::NEON
-  (85588c3:src/io/simd_memory/search.rs:101), even though this module implements only SSE4.2 and scalar
-  kernels.
-- 85588c3:src/io/simd_memory/search.rs:135-143, 85588c3:src/io/simd_memory/search.rs:182-189, 85588c3:src/io/simd_memory/search.rs:222-228, 85588c3:src/io/simd_memory/search.rs:257-263 (adf8204:src/io/simd_memory/search.rs:135-143,
-  85588c3:src/io/simd_memory/search.rs:180-187, 85588c3:src/io/simd_memory/search.rs:217-223, 85588c3:src/io/simd_memory/search.rs:251-257) on AVX2/AVX512 tiers, find_char,
-  find_pattern, find_any_of and compare_strings checked
-  is_x86_feature_detected!("sse4.2") directly without consulting
-  config.enable_sse42, and find_pattern sent needles > 16 bytes to
-  scalar_strstr (85588c3:src/io/simd_memory/search.rs:187; adf8204:src/io/simd_memory/search.rs:185).
-- 85588c3:src/io/simd_memory/search.rs:682-707 (adf8204:src/io/simd_memory/search.rs:592-617) five honesty markers
-  ("Placeholder" at 85588c3:src/io/simd_memory/search.rs:682 / adf8204:src/io/simd_memory/search.rs:592 and four "TODO" comments at
-  85588c3:src/io/simd_memory/search.rs:687, 85588c3:src/io/simd_memory/search.rs:693, 85588c3:src/io/simd_memory/search.rs:699, 85588c3:src/io/simd_memory/search.rs:705 / adf8204:src/io/simd_memory/search.rs:597, adf8204:src/io/simd_memory/search.rs:603, adf8204:src/io/simd_memory/search.rs:609, adf8204:src/io/simd_memory/search.rs:615) on
-  neon_strchr, neon_strstr, neon_multi_search and neon_strcmp.
-- 85588c3:src/io/simd_memory/search.rs:296 (adf8204:src/io/simd_memory/search.rs:290) sse42_strchr_impl and adf8204:src/io/simd_memory/search.rs:637 (adf8204:src/io/simd_memory/search.rs:547)
-  sse42_strcmp_impl lacked `# Safety` doc sections.
-- 85588c3:src/io/simd_memory/search.rs:7, 85588c3:src/io/simd_memory/search.rs:10, 85588c3:src/io/simd_memory/search.rs:14-16, 85588c3:src/io/simd_memory/search.rs:117, 85588c3:src/io/simd_memory/search.rs:239-240 (adf8204:src/io/simd_memory/search.rs:7, adf8204:src/io/simd_memory/search.rs:10, adf8204:src/io/simd_memory/search.rs:14-16,
-  85588c3:src/io/simd_memory/search.rs:117, 85588c3:src/io/simd_memory/search.rs:233-234) and 85588c3:src/io/simd_memory/mod.rs:11-12, 85588c3:src/io/simd_memory/mod.rs:16, 85588c3:src/io/simd_memory/mod.rs:19 claimed a 6-tier
-  framework, unbacked speedups, "Zero Unsafe in Public APIs", and
-  PCMPESTRI in compare_strings.
+Root cause (`85588c3:src/io/simd_memory/search.rs` and `85588c3:src/io/simd_memory/mod.rs`; `adf8204` lines in parentheses):
+- `85588c3:src/io/simd_memory/search.rs:82-106` (`adf8204:src/io/simd_memory/search.rs:82-106`): `detect_optimal_tier` returned `SearchTier::AVX512` (`85588c3:src/io/simd_memory/search.rs:88`), `SearchTier::AVX2` (`85588c3:src/io/simd_memory/search.rs:91`) or `SearchTier::NEON` (`85588c3:src/io/simd_memory/search.rs:101`), even though this module implements only SSE4.2 and scalar kernels.
+- `85588c3:src/io/simd_memory/search.rs:135-143`, `85588c3:src/io/simd_memory/search.rs:182-189`, `85588c3:src/io/simd_memory/search.rs:222-228`, `85588c3:src/io/simd_memory/search.rs:257-263` (`adf8204:src/io/simd_memory/search.rs:135-143`, `adf8204:src/io/simd_memory/search.rs:180-187`, `adf8204:src/io/simd_memory/search.rs:217-223`, `adf8204:src/io/simd_memory/search.rs:251-257`): on AVX2/AVX512 tiers, `find_char`, `find_pattern`, `find_any_of` and `compare_strings` checked `is_x86_feature_detected!("sse4.2")` directly without consulting `config.enable_sse42`, and `find_pattern` sent needles `> 16` bytes to `scalar_strstr` (`85588c3:src/io/simd_memory/search.rs:187`; `adf8204:src/io/simd_memory/search.rs:185`).
+- `85588c3:src/io/simd_memory/search.rs:682-707` (`adf8204:src/io/simd_memory/search.rs:592-617`): five honesty markers (`"Placeholder"` at `85588c3:src/io/simd_memory/search.rs:682` / `adf8204:src/io/simd_memory/search.rs:592` and four `"TODO"` comments at `85588c3:src/io/simd_memory/search.rs:687`, `85588c3:src/io/simd_memory/search.rs:693`, `85588c3:src/io/simd_memory/search.rs:699`, `85588c3:src/io/simd_memory/search.rs:705` / `adf8204:src/io/simd_memory/search.rs:597`, `adf8204:src/io/simd_memory/search.rs:603`, `adf8204:src/io/simd_memory/search.rs:609`, `adf8204:src/io/simd_memory/search.rs:615`) on `neon_strchr`, `neon_strstr`, `neon_multi_search` and `neon_strcmp`.
+- `85588c3:src/io/simd_memory/search.rs:296` (`adf8204:src/io/simd_memory/search.rs:290`) `sse42_strchr_impl` and `85588c3:src/io/simd_memory/search.rs:637` (`adf8204:src/io/simd_memory/search.rs:547`) `sse42_strcmp_impl` lacked `# Safety` doc sections.
+- `85588c3:src/io/simd_memory/search.rs:7`, `85588c3:src/io/simd_memory/search.rs:10`, `85588c3:src/io/simd_memory/search.rs:14-16`, `85588c3:src/io/simd_memory/search.rs:117`, `85588c3:src/io/simd_memory/search.rs:239-240` (`adf8204:src/io/simd_memory/search.rs:7`, `adf8204:src/io/simd_memory/search.rs:10`, `adf8204:src/io/simd_memory/search.rs:14-16`, `adf8204:src/io/simd_memory/search.rs:117`, `adf8204:src/io/simd_memory/search.rs:233-234`) and `85588c3:src/io/simd_memory/mod.rs:11-12`, `85588c3:src/io/simd_memory/mod.rs:16`, `85588c3:src/io/simd_memory/mod.rs:19` claimed a 6-tier framework, unbacked speedups, `"Zero Unsafe in Public APIs"`, and PCMPESTRI in `compare_strings`.
 
-Fix (src/io/simd_memory/search.rs and src/io/simd_memory/mod.rs in this
-commit):
-- a85284e:src/io/simd_memory/search.rs:49-60 and a85284e:src/io/simd_memory/search.rs:66-74 SearchTier and SearchConfig document
-  `Limitation:` on AVX2, AVX512, NEON and enable_avx2, enable_avx512,
-  enable_neon.
-- a85284e:src/io/simd_memory/search.rs:105-118 detect_optimal_tier selects SearchTier::SSE42 when
-  config.enable_sse42 and get_cpu_features().has_sse42 are true on
-  x86_64, and SearchTier::Scalar otherwise.
-- a85284e:src/io/simd_memory/search.rs:143-151, a85284e:src/io/simd_memory/search.rs:181-188, a85284e:src/io/simd_memory/search.rs:212-219, a85284e:src/io/simd_memory/search.rs:240-248 find_char,
-  find_pattern, find_any_of and compare_strings dispatch to sse42_*
-  when self.tier == SearchTier::SSE42 and to scalar_* otherwise.
-- a85284e:src/io/simd_memory/search.rs:277-285 and a85284e:src/io/simd_memory/search.rs:628-638 add `# Safety` doc sections to
-  sse42_strchr_impl and sse42_strcmp_impl, state the exact bounds on
-  their `_mm_loadu_si128` SAFETY comments (a85284e:src/io/simd_memory/search.rs:291-292, a85284e:src/io/simd_memory/search.rs:300-301,
-  a85284e:src/io/simd_memory/search.rs:646-647, a85284e:src/io/simd_memory/search.rs:649), and remove stale SAFETY comments on safe intrinsics
-  (a85284e:src/io/simd_memory/search.rs:306, a85284e:src/io/simd_memory/search.rs:653-654).
-- Remove the 4 neon_* placeholder wrappers and 5 honesty markers
-  (85588c3:src/io/simd_memory/search.rs:682-707; 85588c3:src/io/simd_memory/search.rs:681 in this commit goes directly to
-  Scalar Fallback Implementation).
-- a85284e:src/io/simd_memory/search.rs:1-29, a85284e:src/io/simd_memory/search.rs:127-131, a85284e:src/io/simd_memory/search.rs:223-228, a85284e:src/io/simd_memory/search.rs:261-265, a85284e:src/io/simd_memory/search.rs:612-616 and
-  a85284e:src/io/simd_memory/mod.rs:1-23 state the actual two-tier architecture and `Limitation:`
-  disclosures.
+Fix (`a85284e:src/io/simd_memory/search.rs` and `a85284e:src/io/simd_memory/mod.rs` in this commit):
+- `a85284e:src/io/simd_memory/search.rs:49-60` and `a85284e:src/io/simd_memory/search.rs:66-74`: `SearchTier` and `SearchConfig` document `Limitation:` on `AVX2`, `AVX512`, `NEON` and `enable_avx2`, `enable_avx512`, `enable_neon`.
+- `a85284e:src/io/simd_memory/search.rs:105-118`: `detect_optimal_tier` selects `SearchTier::SSE42` when `config.enable_sse42` and `get_cpu_features().has_sse42` are true on x86_64, and `SearchTier::Scalar` otherwise.
+- `a85284e:src/io/simd_memory/search.rs:143-151`, `a85284e:src/io/simd_memory/search.rs:181-188`, `a85284e:src/io/simd_memory/search.rs:212-219`, `a85284e:src/io/simd_memory/search.rs:240-248`: `find_char`, `find_pattern`, `find_any_of` and `compare_strings` dispatch to `sse42_*` when `self.tier == SearchTier::SSE42` and to `scalar_*` otherwise.
+- `a85284e:src/io/simd_memory/search.rs:277-285` and `a85284e:src/io/simd_memory/search.rs:628-638`: add `# Safety` doc sections to `sse42_strchr_impl` and `sse42_strcmp_impl`, state the exact bounds on their `_mm_loadu_si128` SAFETY comments (`a85284e:src/io/simd_memory/search.rs:291-292`, `a85284e:src/io/simd_memory/search.rs:300-301`, `a85284e:src/io/simd_memory/search.rs:646-647`, `a85284e:src/io/simd_memory/search.rs:649`), and remove stale SAFETY comments on safe intrinsics (`a85284e:src/io/simd_memory/search.rs:306`, `a85284e:src/io/simd_memory/search.rs:653-654`).
+- Remove the 4 `neon_*` placeholder wrappers and 5 honesty markers (`85588c3:src/io/simd_memory/search.rs:682-707`; `a85284e:src/io/simd_memory/search.rs:672` in this commit goes directly to Scalar Fallback Implementation).
+- `a85284e:src/io/simd_memory/search.rs:1-29`, `a85284e:src/io/simd_memory/search.rs:127-131`, `a85284e:src/io/simd_memory/search.rs:223-228`, `a85284e:src/io/simd_memory/search.rs:261-265`, `a85284e:src/io/simd_memory/search.rs:612-616` and `a85284e:src/io/simd_memory/mod.rs:1-23` state the actual two-tier architecture and `Limitation:` disclosures.
 
-Tests (src/io/simd_memory/search.rs, mod tests, in this commit):
-- a85284e:src/io/simd_memory/search.rs:1359 test_c9_s5_tier_names_the_kernels_that_run: asserts
-  SimdStringSearch::new().tier() is SearchTier::SSE42 on x86_64 when
-  get_cpu_features().has_sse42 is true, and SearchTier::Scalar
-  otherwise.
-- a85284e:src/io/simd_memory/search.rs:1379 test_c9_s5_enable_sse42_false_selects_scalar: asserts
-  SimdStringSearch::with_config(SearchConfig { enable_sse42: false,
-  ..SearchConfig::default() }) selects SearchTier::Scalar and executes
-  all four search methods.
+Tests (`a85284e:src/io/simd_memory/search.rs`, `mod tests`, in this commit):
+- `a85284e:src/io/simd_memory/search.rs:1359` (`test_c9_s5_tier_names_the_kernels_that_run`): asserts `SimdStringSearch::new().tier()` is `SearchTier::SSE42` on x86_64 when `get_cpu_features().has_sse42` is true, and `SearchTier::Scalar` otherwise.
+- `a85284e:src/io/simd_memory/search.rs:1379` (`test_c9_s5_enable_sse42_false_selects_scalar`): asserts `SimdStringSearch::with_config(SearchConfig { enable_sse42: false, ..SearchConfig::default() })` selects `SearchTier::Scalar` and executes all four search methods.
+- Note on C9 S6: removing the unused `neon_*` placeholder wrappers and honesty markers is verified by compilation + `python3 scripts/api_honesty.py --src src/io/simd_memory --strict` (`0` markers) and has no standalone runtime test.
+
+RED: the tests above, as committed, added to the parent commit's (`85588c3`) `search.rs`:
 
 ```text
-RED: the tests above, as committed, added to the parent commit's
-search.rs (c9_evidence/S5/red_native_commit3_tests_on_commit2_tree.txt):
-
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::simd_memory::search::tests::test_c9_s5   # tree: commit-2 tree + the commit-3 tests (final text), no S5 fix
 [... 4 lines elided ...]
 running 2 tests
@@ -2956,10 +2589,7 @@ test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 3037 filtered ou
 [... 2 lines elided ...]
 ## exit=101
 
-GREEN, this commit's tree (c9_evidence/S5/green_native_commit3.txt,
-clippy_commit3.txt, green_miri_simd_commit3_s5.txt,
-unsafe_audit_commit3.txt, api_honesty_commit3.txt):
-
+GREEN:
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::simd_memory io::simd_validation io::endian
 [... 4 lines elided ...]
 running 53 tests
@@ -3013,8 +2643,6 @@ All findings (0):
 
 Audit status: PASS
 ## exit=0
-
-ASan was not run on this commit's tree.
 ```
 
 #### `fd455f5` — fix(io): aarch64 CRC32C intrinsics, Miri SSE4.2 test, and crc32c_update doctest (C9 C1 C3 C4)
@@ -3066,10 +2694,9 @@ Tests (src/io/simd_validation/checksum.rs in this commit):
   inputs), and checks crc32c_hash(b"123456789") == 0xE306_9283.
 - fd455f5:src/io/simd_validation/checksum.rs:208-216 crc32c_update doctest asserting 0xE306_9283.
 
-```text
-RED (c9_evidence/C1/red_aarch64_miri_test_parent.txt and
-red_harness_miri_aarch64_crc_parent.txt):
+RED:
 
+```text
 CC_aarch64_unknown_linux_gnu=gcc AR_aarch64_unknown_linux_gnu=ar RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-aarch64 CARGO_BUILD_JOBS=16 cargo +nightly miri test --lib --target aarch64-unknown-linux-gnu -- io::simd_memory io::simd_validation io::endian   # cwd: scratch/parent-adf8204 (git archive of adf8204)
 [... 22 lines elided ...]
 error: extern blocks must be unsafe
@@ -3091,7 +2718,7 @@ error[E0658]: linking to LLVM intrinsics is experimental
 error[E0658]: linking to LLVM intrinsics is experimental
    --> src/io/simd_validation/checksum.rs:382:5
     |
-[... 372 lines elided ...]
+[... 7 lines elided ...]
 error[E0133]: call to unsafe function `io::simd_validation::checksum::__crc32cd` is unsafe and requires unsafe block
    --> src/io/simd_validation/checksum.rs:333:15
     |
@@ -3145,24 +2772,15 @@ error: aborting due to 9 previous errors
 [... 7 lines elided ...]
 ## exit=1
 
-GREEN, this commit's tree (c9_evidence/C1/after_c1_aarch64_miri_test.txt,
-green_harness_miri_aarch64_crc.txt, green_native_commit4.txt,
-green_doctest_commit4.txt, clippy_commit4.txt,
-green_miri_simd_commit4.txt):
-
-On the full crate for aarch64-unknown-linux-gnu, all 9 errors in
-src/io/simd_validation/checksum.rs are gone (44 -> 35 errors; the
-remaining 35 are in modules outside src/io/):
-
+GREEN:
+# On the full crate for aarch64-unknown-linux-gnu, all 9 errors in src/io/simd_validation/checksum.rs are gone (44 -> 35 errors; the remaining 35 are in modules outside src/io/):
 CC_aarch64_unknown_linux_gnu=gcc AR_aarch64_unknown_linux_gnu=ar RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-aarch64 CARGO_BUILD_JOBS=16 cargo +nightly miri test --lib --target aarch64-unknown-linux-gnu -- io::simd_memory io::simd_validation io::endian
 [... 519 lines elided ...]
 error: aborting due to 35 previous errors; 29 warnings emitted
 [... 8 lines elided ...]
 ## exit=1
 
-In the standalone aarch64 harness containing checksum.rs under Miri with
-`-C target-feature=+crc`:
-
+# Standalone aarch64 harness containing checksum.rs under Miri with -C target-feature=+crc:
 RUSTFLAGS="-C target-feature=+crc" cargo +nightly miri test --lib --target aarch64-unknown-linux-gnu -- --nocapture
 [... 3 lines elided ...]
 running 13 tests
@@ -3175,8 +2793,6 @@ ok
 test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.57s
 [... 1 line elided ...]
 ## exit=0
-
-Native tests, doctests, clippy, and Miri SIMD on x86_64:
 
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::simd_validation::checksum --nocapture
 [... 4 lines elided ...]
@@ -3217,8 +2833,6 @@ ok
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3006 filtered out; finished in 20.48s
 [... 3 lines elided ...]
 ## exit=0
-
-ASan was not run on this commit's tree.
 ```
 
 #### `ac7a59b` — fix(io): bound EndianConvert by Pod, fix SIMD/magic/config in endian (C9 E1 E2 E3 E4 E5)
@@ -3338,24 +2952,24 @@ ASan was not run on this commit's tree.
 
 ### RED Outputs (on parent `fd455f5`)
 
-1. **E1 Soundness RED (Miri catches UB when `EndianConvert` is implemented for `Flag(bool)` in safe code on parent `fd455f5`)**:
+1. **E1 Soundness RED (Miri catches UB when `EndianConvert` is implemented for `Flag(bool)` in safe code on parent `fd455f5`; `test_c9_e1_bool_newtype_ub_on_parent` was a temporary splice probe on `fd455f5`, while the committed regression check is the `compile_fail,E0277` doctest at `ac7a59b:src/io/endian.rs:62-74`)**:
 ```
 RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar CARGO_BUILD_JOBS=16 cargo +nightly miri test --lib -- --exact io::endian::tests::test_c9_e1_bool_newtype_ub_on_parent
 [... 66 lines elided ...]
 running 1 test
 test io::endian::tests::test_c9_e1_bool_newtype_ub_on_parent ... error: Undefined Behavior: constructing invalid value of type std::ptr::Unaligned<io::endian::tests::test_c9_e1_bool_newtype_ub_on_parent::Flag>: at .0.0, encountered 0x02, but expected a boolean
-   --> ac7a59b:src/io/endian.rs:262:30
+   --> src/io/endian.rs:262:30
     |
 262 | ...safe { std::ptr::read_unaligned(bytes.as_ptr() as *const T) };
     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
 [... 4 lines elided ...]
     = note: stack backtrace:
             0: io::endian::EndianIO::<io::endian::tests::test_c9_e1_bool_newtype_ub_on_parent::Flag>::read_from_bytes
-                at ac7a59b:src/io/endian.rs:262:30: 262:82
+                at src/io/endian.rs:262:30: 262:82
             1: io::endian::tests::test_c9_e1_bool_newtype_ub_on_parent
-                at ac7a59b:src/io/endian.rs:691:17: 691:74
+                at src/io/endian.rs:691:17: 691:74
             2: io::endian::tests::test_c9_e1_bool_newtype_ub_on_parent::{closure#0}
-                at ac7a59b:src/io/endian.rs:682:46: 682:46
+                at src/io/endian.rs:682:46: 682:46
 [... 3 lines elided ...]
 error: aborting due to 1 previous error; 8 warnings emitted
 [... 6 lines elided ...]
@@ -3373,17 +2987,17 @@ test io::endian::tests::test_c9_e4_endianness_magic_round_trips_for_every_varian
 test io::endian::tests::test_c9_e1_pod_newtype_round_trips ... ok
 test io::endian::tests::test_c9_e2_simd_slice_conversions_match_swap_bytes_both_directions ... FAILED
 [... 5 lines elided ...]
-thread 'io::endian::tests::test_c9_e3_u32_simd_swap_needs_only_sse2' (702657) panicked at ac7a59b:src/io/endian.rs:811:13:
+thread 'io::endian::tests::test_c9_e3_u32_simd_swap_needs_only_sse2' (702657) panicked at src/io/endian.rs:811:13:
 assertion `left == right` failed: from_little true
   left: [67305985, 134678021, 202050057, 269422093, 336794129]
  right: [16909060, 84281096, 151653132, 219025168, 286397204]
 [... 4 lines elided ...]
-thread 'io::endian::tests::test_c9_e4_endianness_magic_round_trips_for_every_variant' (702658) panicked at ac7a59b:src/io/endian.rs:820:9:
+thread 'io::endian::tests::test_c9_e4_endianness_magic_round_trips_for_every_variant' (702658) panicked at src/io/endian.rs:820:9:
 assertion `left != right` failed
   left: 305419896
  right: 305419896
 [... 3 lines elided ...]
-thread 'io::endian::tests::test_c9_e2_simd_slice_conversions_match_swap_bytes_both_directions' (702656) panicked at ac7a59b:src/io/endian.rs:787:17:
+thread 'io::endian::tests::test_c9_e2_simd_slice_conversions_match_swap_bytes_both_directions' (702656) panicked at src/io/endian.rs:787:17:
 assertion `left == right` failed: u16 len 1 from_little true
   left: [513]
  right: [258]
@@ -3399,7 +3013,7 @@ RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar CARGO_BUILD_JOBS=16 cargo +nigh
 [... 159 lines elided ...]
 running 1 test
 test io::endian::tests::test_c9_e3_u32_simd_swap_needs_only_sse2 ... error: Undefined Behavior: calling a function that requires unavailable target features: ssse3
-   --> ac7a59b:src/io/endian.rs:384:35
+   --> src/io/endian.rs:384:35
     |
 384 |   ...   let swapped = _mm_shuffle_epi8(
     |  _____________________^
@@ -3410,11 +3024,11 @@ test io::endian::tests::test_c9_e3_u32_simd_swap_needs_only_sse2 ... error: Unde
 [... 4 lines elided ...]
     = note: stack backtrace:
             0: io::endian::simd::convert_u32_slice_simd
-                at ac7a59b:src/io/endian.rs:384:35: 387:22
+                at src/io/endian.rs:384:35: 387:22
             1: io::endian::tests::test_c9_e3_u32_simd_swap_needs_only_sse2
-                at ac7a59b:src/io/endian.rs:808:13: 808:67
+                at src/io/endian.rs:808:13: 808:67
             2: io::endian::tests::test_c9_e3_u32_simd_swap_needs_only_sse2::{closure#0}
-                at ac7a59b:src/io/endian.rs:804:50: 804:50
+                at src/io/endian.rs:804:50: 804:50
 [... 3 lines elided ...]
 error: aborting due to 1 previous error; 7 warnings emitted
 [... 6 lines elided ...]
@@ -3426,22 +3040,22 @@ error: aborting due to 1 previous error; 7 warnings emitted
 CARGO_BUILD_JOBS=16 cargo test --lib --all-features --no-run
 [... 1 line elided ...]
 error[E0599]: no method named `default_endianness` found for struct `EndianConfig` in the current scope
-   --> ac7a59b:src/io/endian.rs:846:27
+   --> src/io/endian.rs:846:27
 [... 15 lines elided ...]
 error[E0599]: no method named `auto_detect` found for struct `EndianConfig` in the current scope
-   --> ac7a59b:src/io/endian.rs:847:24
+   --> src/io/endian.rs:847:24
 [... 15 lines elided ...]
 error[E0599]: no method named `simd_acceleration` found for struct `EndianConfig` in the current scope
-   --> ac7a59b:src/io/endian.rs:848:25
+   --> src/io/endian.rs:848:25
 [... 15 lines elided ...]
 error[E0599]: no method named `default_endianness` found for struct `EndianConfig` in the current scope
-   --> ac7a59b:src/io/endian.rs:851:29
+   --> src/io/endian.rs:851:29
 [... 15 lines elided ...]
 error[E0599]: no method named `auto_detect` found for struct `EndianConfig` in the current scope
-   --> ac7a59b:src/io/endian.rs:852:27
+   --> src/io/endian.rs:852:27
 [... 15 lines elided ...]
 error[E0599]: no method named `simd_acceleration` found for struct `EndianConfig` in the current scope
-   --> ac7a59b:src/io/endian.rs:853:26
+   --> src/io/endian.rs:853:26
 [... 16 lines elided ...]
 error: could not compile `zipora` (lib test) due to 6 previous errors
 ## exit=101
@@ -3553,7 +3167,7 @@ Root cause: the provided read_vec ran `vec![0u8; len]` before reading
 Slice and Mmap know their remaining length; read_length_prefixed_bytes
 narrowed the varint with `as usize` (adf8204:src/io/data_input.rs:47).
 skip compared `self.position + n` (adf8204:src/io/data_input.rs:165,
-:393).
+adf8204:src/io/data_input.rs:393).
 
 Fix, in this commit:
 - New provided DataInput::remaining_bytes (376ad6b:src/io/data_input.rs:74),
@@ -3593,10 +3207,10 @@ Tests added:
   2^30 prefix through ReaderDataInput<Cursor>; the largest single
   allocation is at most 64 KiB.
 
-```text
 RED, parent adf8204 with the tests spliced in verbatim
 (c9_evidence/DI-1/red_parent.txt; line numbers in panics are those of
 the spliced file, whose first 585 lines are the parent's verbatim):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/data_input.rs --base adf8204 --evidence c9_evidence/DI-1/red_parent.txt --item 'struct TrickleReader' --item 'impl TrickleReader' --item 'impl Read for TrickleReader' --item 'const OVERSIZED_PREFIXES' --item 'fn test_c9_di1_length_prefix_beyond_slice_is_err(' --item 'fn test_c9_di1_length_prefix_beyond_mmap_is_err(' --item 'fn test_c9_di1_stream_length_prefix_allocates_with_the_data(' --item 'fn test_c9_di1_stream_read_vec_crosses_growth_steps(' --item 'fn test_c9_di2_skip_overflow_is_err(' --item 'fn test_c9_di2_mmap_skip_overflow_is_err(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::data_input::tests::test_c9_di'
 [... 6 lines elided ...]
 running 6 tests
@@ -3651,6 +3265,7 @@ $ CARGO_BUILD_JOBS=16 cargo test --all-features --test io_untrusted_lengths
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 [... 1 line elided ...]
 ## exit=0
+```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
 exit 0 (c9_evidence/DI-1/clippy_commit1.txt).
@@ -3661,7 +3276,6 @@ io_untrusted_lengths`: 1 passed in each (miri_simd_integration.txt,
 miri_scalar_integration.txt). No MIRIFLAGS were needed.
 ASan, `--lib --all-features io::data_input`: 15 passed, including the
 mmap tests (c9_evidence/DI-1/asan.txt).
-```
 
 #### `7be4f44` — docs(io): state memmap2's real precondition for MmapDataInput::open (C9 DI-3)
 
@@ -3689,18 +3303,18 @@ Tests: none. Exercising the precondition needs a second handle that
 truncates or rewrites the file while it is mapped, and the outcome is
 SIGBUS or undefined behaviour, not a value a test can assert.
 
-```text
 GREEN on this tree (c9_evidence/DI-3/green_data_input.txt):
+```text
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::data_input
 [... 21 lines elided ...]
 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 3022 filtered out; finished in 0.01s
 [... 1 line elided ...]
 ## exit=0
+```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
 exit 0 (c9_evidence/DI-3/clippy.txt). No Miri or ASan run for this
 commit: it changes comments only.
-```
 
 #### `a24f443` — fix(io): bound pre-allocation from untrusted counts (C9 CT-1 CT-2 SP-1)
 
@@ -3755,25 +3369,25 @@ Tests added:
   the 64 KiB budget caps usize::MAX counts (8192 for 8-byte
   elements), remaining_bytes caps the count, zero-sized elements do
   not divide by zero, oversized elements get 0 (new helper, so
-```text
   GREEN only).
 - tests/io_untrusted_lengths.rs (counting global allocator), with
   the 4-byte input 00 00 01 00 (count 65536, no elements):
-  :112 test_c9_ct1_hash_collection_count_is_not_trusted_for_capacity:
+  a24f443:tests/io_untrusted_lengths.rs:112 test_c9_ct1_hash_collection_count_is_not_trusted_for_capacity:
   HashMap<u8, u8> and HashSet<u8> from a SliceDataInput return Err
   and the largest allocation is below 4096 bytes; from a
   ReaderDataInput<Cursor> it is at most 3 * 64 KiB (the hashbrown
   rounding above).
-  :153 test_c9_ct2_batch_count_is_not_trusted_for_capacity:
+  a24f443:tests/io_untrusted_lengths.rs:153 test_c9_ct2_batch_count_is_not_trusted_for_capacity:
   deserialize_batch::<(u32, String)> with the default and the
   fast() config returns Err with no allocation of 4096 bytes or more.
-  :180 test_c9_sp1_vec_count_is_not_trusted_for_capacity:
+  a24f443:tests/io_untrusted_lengths.rs:180 test_c9_sp1_vec_count_is_not_trusted_for_capacity:
   Vec<String> from a slice allocates below 4096 bytes, from a
   stream at most 64 KiB.
 
 RED, the parent's three src/io files with the new test file
 (c9_evidence/CT-1/red_parent_integration.txt). Each test stops at its
 first assertion, so the later stream cases are not reached there:
+```text
 $ python3 c9_evidence/tools/swap_parent.py --base 7be4f44 --evidence c9_evidence/CT-1/red_parent_integration.txt --file src/io/complex_types.rs --file src/io/smart_ptr.rs --file src/io/data_input.rs -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --all-features --test io_untrusted_lengths'
 [... 6 lines elided ...]
 running 4 tests
@@ -3806,6 +3420,7 @@ $ CARGO_BUILD_JOBS=16 cargo test --all-features --test io_untrusted_lengths
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 [... 1 line elided ...]
 ## exit=0
+```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
 exit 0 (c9_evidence/CT-1/clippy.txt).
@@ -3813,7 +3428,6 @@ Miri, SIMD flags and scalar, `--lib --test io_untrusted_lengths --
 test_c9_ct1 test_c9_ct2 test_c9_sp1`: the lib test and the three
 integration tests pass in each (c9_evidence/CT-1/miri_simd.txt,
 miri_scalar.txt). No unsafe code is added or changed, so no ASan run.
-```
 
 #### `bdb895f` — fix(io): drop decoded array elements when a later one fails (C9 CT-4)
 
@@ -3841,10 +3455,10 @@ type that counts drops in a thread-local and rejects a zero byte) is
 decoded as [DropCounter; 3] from 03 00 00 00 07 00: one element
 decodes, the second fails. Asserts Err and exactly one drop.
 
-```text
 RED, parent a24f443 with the test items spliced in verbatim
 (c9_evidence/CT-4/red_parent.txt; the panic line is in the spliced
 file):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/complex_types.rs --base a24f443 --evidence c9_evidence/CT-4/red_parent.txt --item 'thread_local! {' --item 'struct DropCounter(u8);' --item 'impl Drop for DropCounter' --item 'impl SerializableType for DropCounter' --item 'fn test_c9_ct4_array_error_drops_decoded_elements(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::complex_types::tests::test_c9_ct4'
 [... 6 lines elided ...]
 running 1 test
@@ -3865,6 +3479,7 @@ $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::complex_types
 test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 3023 filtered out; finished in 0.00s
 [... 1 line elided ...]
 ## exit=0
+```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
 exit 0 (c9_evidence/CT-4/clippy.txt).
@@ -3874,7 +3489,6 @@ io::complex_types::tests::test_c9_ct4`: 1 passed in each
 was not run under Miri.
 ASan (an unsafe block was removed), `--lib --all-features
 io::complex_types`: 16 passed (c9_evidence/CT-4/asan.txt).
-```
 
 #### `c477d1c` — fix(io): reject bool bytes other than 0 and 1 (C9 SP-6)
 
@@ -3893,10 +3507,10 @@ Test added: c477d1c:src/io/smart_ptr.rs:894
 test_c9_sp6_bool_rejects_bytes_above_one. Bytes 0x02 and 0xFF must
 return Err; 0x00 and 0x01 must decode to false and true.
 
-```text
 RED, parent bdb895f with the test spliced in verbatim
 (c9_evidence/SP-6/red_parent.txt; the panic line is in the spliced
 file):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/smart_ptr.rs --base bdb895f --evidence c9_evidence/SP-6/red_parent.txt --item 'fn test_c9_sp6_bool_rejects_bytes_above_one(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr::tests::test_c9_sp6'
 [... 6 lines elided ...]
 running 1 test
@@ -3919,6 +3533,7 @@ test io::smart_ptr::tests::test_c9_sp6_bool_rejects_bytes_above_one ... ok
 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 3028 filtered out; finished in 0.00s
 [... 1 line elided ...]
 ## exit=0
+```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
 exit 0 (c9_evidence/SP-6/clippy.txt).
@@ -3927,7 +3542,6 @@ io::smart_ptr::tests::test_c9_sp6`: 1 passed in each
 (c9_evidence/SP-6/miri_simd.txt, miri_scalar.txt). The parent version
 was not run under Miri. No unsafe code is added or changed, so no ASan
 run.
-```
 
 #### `f1eafe4` — fix(io): check tuple arity and versions in complex-type metadata (C9 CT-3)
 
@@ -3948,10 +3562,10 @@ tell types apart, and the version in it was never checked.
   ran past the end of the input (audit).
 
 Root cause: adf8204:src/io/complex_types.rs:75 (`"tuple" // Simplified
-for now`); the `_version` parameters at c477d1c:src/io/complex_types.rs:66, c477d1c:src/io/complex_types.rs:88, c477d1c:src/io/complex_types.rs:128, c477d1c:src/io/complex_types.rs:169, c477d1c:src/io/complex_types.rs:198,
-:224, c477d1c:src/io/complex_types.rs:253, c477d1c:src/io/complex_types.rs:281, c477d1c:src/io/complex_types.rs:310 and in the macro at c477d1c:src/io/complex_types.rs:594; c477d1c:src/io/complex_types.rs:34-47
-(deserialize_with_metadata passes any version on); c477d1c:src/io/complex_types.rs:481-489
-(deserialize_from_bytes); c477d1c:src/io/complex_types.rs:529 (deserialize_batch reads the version
+for now`); the `_version` parameters at c477d1c:src/io/complex_types.rs:67, c477d1c:src/io/complex_types.rs:89, c477d1c:src/io/complex_types.rs:129, c477d1c:src/io/complex_types.rs:175, c477d1c:src/io/complex_types.rs:204,
+c477d1c:src/io/complex_types.rs:230, c477d1c:src/io/complex_types.rs:268, c477d1c:src/io/complex_types.rs:301, c477d1c:src/io/complex_types.rs:330 and in the macro at c477d1c:src/io/complex_types.rs:628; c477d1c:src/io/complex_types.rs:35-47
+(deserialize_with_metadata passes any version on); c477d1c:src/io/complex_types.rs:501-509
+(deserialize_from_bytes); c477d1c:src/io/complex_types.rs:562 (deserialize_batch reads the version
 and passes it on).
 
 Fix, in this commit (src/io/complex_types.rs):
@@ -4000,10 +3614,10 @@ Tests added (src/io/complex_types.rs):
   deserialize_from_bytes and deserialize_batch.
 Helpers: pair_with_header (f1eafe4:src/io/complex_types.rs:1049), versioned_v1_with_header (f1eafe4:src/io/complex_types.rs:1084).
 
-```text
 RED, parent c477d1c with the test items spliced in verbatim
 (c9_evidence/CT-3/red_parent.txt; the panic lines are in the spliced
 file):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/complex_types.rs --base c477d1c --evidence c9_evidence/CT-3/red_parent.txt --item 'fn test_c9_ct3_tuple_arity_is_checked(' --item 'fn pair_with_header(' --item 'struct Versioned(u32);' --item 'impl ComplexSerialize for Versioned' --item 'fn versioned_v1_with_header(' --item 'fn test_c9_ct3_unknown_version_is_rejected(' --item 'fn test_c9_ct3_impl_macro_rejects_unknown_version(' --item 'fn test_c9_ct3_validate_types_false_accepts_other_type_id(' --item 'fn test_c9_ct3_version_skew_requires_allow_version_skew(' --item 'fn test_c9_ct3_batch_version_skew_requires_allow_version_skew(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::complex_types::tests::test_c9_ct3'
 [... 6 lines elided ...]
 running 6 tests
@@ -4063,6 +3677,7 @@ test test_c9_sp1_vec_count_is_not_trusted_for_capacity ... ok
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 [... 1 line elided ...]
 ## exit=0
+```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
 exit 0 (c9_evidence/CT-3/clippy.txt).
@@ -4071,7 +3686,6 @@ io::complex_types::tests::test_c9_ct3`: 6 passed in each
 (c9_evidence/CT-3/miri_simd.txt, miri_scalar.txt). The parent version
 was not run under Miri. No unsafe code is added or changed, so no ASan
 run.
-```
 
 #### `48f8ab3` — fix(io): count partial writes and newly appended bytes in DataOutput (C9 DO-1)
 
@@ -4088,11 +3702,11 @@ sets `bytes_written` from `file.metadata().len()`), and f1eafe4:src/io/data_outp
 (`FileDataOutput` calls `self.file.write_all` directly).
 
 Fix, in this commit (src/io/data_output.rs):
-- 48f8ab3:src/io/data_output.rs:193-221 (`WriterDataOutput`) and 48f8ab3:src/io/data_output.rs:318-346 (`FileDataOutput`) call
+- 48f8ab3:src/io/data_output.rs:193-221 (`WriterDataOutput`) and 48f8ab3:src/io/data_output.rs:309-337 (`FileDataOutput`) call
   `Write::write_all(self, ...)`, routing every write through the
-  `Write` impls at 48f8ab3:src/io/data_output.rs:236-246 and 48f8ab3:src/io/data_output.rs:363-373 so `bytes_written` is updated
+  `Write` impls at 48f8ab3:src/io/data_output.rs:239-247 and 48f8ab3:src/io/data_output.rs:355-363 so `bytes_written` is updated
   after each inner `write` call.
-- 48f8ab3:src/io/data_output.rs:269, 48f8ab3:src/io/data_output.rs:279, 48f8ab3:src/io/data_output.rs:290-296, 48f8ab3:src/io/data_output.rs:354-360 `FileDataOutput` stores `initial_len`
+- 48f8ab3:src/io/data_output.rs:254, 48f8ab3:src/io/data_output.rs:266, 48f8ab3:src/io/data_output.rs:279-285, 48f8ab3:src/io/data_output.rs:345-347 `FileDataOutput` stores `initial_len`
   separately from `bytes_written`: `bytes_written()` starts at 0 and
   counts bytes written through this handle, while `position()` returns
   `initial_len.saturating_add(bytes_written)`.
@@ -4106,10 +3720,10 @@ Tests added (src/io/data_output.rs):
   verifies `bytes_written()` is 0 on `FileDataOutput::append` while
   `position()` includes the initial file length.
 
-```text
 RED, parent f1eafe4 with the test items spliced in verbatim
 (c9_evidence/DO-1/red_parent.txt; the panic lines are in the spliced
 file):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/data_output.rs --base f1eafe4 --evidence c9_evidence/DO-1/red_parent.txt --item 'struct OneByteThenFail' --item 'impl Write for OneByteThenFail' --item 'struct TrickleWriter' --item 'impl Write for TrickleWriter' --item 'struct ZeroWriter;' --item 'impl Write for ZeroWriter' --item 'fn test_c9_do1_writer_counts_partial_writes_and_retries_interrupted(' --item 'fn test_c9_do1_file_append_bytes_written_counts_new_bytes_only(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::data_output::tests::test_c9_do1'
 [... 6 lines elided ...]
 running 2 tests
@@ -4142,7 +3756,7 @@ test io::data_output::tests::test_c9_do1_file_append_bytes_written_counts_new_by
 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 3036 filtered out; finished in 0.01s
 [... 1 line elided ...]
 ## exit=0
-
+```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
 exit 0 (c9_evidence/DO-1/clippy.txt).
@@ -4151,76 +3765,33 @@ io::data_output::tests::test_c9_do1`: 1 passed, 1 ignored (file test) in
 each (c9_evidence/DO-1/miri_simd.txt, miri_scalar.txt). The parent
 version was not run under Miri. No unsafe code is added or changed, so
 no ASan run.
-```
 
 #### `3a9ca6f` — fix(io): share smart-pointer context and pin allocations during serialization (C9 SP-2 SP-3 SP-4 SP-5)
 
- Findings: C9 SP-2 (HIGH), SP-3 (HIGH), SP-4 (HIGH), SP-5 (HIGH)
+Findings: C9 SP-2 (HIGH), SP-3 (HIGH), SP-4 (HIGH), SP-5 (HIGH)
 
-Root causes:
-- SP-2: `Weak<T>` and `ArcWeak<T>` serialized a dangling weak pointer by writing
-  only a single `false` byte (`output.write_bool(false)`), while
-  `deserialize_smart_ptr` always read `let object_id = input.read_var_int()?`
-  before `let has_target = input.read_bool()?`. Deserializing a dangling weak
-  pointer therefore failed with `Unexpected end of data` (or consumed subsequent
-  stream bytes as a bogus varint ID).
-- SP-3: When a live `Weak<T>` or `ArcWeak<T>` upgraded to a `Rc<T>` / `Arc<T>`,
-  `serialize_smart_ptr` allocated a new object ID instead of looking up the
-  referent's `Rc::as_ptr(&strong) as usize` / `Arc::as_ptr(&strong) as usize` in
-  `context.object_ids`. On decode, `Weak<T>::deserialize_smart_ptr` checked
-  `context.get_object::<Rc<T>>(object_id)` before reading the inline referent,
-  always missed for first-seen IDs, and returned `Weak::new()`. Furthermore,
-  `Rc<T>`, `Arc<T>`, `Weak<T>`, and `ArcWeak<T>` each created a fresh
-  `SerializationContext` / `DeserializationContext` when called through
-  `SerializableType::{serialize, deserialize}`, so containers such as `Vec<Rc<T>>`
-  never shared deduplication state across elements.
-- SP-4: `SerializationContext` keyed `object_ids` by the raw `Rc::as_ptr` /
-  `Arc::as_ptr` address without retaining a strong reference for the duration of
-  the context. Temporary `Rc` / `Arc` allocations dropped between calls in the
-  same `SerializationContext` could have their heap address reused by the
-  allocator, causing later unrelated values at that address to be emitted as
-  back-references (`is_first_occurrence = false`) to the earlier object ID.
-- SP-5: `Rc<T>::serialize_smart_ptr` and `Arc<T>::serialize_smart_ptr` invoked
-  `(**self).serialize(output)` instead of routing through the active
-  `SerializationContext`, and `SerializableType` container impls did not
-  propagate an ambient context. Nested `Rc`/`Arc` fields lost pointer sharing,
-  and cyclic graphs (`Rc<RefCell<...>>` / `Arc<Mutex<...>>`) could not detect
-  in-progress ancestor object IDs and recursed until stack overflow.
+*Commit-message accuracy note (`S22-R6`):* the git commit message of `3a9ca6f` inaccurately claimed that `RcWeak<T>` and `ArcWeak<T>` lacked `SmartPtrSerialize` implementations and described a two-pass ID table. In fact, `48f8ab3:src/io/smart_ptr.rs:333-411` already implemented `SmartPtrSerialize<T>` for `RcWeak<T>` and `ArcWeak<T>`; the actual defects and fixes in `3a9ca6f` are detailed below.
 
-Fixes:
-- In `Weak<T>` and `ArcWeak<T>` (`src/io/smart_ptr.rs`):
-  - For dangling weak pointers (`upgrade().is_none()`), write `object_id = 0`
-    followed by `has_target = false`, matching the reader's `object_id` then
-    `has_target` wire layout.
-  - For live weak pointers, register or look up the upgraded referent's raw data
-    pointer in `context`, write `(object_id, true)`, and on first occurrence
-    write the referent payload and pin the strong `Rc`/`Arc` in `context`. On
-    decode, if `object_id` is already present in `context` (`Rc<T>` or `Arc<T>`),
-    downgrade and return it; otherwise decode the referent, store a strong
-    `Rc<T>` / `Arc<T>` in `context` under `object_id`, and return `downgrade(&strong)`.
-- In `SerializationContext` and `DeserializationContext` (`src/io/smart_ptr.rs`):
-  - Retain type-erased strong references (`pinned_objects: Vec<Box<dyn Any>>`)
-    alongside `object_ids` in `SerializationContext` so no serialized `Rc` or
-    `Arc` allocation can be freed and have its address reused before the context
-    finishes or is `clear()`ed.
-  - Track `active_ids: HashSet<u64>` in `SerializationContext`; if an object ID
-    is re-entered while still active (`enter_object` returns `false` when
-    `cycle_detection` is enabled), fail with `ZiporaError::invalid_data("Cyclic
-    smart pointer reference detected")`.
-  - Propagate the active `SerializationContext` / `DeserializationContext` across
-    nested `SerializableType::{serialize, deserialize}` calls via thread-local
-    ambient context slots scoped with an RAII `Guard` (`run_nested`), so nested
-    `Vec<Rc<T>>`, structs, and `Option`/`Box` fields share deduplication state
-    and cycle detection automatically.
+Root causes (in `48f8ab3:src/io/smart_ptr.rs`):
+- SP-2 (`48f8ab3:src/io/smart_ptr.rs:344-347, 357-361` for `RcWeak<T>`, and `48f8ab3:src/io/smart_ptr.rs:385-388, 398-402` for `ArcWeak<T>`): `serialize_with_context` encoded a dangling weak pointer (`self.upgrade()` is `None`) by writing only `output.write_u8(0)?`, whereas `deserialize_with_context` on marker `0` called `let _ = T::deserialize(input)?;` before returning `Ok(RcWeak::new())` / `Ok(ArcWeak::new())`. Decoding a dangling weak pointer therefore failed with `Unexpected end of data` (or consumed subsequent bytes in the stream as a dummy `T`).
+- SP-3 (`48f8ab3:src/io/smart_ptr.rs:86-113, 217-219, 362-367, 403-408`): `DeserializationContext<T>` was generic over a single concrete type `T`, so `Option<Box<T>>::deserialize_with_context` (`48f8ab3:src/io/smart_ptr.rs:217-219`) and `RcWeak<T>` / `ArcWeak<T>::deserialize_with_context` (`48f8ab3:src/io/smart_ptr.rs:364, 405`) could not pass their `DeserializationContext<Self>` to `Box::<T>::deserialize_with_context`, `Rc::<T>::deserialize_with_context`, or `Arc::<T>::deserialize_with_context`, and instead allocated a fresh `&mut DeserializationContext::new()`. For marker `1` on `RcWeak<T>` / `ArcWeak<T>`, the decoded `rc` / `arc` lived only in that temporary inner context and local variable, which were both dropped before returning `Ok(Rc::downgrade(&rc))` / `Ok(Arc::downgrade(&arc))`, so every decoded weak pointer immediately expired (`upgrade() == None`).
+- SP-4 (`48f8ab3:src/io/smart_ptr.rs:46-59`): `SerializationContext::get_or_assign_id` keyed `object_ids: HashMap<usize, u32>` by `ptr as *const T as usize` without keeping a strong `Rc<T>` / `Arc<T>` alive for the lifetime of the `SerializationContext`. Temporary `Rc` / `Arc` allocations dropped between `serialize_with_context` calls on the same `SerializationContext` had their heap addresses reused by the allocator, causing later distinct `Rc` / `Arc` values to collide in `object_ids` and be serialized as marker `2` back-references to the earlier object ID.
+- SP-5 (`48f8ab3:src/io/smart_ptr.rs:139-151, 245, 261, 298, 314, 545-571, 610-632`): `SmartPtrSerialize::{serialize, deserialize}` always constructed a fresh `SerializationContext::new()` / `DeserializationContext::new()`, and `Rc<T>`, `Arc<T>`, `Vec<T>`, and `Option<T>` called `SerializableType::{serialize, deserialize}` without propagating the active context. Consequently, containers (`Vec<Rc<T>>`) never shared deduplication state across elements, and cyclic graphs (`Rc<RefCell<Option<Rc<Node>>>>`) created a fresh `SerializationContext` at each nested `Rc` hop and recursed until stack overflow.
 
-Tests:
-- `io::smart_ptr::tests::test_c9_sp2_dangling_weak_round_trips`
-- `io::smart_ptr::tests::test_c9_sp3_live_weak_and_shared_context_round_trip`
-- `io::smart_ptr::tests::test_c9_sp4_temporary_rc_addresses_are_not_confused`
-- `io::smart_ptr::tests::test_c9_sp5_nested_sharing_and_cycle_detection`
+Fixes (in `3a9ca6f:src/io/smart_ptr.rs`):
+- SP-2 (`3a9ca6f:src/io/smart_ptr.rs:506-507, 541-542`): on marker `0`, `RcWeak<T>::deserialize_with_context` (`3a9ca6f:src/io/smart_ptr.rs:501-514`) and `ArcWeak<T>::deserialize_with_context` (`3a9ca6f:src/io/smart_ptr.rs:536-549`) return `Ok(RcWeak::new())` / `Ok(ArcWeak::new())` immediately without calling `T::deserialize(input)`.
+- SP-3 (`3a9ca6f:src/io/smart_ptr.rs:144-205, 365-368, 508-511, 543-546`): make `DeserializationContext` non-generic by storing `objects: HashMap<u32, Box<dyn Any>>` (`3a9ca6f:src/io/smart_ptr.rs:146`) with typed `store_object<T: 'static>(&mut self, id: u32, object: T)` (`3a9ca6f:src/io/smart_ptr.rs:163-165`) and `get_object<T: 'static>(&self, id: u32) -> Option<&T>` (`3a9ca6f:src/io/smart_ptr.rs:168-170`). `Option<Box<T>>`, `RcWeak<T>`, and `ArcWeak<T>` pass the caller's `context: &mut DeserializationContext` directly to `Box::<T>::deserialize_with_context`, `Rc::<T>::deserialize_with_context`, and `Arc::<T>::deserialize_with_context`, so the strong `Rc<T>` / `Arc<T>` stored in `context.objects` keeps the referent alive for the duration of the `DeserializationContext` and `weak.upgrade()` succeeds.
+- SP-4 (`3a9ca6f:src/io/smart_ptr.rs:32, 81-85, 391, 445`): add `retained_objects: Vec<Box<dyn Any>>` to `SerializationContext` and call `context.retain_object(self.clone())` when first serializing an `Rc<T>` (`3a9ca6f:src/io/smart_ptr.rs:391`) or `Arc<T>` (`3a9ca6f:src/io/smart_ptr.rs:445`), keeping a strong reference alive until `SerializationContext::clear` (`3a9ca6f:src/io/smart_ptr.rs:129-135`) or drop so the allocator cannot reuse the referent's address during the session.
+- SP-5 (`3a9ca6f:src/io/smart_ptr.rs:18-21, 105-126, 179-200, 214-299, 394, 410, 448, 464, 689-717, 750-772`): add thread-local `ACTIVE_SER_CTX` / `ACTIVE_DE_CTX` pointers (`3a9ca6f:src/io/smart_ptr.rs:18-21`) installed by `SerializationContext::run_nested` (`3a9ca6f:src/io/smart_ptr.rs:105-126`) and `DeserializationContext::run_nested` (`3a9ca6f:src/io/smart_ptr.rs:179-200`) with an RAII `Guard`, and route `SmartPtrSerialize::{serialize, deserialize}` (`3a9ca6f:src/io/smart_ptr.rs:289-299`), `Vec<T>` (`3a9ca6f:src/io/smart_ptr.rs:689-717`), and `Option<T>` (`3a9ca6f:src/io/smart_ptr.rs:750-772`) through `with_active_ser_ctx` / `with_active_de_ctx` (`3a9ca6f:src/io/smart_ptr.rs:214-269`). Note: in `3a9ca6f`, a plain user-defined struct whose `SerializableType` impl serialized multiple `Rc<T>` fields directly without an enclosing `Box`/`Rc`/`Arc`/`Vec`/`Option` still created one context per top-level field unless `SmartPtrSerialize::serialize_with_context` was used; `0e8c6ba` (`S22-R8`, `0e8c6ba:src/io/smart_ptr.rs:485-503`, `0e8c6ba:src/io/complex_types.rs:643-647, 747-756`) added public `with_shared_ser_ctx` / `with_shared_de_ctx` helpers and wired `ComplexTypeSerializer` and `impl_complex_serialize!` through them.
 
-```text
+Tests added (in `3a9ca6f:src/io/smart_ptr.rs`):
+- `3a9ca6f:src/io/smart_ptr.rs:1082` `test_c9_sp2_dangling_weak_round_trips`
+- `3a9ca6f:src/io/smart_ptr.rs:1122` `test_c9_sp3_live_weak_and_shared_context_round_trip` (with helper `StrongAndWeak` at `3a9ca6f:src/io/smart_ptr.rs:1103-1119`)
+- `3a9ca6f:src/io/smart_ptr.rs:1154` `test_c9_sp4_temporary_rc_addresses_are_not_confused`
+- `3a9ca6f:src/io/smart_ptr.rs:1227` `test_c9_sp5_nested_sharing_and_cycle_detection` (with helper `CyclicNode` at `3a9ca6f:src/io/smart_ptr.rs:1181-1224`)
+
 RED output (tests spliced onto parent `48f8ab3`, `c9_evidence/SP-2/red_parent.txt`):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/smart_ptr.rs --base 48f8ab3 --evidence c9_evidence/SP-2/red_parent.txt --item 'fn test_c9_sp2_dangling_weak_round_trips(' --item 'struct StrongAndWeak' --item 'impl SerializableType for StrongAndWeak' --item 'fn test_c9_sp3_live_weak_and_shared_context_round_trip(' --item 'fn test_c9_sp4_temporary_rc_addresses_are_not_confused(' --item 'static CYCLE_DEPTH:' --item 'struct CyclicNode' --item 'impl SerializableType for CyclicNode' --item 'fn test_c9_sp5_nested_sharing_and_cycle_detection(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr::tests::test_c9_sp'
 # tree: 48f8ab3:src/io/smart_ptr.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/SP-2/red_parent_spliced_smart_ptr.rs)
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr::tests::test_c9_sp'
@@ -4273,8 +3844,10 @@ test result: FAILED. 1 passed; 4 failed; 0 ignored; 0 measured; 3047 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
 GREEN output (`c9_evidence/SP-2/green_lib.txt`):
+```text
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 26.35s
@@ -4308,35 +3881,26 @@ test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 3036 filtered out; 
 Finding: C9 CT-5 (MEDIUM)
 
 Root cause:
-- `NestedSerialize::{serialize_nested, deserialize_nested}` (`src/io/complex_types.rs`)
-  checked `depth > Self::max_depth()` only once at the entry call and then invoked
+- `NestedSerialize::{serialize_nested, deserialize_nested}` (`3a9ca6f:src/io/complex_types.rs:669-683`)
+  checked `depth > Self::max_depth()` only once at the entry call (`3a9ca6f:src/io/complex_types.rs:670, 678`) and then invoked
   `self.serialize_data(output)` / `Self::deserialize_with_version(input, Self::version())`
   without propagating or incrementing `depth` across nested containers (`Vec`,
   `HashMap`, `HashSet`, `BTreeMap`, `BTreeSet`) or smart pointers (`Box`, `Rc`,
   `Arc`).
-- `SmartPtrConfig::max_depth` (`src/io/smart_ptr.rs`) was never read by
-  `SmartPtrSerializer`, `SerializationContext`, or `DeserializationContext`.
+- `SmartPtrConfig::max_depth` (`3a9ca6f:src/io/smart_ptr.rs:558`) was never read by
+  `SmartPtrSerializer`, `SerializationContext` (`3a9ca6f:src/io/smart_ptr.rs:25-33`), or `DeserializationContext` (`3a9ca6f:src/io/smart_ptr.rs:144-147`).
 
 Fix:
-- Track `depth` and `max_depth` (default `1000`) on `SerializationContext` and
-  `DeserializationContext` (`src/io/smart_ptr.rs`), and check `self.depth >=
-  self.max_depth` in `run_nested` before incrementing `depth` (decrementing via
-  an RAII `Guard` on scope exit).
-- Wire `SmartPtrSerializer::{serialize_to_bytes, deserialize_from_bytes}` to copy
-  `self.config.max_depth` into `context.max_depth`.
-- Route `NestedSerialize::{serialize_nested, deserialize_nested}` and non-empty
-  `HashMap`, `HashSet`, `BTreeMap`, and `BTreeSet` serialization/deserialization
-  in `src/io/complex_types.rs` through the active thread-local context so
-  recursive container and smart-pointer nesting increments the shared depth
-  counter and fails with `ZiporaError::invalid_data("Maximum nesting depth
-  exceeded")` once `max_depth` is exceeded.
+- Track `depth` and `max_depth` (set to `DEFAULT_MAX_DEPTH = 1000` in `0a63ab5:src/io/smart_ptr.rs:22, 38-40, 164-166`, and subsequently reduced to `256` with `64`/`128`/`256` presets in `0e8c6ba` for `S22-R1` so hostile nested chains fail cleanly with `Err` on a 2 MiB debug thread stack) on `SerializationContext` and `DeserializationContext`, and check `self.depth >= self.max_depth` in `run_nested` (`0a63ab5:src/io/smart_ptr.rs:113-139, 199-225`) before incrementing `depth` (decrementing via an RAII `Guard` on scope exit).
+- Wire `SmartPtrSerializer::{serialize, deserialize, create_context, create_deserialization_context}` (`0a63ab5:src/io/smart_ptr.rs:762-805`) to copy `self.config.max_depth` into the context via `with_max_depth` / `set_max_depth` (`0a63ab5:src/io/smart_ptr.rs:68-78, 178-188`).
+- Route `NestedSerialize::{serialize_nested, deserialize_nested}` (`0a63ab5:src/io/complex_types.rs:721-731`) via `with_nested_ser_depth` / `with_nested_de_depth` (`0a63ab5:src/io/smart_ptr.rs:300-427`) and route `HashMap`, `HashSet`, `BTreeMap`, and `BTreeSet` serialization/deserialization (`0a63ab5:src/io/complex_types.rs:255-431`) through `enter_complex_ser` / `enter_complex_de` (`0a63ab5:src/io/complex_types.rs:247-253`), plus `Box<T>` and `Option<Box<T>>` (`0a63ab5:src/io/smart_ptr.rs:437-489`), so recursive container and smart-pointer nesting increments the shared depth counter and fails with `ZiporaError::invalid_data("Maximum nesting depth exceeded: ...")`.
 
 Tests:
-- `io::complex_types::tests::test_c9_ct5_nested_serialize_enforces_max_depth`
-- `io::smart_ptr::tests::test_c9_ct5_smart_ptr_serializer_enforces_max_depth`
+- `0a63ab5:src/io/complex_types.rs:1222` `io::complex_types::tests::test_c9_ct5_nested_serialize_enforces_max_depth`
+- `0a63ab5:src/io/smart_ptr.rs:1429` `io::smart_ptr::tests::test_c9_ct5_smart_ptr_serializer_enforces_max_depth`
 
-```text
 RED output (tests spliced onto parent `3a9ca6f`, `c9_evidence/CT-5/red_parent.txt`):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/complex_types.rs --base 3a9ca6f --evidence c9_evidence/CT-5/red_parent.txt --item 'fn test_c9_ct5_nested_serialize_enforces_max_depth(' --extra-file src/io/smart_ptr.rs --extra-item 'fn test_c9_ct5_smart_ptr_serializer_enforces_max_depth(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- test_c9_ct5_'
 # tree: 3a9ca6f:src/io/complex_types.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/CT-5/red_parent_spliced_complex_types.rs)
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- test_c9_ct5_'
@@ -4370,8 +3934,10 @@ test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 3052 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
 GREEN output (`c9_evidence/CT-5/green_lib.txt`):
+```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- test_c9_ct5_
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 22.18s
@@ -4391,70 +3957,72 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3052 filtered out; f
 Findings: C9 VS-1 (HIGH), VS-2 (MEDIUM), VS-3 (MEDIUM), VS-4 (MEDIUM), VS-5 (MEDIUM)
 
 Root causes:
-- VS-1: `VersionedSerialize::supports_version(version)` called
+- VS-1 (`0a63ab5:src/io/versioning.rs:324-326`): `VersionedSerialize::supports_version(version)` called
   `version.is_compatible_with(&Self::current_version())` instead of
   `Self::current_version().is_compatible_with(version)`. Because
-  `a.is_compatible_with(b)` checks `a.major == b.major && a >= b`,
+  `a.is_compatible_with(b)` (`0a63ab5:src/io/versioning.rs:41-47`) checks `a.major == b.major && a >= b`,
   `supports_version` rejected older same-major versions (e.g. `1.0.0` when
   current is `1.1.0`, preventing migrations from ever running under strict
   checking) and accepted newer versions (`1.2.0`) even when
   `allow_forward_compatibility` was `false`.
-- VS-2: `VersionedSerializer::deserialize_from_bytes` computed minor version
-  skew via `stored_version.minor() - current_version.minor()` when
-  `stored_version > current_version` and `current_version.minor() -
-  stored_version.minor()` otherwise. When `stored_version` had a smaller major
+- VS-2 (`0a63ab5:src/io/versioning.rs:520-532`): `VersionedSerializer::deserialize_from_bytes` computed minor version
+  skew via `stored_version.minor - current_version.minor` when
+  `stored_version > current_version` and `current_version.minor -
+  stored_version.minor` otherwise. When `stored_version` had a smaller major
   and larger minor (e.g. `0.9.0` vs `1.0.0`), the subtraction underflowed and
   panicked in debug builds; when `stored_version` had a different major and equal
   minor (e.g. `9.0.0` vs `1.0.0`), the skew evaluated to `0` and ignored the
   major mismatch.
-- VS-3: `MigrationRegistry::find_migration_path` performed a greedy recursive
+- VS-3 (`0a63ab5:src/io/versioning.rs:367-395`): `MigrationRegistry::find_migration_path` performed a greedy recursive
   search without a visited set or backtracking, executing each migration closure
   during graph exploration. Cycles (`1.0.0 -> 2.0.0 -> 1.0.0`) caused infinite
   recursion until stack overflow, and dead-end branches (`1.0.0 -> 1.5.0`
   visited before `1.0.0 -> 2.0.0 -> 3.0.0`) caused valid migration paths to be
   missed depending on `HashMap` iteration order.
-- VS-4: `Version::to_u32` shifted `self.major: u16` by 24 and `self.minor: u16`
+- VS-4 (`0a63ab5:src/io/versioning.rs:58-68, 79-89`): `Version::to_u32` shifted `self.major: u16` by 24 and `self.minor: u16`
   by 16 without masking/saturating, and `Version::{serialize, deserialize}`
   relied exclusively on `to_u32` / `from_u32`. Values with `major >= 256` or
   `minor >= 256` (e.g. `Version::new(2, 256, 0)`) overflowed into the adjacent
   field (`3.0.0`).
-- VS-5: `VersionedSerialize::serialize_versioned` omitted the version header
+- VS-5 (`0a63ab5:src/io/versioning.rs:297-308`): `VersionedSerialize::serialize_versioned` omitted the version header
   while `deserialize_versioned` read a `Version` header and never checked
   `Self::supports_version(&version)`.
 
 Fixes:
-- In `VersionedSerialize::supports_version` (`src/io/versioning.rs`), check
-  `version >= &Self::min_supported_version() &&
-  Self::current_version().is_compatible_with(version)`.
-- In `VersionedSerializer::deserialize_from_bytes`, check whether a migration
+- In `VersionedSerialize::supports_version` (`4f08691:src/io/versioning.rs:354-358`), check
+  `*version >= Self::min_supported_version() && Self::current_version().is_compatible_with(version)`.
+- In `VersionedSerializer::deserialize_from_bytes` (`4f08691:src/io/versioning.rs:564-631`), check whether a migration
   path exists when `enable_migrations` is set; when not migrating, enforce
   `strict_version_checking`, `min_supported_version`, major-version equality, and
   `allow_forward_compatibility`. Compute same-major minor skew with
-  `stored_version.minor().abs_diff(current_version.minor())`.
-- In `MigrationRegistry`, replace `find_migration_path` with a deterministic BFS
+  `stored_version.minor.abs_diff(current_version.minor)`.
+- In `MigrationRegistry` (`4f08691:src/io/versioning.rs:383-444`), replace `find_migration_path` with a deterministic BFS
   (`shortest_path`) using a `VecDeque`, a `HashSet<Version>` visited set, and
   sorted neighbor versions, then apply the migration closures along the shortest
   path only after a path is found.
-- In `Version::to_u32`, saturate `major` and `minor` to `0xFF` so `minor` never
-  spills into `major` (and document the 8.8.16 packed layout `Limitation:`), and
-  in `SerializableType for Version`, use a `0xFFFF_pppp` sentinel header followed
-  by two `u16` fields whenever `major >= 255` or `minor >= 255` so all `u16`
+- In `Version::to_u32` (`4f08691:src/io/versioning.rs:59-64`), saturate `major` and `minor` to `0xFF` so `minor` never
+  spills into `major` (and document the 8.8.16 packed layout `Limitation:` at `4f08691:src/io/versioning.rs:51-58`), and
+  in `SerializableType for Version` (`4f08691:src/io/versioning.rs:86-114`), use `PACKED_EXTENDED_SENTINEL` (`0xFFFF_0000`, `4f08691:src/io/versioning.rs:84`) followed
+  by three `u16` fields (`major`, `minor`, `patch`) whenever `major >= 255` or `minor >= 255` so all `u16`
   major/minor/patch triples round-trip losslessly while keeping the 4-byte wire
   format for `major, minor < 255`.
-- In `VersionedSerialize::serialize_versioned`, write
+- In `VersionedSerialize::serialize_versioned` (`4f08691:src/io/versioning.rs:318-323`), write
   `Self::current_version().serialize(output)?` before serializing fields (and
-  avoid duplicating the header in `VersionedSerializer::serialize_to_bytes`), and
-  validate `Self::supports_version(&version)` in `deserialize_versioned`.
+  avoid duplicating the header in `VersionedSerializer::serialize_to_bytes` at `4f08691:src/io/versioning.rs:554-560`), and
+  validate `Self::supports_version(&version)` in `deserialize_versioned` (`4f08691:src/io/versioning.rs:325-336`).
+- **Wire-format compatibility disclosure (`S22-R2`, documented in `5b33f98:src/io/versioning.rs:12-24, 58-59`):**
+  1. `VersionedSerialize::serialize_versioned` now prefixes the payload with `Self::current_version().serialize(output)?` so `serialize_versioned` and `deserialize_versioned` are symmetric (previously `serialize_versioned` omitted the header while `deserialize_versioned` unconditionally read one).
+  2. `Version::serialize` remains 4 bytes for `major < 255 && minor < 255`, and writes an 8-byte extended header (`0xFFFF_0000u32` followed by three little-endian `u16`s) when `major >= 255 || minor >= 255`.
 
 Tests:
-- `io::versioning::tests::test_c9_vs1_supports_older_same_major_and_rejects_newer_without_forward_compat`
-- `io::versioning::tests::test_c9_vs2_skew_check_rejects_underflow_and_major_mismatch`
-- `io::versioning::tests::test_c9_vs3_migration_path_handles_cycles_and_dead_ends`
-- `io::versioning::tests::test_c9_vs4_large_major_and_minor_versions_round_trip`
-- `io::versioning::tests::test_c9_vs5_serialize_versioned_and_deserialize_versioned_round_trip_and_validate`
+- `4f08691:src/io/versioning.rs:858` `io::versioning::tests::test_c9_vs1_supports_older_same_major_and_rejects_newer_without_forward_compat`
+- `4f08691:src/io/versioning.rs:908` `io::versioning::tests::test_c9_vs2_skew_check_rejects_underflow_and_major_mismatch`
+- `4f08691:src/io/versioning.rs:953` `io::versioning::tests::test_c9_vs3_migration_path_handles_cycles_and_dead_ends`
+- `4f08691:src/io/versioning.rs:1013` `io::versioning::tests::test_c9_vs4_large_major_and_minor_versions_round_trip`
+- `4f08691:src/io/versioning.rs:1034` `io::versioning::tests::test_c9_vs5_serialize_versioned_and_deserialize_versioned_round_trip_and_validate`
 
-```text
 RED output (tests spliced onto parent `0a63ab5`, `c9_evidence/VS-1/red_parent.txt`):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/versioning.rs --base 0a63ab5 --evidence c9_evidence/VS-1/red_parent.txt --item 'fn test_c9_vs1_supports_older_same_major_and_rejects_newer_without_forward_compat(' --item 'fn test_c9_vs2_skew_check_rejects_underflow_and_major_mismatch(' --item 'fn test_c9_vs3_migration_path_handles_cycles_and_dead_ends(' --item 'fn test_c9_vs4_large_major_and_minor_versions_round_trip(' --item 'fn test_c9_vs5_serialize_versioned_and_deserialize_versioned_round_trip_and_validate(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::versioning::tests::test_c9_vs'
 # tree: 0a63ab5:src/io/versioning.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/VS-1/red_parent_spliced_versioning.rs)
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::versioning::tests::test_c9_vs'
@@ -4515,8 +4083,10 @@ test result: FAILED. 0 passed; 5 failed; 0 ignored; 0 measured; 3054 filtered ou
 error: test failed, to rerun pass `--lib`
 
 ## exit=101
+```
 
 GREEN output (`c9_evidence/VS-1/green_lib.txt`):
+```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::versioning
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 24.09s
@@ -4547,15 +4117,24 @@ test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 3043 filtered out; 
 
 #### `1423bc3` — fix(io): position range streams on construction and validate seeks and multi-range reads (C9 RS-1 RS-2 RS-3 RS-4 RS-5)
 
-Fixes:
-- RS-1 (HIGH): `RangeReader::new` (`4f08691:src/io/range_stream.rs:28-51`) and `RangeWriter::new` (`4f08691:src/io/range_stream.rs:228-246`) did not advance the inner reader or writer when `start > 0`, while `RangeReader::with_seek` (`4f08691:src/io/range_stream.rs:78-84`) only marked `seek_supported = false` without positioning the stream. Skip `start` bytes from the current position via `io::copy(&mut (&mut inner).take(start), &mut io::sink())` in `RangeReader::new` (requiring `R: Read` and returning `UnexpectedEof` if fewer than `start` bytes exist), seek to `SeekFrom::Start(start)` in `RangeReader::with_seek` (`R: Read + Seek`) and `RangeWriter::new` (`W: Write + Seek`), and return `Err(InvalidInput)` from `RangeReader::reset` when `!self.seek_supported && self.start_pos > 0`.
-- RS-2 (MEDIUM): `MultiRangeReader::read` (`4f08691:src/io/range_stream.rs:492-527`) recursed across empty ranges (causing stack overflow on 200,000 empty ranges) and returned `Ok(0)` when an inner range lay past the underlying stream's EOF, silently truncating subsequent valid ranges. Advance across exhausted ranges iteratively with a `loop` and return `Err(io::ErrorKind::UnexpectedEof)` when the inner stream returns 0 bytes while the active range still expects bytes.
-- RS-3 (LOW): `RangeReader::seek` (`4f08691:src/io/range_stream.rs:184-216`) and `RangeWriter::seek` (`4f08691:src/io/range_stream.rs:331-361`) computed `(-offset) as u64` (panicking in debug on `i64::MIN`) and silently clamped out-of-bounds seeks to `[start_pos, end_pos]`. Compute signed seek targets with `checked_add_signed(offset)` and reject targets `< start_pos` or `> end_pos` with `io::ErrorKind::InvalidInput`.
-- RS-4 (LOW): `self.remaining() as usize` (`4f08691:src/io/range_stream.rs:176, 4f08691:src/io/range_stream.rs:316, 4f08691:src/io/range_stream.rs:517`) truncated 64-bit range lengths on 32-bit targets. Compute `let max_read = self.remaining().min(buf.len() as u64) as usize;`.
-- RS-5 (LOW): `MultiRangeReader::total_length` (`4f08691:src/io/range_stream.rs:473-476`) summed `end.saturating_sub(start)` with `.sum()`, panicking on `u64` overflow in debug builds. Fold with `u64::saturating_add`.
+*Commit-message accuracy note (`S22-R6`):* the git commit message of `1423bc3` inaccurately stated that `RangeReader::new` / `RangeWriter::new` seek at construction time and before every `read`/`write`, and mentioned `io::copy(&mut (&mut inner).take(start), &mut io::sink())` and `checked_add_signed`. In fact, `RangeReader::new` (`1423bc3:src/io/range_stream.rs:68-78`) and `RangeWriter::new` (`1423bc3:src/io/range_stream.rs:255-265`) remain infallible constructors that set `needs_initial_seek: start > 0`, and perform a single lazy `inner.seek(SeekFrom::Start(self.current_pos))` on the first `read` or `write` (unless `new_and_seek` or `Seek::seek` has already positioned `inner`). The exact changes in `1423bc3` are detailed below.
 
-```text
+Fixes (in `1423bc3:src/io/range_stream.rs`):
+- RS-1 (HIGH): `RangeReader::new` (`4f08691:src/io/range_stream.rs:67-76`) and `RangeWriter::new` (`4f08691:src/io/range_stream.rs:236-245`) initialized `current_pos = start` without ever seeking `inner`, so reading or writing with `start > 0` accessed offset `0` of `inner` unless `new_and_seek` was used. Add `needs_initial_seek: bool` to `RangeReader` (`1423bc3:src/io/range_stream.rs:64, 76`) and `RangeWriter` (`1423bc3:src/io/range_stream.rs:250, 263`), set to `start > 0` in `new` and cleared to `false` in `new_and_seek` (`1423bc3:src/io/range_stream.rs:146, 337`) and `Seek::seek` (`1423bc3:src/io/range_stream.rs:237, 375`). On the first `RangeReader::read` (`1423bc3:src/io/range_stream.rs:183-186`) or `RangeWriter::write` (`1423bc3:src/io/range_stream.rs:348-351`) when `needs_initial_seek` is `true`, seek `inner` to `SeekFrom::Start(self.current_pos)` and clear `needs_initial_seek`.
+- **API compatibility disclosure (`S22-R2`, documented in `5b33f98:src/io/range_stream.rs:13-18, 248-253`):** `Read for RangeReader<R>` (`1423bc3:src/io/range_stream.rs:177`), `DataInput for RangeReader<R>` (`1423bc3:src/io/range_stream.rs:381`), and `Write for RangeWriter<W>` (`1423bc3:src/io/range_stream.rs:342`) now require `R: Read + Seek` and `W: Write + Seek` so non-zero `start` offsets can position the underlying stream on first I/O.
+- RS-2 (MEDIUM): `MultiRangeReader::read` (`4f08691:src/io/range_stream.rs:492-527`) recursed via `self.read(buf)` whenever a range was exhausted (causing stack overflow on 200,000 empty ranges) and returned `Ok(0)` when an inner range lay past the underlying stream's EOF, silently truncating subsequent valid ranges. Advance across empty or exhausted ranges iteratively in a `loop` (`1423bc3:src/io/range_stream.rs:522-538`) and return `Err(io::Error::new(io::ErrorKind::UnexpectedEof, ...))` (`1423bc3:src/io/range_stream.rs:548-556`) when `self.inner.read` returns `0` while `absolute_pos < end`.
+- RS-3 (LOW): `RangeReader::seek` (`4f08691:src/io/range_stream.rs:184-216`) and `RangeWriter::seek` (`4f08691:src/io/range_stream.rs:331-361`) computed `(-offset) as u64` (panicking in debug on `i64::MIN`) and silently clamped out-of-bounds seeks to `[start_pos, end_pos]`. Extract `resolve_range_seek` (`1423bc3:src/io/range_stream.rs:198-229`) using `checked_add(offset as u64)` for `offset >= 0` and `checked_sub(offset.unsigned_abs())` for `offset < 0`, and return `Err(io::ErrorKind::InvalidInput)` whenever the target overflows or falls outside `start_pos..=end_pos` (`1423bc3:src/io/range_stream.rs:222-228`).
+- RS-4 (LOW): `self.remaining() as usize` (`4f08691:src/io/range_stream.rs:176, 316`) and `(end - absolute_pos) as usize` (`4f08691:src/io/range_stream.rs:517`) truncated 64-bit range lengths on 32-bit targets. Use `usize::try_from(...).unwrap_or(usize::MAX)` in `RangeReader::read` (`1423bc3:src/io/range_stream.rs:188`), `RangeWriter::write` (`1423bc3:src/io/range_stream.rs:353`), and `MultiRangeReader::read` (`1423bc3:src/io/range_stream.rs:544`). (Note: on 64-bit hosts `usize::try_from(u64)` is infallible, so `RS-4` is a 32-bit portability guard and has no separate 64-bit runtime test.)
+- RS-5 (LOW): `MultiRangeReader::total_length` (`4f08691:src/io/range_stream.rs:473-476`) summed `end.saturating_sub(*start)` with `.sum()`, panicking on `u64` overflow in debug builds. Fold with `fold(0u64, |acc, (start, end)| acc.saturating_add(end.saturating_sub(*start)))` (`1423bc3:src/io/range_stream.rs:491-497`).
+
+Tests added (in `1423bc3:src/io/range_stream.rs`):
+- `1423bc3:src/io/range_stream.rs:757` `io::range_stream::tests::test_c9_rs1_new_positions_inner_reader_and_writer_to_start`
+- `1423bc3:src/io/range_stream.rs:775` `io::range_stream::tests::test_c9_rs2_multi_range_reader_skips_empty_ranges_and_errors_past_eof`
+- `1423bc3:src/io/range_stream.rs:804` `io::range_stream::tests::test_c9_rs3_seek_i64_min_and_out_of_bounds_return_invalid_input`
+- `1423bc3:src/io/range_stream.rs:845` `io::range_stream::tests::test_c9_rs5_multi_range_total_length_saturates_on_overflow`
+
 RED (tests spliced onto parent 4f08691, c9_evidence/RS-1/red_parent.txt):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/range_stream.rs --base 4f08691 --evidence c9_evidence/RS-1/red_parent.txt --item 'fn test_c9_rs1_new_positions_inner_reader_and_writer_to_start(' --item 'fn test_c9_rs2_multi_range_reader_skips_empty_ranges_and_errors_past_eof(' --item 'fn test_c9_rs3_seek_i64_min_and_out_of_bounds_return_invalid_input(' --item 'fn test_c9_rs5_multi_range_total_length_saturates_on_overflow(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::range_stream::tests::test_c9_rs'
 # tree: 4f08691:src/io/range_stream.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/RS-1/red_parent_spliced_range_stream.rs)
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::range_stream::tests::test_c9_rs'
@@ -4611,8 +4190,10 @@ test result: FAILED. 0 passed; 4 failed; 0 ignored; 0 measured; 3059 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
 GREEN (c9_evidence/RS-1/green_lib.txt):
+```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::range_stream::
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 19.49s
@@ -4639,8 +4220,10 @@ test io::range_stream::tests::test_c9_rs2_multi_range_reader_skips_empty_ranges_
 test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 3047 filtered out; finished in 0.00s
 
 ## exit=0
+```
 
 Miri SIMD (c9_evidence/RS-1/miri_simd.txt):
+```text
 $ env CARGO_BUILD_JOBS=16 MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::range_stream::tests::test_c9_rs
 [... 56 lines elided ...]
 running 4 tests
@@ -4654,8 +4237,10 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3027 filtered out; f
 warning: 7 warnings emitted
 
 ## exit=0
+```
 
 Miri Scalar (c9_evidence/RS-1/miri_scalar.txt):
+```text
 $ env CARGO_BUILD_JOBS=16 RUSTFLAGS= CARGO_TARGET_DIR=target/miri-scalar MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::range_stream::tests::test_c9_rs
 [... 56 lines elided ...]
 running 4 tests
@@ -4674,15 +4259,25 @@ warning: 7 warnings emitted
 #### `6c8fab3` — fix(io): fix GroupVarint 64-bit tags, 65-bit delta encoding, LEB128 10th-byte overflow, and i64::MIN strategy panics (C9 VV-1 VV-2 VV-3 VV-4 VV-5 VV-6)
 
 Fixes:
-- VV-1 (HIGH): `VarIntEncoder::encode_group_varint_u64` / `decode_group_varint_u64` (`1423bc3:src/io/var_int_variants.rs:607-688`) packed 2-bit width selectors (`1..=4` bytes) into a single `u8`, corrupting any `u64 >= 2^32` (widths `5..=8` spilled into adjacent selectors and truncated on decode), and `encode_i64` / `encode_i64_sequence` (`1423bc3:src/io/var_int_variants.rs:106, 1423bc3:src/io/var_int_variants.rs:134-137`) cast `i64 as u64` without zigzag encoding. Use a 2-byte `u16` little-endian selector header with 3 bits per lane (`1..=8` bytes, rejecting unused top bits `selector & !0x0FFF != 0`) and zigzag-encode signed integers for `GroupVarint`.
-- VV-2 (MEDIUM): `encode_delta_sequence_u64` (`1423bc3:src/io/var_int_variants.rs:454-458`) shifted `(values[i] - values[i - 1]) << 1` in `u64`, discarding bit 63 whenever the magnitude reached `2^63` (e.g. `[0, u64::MAX]`). Widen the signed-magnitude delta (`(mag as u128) << 1 | sign`) to 65 bits and encode/decode it with `encode_leb128_u128` / `decode_leb128_u128_65`.
-- VV-3 (MEDIUM): `encode_delta_sequence_i64` (`1423bc3:src/io/var_int_variants.rs:483`) used `values[i] - values[i - 1]`, panicking on signed overflow in debug builds (e.g. `[i64::MIN, i64::MAX]`). Use `values[i].wrapping_sub(values[i - 1])` to match `decode_delta_sequence_i64`'s `wrapping_add`.
-- VV-4 (LOW): `decode_leb128_u64` (`1423bc3:src/io/var_int_variants.rs:260-273`) and `decode_leb128_i64` (`1423bc3:src/io/var_int_variants.rs:283-299`) accepted arbitrary 10th bytes (`shift == 63`), silently discarding bits above bit 63. Reject `byte > 1` at `shift == 63` in `decode_leb128_u64` and require `byte == 0x00 || byte == 0x7F` at `shift == 63` in `decode_leb128_i64`.
-- VV-5 (LOW): `choose_optimal_strategy_signed` (`1423bc3:src/io/var_int_variants.rs:932`) called `v.abs() < 256`, panicking on `i64::MIN` in debug builds. Use `v.unsigned_abs() < 256`.
-- VV-6 (LOW) + Phase D: document `VarIntStrategy::{Compact, Simd}` delegation to scalar LEB128 / zigzag+LEB128, remove the honesty marker at `1423bc3:src/io/var_int_variants.rs:846` and stale `// SAFETY:` comment + `.expect()` at `1423bc3:src/io/var_int_variants.rs:905-906`, and replace the two `.expect()` calls in `src/io/var_int.rs` (`1423bc3:src/io/var_int.rs:92, 1423bc3:src/io/var_int.rs:228`) with an infallible `VarInt::push_to_vec` helper.
+- VV-1 (HIGH): `VarIntEncoder::encode_group_varint_u64` / `decode_group_varint_u64` (`1423bc3:src/io/var_int_variants.rs:607-688`) packed 2-bit width selectors (`1..=4` bytes) into a single `u8`, corrupting any `u64 >= 2^32` (widths `5..=8` spilled into adjacent selectors and truncated on decode), and `encode_i64` / `encode_i64_sequence` (`1423bc3:src/io/var_int_variants.rs:106, 1423bc3:src/io/var_int_variants.rs:134-137`) cast `i64 as u64` without zigzag encoding. In `6c8fab3:src/io/var_int_variants.rs:666-749`, use a 2-byte `u16` little-endian selector header with 3 bits per lane (`1..=8` bytes, rejecting unused top bits `selector & !0x0FFF != 0` at `6c8fab3:src/io/var_int_variants.rs:722-726`) and zigzag-encode signed integers for `GroupVarint` (`6c8fab3:src/io/var_int_variants.rs:112, 147-153, 187-190, 216-222`).
+- VV-2 (MEDIUM): `encode_delta_sequence_u64` (`1423bc3:src/io/var_int_variants.rs:454-458`) shifted `(values[i] - values[i - 1]) << 1` in `u64`, discarding bit 63 whenever the magnitude reached `2^63` (e.g. `[0, u64::MAX]`). In `6c8fab3:src/io/var_int_variants.rs:497-588`, widen the signed-magnitude delta (`(mag as u128) << 1 | sign`) to 65 bits and encode/decode it with `encode_leb128_u128` (`6c8fab3:src/io/var_int_variants.rs:246-256`) and `decode_leb128_u128_65` (`6c8fab3:src/io/var_int_variants.rs:325-351`).
+- **Wire-format compatibility disclosure (`S22-R2`, documented in `5b33f98:src/io/var_int_variants.rs:23-38, 80-81`):**
+  1. `VarIntStrategy::GroupVarint` now uses a 2-byte little-endian `u16` selector header per group of up to 4 values (3 bits per lane encoding byte widths `1..=8`, top 4 bits `0`) instead of the broken 1-byte 2-bit-per-lane header, and `encode_i64` / `encode_i64_sequence` now zigzag-encode signed integers under `GroupVarint`.
+  2. `VarIntStrategy::Delta` on `u64` sequences now encodes each signed-magnitude delta as a 65-bit unsigned LEB128 integer (up to 10 bytes, `decode_leb128_u128_65`) so full-range `u64` deltas (`>= 2^63`) do not overflow.
+- VV-3 (MEDIUM): `encode_delta_sequence_i64` (`1423bc3:src/io/var_int_variants.rs:483`) used `values[i] - values[i - 1]`, panicking on signed overflow in debug builds (e.g. `[i64::MIN, i64::MAX]`). Use `values[i].wrapping_sub(values[i - 1])` (`6c8fab3:src/io/var_int_variants.rs:536`) to match `decode_delta_sequence_i64`'s `wrapping_add` (`6c8fab3:src/io/var_int_variants.rs:647`).
+- VV-4 (LOW): `decode_leb128_u64` (`1423bc3:src/io/var_int_variants.rs:260-273`) and `decode_leb128_i64` (`1423bc3:src/io/var_int_variants.rs:283-299`) accepted arbitrary 10th bytes (`shift == 63`), silently discarding bits above bit 63. Reject `byte > 1` at `shift == 63` in `decode_leb128_u64` (`6c8fab3:src/io/var_int_variants.rs:281-285`) and require `byte == 0x00 || byte == 0x7F` at `shift == 63` in `decode_leb128_i64` (`6c8fab3:src/io/var_int_variants.rs:304-312`).
+- VV-5 (LOW): `choose_optimal_strategy_signed` (`1423bc3:src/io/var_int_variants.rs:932`) called `v.abs() < 256`, panicking on `i64::MIN` in debug builds. Use `v.unsigned_abs() < 256` (`6c8fab3:src/io/var_int_variants.rs:990`).
+- VV-6 (LOW, documentation/honesty only — no separate runtime test) + Phase D: document `VarIntStrategy::{Compact, Simd}` delegation to scalar LEB128 / zigzag+LEB128 (`6c8fab3:src/io/var_int_variants.rs:42-53, 892-903`), remove the honesty marker at `1423bc3:src/io/var_int_variants.rs:846` and stale `// SAFETY:` comment + `.expect()` at `1423bc3:src/io/var_int_variants.rs:905-906`, and replace the two `.expect()` calls in `src/io/var_int.rs` (`1423bc3:src/io/var_int.rs:92, 1423bc3:src/io/var_int.rs:228`) with an infallible `VarInt::push_to_vec` helper (`6c8fab3:src/io/var_int.rs:52-63, 102, 238`).
 
-```text
+Tests added (in `6c8fab3:src/io/var_int_variants.rs`):
+- `6c8fab3:src/io/var_int_variants.rs:1216` `io::var_int_variants::tests::test_c9_vv1_group_varint_roundtrips_u64_above_32_bits_and_negative_i64`
+- `6c8fab3:src/io/var_int_variants.rs:1243` `io::var_int_variants::tests::test_c9_vv2_delta_u64_roundtrips_full_64_bit_span`
+- `6c8fab3:src/io/var_int_variants.rs:1261` `io::var_int_variants::tests::test_c9_vv3_delta_i64_roundtrips_i64_min_to_max_without_overflow`
+- `6c8fab3:src/io/var_int_variants.rs:1275` `io::var_int_variants::tests::test_c9_vv4_leb128_decoders_reject_tenth_byte_overflow`
+- `6c8fab3:src/io/var_int_variants.rs:1299` `io::var_int_variants::tests::test_c9_vv5_choose_optimal_strategy_signed_handles_i64_min`
+
 RED (tests spliced onto parent 1423bc3, c9_evidence/VV-1/red_parent.txt):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/var_int_variants.rs --base 1423bc3 --evidence c9_evidence/VV-1/red_parent.txt --item 'fn test_c9_vv1_group_varint_roundtrips_u64_above_32_bits_and_negative_i64(' --item 'fn test_c9_vv2_delta_u64_roundtrips_full_64_bit_span(' --item 'fn test_c9_vv3_delta_i64_roundtrips_i64_min_to_max_without_overflow(' --item 'fn test_c9_vv4_leb128_decoders_reject_tenth_byte_overflow(' --item 'fn test_c9_vv5_choose_optimal_strategy_signed_handles_i64_min(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::var_int_variants::tests::test_c9_vv'
 # tree: 1423bc3:src/io/var_int_variants.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/VV-1/red_parent_spliced_var_int_variants.rs)
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::var_int_variants::tests::test_c9_vv'
@@ -4747,8 +4342,10 @@ test result: FAILED. 0 passed; 5 failed; 0 ignored; 0 measured; 3063 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
 GREEN (c9_evidence/VV-1/green_lib.txt):
+```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::var_int
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 15.60s
@@ -4794,8 +4391,10 @@ test io::var_int_variants::tests::test_zigzag_encoding ... ok
 test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 3033 filtered out; finished in 0.00s
 
 ## exit=0
+```
 
 Miri SIMD (c9_evidence/VV-1/miri_simd.txt):
+```text
 $ env CARGO_BUILD_JOBS=16 MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::var_int_variants::tests::test_c9_vv
 [... 56 lines elided ...]
 running 5 tests
@@ -4810,8 +4409,10 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 3031 filtered out; f
 warning: 7 warnings emitted
 
 ## exit=0
+```
 
 Miri Scalar (c9_evidence/VV-1/miri_scalar.txt):
+```text
 $ env CARGO_BUILD_JOBS=16 RUSTFLAGS= CARGO_TARGET_DIR=target/miri-scalar MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::var_int_variants::tests::test_c9_vv
 [... 56 lines elided ...]
 running 5 tests
@@ -4831,18 +4432,28 @@ warning: 7 warnings emitted
 #### `a807faf` — fix(io): fix StreamBufferedReader/Writer drop flush, non-blocking read, seek, retry, and config validation (C9 SB-1 SB-2 SB-3 SB-4 SB-5 SB-6 SB-7 SB-8 SB-9)
 
 Fixes:
-- SB-1 (HIGH): `StreamBufferedWriter` (`6c8fab3:src/io/stream_buffer.rs:537-544`) had no `Drop` implementation, silently discarding buffered bytes when dropped without an explicit `flush()`. Store a type-erased `flush_on_drop` callback and `ManuallyDrop<W>` inner writer so `Drop` flushes remaining buffered bytes and drops `inner` once (while `into_inner` flushes once and takes `inner` without double-flushing).
-- SB-2 (HIGH): `Read::read`, `read_bulk`, `read_buffered`, and `read_simd_optimized` (`6c8fab3:src/io/stream_buffer.rs:346-465`) looped via `ensure_buffered(remaining.len())` until the entire caller buffer was filled or EOF was reached, and `read_bulk` issued a second blocking `inner.read` even after copying buffered bytes. Return already-buffered bytes immediately, and when the buffer is empty perform a single refill (`fill_buffer_io(1)`) or a single direct `inner.read`.
-- SB-3 (HIGH): `Seek for StreamBufferedReader` (`6c8fab3:src/io/stream_buffer.rs:528-533`) zeroed `pos`/`end` before seeking `inner` and did not subtract `end - pos` on `SeekFrom::Current(offset)`, losing buffered read-ahead bytes and corrupting `stream_position()`. Adjust `SeekFrom::Current(offset)` by `-(end - pos)` using checked arithmetic and only clear `pos`/`end` after `inner.seek` succeeds.
-- SB-4 (HIGH): `fill_buffer_simd`, `read_bulk`, and `Read::read` (`6c8fab3:src/io/stream_buffer.rs:248-251, 6c8fab3:src/io/stream_buffer.rs:353-363, 6c8fab3:src/io/stream_buffer.rs:510`) did not retry `io::ErrorKind::Interrupted`, wrapped all errors into `io::ErrorKind::Other`, and lost already-copied buffered bytes when a follow-up `inner.read` failed. Retry `Interrupted` in `read_inner_retry_interrupted`, preserve the original `io::Error` in `Read::read` and `BufRead::fill_buf`, and never call `inner.read` after copying buffered bytes.
-- SB-5 (MEDIUM): `StreamBufferedWriter::flush_buffer` (`6c8fab3:src/io/stream_buffer.rs:631-640`) used `write_all` without compacting partially written bytes on error, and `Write::write` (`6c8fab3:src/io/stream_buffer.rs:657-669`) copied into the tail of `self.buffer` before flushing, duplicating bytes when the flush failed with `WouldBlock` and was retried. Compact written bytes before returning an error in `flush_raw`, flush existing buffered bytes before copying when `buf.len() > self.buffer.len() - self.pos`, and preserve `io::Error` kinds in `Write::write` and `Write::flush`.
-- SB-6 (MEDIUM): `read_slice(len)` (`6c8fab3:src/io/stream_buffer.rs:224-237, 6c8fab3:src/io/stream_buffer.rs:332-343`) capped `read_size` to `self.buffer.len() - self.end` and returned `Ok(None)` when `len > self.buffer.len()` instead of growing the buffer up to `max_capacity`. Grow the buffer via `grow_buffer_to(min_needed)` whenever `min_needed > self.buffer.len()` or `self.end >= self.buffer.len()` before EOF.
-- SB-7 (MEDIUM): `StreamBufferConfig` (`6c8fab3:src/io/stream_buffer.rs:151, 6c8fab3:src/io/stream_buffer.rs:225, 6c8fab3:src/io/stream_buffer.rs:625`) did not validate `initial_capacity == 0`, `max_capacity < initial_capacity`, non-power-of-two/zero `page_alignment`, or `growth_factor <= 1.0`, and `ensure_buffered(usize::MAX)` overflowed in debug builds. Validate `StreamBufferConfig` in `validate()` / `allocate_aligned_buffer()` and bound `min_needed` against `max_capacity` in `grow_buffer_to`.
-- SB-8 (MEDIUM): `BufRead::fill_buf` (`6c8fab3:src/io/stream_buffer.rs:515-520`) called `fill_buffer(1)`, which capped each `inner.read` slice to `1 * readahead_multiplier` (1-2 bytes). Pass the full remaining tail `&mut self.buffer[self.end..]` to `inner.read` while stopping the loop once `min_needed` bytes are buffered.
-- SB-9 (LOW) + Phase D: remove the honesty marker at `6c8fab3:src/io/stream_buffer.rs:153-155` and document the `# Limitation` on `StreamBufferConfig::{page_alignment, use_secure_pool}`.
+- SB-1 (HIGH): `StreamBufferedWriter` (`6c8fab3:src/io/stream_buffer.rs:537-544`) had no `Drop` implementation, silently discarding buffered bytes when dropped without an explicit `flush()`. Store a type-erased `flush_on_drop: Option<FlushRawFn<W>>` callback (`a807faf:src/io/stream_buffer.rs:584, 593, 627`) and `ManuallyDrop<W>` inner writer (`a807faf:src/io/stream_buffer.rs:587`) so `Drop for StreamBufferedWriter<W>` (`a807faf:src/io/stream_buffer.rs:748-763`) flushes remaining buffered bytes and drops `inner` once (while `into_inner` at `a807faf:src/io/stream_buffer.rs:692-700` flushes once, clears `flush_on_drop = None`, and takes `inner` without double-flushing).
+- SB-2 (HIGH): `Read::read`, `read_bulk`, `read_buffered`, and `read_simd_optimized` (`6c8fab3:src/io/stream_buffer.rs:346-465`) looped via `ensure_buffered(remaining.len())` until the entire caller buffer was filled or EOF was reached, and `read_bulk` issued a second blocking `inner.read` even after copying buffered bytes. Return already-buffered bytes immediately, and when the buffer is empty perform a single refill (`fill_buffer_io(1)`) or a single direct `inner.read` (`a807faf:src/io/stream_buffer.rs:373-507, 526-544`).
+- SB-3 (HIGH): `Seek for StreamBufferedReader` (`6c8fab3:src/io/stream_buffer.rs:528-533`) zeroed `pos`/`end` before seeking `inner` and did not subtract `end - pos` on `SeekFrom::Current(offset)`, losing buffered read-ahead bytes and corrupting `stream_position()`. In `a807faf:src/io/stream_buffer.rs:559-581`, adjust `SeekFrom::Current(offset)` by `-(end - pos)` using checked arithmetic and only clear `pos`/`end` after `inner.seek` succeeds.
+- SB-4 (HIGH): `fill_buffer_simd`, `read_bulk`, and `Read::read` (`6c8fab3:src/io/stream_buffer.rs:248-251, 6c8fab3:src/io/stream_buffer.rs:353-363, 6c8fab3:src/io/stream_buffer.rs:510`) did not retry `io::ErrorKind::Interrupted`, wrapped all errors into `io::ErrorKind::Other`, and lost already-copied buffered bytes when a follow-up `inner.read` failed. Retry `Interrupted` in `read_inner_retry_interrupted` (`a807faf:src/io/stream_buffer.rs:265-274`), preserve the original `io::Error` in `Read::read` (`a807faf:src/io/stream_buffer.rs:526-544`) and `BufRead::fill_buf` (`a807faf:src/io/stream_buffer.rs:546-557`), and never call `inner.read` after copying buffered bytes.
+- SB-5 (MEDIUM): `StreamBufferedWriter::flush_buffer` (`6c8fab3:src/io/stream_buffer.rs:631-640`) used `write_all` without compacting partially written bytes on error, and `Write::write` (`6c8fab3:src/io/stream_buffer.rs:657-669`) copied into the tail of `self.buffer` before flushing, duplicating bytes when the flush failed with `WouldBlock` and was retried. Compact written bytes before returning an error in `flush_raw` (`a807faf:src/io/stream_buffer.rs:631-665`), flush existing buffered bytes before copying when `buf.len() > self.buffer.len() - self.pos` (`a807faf:src/io/stream_buffer.rs:766-800`), and preserve `io::Error` kinds in `Write::write` and `Write::flush`.
+- SB-6 (MEDIUM): `read_slice(len)` (`6c8fab3:src/io/stream_buffer.rs:224-237, 6c8fab3:src/io/stream_buffer.rs:332-343`) capped `read_size` to `self.buffer.len() - self.end` and returned `Ok(None)` when `len > self.buffer.len()` instead of growing the buffer up to `max_capacity`. Grow the buffer via `grow_buffer_to(min_needed)` (`a807faf:src/io/stream_buffer.rs:238-250, 322-343`) whenever `min_needed > self.buffer.len()` or `self.end >= self.buffer.len()` before EOF.
+- SB-7 (MEDIUM): `StreamBufferConfig` (`6c8fab3:src/io/stream_buffer.rs:151, 6c8fab3:src/io/stream_buffer.rs:225, 6c8fab3:src/io/stream_buffer.rs:625`) did not validate `initial_capacity == 0`, `max_capacity < initial_capacity`, non-power-of-two/zero `page_alignment`, or `growth_factor <= 1.0`, and `ensure_buffered(usize::MAX)` overflowed in debug builds. Validate `StreamBufferConfig` in `validate()` / `allocate_aligned_buffer()` (`a807faf:src/io/stream_buffer.rs:68-100, 173-181`, and tightened in `5b33f98:src/io/stream_buffer.rs:45-56, 93-98` to also reject non-finite or `> 16.0` `growth_factor`) and bound `min_needed` against `max_capacity` in `grow_buffer_to` (`a807faf:src/io/stream_buffer.rs:322-343`).
+- SB-8 (MEDIUM): `BufRead::fill_buf` (`6c8fab3:src/io/stream_buffer.rs:515-520`) called `fill_buffer(1)`, which capped each `inner.read` slice to `1 * readahead_multiplier` (1-2 bytes). Pass the full remaining tail `&mut self.buffer[self.end..]` to `inner.read` (`a807faf:src/io/stream_buffer.rs:276-320`) while stopping the loop once `min_needed` bytes are buffered.
+- SB-9 (LOW, documentation/honesty only — no separate runtime test) + Phase D: remove the honesty marker at `6c8fab3:src/io/stream_buffer.rs:153-155` and document the `# Limitation` on `StreamBufferConfig::{page_alignment, use_secure_pool}` (`a807faf:src/io/stream_buffer.rs:29-42, 169-172`).
 
-```text
+Tests added (in `a807faf:src/io/stream_buffer.rs`):
+- `a807faf:src/io/stream_buffer.rs:1265` `io::stream_buffer::tests::test_c9_sb1_writer_drop_flushes_buffered_bytes`
+- `a807faf:src/io/stream_buffer.rs:1281` `io::stream_buffer::tests::test_c9_sb2_read_returns_available_bytes_without_blocking_for_full_buffer`
+- `a807faf:src/io/stream_buffer.rs:1328` `io::stream_buffer::tests::test_c9_sb3_seek_accounts_for_buffered_readahead_and_preserves_buffer_on_err`
+- `a807faf:src/io/stream_buffer.rs:1353` `io::stream_buffer::tests::test_c9_sb4_read_retries_interrupted_preserves_error_kind_and_never_loses_buffered_bytes`
+- `a807faf:src/io/stream_buffer.rs:1434` `io::stream_buffer::tests::test_c9_sb5_writer_partial_flush_and_write_error_do_not_duplicate_bytes`
+- `a807faf:src/io/stream_buffer.rs:1502` `io::stream_buffer::tests::test_c9_sb6_read_slice_above_initial_capacity_grows_buffer_before_eof`
+- `a807faf:src/io/stream_buffer.rs:1515` `io::stream_buffer::tests::test_c9_sb7_invalid_config_and_huge_ensure_buffered_return_err_without_panic`
+- `a807faf:src/io/stream_buffer.rs:1562` `io::stream_buffer::tests::test_c9_sb8_fill_buf_reads_full_buffer_capacity_per_inner_read`
+
 RED (tests spliced onto parent 6c8fab3, c9_evidence/SB-1/red_parent.txt):
+```text
 $ python3 c9_evidence/tools/splice_red.py --file src/io/stream_buffer.rs --base 6c8fab3 --evidence c9_evidence/SB-1/red_parent.txt --item 'fn miri_fast_config(' --item 'fn test_c9_sb1_writer_drop_flushes_buffered_bytes(' --item 'fn test_c9_sb2_read_returns_available_bytes_without_blocking_for_full_buffer(' --item 'fn test_c9_sb3_seek_accounts_for_buffered_readahead_and_preserves_buffer_on_err(' --item 'fn test_c9_sb4_read_retries_interrupted_preserves_error_kind_and_never_loses_buffered_bytes(' --item 'fn test_c9_sb5_writer_partial_flush_and_write_error_do_not_duplicate_bytes(' --item 'fn test_c9_sb6_read_slice_above_initial_capacity_grows_buffer_before_eof(' --item 'fn test_c9_sb7_invalid_config_and_huge_ensure_buffered_return_err_without_panic(' --item 'fn test_c9_sb8_fill_buf_reads_full_buffer_capacity_per_inner_read(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::stream_buffer::tests::test_c9_sb'
 # tree: 6c8fab3:src/io/stream_buffer.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/SB-1/red_parent_spliced_stream_buffer.rs)
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::stream_buffer::tests::test_c9_sb'
@@ -4926,8 +4537,10 @@ test result: FAILED. 0 passed; 8 failed; 0 ignored; 0 measured; 3068 filtered ou
 
 error: test failed, to rerun pass `--lib`
 ## exit=101
+```
 
 GREEN (c9_evidence/SB-1/green_lib.txt):
+```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::stream_buffer::
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 17.27s
@@ -4970,8 +4583,10 @@ test io::stream_buffer::tests::test_stream_reader_utf8_validation_valid ... ok
 test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 3044 filtered out; finished in 0.00s
 
 ## exit=0
+```
 
 Miri SIMD (c9_evidence/SB-1/miri_simd.txt):
+```text
 $ env CARGO_BUILD_JOBS=16 MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::stream_buffer::tests::test_c9_sb
 [... 56 lines elided ...]
 running 8 tests
@@ -4989,8 +4604,10 @@ test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 3036 filtered out; f
 warning: 7 warnings emitted
 
 ## exit=0
+```
 
 Miri Scalar (c9_evidence/SB-1/miri_scalar.txt):
+```text
 $ env CARGO_BUILD_JOBS=16 RUSTFLAGS= CARGO_TARGET_DIR=target/miri-scalar MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::stream_buffer::tests::test_c9_sb
 [... 56 lines elided ...]
 running 8 tests
@@ -5010,23 +4627,23 @@ warning: 7 warnings emitted
 ## exit=0
 ```
 
-## 8. Phase D Audit Progression (`db3c514` → `d611d4b` → `a807faf`)
+## 8. Phase D Audit Progression (`db3c514` → `d611d4b` → `a807faf` → `125b80a`)
 
-| Metric | `db3c514` (Stage 9 close) | `d611d4b` (`#[cfg(all(test, ..))]` fix) | `a807faf` (Stage 10 `C9` close) | Ratchet in `scripts/audit_baseline.toml` |
-|---|---|---|---|---|
-| Total non-test `unsafe` sites (`scripts/unsafe_audit.py`) | 1,341 | 1,341 | 1,308 | — |
-| Documented non-test `unsafe` sites | 1,334 (99.5%) | 1,334 (99.5%) | 1,302 (99.5%) | — |
-| Undocumented non-test `unsafe` sites (crate-wide) | 7 | 7 | **6** | `max_undocumented = 6` (was `7`) |
-| `src/io/` non-test `unsafe` sites (documented / total) | 57 / 58 (98.3%) | 57 / 58 (98.3%) | **52 / 52 (100.0%)** | 0 undocumented in `src/io/` |
-| `src/memory/` non-test `unsafe` sites (documented / total) | 338 / 338 (100.0%) | 338 / 338 (100.0%) | **309 / 309 (100.0%)** | `src/memory/mmap_vec.rs`: 34 → 5 sites, 100% documented |
-| §8.5 `debug_assert!` precondition violations | 0 | 0 | **0** | `max_precondition_violations = 0` |
-| Honesty markers (`scripts/api_honesty.py`, crate-wide) | 39 | 39 | **30** | `max_markers = 30` (was `39`) |
-| `src/io/` honesty markers | 9 | 9 | **0** | `complex_types.rs` −1, `mmap.rs` −3, `search.rs` −5 |
-| Production `.unwrap()` (`scripts/unwrap_audit.py`) | 0 | 0 | **0** | `max_unwraps = 0` |
-| Production `.expect()` (`scripts/unwrap_audit.py`, crate-wide) | 103 | 102 | **95** | `max_expects = 95` (was `103`) |
-| `src/io/` production `.expect()` | 6 | 5 | **0** | `checksum.rs` −1 (`d611d4b`), `mmap.rs` −2, `var_int.rs` −2, `var_int_variants.rs` −1 |
-| `src/memory/mmap_vec.rs` production `.expect()` | 2 | 2 | **0** | `mmap_vec.rs` −2 (`9a3fe31`) |
-| Direct decoder indexing (`scripts/index_audit.py`) | 0 (132 in-bounds) | 0 (132 in-bounds) | **0 (132 in-bounds)** | `max_total = 0`, `var_int = 0` |
+| Metric | `db3c514` (Stage 9 close) | `d611d4b` (`#[cfg(all(test, ..))]` fix) | `a807faf` (Stage 10 `C9` close) | `125b80a` (`S22` close) | Ratchet in `scripts/audit_baseline.toml` |
+|---|---|---|---|---|---|
+| Total non-test `unsafe` sites (`scripts/unsafe_audit.py`) | 1,341 | 1,341 | 1,308 | 1,310 | — |
+| Documented non-test `unsafe` sites | 1,334 (99.5%) | 1,334 (99.5%) | 1,302 (99.5%) | 1,304 (99.5%) | — |
+| Undocumented non-test `unsafe` sites (crate-wide) | 7 | 7 | **6** | **6** | `max_undocumented = 6` (was `7`) |
+| `src/io/` non-test `unsafe` sites (documented / total) | 57 / 58 (98.3%) | 57 / 58 (98.3%) | **52 / 52 (100.0%)** | **51 / 51 (100.0%)** | 0 undocumented in `src/io/` |
+| `src/memory/` non-test `unsafe` sites (documented / total) | 338 / 338 (100.0%) | 338 / 338 (100.0%) | **309 / 309 (100.0%)** | **312 / 312 (100.0%)** | `src/memory/mmap_vec.rs`: 34 → 8 sites (`4790f48`), 100% documented |
+| §8.5 `debug_assert!` precondition violations | 0 | 0 | **0** | **0** | `max_precondition_violations = 0` |
+| Honesty markers (`scripts/api_honesty.py`, crate-wide) | 39 | 39 | **30** | **30** | `max_markers = 30` (was `39`) |
+| `src/io/` honesty markers | 9 | 9 | **0** | **0** | `complex_types.rs` −1, `mmap.rs` −3, `search.rs` −5 |
+| Production `.unwrap()` (`scripts/unwrap_audit.py`) | 0 | 0 | **0** | **0** | `max_unwraps = 0` |
+| Production `.expect()` (`scripts/unwrap_audit.py`, crate-wide) | 103 | 102 | **95** | **95** | `max_expects = 95` (was `103`) |
+| `src/io/` production `.expect()` | 6 | 5 | **0** | **0** | `checksum.rs` −1 (`d611d4b`), `mmap.rs` −2, `var_int.rs` −2, `var_int_variants.rs` −1 |
+| `src/memory/mmap_vec.rs` production `.expect()` | 2 | 2 | **0** | **0** | `mmap_vec.rs` −2 (`9a3fe31`) |
+| Direct decoder indexing (`scripts/index_audit.py`) | 0 (132 in-bounds) | 0 (132 in-bounds) | **0 (132 in-bounds)** | **0 (132 in-bounds)** | `max_total = 0`, `var_int = 0` |
 
 ## 9. Integrated Verification on `main` (`a807faf`)
 
@@ -5568,6 +5185,225 @@ lib_debug       3141       3141       OK
 lib_release     3158       3158       OK        
 doctests        229        229        OK        
 all_targets     3802       3802       OK        
+------------------------------------------------
+test count drift check: PASS
+=== Sanity: PASS ===
+```
+
+## 10. Stage 10 Re-Review Remediation (`S22`: `0e8c6ba..125b80a`)
+
+### 10.1 `0e8c6ba` — fix(io): size max_depth presets for 2 MiB stacks and check u32 collection lengths (S22-R1, S22-R8)
+
+- **`S22-R1` (`2 MiB` debug stack recursion budgets and shared context forwarding)**:
+  - Lowered `DEFAULT_MAX_DEPTH` to `256` (`0e8c6ba:src/io/smart_ptr.rs:27`), used across `SmartPtrConfig::default` (`0e8c6ba:src/io/smart_ptr.rs:66`), `SerializationContext::new` (`0e8c6ba:src/io/smart_ptr.rs:79`), `DeserializationContext::new` (`0e8c6ba:src/io/smart_ptr.rs:194`), `SmartPtrConfig::max_depth` (`0e8c6ba:src/io/smart_ptr.rs:768`), and `ComplexSerialize::max_depth` (`0e8c6ba:src/io/complex_types.rs:727-729`).
+  - Lowered `SmartPtrConfig::high_performance` `max_depth` to `64` (`0e8c6ba:src/io/smart_ptr.rs:786`) and `SmartPtrConfig::memory_optimized` `max_depth` to `128` (`0e8c6ba:src/io/smart_ptr.rs:796`).
+  - Added `with_shared_ser_ctx` and `with_shared_de_ctx` (`0e8c6ba:src/io/smart_ptr.rs:485-503`) and wired them into `BatchSerialize for Vec<T>` (`0e8c6ba:src/io/complex_types.rs:643-647`) and `NestedSerialize for Vec<T>` (`0e8c6ba:src/io/complex_types.rs:747-756`) so `Vec::serialize_batch` / `deserialize_batch` and `Vec::serialize_nested` / `deserialize_nested` share the active thread-local recursion counter and object identity table when invoked inside an outer `SmartPtrSerialize` or `ComplexSerialize` traversal.
+  - Regression tests: `test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack` (`0e8c6ba:src/io/smart_ptr.rs:1529-1626`) and `test_s22_r1_nested_containers_rejected_on_2mib_stack` (`0e8c6ba:src/io/complex_types.rs:1299-1348`) spawn a `std::thread::Builder::new().stack_size(2 * 1024 * 1024)` worker and verify that hostile 300-deep `Box` / `Rc` / `Arc` / `Vec` / `HashMap` chains return `Err` without stack overflow across `SmartPtrConfig::default`, `high_performance`, `memory_optimized`, and `ComplexSerialize`.
+- **`S22-R8` (`u32` collection length overflow check)**:
+  - Added `checked_u32_len(len: usize, kind: &str) -> Result<u32>` (`0e8c6ba:src/io/smart_ptr.rs:30-35`) and replaced every `self.len() as u32` / `N as u32` wire-count cast in `SmartPtrSerialize for Vec<T>` (`0e8c6ba:src/io/smart_ptr.rs:892`), `ComplexSerialize for HashMap<K, V>` (`0e8c6ba:src/io/complex_types.rs:154`), `ComplexSerialize for HashSet<T>` (`0e8c6ba:src/io/complex_types.rs:257`), `ComplexSerialize for [T; N]` (`0e8c6ba:src/io/complex_types.rs:310`), `ComplexSerialize for &[T]` (`0e8c6ba:src/io/complex_types.rs:356`), `ComplexSerialize for Vec<T>` (`0e8c6ba:src/io/complex_types.rs:400`), and `BatchSerialize for Vec<T>` (`0e8c6ba:src/io/complex_types.rs:652`).
+  - Regression test: `test_s22_r8_checked_u32_len_rejects_above_u32_max` (`0e8c6ba:src/io/complex_types.rs:1351-1361`).
+
+### 10.2 `d28462f` — perf(io): reserve full capacity up to 64 MiB when remaining_bytes is known (S22-R4)
+
+- **`S22-R4` (`DataInput::read_vec` single-allocation fast path on known-size inputs)**:
+  - Added `MAX_KNOWN_INPUT_PREALLOC = 64 * 1024 * 1024` (`d28462f:src/io/data_input.rs:28`) and updated `prealloc_capacity` (`d28462f:src/io/data_input.rs:59-68`) so slice/mmap inputs that report `remaining_bytes() == Some(rem)` preallocate the full element count in one allocation up to 64 MiB (after validating `count <= rem / elem_size`), while streaming readers (`remaining_bytes() == None`) retain the 64 KiB `MAX_INITIAL_PREALLOC` cap.
+  - Updated `DataInput::read_vec` (`d28462f:src/io/data_input.rs:117-124`) to take a direct `for _ in 0..count { vec.push(read_elem(self)?); }` loop when `cap == count`, eliminating the `52.9%` `vec_u64` / `10000` Criterion regression (`24.75 µs -> 15.86 µs`, matching the pre-`a24f443` `16.20 µs` baseline).
+  - Annotated `test_mmap_data_input` with `#[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]` (`d28462f:src/io/data_input.rs:697`).
+  - Regression test: `test_s22_r4_vec_u64_known_remaining_preallocates_full_count` (`d28462f:src/io/data_input.rs:938-952`).
+
+### 10.3 `4790f48` — fix(mmap_vec): map read-only vectors with PROT_READ and inline validated slice access (S22-R3, S22-R5, S22-R7, S22-R8)
+
+- **`S22-R5` (`PROT_READ` mapping for read-only `MmapVec`)**:
+  - Replaced the single `mmap: Option<MmapMut>` field with `enum MappingKind { ReadWrite(MmapMut), ReadOnly(Mmap) }` (`4790f48:src/memory/mmap_vec.rs:41-92`).
+  - In `MmapVec::remap` (`4790f48:src/memory/mmap_vec.rs:1266-1317`), read-only handles now map with `OpenOptions::new().len(file_size).map(&self.file)` (`PROT_READ`, `MAP_SHARED`) instead of `map_copy_read_only` (`MAP_PRIVATE` + `PROT_WRITE`), and `apply_madvise` uses `libc::madvise` on `ReadOnly(Mmap)`.
+  - Regression test: `test_s22_r5_read_only_open_does_not_fault_into_rss_anon` (`4790f48:src/memory/mmap_vec.rs:3585-3619`) reads `/proc/self/status` `RssAnon` before and after touching every page of a 16 MiB read-only `MmapVec<u64>` and verifies `RssAnon` grows by `< 2 MiB` (measured `0 KiB` delta vs `16,384 KiB` before `4790f48`).
+- **`S22-R3` (`MmapVec` hot-path inlining and cached validated pointer)**:
+  - Cached `data_ptr: NonNull<T>` (`4790f48:src/memory/mmap_vec.rs:97`) computed and validated once in `validated_data_ptr` (`4790f48:src/memory/mmap_vec.rs:1164-1195`) whenever the mapping is created, remapped, or cleared, and marked `push` (`4790f48:src/memory/mmap_vec.rs:656-680`), `get`, `get_mut`, `as_slice`, and `as_mut_slice` (`4790f48:src/memory/mmap_vec.rs:722-770`) `#[inline]`.
+- **`S22-R7` (Miri test coverage in `mmap_vec.rs`)**:
+  - Un-ignored `test_c9_f1_with_capacity_simd_rejects_overflowing_capacity` (`4790f48:src/memory/mmap_vec.rs:2739`) and `test_c9_f9_create_rejects_read_only_config` (`4790f48:src/memory/mmap_vec.rs:3414`) under Miri so 6/58 `memory::mmap_vec::` tests execute under `make miri_io`.
+
+### 10.4 `5b33f98` — fix(io): disclose wire-format/API changes and guard zero_copy/stream_buffer bounds (S22-R2, S22-R8)
+
+- **`S22-R2` (Wire-format and public API compatibility disclosures)**:
+  - Added `# Wire-format compatibility (C9 / 0.1.x pre-1.0)` and `# Compatibility (C9 / 0.1.x pre-1.0)` sections to `5b33f98:src/io/var_int_variants.rs:23-38, 80-81`, `5b33f98:src/io/versioning.rs:12-24, 58-59`, `5b33f98:src/io/range_stream.rs:13-18, 248-253`, and `5b33f98:src/io/mmap.rs:249-255`.
+- **`S22-R8` (`StreamBufferConfig::growth_factor` and `zero_copy` over-reported counts)**:
+  - Added `MAX_GROWTH_FACTOR: f64 = 16.0` and `growth_factor.is_finite()` validation in `StreamBufferConfig::validate` (`5b33f98:src/io/stream_buffer.rs:45-56, 93-98`), tested with `NaN`, `INFINITY`, and `1e300` in `test_c9_sb7_invalid_config_and_huge_ensure_buffered_return_err_without_panic` (`5b33f98:src/io/stream_buffer.rs:1549-1561`).
+  - Added over-reported byte checks to `ZeroCopyReader::read` direct path (`5b33f98:src/io/zero_copy.rs:560-567`), `ZeroCopyWriter::write_all_direct` / `write` / `zc_write` / `zc_ensure_write` (`5b33f98:src/io/zero_copy.rs:696-706, 720, 730`), and `VectoredIO::read_vectored` / `write_vectored` (`5b33f98:src/io/zero_copy.rs:787-804, 828-847`), verified by `test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts` (`5b33f98:src/io/zero_copy.rs:2190-2233`).
+
+### 10.5 `125b80a` — perf(io): use SSE2 PCMPEQB for strchr and add make miri_io target (S22-R7)
+
+- **`S22-R7` (`sse42_strchr_impl` `PCMPEQB` + `PMOVMSKB` and `make miri_io` target)**:
+  - Replaced `_mm_cmpestri` in `sse42_strchr_impl` (`125b80a:src/io/simd_memory/search.rs:262-302`) with `_mm_set1_epi8` + `_mm_cmpeq_epi8` + `_mm_movemask_epi8` (`2.875 µs` vs scalar `27.375 µs` on a 64 KiB haystack, `9.5x` speedup), verified by `test_s22_r7_strchr_pcmpeqb_matches_scalar` (`125b80a:src/io/simd_memory/search.rs:1411-1432`).
+  - Un-ignored `test_c9_do1_file_append_bytes_written_counts_new_bytes_only` under Miri (`125b80a:src/io/data_output.rs:703`), scaled slow iteration counts under `cfg!(miri)` in `125b80a:src/io/simd_memory/search.rs:845, 922, 1219, 1226-1231, 1277`, `125b80a:src/io/simd_validation/checksum.rs:483, 622, 650-651, 712, 742`, `125b80a:src/io/data_input.rs:724, 902`, `125b80a:src/io/stream_buffer.rs:1013, 1205, 1344, 1525`, `125b80a:src/io/versioning.rs:1019`, and `125b80a:src/io/zero_copy.rs:1244, 1363`, and added `miri_io` to `125b80a:Makefile:15, 42-44, 298-319`.
+
+### 10.6 Full `make miri_io && make MIRI_SCALAR=1 miri_io` Verification (`125b80a`)
+
+Command:
+```text
+CARGO_BUILD_JOBS=16 make miri_io && CARGO_BUILD_JOBS=16 make MIRI_SCALAR=1 miri_io
+```
+Output:
+```text
+MIRIFLAGS="-Zmiri-disable-isolation" RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd cargo +nightly miri test --lib io:: -- --test-threads=1
+[... 56 lines elided ...]
+running 301 tests
+test io::complex_types::tests::test_array_length_validation ... ok
+test io::complex_types::tests::test_array_serialization ... ok
+test io::complex_types::tests::test_batch_serialization ... ok
+test io::complex_types::tests::test_c9_ct3_batch_version_skew_requires_allow_version_skew ... ok
+test io::complex_types::tests::test_c9_ct3_impl_macro_rejects_unknown_version ... ok
+test io::complex_types::tests::test_c9_ct3_tuple_arity_is_checked ... ok
+test io::complex_types::tests::test_c9_ct3_unknown_version_is_rejected ... ok
+test io::complex_types::tests::test_c9_ct3_validate_types_false_accepts_other_type_id ... ok
+test io::complex_types::tests::test_c9_ct3_version_skew_requires_allow_version_skew ... ok
+test io::complex_types::tests::test_c9_ct4_array_error_drops_decoded_elements ... ok
+test io::complex_types::tests::test_c9_ct5_nested_serialize_enforces_max_depth ... ok
+test io::complex_types::tests::test_complex_type_serializer ... ok
+test io::complex_types::tests::test_custom_struct_serialization ... ok
+test io::complex_types::tests::test_empty_tuple_serialization ... ok
+test io::complex_types::tests::test_hashmap_serialization ... ok
+test io::complex_types::tests::test_hashset_serialization ... ok
+test io::complex_types::tests::test_metadata_serialization ... ok
+test io::complex_types::tests::test_nested_complex_types ... ok
+test io::complex_types::tests::test_option_serialization ... ok
+test io::complex_types::tests::test_result_serialization ... ok
+test io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack ... ok
+test io::complex_types::tests::test_s22_r8_checked_u32_len_rejects_above_u32_max ... ok
+test io::complex_types::tests::test_serializer_configs ... ok
+test io::complex_types::tests::test_tuple_serialization ... ok
+test io::complex_types::tests::test_type_validation ... ok
+[... 251 lines elided ...]
+test io::zero_copy::tests::test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts ... ok
+test io::zero_copy::tests::test_vectored_io ... ok
+test io::zero_copy::tests::test_write_vectored_stops_at_a_short_write ... ok
+test io::zero_copy::tests::test_zero_copy_buffer_basic ... ok
+test io::zero_copy::tests::test_zero_copy_buffer_compact ... ok
+test io::zero_copy::tests::test_zero_copy_buffer_read_write ... ok
+test io::zero_copy::tests::test_zero_copy_buffer_zero_capacity ... ok
+test io::zero_copy::tests::test_zero_copy_buffer_zero_capacity_ops ... ok
+test io::zero_copy::tests::test_zero_copy_reader ... ok
+test io::zero_copy::tests::test_zero_copy_reader_checksum ... ok
+test io::zero_copy::tests::test_zero_copy_reader_checksum_consistency ... ok
+test io::zero_copy::tests::test_zero_copy_reader_checksum_empty ... ok
+test io::zero_copy::tests::test_zero_copy_reader_large_data_validation ... ok
+test io::zero_copy::tests::test_zero_copy_reader_skip ... ok
+test io::zero_copy::tests::test_zero_copy_reader_utf8_validation_after_read ... ok
+test io::zero_copy::tests::test_zero_copy_reader_utf8_validation_empty ... ok
+test io::zero_copy::tests::test_zero_copy_reader_utf8_validation_invalid ... ok
+test io::zero_copy::tests::test_zero_copy_reader_utf8_validation_multibyte ... ok
+test io::zero_copy::tests::test_zero_copy_reader_utf8_validation_valid ... ok
+test io::zero_copy::tests::test_zero_copy_reader_validate_and_checksum ... ok
+test io::zero_copy::tests::test_zero_copy_round_trip ... ok
+test io::zero_copy::tests::test_zero_copy_writer ... ok
+
+test result: ok. 276 passed; 0 failed; 25 ignored; 0 measured; 2817 filtered out; finished in 199.31s
+
+warning: 7 warnings emitted
+
+MIRIFLAGS="-Zmiri-disable-isolation" RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd cargo +nightly miri test --lib memory::mmap_vec:: -- --test-threads=1
+[... 56 lines elided ...]
+running 58 tests
+test memory::mmap_vec::tests::test_access_pattern_and_huge_page_configs_work ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_alignment_over_16 ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_builder_pattern ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_1_mapped_capacity_for_checks_layout ... ok
+test memory::mmap_vec::tests::test_c9_1_misaligned_mapping_reported_and_harmless ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f1_with_capacity_simd_honours_capacity ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f1_with_capacity_simd_rejects_overflowing_capacity ... ok
+test memory::mmap_vec::tests::test_c9_f2_guard_open_rejects_header_capacity_beyond_file ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f2_guard_open_rejects_zero_length_file ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f2_header_rewrite_does_not_widen_views ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f2_second_handle_growth_does_not_widen_first_handle ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f3_growth_never_reopens_path ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f5_counts_from_header_validates ... ok
+test memory::mmap_vec::tests::test_c9_f6_guard_calculate_file_size_is_checked ... ok
+test memory::mmap_vec::tests::test_c9_f6_reserve_and_extend_overflow_are_errors ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f7_compare_range_simd_respects_partial_eq ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f8_create_temp_in_retries_past_existing_symlink ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f9_create_rejects_read_only_config ... ok
+test memory::mmap_vec::tests::test_c9_f9_header_validates_alignment_and_endianness_flags ... ok
+[... 38 lines elided ...]
+
+test result: ok. 6 passed; 0 failed; 52 ignored; 0 measured; 3060 filtered out; finished in 20.09s
+
+warning: 7 warnings emitted
+
+MIRIFLAGS="-Zmiri-disable-isolation" RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar cargo +nightly miri test --lib io:: -- --test-threads=1
+[... 69 lines elided ...]
+running 301 tests
+[... 301 lines elided ...]
+
+test result: ok. 276 passed; 0 failed; 25 ignored; 0 measured; 2817 filtered out; finished in 190.93s
+
+warning: 8 warnings emitted
+
+MIRIFLAGS="-Zmiri-disable-isolation" RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar cargo +nightly miri test --lib memory::mmap_vec:: -- --test-threads=1
+[... 56 lines elided ...]
+running 58 tests
+[... 58 lines elided ...]
+
+test result: ok. 6 passed; 0 failed; 52 ignored; 0 measured; 3060 filtered out; finished in 19.92s
+
+warning: 7 warnings emitted
+```
+
+### 10.7 Final `make sanity` Gate Verification (`125b80a`)
+
+Command:
+```text
+CARGO_BUILD_JOBS=16 make sanity
+```
+Output:
+```text
+=== Clippy (all targets, all features, deny warnings) ===
+cargo clippy --locked --all-targets --all-features -- -D warnings
+    Checking zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 29.46s
+=== Unsafe Code Audit (B7) ===
+python3 scripts/unsafe_audit.py
+=== Unsafe Code Audit (Rule B7) ===
+Total unsafe sites in non-test code: 1310
+Documented (with SAFETY: or # Safety): 1304 (99.5%)
+Undocumented sites:                  6 (ratchet ceiling: 6)
+Precondition violations (§8.5):      0 (ratchet ceiling: 0)
+[... 19 lines elided ...]
+Audit status: PASS
+=== API Honesty Audit (D1) ===
+python3 scripts/api_honesty.py
+=== API Honesty Audit (Rule D1) ===
+Total honesty markers found: 30 (ratchet ceiling: 30)
+[... 52 lines elided ...]
+Audit status: PASS
+=== Decoder Indexing Safety Audit (D10.1) ===
+python3 scripts/index_audit.py
+=== Decoder Indexing Safety Audit (Rule D10.1) ===
+Total direct indexing sites in scoped paths: 0 (ratchet ceiling: 0)
+Total in-bounds exemptions (D10.1: in-bounds): 132 (exact baseline: 132)
+Total checked .get() sites:                   293
+[... 146 lines elided ...]
+Audit status: PASS
+=== Production Unwrap Audit (Rule D10 / S2-R1) ===
+python3 scripts/unwrap_audit.py
+=== Production Unwrap & Panic Audit (Rule D10 / S2-R1) ===
+Total .unwrap() found: 0 (ratchet ceiling: 0)
+Total .expect() found: 95 (ratchet ceiling: 95)
+
+Audit status: PASS
+=== No default features (guard feature-gated cfg attrs) ===
+cargo clippy --locked --no-default-features -- -D unused_variables -D unused_imports
+    Checking zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.74s
+[... 7198 lines elided ...]
+=== Test counts and drift guard (B8) ===
+python3 scripts/check_gate_drift.py target/sanity
+=== Test Count Drift Guard (Rule B8) ===
+Metric          Measured   Baseline   Status    
+------------------------------------------------
+lib_debug       3148       3148       OK        
+lib_release     3165       3165       OK        
+doctests        229        229        OK        
+all_targets     3809       3809       OK        
 ------------------------------------------------
 Test count drift check: PASS
 === Sanity: PASS ===
