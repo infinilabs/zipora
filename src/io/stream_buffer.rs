@@ -162,7 +162,7 @@ impl<R: Read> StreamBufferedReader<R> {
     pub fn with_config(inner: R, mut config: StreamBufferConfig) -> Result<Self> {
         config.validate()?;
 
-        let pool = if config.use_secure_pool {
+        let pool = if config.use_secure_pool && !cfg!(miri) {
             Some(SecureMemoryPool::new(
                 crate::memory::SecurePoolConfig::small_secure(),
             )?)
@@ -615,7 +615,7 @@ impl<W: Write> StreamBufferedWriter<W> {
     pub fn with_config(inner: W, mut config: StreamBufferConfig) -> Result<Self> {
         config.validate()?;
 
-        let pool = if config.use_secure_pool {
+        let pool = if config.use_secure_pool && !cfg!(miri) {
             Some(SecureMemoryPool::new(
                 crate::memory::SecurePoolConfig::small_secure(),
             )?)
@@ -875,13 +875,14 @@ mod tests {
 
     #[test]
     fn test_stream_buffered_reader_bulk_read() {
-        let data = vec![42u8; 100_000]; // Large data for bulk read test
+        let len = if cfg!(miri) { 10_000 } else { 100_000 }; // Above 8192 bulk_read_threshold
+        let data = vec![42u8; len];
         let cursor = Cursor::new(data.clone());
         let mut reader = StreamBufferedReader::new(cursor).unwrap();
 
-        let mut buf = vec![0u8; 100_000];
+        let mut buf = vec![0u8; len];
         let bytes_read = reader.read_bulk(&mut buf).unwrap();
-        assert_eq!(bytes_read, 100_000);
+        assert_eq!(bytes_read, len);
         assert_eq!(buf, data);
     }
 
@@ -939,7 +940,8 @@ mod tests {
 
     #[test]
     fn test_stream_buffered_writer_large_write() {
-        let data = vec![42u8; 100_000];
+        let len = if cfg!(miri) { 10_000 } else { 100_000 };
+        let data = vec![42u8; len];
         let mut buffer = Vec::new();
         {
             let cursor = Cursor::new(&mut buffer);
@@ -949,13 +951,14 @@ mod tests {
             writer.flush().unwrap();
         }
 
-        assert_eq!(buffer.len(), 100_000);
+        assert_eq!(buffer.len(), len);
         assert_eq!(buffer, data);
     }
 
     #[test]
     fn test_stream_buffer_round_trip() {
-        let original_data = b"The quick brown fox jumps over the lazy dog. ".repeat(1000);
+        let reps = if cfg!(miri) { 100 } else { 1000 };
+        let original_data = b"The quick brown fox jumps over the lazy dog. ".repeat(reps);
 
         // Write data using buffered writer
         let mut buffer = Vec::new();
@@ -1031,7 +1034,8 @@ mod tests {
     #[test]
     fn test_stream_reader_simd_optimized_read_large() {
         // Test with large data to exercise SIMD paths
-        let large_data: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
+        let len = if cfg!(miri) { 2_048 } else { 10_000 };
+        let large_data: Vec<u8> = (0..len).map(|i| (i % 256) as u8).collect();
         let cursor = Cursor::new(&large_data);
         let mut reader = StreamBufferedReader::new(cursor).unwrap();
 
@@ -1182,7 +1186,8 @@ mod tests {
     #[test]
     fn test_stream_reader_utf8_large_data() {
         // Test with large data to exercise SIMD validation paths
-        let large_text = "Hello, World! 世界 🦀 ".repeat(1000);
+        let reps = if cfg!(miri) { 100 } else { 1000 };
+        let large_text = "Hello, World! 世界 🦀 ".repeat(reps);
         let cursor = Cursor::new(large_text.as_bytes());
         let mut reader = StreamBufferedReader::new(cursor).unwrap();
 

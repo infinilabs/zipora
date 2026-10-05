@@ -12,7 +12,7 @@
 .PHONY: test test_debug test_release test_simd_base64
 .PHONY: bench bench_all bench_avx512 bench_fsa bench_io bench_serialization
 .PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
-.PHONY: miri_cspp miri_core miri_simd miri_string miri_scalar
+.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_scalar
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity
 .PHONY: unsafe_audit api_honesty index_audit unwrap_audit
@@ -39,9 +39,9 @@ CARGO := cargo
 # macros compile them out under cfg(miri)), code selected through CpuFeatures
 # (its detection returns all-false under cfg(miri)), code behind a has_*()
 # helper that returns false under cfg!(miri), or any AVX-512 code (haswell has
-# none). The miri_cspp, miri_simd, miri_string and miri_algorithms comments
-# say which #[target_feature] kernels their suites run; the miri_core and
-# miri_pool suites run none in either build.
+# none). The miri_cspp, miri_simd, miri_string, miri_io and miri_algorithms
+# comments say which #[target_feature] kernels their suites run; the miri_core
+# and miri_pool suites run none in either build.
 ifeq ($(shell uname -m),x86_64)
 MIRI_SIMD_RUSTFLAGS := -C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt
 endif
@@ -295,6 +295,20 @@ miri_algorithms:
 miri_string:
 	$(CARGO_MIRI) test --lib string:: -- --test-threads=1
 
+# src/io and src/memory/mmap_vec under Miri (S22-R7). Two runs, both with
+# Stacked Borrows, the leak check on, and -Zmiri-disable-isolation (data_output,
+# range_stream, mmap's BufferedIO tests, and mmap_vec's
+# test_c9_f9_create_rejects_read_only_config create temporary files; tests that
+# reach OS mmap/mprotect are marked #[cfg_attr(miri, ignore = ...)] or
+# #[cfg(not(miri))]). In the default build, the direct sse42_* tests in
+# io::simd_memory::search run sse42_strchr_impl, sse42_strstr_impl,
+# sse42_multi_search_impl and sse42_strcmp_impl, and the direct kernel test in
+# io::simd_validation::checksum runs crc32c_sse42; MIRI_SCALAR=1 runs their
+# scalar fallbacks instead.
+miri_io:
+	MIRIFLAGS="-Zmiri-disable-isolation" $(CARGO_MIRI) test --lib io:: -- --test-threads=1
+	MIRIFLAGS="-Zmiri-disable-isolation" $(CARGO_MIRI) test --lib memory::mmap_vec:: -- --test-threads=1
+
 # The suites whose #[target_feature] kernels differ between the two builds,
 # rebuilt with no target features (MIRI_SCALAR=1, target/miri-scalar), so the
 # scalar code those kernels replace is Miri-checked too. miri_core, miri_pool
@@ -302,7 +316,7 @@ miri_string:
 # not repeated. Which kernels miri_tests and miri_full run in each build has
 # not been fully measured.
 miri_scalar:
-	$(MAKE) --no-print-directory MIRI_SCALAR=1 miri_cspp miri_string miri_algorithms
+	$(MAKE) --no-print-directory MIRI_SCALAR=1 miri_cspp miri_string miri_io miri_algorithms
 
 # =============================================================================
 # FUZZING (plan.md 6.1) — requires: cargo install cargo-fuzz; nightly toolchain

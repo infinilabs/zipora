@@ -1481,7 +1481,8 @@ mod tests {
     /// 10_000 patterned bytes behind a reader whose 1024-byte buffer is much
     /// smaller than the 4096-byte requests the Z1 tests make.
     fn z1_reader() -> (Vec<u8>, ZeroCopyReader<Cursor<Vec<u8>>>) {
-        let data: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+        let len = if cfg!(miri) { 2_500u32 } else { 10_000u32 };
+        let data: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
         let reader = ZeroCopyReader::with_capacity(Cursor::new(data.clone()), 1024).unwrap();
         (data, reader)
     }

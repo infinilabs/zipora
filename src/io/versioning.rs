@@ -1000,7 +1000,8 @@ mod tests {
         );
 
         // 2. Dead-end branch 1.0 -> 1.5 alongside valid path 1.0 -> 2.0 -> 3.0 must always succeed.
-        for _ in 0..32 {
+        let reps = if cfg!(miri) { 4 } else { 32 };
+        for _ in 0..reps {
             let mut reg = MigrationRegistry::new();
             reg.register_migration(Version::new(1, 0, 0), Version::new(1, 5, 0), |d| {
                 Ok(d.to_vec())

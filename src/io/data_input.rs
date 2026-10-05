@@ -758,14 +758,14 @@ mod tests {
             if interrupt {
                 return Err(std::io::ErrorKind::Interrupted.into());
             }
-            match (buf.first_mut(), self.data.get(self.pos)) {
-                (Some(slot), Some(&byte)) => {
-                    *slot = byte;
-                    self.pos += 1;
-                    Ok(1)
-                }
-                _ => Ok(0),
+            if buf.is_empty() || self.pos >= self.data.len() {
+                return Ok(0);
             }
+            let step = if cfg!(miri) { 4096 } else { 1 };
+            let n = buf.len().min(step).min(self.data.len() - self.pos);
+            buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
         }
     }
 

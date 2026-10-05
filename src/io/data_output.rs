@@ -701,7 +701,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // Miri cannot open temporary files without -Zmiri-disable-isolation.
     fn test_c9_do1_file_append_bytes_written_counts_new_bytes_only() {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();

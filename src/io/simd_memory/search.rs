@@ -8,8 +8,9 @@
 //! - **Two tiers**: SSE4.2 (x86_64, detected at runtime) and scalar. The
 //!   [`SearchTier::AVX2`], [`SearchTier::AVX512`] and [`SearchTier::NEON`]
 //!   variants are never selected; see [`SearchTier`].
-//! - **PCMPESTRI Instructions**: `find_char`, `find_pattern` and
-//!   `find_any_of` use PCMPESTRI; `compare_strings` uses SSE2 PCMPEQB.
+//! - **SSE2 / PCMPESTRI Instructions**: `find_pattern` and `find_any_of`
+//!   use SSE4.2 PCMPESTRI; `find_char` and `compare_strings` use SSE2
+//!   PCMPEQB / PMOVMSKB.
 //! - **Hybrid Strategy**: needles of up to 32 bytes are matched by their
 //!   first `min(n, 8)` bytes with PCMPESTRI (17..=32-byte needles through
 //!   their first 16 bytes), longer needles by their first byte; every
@@ -126,8 +127,8 @@ impl SimdStringSearch {
     ///
     /// # Performance
     ///
-    /// - SSE4.2 tier: one PCMPESTRI per 16-byte chunk, scalar code for the
-    ///   last `haystack.len() % 16` bytes
+    /// - SSE4.2 tier: one SSE2 `PCMPEQB` + `PMOVMSKB` per 16-byte chunk,
+    ///   scalar code for the last `haystack.len() % 16` bytes
     /// - Scalar tier: `Iterator::position`
     ///
     /// # Example
@@ -258,11 +259,11 @@ impl Default for SimdStringSearch {
 // SSE4.2 PCMPESTRI Implementation
 // ============================================================================
 
-/// Find character using SSE4.2 PCMPESTRI
+/// Find character using SSE2 `PCMPEQB` + `PMOVMSKB` on the SSE4.2 tier
 ///
-/// Uses _mm_cmpestri with _SIDD_CMP_EQUAL_ANY mode on each full 16-byte
-/// chunk and scalar code for the remaining bytes. Runs the scalar search
-/// when the CPU lacks SSE4.2.
+/// Uses `_mm_set1_epi8` + `_mm_cmpeq_epi8` + `_mm_movemask_epi8` on each full
+/// 16-byte chunk and scalar code for the remaining bytes. Runs the scalar
+/// search when the CPU lacks SSE4.2.
 #[cfg(target_arch = "x86_64")]
 pub fn sse42_strchr(haystack: &[u8], ch: u8) -> Option<usize> {
     if !is_x86_feature_detected!("sse4.2") {
@@ -274,8 +275,9 @@ pub fn sse42_strchr(haystack: &[u8], ch: u8) -> Option<usize> {
     unsafe { sse42_strchr_impl(haystack, ch) }
 }
 
-/// SSE4.2 body of [`sse42_strchr`]. It loads only full 16-byte chunks that
-/// lie inside `haystack` and scans the rest with scalar code.
+/// SSE4.2-tier body of [`sse42_strchr`]. Uses SSE2 `PCMPEQB` + `PMOVMSKB` over
+/// full 16-byte chunks that lie inside `haystack` and scans the tail with
+/// scalar code.
 ///
 /// # Safety
 ///
@@ -285,34 +287,18 @@ pub fn sse42_strchr(haystack: &[u8], ch: u8) -> Option<usize> {
 unsafe fn sse42_strchr_impl(haystack: &[u8], ch: u8) -> Option<usize> {
     const CHUNK_SIZE: usize = 16;
 
-    // Create needle vector with single character
-    let mut needle_bytes = [0u8; 16];
-    needle_bytes[0] = ch;
-    // SAFETY: `needle_bytes` is a 16-byte stack array, so the unaligned
-    // 16-byte load reads only its bytes.
-    let needle = unsafe { _mm_loadu_si128(needle_bytes.as_ptr() as *const __m128i) };
-
+    let needle = _mm_set1_epi8(ch as i8);
     let mut offset = 0;
     let len = haystack.len();
 
-    // Process 16-byte chunks
+    // Process 16-byte chunks with PCMPEQB + PMOVMSKB
     while offset + CHUNK_SIZE <= len {
         // SAFETY: the loop condition gives `offset + 16 <= haystack.len()`,
         // so the unaligned 16-byte load stays inside `haystack`.
         let chunk = unsafe { _mm_loadu_si128(haystack.as_ptr().add(offset) as *const __m128i) };
-
-        // _SIDD_CMP_EQUAL_ANY: Match any character in needle
-        // _SIDD_UBYTE_OPS: Operate on unsigned bytes
-        let idx = _mm_cmpestri(
-            needle,
-            1, // needle length = 1
-            chunk,
-            CHUNK_SIZE as i32,
-            _SIDD_CMP_EQUAL_ANY | _SIDD_UBYTE_OPS,
-        );
-
-        if idx < CHUNK_SIZE as i32 {
-            return Some(offset + idx as usize);
+        let mask = _mm_movemask_epi8(_mm_cmpeq_epi8(chunk, needle)) as u32;
+        if mask != 0 {
+            return Some(offset + mask.trailing_zeros() as usize);
         }
 
         offset += CHUNK_SIZE;
@@ -1070,8 +1056,16 @@ mod tests {
     /// checks that the kernel does not depend on those reports.
     #[test]
     fn test_c9_s1_strstr_matches_reference_search() {
-        for len in 0..=64usize {
-            for n in 1..=17usize {
+        let (lens, needle_lens): (Vec<usize>, Vec<usize>) = if cfg!(miri) {
+            (
+                vec![0, 1, 15, 16, 17, 31, 32, 33],
+                vec![1, 2, 8, 9, 16, 17],
+            )
+        } else {
+            ((0..=64).collect(), (1..=17).collect())
+        };
+        for len in lens {
+            for &n in &needle_lens {
                 let starts = [0, 15, 17usize.saturating_sub(n), len.saturating_sub(n)];
 
                 let mut needle = vec![b'a'; n];
@@ -1219,6 +1213,13 @@ mod tests {
         }
 
         let haystack: Vec<u8> = (0..65_536u32).map(|i| b'a' + (i % 23) as u8).collect();
+        let scalar_ch = per_search(&|| scalar_strchr(black_box(&haystack), black_box(b'Z')));
+        #[cfg(target_arch = "x86_64")]
+        if is_x86_feature_detected!("sse4.2") {
+            assert_eq!(sse42_strchr(&haystack, b'Z'), None);
+            let sse_ch = per_search(&|| sse42_strchr(black_box(&haystack), black_box(b'Z')));
+            println!("find_char: sse42_strchr {sse_ch:?}/search, scalar_strchr {scalar_ch:?}/search");
+        }
         for n in [1usize, 2, 4, 8, 12, 16] {
             let mut needle: Vec<u8> = (0..n).map(|i| b'a' + (i % 23) as u8).collect();
             needle[n - 1] = b'Z'; // never in the haystack
@@ -1242,12 +1243,22 @@ mod tests {
     /// out.
     #[test]
     fn test_c9_s3_sse42_strstr_medium_and_long_needles_match_reference() {
-        for n in 17..=40usize {
+        let needle_lens: Vec<usize> = if cfg!(miri) {
+            vec![17, 18, 31, 32, 33, 40]
+        } else {
+            (17..=40).collect()
+        };
+        for n in needle_lens {
             let mut needle: Vec<u8> = (0..n).map(|i| b'a' + (i % 7) as u8).collect();
             needle[n - 1] = b'z';
             let mut decoy = needle.clone();
             decoy[n - 1] = b'y';
-            for len in [n - 1, n, n + 1, n + 15, n + 16, n + 17, 96] {
+            let hay_lens: &[usize] = if cfg!(miri) {
+                &[n - 1, n, n + 1, n + 16, 96]
+            } else {
+                &[n - 1, n, n + 1, n + 15, n + 16, n + 17, 96]
+            };
+            for &len in hay_lens {
                 let background = vec![b'a'; len];
                 assert_strstr_agrees(&background, &needle, ("absent", len, n, 0));
                 for at in [0usize, 1, 15, 16, 31, 32, len.saturating_sub(n)] {
@@ -1312,16 +1323,21 @@ mod tests {
     /// 256 byte values.
     #[test]
     fn test_c9_s2_find_any_of_matches_scalar_for_set_sizes_1_to_40() {
-        let (lens, spots): (&[usize], &[usize]) = if cfg!(miri) {
-            (&[0, 15, 16, 17, 33], &[0, 15, 16, usize::MAX])
+        let (set_sizes, lens, spots): (Vec<usize>, &[usize], &[usize]) = if cfg!(miri) {
+            (
+                vec![1, 2, 15, 16, 17, 32, 40],
+                &[0, 15, 16, 17, 33],
+                &[0, 15, 16, usize::MAX],
+            )
         } else {
             (
+                (1..=40).collect(),
                 &[0, 1, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65],
                 &[0, 1, 15, 16, 17, 31, 32, usize::MAX],
             )
         };
         let filler = b'~'; // outside every set below
-        for k in 1..=40usize {
+        for k in set_sizes {
             let set: Vec<u8> = (0..k).map(|i| b'!' + i as u8).collect();
             for &len in lens {
                 let background = vec![filler; len];
@@ -1386,5 +1402,32 @@ mod tests {
         assert_eq!(searcher.find_pattern(b"hello world", b"world"), Some(6));
         assert_eq!(searcher.find_any_of(b"hello", b"ol"), Some(2));
         assert_eq!(searcher.compare_strings(b"abc", b"abd"), Ordering::Less);
+    }
+
+    /// S22-R7: `sse42_strchr` uses SSE2 `PCMPEQB` + `PMOVMSKB` instead of
+    /// `PCMPESTRI`, matching `scalar_strchr` across all chunk offsets and
+    /// signed/unsigned byte values (including `0x00`, `0x7F`, `0x80`, `0xFF`).
+    #[test]
+    fn test_s22_r7_strchr_pcmpeqb_matches_scalar() {
+        for &target in &[0u8, 1, 0x7F, 0x80, 0xFE, 0xFF] {
+            let filler = target.wrapping_add(1);
+            for len in [0usize, 1, 15, 16, 17, 31, 32, 33, 48, 65] {
+                let bg = vec![filler; len];
+                assert_eq!(find_char(&bg, target), None);
+                #[cfg(target_arch = "x86_64")]
+                if is_x86_feature_detected!("sse4.2") {
+                    assert_eq!(sse42_strchr(&bg, target), None);
+                }
+                for pos in 0..len {
+                    let mut hay = bg.clone();
+                    hay[pos] = target;
+                    assert_eq!(find_char(&hay, target), Some(pos));
+                    #[cfg(target_arch = "x86_64")]
+                    if is_x86_feature_detected!("sse4.2") {
+                        assert_eq!(sse42_strchr(&hay, target), Some(pos));
+                    }
+                }
+            }
+        }
     }
 }

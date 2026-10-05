@@ -524,7 +524,8 @@ mod tests {
     #[test]
     fn test_crc32c_large_data() {
         // Test with large data to ensure hardware acceleration is used
-        let data: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
+        let n = if cfg!(miri) { 512 } else { 10000 };
+        let data: Vec<u8> = (0..n).map(|i| (i % 256) as u8).collect();
         let crc = crc32c_hash(&data).unwrap();
         assert_ne!(crc, 0);
 
@@ -545,8 +546,13 @@ mod tests {
     fn test_c9_c1_c3_hardware_kernels_match_scalar_for_lengths_0_to_64_and_offsets() {
         let buf: Vec<u8> = (0..72u32).map(|i| (i.wrapping_mul(151) ^ (i >> 3)) as u8).collect();
         let mut hardware_checked = 0usize;
+        let lens: Vec<usize> = if cfg!(miri) {
+            vec![0, 1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 64]
+        } else {
+            (0..=64).collect()
+        };
         for offset in 0..8 {
-            for len in 0..=64 {
+            for &len in &lens {
                 let data = &buf[offset..offset + len];
                 for init in [0u32, 0xFFFF_FFFF, 0x89AB_CDEF] {
                     let expected = crc32c_scalar(data, init);
