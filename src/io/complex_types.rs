@@ -6,12 +6,20 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::io::data_input::prealloc_capacity;
-use crate::io::smart_ptr::SerializableType;
+use crate::io::smart_ptr::{DEFAULT_MAX_DEPTH, SerializableType, checked_u32_len};
 use crate::io::{DataInput, DataOutput};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
-/// Trait for complex type serialization with metadata
+/// Trait for complex type serialization with metadata.
+///
+/// # Limitations
+///
+/// - **32-bit length prefixes**: the built-in collection and array implementations
+///   (`HashMap`, `HashSet`, `BTreeMap`, `BTreeSet`, `[T; N]`) and
+///   [`ComplexTypeSerializer::serialize_batch`] encode element counts as a `u32`
+///   wire prefix and return [`ZiporaError::InvalidData`] if a length exceeds
+///   `u32::MAX` (`4,294,967,295`).
 pub trait ComplexSerialize: Sized {
     /// Get the type identifier for versioning
     ///
@@ -143,7 +151,7 @@ impl<T: SerializableType, const N: usize> ComplexSerialize for [T; N] {
 
     fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         // Write array length for validation
-        output.write_u32(N as u32)?;
+        output.write_u32(checked_u32_len(N, "array")?)?;
 
         for item in self.iter() {
             item.serialize(output)?;
@@ -246,7 +254,7 @@ impl<K: SerializableType + Hash + Eq, V: SerializableType> ComplexSerialize for 
     }
 
     fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
-        output.write_u32(self.len() as u32)?;
+        output.write_u32(checked_u32_len(self.len(), "HashMap")?)?;
         if self.is_empty() {
             return Ok(());
         }
@@ -299,7 +307,7 @@ impl<T: SerializableType + Hash + Eq> ComplexSerialize for HashSet<T> {
     }
 
     fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
-        output.write_u32(self.len() as u32)?;
+        output.write_u32(checked_u32_len(self.len(), "HashSet")?)?;
         if self.is_empty() {
             return Ok(());
         }
@@ -345,7 +353,7 @@ impl<K: SerializableType + Ord, V: SerializableType> ComplexSerialize for BTreeM
     }
 
     fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
-        output.write_u32(self.len() as u32)?;
+        output.write_u32(checked_u32_len(self.len(), "BTreeMap")?)?;
         if self.is_empty() {
             return Ok(());
         }
@@ -389,7 +397,7 @@ impl<T: SerializableType + Ord> ComplexSerialize for BTreeSet<T> {
     }
 
     fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
-        output.write_u32(self.len() as u32)?;
+        output.write_u32(checked_u32_len(self.len(), "BTreeSet")?)?;
         if self.is_empty() {
             return Ok(());
         }
@@ -632,12 +640,16 @@ impl ComplexTypeSerializer {
         Ok(())
     }
 
-    /// Serialize multiple objects efficiently
+    /// Serialize multiple objects efficiently.
+    ///
+    /// # Errors
+    /// Returns [`ZiporaError::InvalidData`] if `values.len() > u32::MAX as usize`
+    /// or if serializing any element fails.
     pub fn serialize_batch<T: ComplexSerialize>(&self, values: &[T]) -> Result<Vec<u8>> {
         let mut output = crate::io::VecDataOutput::new();
 
         // Write batch header
-        output.write_u32(values.len() as u32)?;
+        output.write_u32(checked_u32_len(values.len(), "batch")?)?;
 
         if self.config.include_metadata && !values.is_empty() {
             // Write type metadata once for the entire batch
@@ -710,9 +722,10 @@ pub trait NestedSerialize {
     where
         Self: Sized;
 
-    /// Maximum allowed nesting depth
+    /// Maximum allowed nesting depth (`256`, sized so recursive deserialization
+    /// frames fit a 2 MiB thread stack in both debug and release builds)
     fn max_depth() -> usize {
-        1000
+        DEFAULT_MAX_DEPTH
     }
 }
 
@@ -731,7 +744,16 @@ impl<T: ComplexSerialize> NestedSerialize for T {
     }
 }
 
-/// Macro for implementing ComplexSerialize for custom structs
+/// Macro for implementing [`ComplexSerialize`] for custom structs.
+///
+/// # Limitations
+///
+/// Each field is serialized/deserialized through [`SerializableType`]. When
+/// `serialize_data` or `deserialize_with_version` is invoked at the top level
+/// outside an enclosing smart-pointer, collection, or [`NestedSerialize`] scope,
+/// sibling smart-pointer fields do not share a single
+/// [`crate::io::SerializationContext`] / [`crate::io::DeserializationContext`];
+/// see [`SerializableType#limitations`] for details.
 #[macro_export]
 macro_rules! impl_complex_serialize {
     ($struct_name:ident { $($field:ident : $field_type:ty),* $(,)? }) => {
@@ -1271,5 +1293,70 @@ mod tests {
                 .is_err(),
             "child at depth max_depth() + 1 must be rejected by serialize_nested"
         );
+    }
+
+    #[test]
+    fn test_s22_r1_nested_containers_rejected_on_2mib_stack() {
+        #[derive(Debug, PartialEq)]
+        struct BTreeNode {
+            children: BTreeMap<u32, BTreeNode>,
+        }
+        impl SerializableType for BTreeNode {
+            fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+                self.children.serialize(output)
+            }
+            fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
+                Ok(Self {
+                    children: BTreeMap::<u32, BTreeNode>::deserialize(input)?,
+                })
+            }
+        }
+        impl_complex_serialize!(BTreeNode {
+            children: BTreeMap<u32, BTreeNode>,
+        });
+
+        let depth = if cfg!(miri) { 2_000usize } else { 100_000usize };
+        let mut btree_wire = Vec::with_capacity(depth * 8 + 4);
+        for _ in 0..depth {
+            btree_wire.extend_from_slice(&1u32.to_le_bytes()); // len = 1
+            btree_wire.extend_from_slice(&0u32.to_le_bytes()); // key = 0
+        }
+        btree_wire.extend_from_slice(&0u32.to_le_bytes()); // leaf len = 0
+
+        std::thread::Builder::new()
+            .name("s22-r1-btree-2mib".into())
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                let mut input = SliceDataInput::new(&btree_wire);
+                assert!(
+                    BTreeNode::deserialize_nested(&mut input, 0).is_err(),
+                    "deep BTreeNode must return Err within 2 MiB stack"
+                );
+                let mut input2 = SliceDataInput::new(&btree_wire);
+                assert!(
+                    <BTreeMap<u32, BTreeNode> as ComplexSerialize>::deserialize_with_version(
+                        &mut input2,
+                        1
+                    )
+                    .is_err(),
+                    "deep BTreeMap must return Err within 2 MiB stack"
+                );
+            })
+            .expect("spawn 2 MiB thread")
+            .join()
+            .expect("2 MiB thread must not overflow stack or panic");
+    }
+
+    #[test]
+    fn test_s22_r8_checked_u32_len_rejects_above_u32_max() {
+        assert_eq!(checked_u32_len(0, "Vec").unwrap(), 0);
+        assert_eq!(
+            checked_u32_len(u32::MAX as usize, "Vec").unwrap(),
+            u32::MAX
+        );
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert!(checked_u32_len((u32::MAX as usize) + 1, "Vec").is_err());
+        }
     }
 }

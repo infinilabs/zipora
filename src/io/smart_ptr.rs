@@ -20,6 +20,19 @@ thread_local! {
     static ACTIVE_DE_CTX: RefCell<Option<DeserializationContext>> = const { RefCell::new(None) };
 }
 
+/// Default maximum recursion depth across nested smart pointers and containers.
+///
+/// Chosen so `max_depth` recursive deserialization frames fit comfortably within
+/// a standard 2 MiB thread stack even in unoptimized (`opt-level=0`) debug builds.
+pub(crate) const DEFAULT_MAX_DEPTH: usize = 256;
+
+/// Convert a collection length to its 32-bit wire prefix, rejecting lengths above `u32::MAX`.
+pub(crate) fn checked_u32_len(len: usize, what: &str) -> Result<u32> {
+    u32::try_from(len).map_err(|_| {
+        ZiporaError::invalid_data(format!("{what} length {len} exceeds u32::MAX wire limit"))
+    })
+}
+
 /// Serialization context for tracking shared objects and preventing cycles
 #[derive(Debug)]
 pub struct SerializationContext {
@@ -50,7 +63,7 @@ impl SerializationContext {
             detect_cycles: true,
             compress_ids: false,
             depth: 0,
-            max_depth: 1000,
+            max_depth: DEFAULT_MAX_DEPTH,
         }
     }
 
@@ -63,7 +76,7 @@ impl SerializationContext {
             detect_cycles: false,
             compress_ids: false,
             depth: 0,
-            max_depth: 1000,
+            max_depth: DEFAULT_MAX_DEPTH,
         }
     }
 
@@ -153,7 +166,12 @@ impl Default for SerializationContext {
     }
 }
 
-/// Deserialization context for reconstructing shared objects
+/// Deserialization context for reconstructing shared objects.
+///
+/// Note: `DeserializationContext` is non-generic and stores reconstructed
+/// shared pointers in type-erased `Box<dyn Any>` slots (`store_object<T: 'static>` /
+/// `get_object<T: 'static>`) so a single context can reconstruct heterogeneous
+/// object graphs containing multiple `Rc<T>` and `Arc<U>` pointee types.
 #[derive(Debug)]
 pub struct DeserializationContext {
     /// Map from object ID to reconstructed smart pointer
@@ -173,7 +191,7 @@ impl DeserializationContext {
             objects: HashMap::new(),
             compress_ids: false,
             depth: 0,
-            max_depth: 1000,
+            max_depth: DEFAULT_MAX_DEPTH,
         }
     }
 
@@ -464,7 +482,25 @@ pub trait SmartPtrSerialize<T> {
     }
 }
 
-/// Marker trait for types that are serializable
+/// Marker trait for types that are serializable.
+///
+/// # Limitations
+///
+/// - **Shared-pointer context scope on plain structs**: [`SerializableType::serialize`]
+///   and [`SerializableType::deserialize`] do not take an explicit context argument.
+///   Top-level calls on a smart pointer (`Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`,
+///   `Box<T>`), a collection (`Vec<T>`, `HashMap`, `BTreeMap`, `HashSet`, `BTreeSet`),
+///   or [`crate::io::NestedSerialize`] install a thread-local context for the duration
+///   of that call so nested smart pointers share object IDs and recursion depth.
+///   Calling `SerializableType::serialize` directly on a plain user-defined struct
+///   outside an enclosing smart-pointer/container scope opens a fresh context per
+///   smart-pointer field; to share `Rc`/`Arc` identity across sibling fields of a
+///   top-level struct, wrap the struct in a smart pointer or drive serialization
+///   through [`SmartPtrSerialize::serialize_with_context`] /
+///   [`SmartPtrSerialize::deserialize_with_context`].
+/// - **32-bit collection length prefix**: collection implementations (`Vec<T>`,
+///   `HashMap`, `BTreeMap`, `HashSet`, `BTreeSet`) encode the element count as a
+///   `u32` wire prefix and reject lengths above `u32::MAX` (`4,294,967,295`).
 pub trait SerializableType: 'static {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()>;
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self>
@@ -725,38 +761,39 @@ pub struct SmartPtrConfig {
 }
 
 impl SmartPtrConfig {
-    /// Create a new configuration with default settings
+    /// Create a new configuration with default settings (`max_depth: 256`)
     pub fn new() -> Self {
         Self {
             cycle_detection: true,
-            max_depth: 1000,
+            max_depth: DEFAULT_MAX_DEPTH,
             compress_ids: false,
         }
     }
 
-    /// Configuration optimized for performance
+    /// Configuration optimized for performance (`max_depth: 128`)
     pub fn performance_optimized() -> Self {
         Self {
             cycle_detection: false, // Faster but no cycle detection
-            max_depth: 500,
+            max_depth: 128,
             compress_ids: false,
         }
     }
 
-    /// Configuration optimized for space efficiency
+    /// Configuration optimized for space efficiency (`max_depth: 256`)
     pub fn space_optimized() -> Self {
         Self {
             cycle_detection: true,
-            max_depth: 2000,
+            max_depth: DEFAULT_MAX_DEPTH,
             compress_ids: true, // Smaller serialized size
         }
     }
 
-    /// Configuration for robust handling of complex graphs
+    /// Configuration for robust handling of complex graphs (`max_depth: 384`,
+    /// sized to stay within a 2 MiB thread stack in both debug and release builds)
     pub fn robust() -> Self {
         Self {
             cycle_detection: true,
-            max_depth: 5000,
+            max_depth: 384,
             compress_ids: false,
         }
     }
@@ -852,7 +889,7 @@ impl SerializableType for String {
 
 impl<T: SerializableType> SerializableType for Vec<T> {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
-        output.write_u32(self.len() as u32)?;
+        output.write_u32(checked_u32_len(self.len(), "Vec")?)?;
         if self.is_empty() {
             return Ok(());
         }
@@ -1177,11 +1214,16 @@ mod tests {
     fn test_performance_config() {
         let config = SmartPtrConfig::performance_optimized();
         assert!(!config.cycle_detection);
-        assert_eq!(config.max_depth, 500);
+        assert_eq!(config.max_depth, 128);
 
         let config = SmartPtrConfig::space_optimized();
         assert!(config.cycle_detection);
         assert!(config.compress_ids);
+        assert_eq!(config.max_depth, 256);
+
+        let config = SmartPtrConfig::robust();
+        assert!(config.cycle_detection);
+        assert_eq!(config.max_depth, 384);
     }
 
     #[test]
@@ -1481,5 +1523,105 @@ mod tests {
                 .is_err(),
             "depth 12 must exceed SmartPtrConfig::max_depth = 8 on deserialize"
         );
+    }
+
+    #[test]
+    fn test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack() {
+        struct BoxChain {
+            next: Option<Box<BoxChain>>,
+        }
+        impl SerializableType for BoxChain {
+            fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+                <Option<Box<BoxChain>> as SmartPtrSerialize<BoxChain>>::serialize(
+                    &self.next, output,
+                )
+            }
+            fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
+                Ok(Self {
+                    next: <Option<Box<BoxChain>> as SmartPtrSerialize<BoxChain>>::deserialize(
+                        input,
+                    )?,
+                })
+            }
+        }
+
+        struct RcChain {
+            next: Option<Rc<RcChain>>,
+        }
+        impl SerializableType for RcChain {
+            fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+                <Option<Rc<RcChain>> as SerializableType>::serialize(&self.next, output)
+            }
+            fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
+                Ok(Self {
+                    next: <Option<Rc<RcChain>> as SerializableType>::deserialize(input)?,
+                })
+            }
+        }
+
+        let depth = if cfg!(miri) { 2_000usize } else { 100_000usize };
+        let mut box_wire = vec![1u8; depth + 1];
+        box_wire[depth] = 0;
+
+        let mut rc_wire = Vec::with_capacity(depth * 6 + 1);
+        for i in 1..=depth {
+            if i > 1 {
+                rc_wire.push(1u8); // Option::Some
+            }
+            rc_wire.push(1u8); // Rc new-object marker
+            rc_wire.extend_from_slice(&(i as u32).to_le_bytes());
+        }
+        rc_wire.push(0u8); // Option::None
+
+        let mut rc_compressed_wire = Vec::with_capacity(depth * 4 + 1);
+        let mut tmp_out = VecDataOutput::new();
+        for i in 1..=depth {
+            if i > 1 {
+                tmp_out.write_u8(1).unwrap(); // Option::Some
+            }
+            tmp_out.write_u8(1).unwrap(); // Rc new-object marker
+            tmp_out.write_var_int(i as u64).unwrap();
+        }
+        tmp_out.write_u8(0).unwrap(); // Option::None
+        rc_compressed_wire.extend_from_slice(&tmp_out.into_vec());
+
+        std::thread::Builder::new()
+            .name("s22-r1-2mib".into())
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                for config in [
+                    SmartPtrConfig::default(),
+                    SmartPtrConfig::performance_optimized(),
+                    SmartPtrConfig::space_optimized(),
+                    SmartPtrConfig::robust(),
+                ] {
+                    let ser = SmartPtrSerializer::new(config.clone());
+                    assert!(
+                        ser.deserialize_from_bytes::<BoxChain, Box<BoxChain>>(&box_wire)
+                            .is_err(),
+                        "BoxChain must return Err within 2 MiB stack for {:?}",
+                        config
+                    );
+                    let rc_payload = if config.compress_ids {
+                        &rc_compressed_wire
+                    } else {
+                        &rc_wire
+                    };
+                    assert!(
+                        ser.deserialize_from_bytes::<RcChain, Rc<RcChain>>(rc_payload)
+                            .is_err(),
+                        "RcChain must return Err within 2 MiB stack for {:?}",
+                        config
+                    );
+                }
+
+                let mut box_in = SliceDataInput::new(&box_wire);
+                assert!(<Box<BoxChain> as SerializableType>::deserialize(&mut box_in).is_err());
+                let mut rc_in = SliceDataInput::new(&rc_wire);
+                assert!(<Rc<RcChain> as SerializableType>::deserialize(&mut rc_in).is_err());
+            })
+            .expect("spawn 2 MiB thread")
+            .join()
+            .expect("2 MiB thread must not overflow stack or panic");
     }
 }
