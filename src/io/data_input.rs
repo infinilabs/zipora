@@ -15,12 +15,17 @@ use crate::io::var_int::VarInt;
 #[cfg(feature = "mmap")]
 use memmap2::Mmap;
 
-/// Most bytes a reader allocates ahead of the input that has to back them.
+/// Most bytes a streaming reader (`remaining_bytes() == None`) allocates ahead
+/// of the input that has to back them.
 ///
 /// Lengths and element counts read from the input are untrusted. Code that
-/// sizes a buffer from one allocates at most this much before the input has
-/// delivered the corresponding bytes.
+/// sizes a buffer from one without knowing the remaining input length allocates
+/// at most this much before the input has delivered the corresponding bytes.
 pub(crate) const MAX_READ_AHEAD_ALLOC: usize = 64 * 1024;
+
+/// Maximum upfront byte reservation (`64 MiB`) when `remaining_bytes()` is
+/// `Some(r)` (such as [`SliceDataInput`] or `MmapDataInput`).
+pub(crate) const MAX_KNOWN_INPUT_PREALLOC: usize = 64 * 1024 * 1024;
 
 /// Error for a read of `len` bytes from a source with only `remaining` left.
 fn short_input(len: usize, remaining: u64) -> ZiporaError {
@@ -44,17 +49,23 @@ fn check_len_available(len: usize, remaining: Option<u64>) -> Result<()> {
 /// Capacity to reserve before decoding `count` elements of `elem_size`
 /// bytes each, where `count` was read from the input.
 ///
-/// The result is at most `MAX_READ_AHEAD_ALLOC / elem_size` elements, so the
-/// reservation stays within the read-ahead budget whatever `count` claims,
-/// and at most `remaining` (the source's [`DataInput::remaining_bytes`]),
-/// because each element that encodes to at least one byte needs one of
-/// those bytes. The collection grows past this capacity as decoded elements
-/// arrive, so elements that encode to zero bytes still decode correctly;
-/// they only lose the pre-allocation.
+/// - When `remaining` is `None` (streaming input), reserves at most
+///   `MAX_READ_AHEAD_ALLOC / elem_size.max(1)` elements (`64 KiB`).
+/// - When `remaining` is `Some(r)` (backed by an in-memory slice or file
+///   mapping with `r` bytes left), reserves up to `min(r, MAX_KNOWN_INPUT_PREALLOC) / elem_size.max(1)`
+///   elements (and at most `r` elements), so any valid count backed by `r`
+///   wire bytes up to `64 MiB` (such as 1M `u64`s = `8 MiB`) is reserved in a
+///   single allocation without intermediate reallocations.
 pub(crate) fn prealloc_capacity(count: usize, elem_size: usize, remaining: Option<u64>) -> usize {
-    let by_memory = MAX_READ_AHEAD_ALLOC / elem_size.max(1);
-    let by_input = remaining.map_or(usize::MAX, |r| usize::try_from(r).unwrap_or(usize::MAX));
-    count.min(by_memory).min(by_input)
+    let elem_size = elem_size.max(1);
+    match remaining {
+        Some(r) => {
+            let r_usize = usize::try_from(r).unwrap_or(usize::MAX);
+            let byte_budget = r_usize.min(MAX_KNOWN_INPUT_PREALLOC);
+            count.min(byte_budget / elem_size).min(r_usize)
+        }
+        None => count.min(MAX_READ_AHEAD_ALLOC / elem_size),
+    }
 }
 
 /// Trait for reading structured data from various sources
@@ -97,13 +108,20 @@ pub trait DataInput {
     ///
     /// `len` is treated as untrusted. If [`remaining_bytes`](Self::remaining_bytes)
     /// reports fewer than `len` bytes, the call fails before allocating.
-    /// Otherwise the buffer grows as the bytes arrive: each step adds at most
-    /// `max(64 KiB, bytes already read)`, so a length that promises more
-    /// bytes than the source delivers costs at most `max(n + 64 KiB, 2 * n)`
-    /// bytes of buffer, where `n` is the number of bytes actually read before
-    /// the read fails.
+    /// When `remaining_bytes` is `Some` and `len <= MAX_KNOWN_INPUT_PREALLOC`,
+    /// the verified length is read in one allocation; otherwise the buffer
+    /// grows as the bytes arrive in steps of at most `max(64 KiB, bytes already read)`.
     fn read_vec(&mut self, len: usize) -> Result<Vec<u8>> {
-        check_len_available(len, self.remaining_bytes())?;
+        let remaining = self.remaining_bytes();
+        check_len_available(len, remaining)?;
+        if remaining.is_some() && len <= MAX_KNOWN_INPUT_PREALLOC {
+            let mut buf = Vec::new();
+            buf.try_reserve_exact(len)
+                .map_err(|_| ZiporaError::out_of_memory(len))?;
+            buf.resize(len, 0);
+            self.read_bytes(&mut buf)?;
+            return Ok(buf);
+        }
         let mut buf = Vec::new();
         while buf.len() < len {
             let filled = buf.len();
@@ -676,6 +694,7 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_mmap_data_input() {
         let mut temp_file = NamedTempFile::new().unwrap();
         let data = b"Hello, memory mapped world!";
@@ -892,9 +911,18 @@ mod tests {
 
     #[test]
     fn test_c9_ct1_prealloc_capacity_is_bounded() {
-        // The read-ahead budget caps a huge count: 64 KiB / 8 B = 8192.
+        // Without a known remaining length, the read-ahead budget caps a huge count: 64 KiB / 8 B = 8192.
         assert_eq!(prealloc_capacity(usize::MAX, 8, None), 8192);
-        assert_eq!(prealloc_capacity(usize::MAX, 1, Some(u64::MAX)), 65_536);
+        // With a known remaining length, pre-allocation is capped at MAX_KNOWN_INPUT_PREALLOC (64 MiB).
+        assert_eq!(
+            prealloc_capacity(usize::MAX, 1, Some(u64::MAX)),
+            MAX_KNOWN_INPUT_PREALLOC
+        );
+        // 1M u64 elements (8 MiB) in a known-length slice reserve the full 1M capacity at once.
+        assert_eq!(
+            prealloc_capacity(1_000_000, 8, Some(8_000_000)),
+            1_000_000
+        );
         // A count within the budget is kept.
         assert_eq!(prealloc_capacity(10, 8, None), 10);
         // A source that knows its length caps the count at its bytes left.
@@ -902,7 +930,24 @@ mod tests {
         assert_eq!(prealloc_capacity(1000, 1, Some(0)), 0);
         // Zero-sized elements do not divide by zero.
         assert_eq!(prealloc_capacity(7, 0, None), 7);
-        // Elements larger than the budget get no pre-allocation.
+        // Elements larger than the budget get no pre-allocation when remaining is unknown.
         assert_eq!(prealloc_capacity(3, MAX_READ_AHEAD_ALLOC + 1, None), 0);
     }
+
+    #[test]
+    fn test_s22_r4_vec_u64_known_remaining_preallocates_full_count() {
+        use crate::io::data_output::VecDataOutput;
+        use crate::io::smart_ptr::SerializableType;
+
+        let n = if cfg!(miri) { 1024 } else { 100_000 };
+        let expected: Vec<u64> = (0..n as u64).collect();
+        let mut out = VecDataOutput::with_capacity(4 + n * 8);
+        expected.serialize(&mut out).unwrap();
+
+        let mut input = SliceDataInput::new(out.as_slice());
+        assert_eq!(input.remaining_bytes(), Some((4 + n * 8) as u64));
+        let decoded = Vec::<u64>::deserialize(&mut input).unwrap();
+        assert_eq!(decoded, expected);
+    }
 }
+
