@@ -22,25 +22,79 @@ use crate::memory::cache_layout::AccessPattern;
 use crate::memory::simd_ops::{fast_copy_cache_optimized, fast_fill, fast_prefetch_range};
 use crate::simd::{AdaptiveSimdSelector, Operation};
 use bytemuck::Pod;
-use memmap2::{MmapMut, MmapOptions};
+use memmap2::{Mmap, MmapMut, MmapOptions};
 use std::fs::{File, OpenOptions};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::slice;
 
-/// A file-backed mutable memory mapping.
+/// Underlying file mapping: writable `MAP_SHARED` (`MmapMut`) for mutable
+/// vectors, or read-only `PROT_READ` (`Mmap`) for `config.read_only` vectors.
 ///
-/// Writes through `map` land in the OS page cache of the backing file
-/// (MAP_SHARED), so data persists across drop/reopen even without an
-/// explicit `flush()`; `flush()` only adds durability (msync to disk).
-/// For read-only vectors the mapping is copy-on-write (`map_copy`), so
-/// stray writes can never reach the file.
+/// Using `Mmap` (`PROT_READ`) rather than `MmapMut::map_copy` (`MAP_PRIVATE`
+/// with `PROT_READ | PROT_WRITE`) for read-only vectors ensures that
+/// `populate_pages: true` (`MAP_POPULATE` on Linux) prefaults clean
+/// file-backed page-cache pages (`RssFile`) rather than write-faulting every
+/// page into private anonymous copy-on-write memory (`RssAnon`), and lets
+/// hardware page protection reject any stray write.
+enum MappingKind {
+    ReadWrite(MmapMut),
+    ReadOnly(Mmap),
+}
+
+impl MappingKind {
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Self::ReadWrite(m) => m.len(),
+            Self::ReadOnly(m) => m.len(),
+        }
+    }
+
+    #[inline]
+    fn get(&self, range: std::ops::RangeTo<usize>) -> Option<&[u8]> {
+        match self {
+            Self::ReadWrite(m) => m.get(range),
+            Self::ReadOnly(m) => m.get(range),
+        }
+    }
+
+    fn advise(&self, advice: memmap2::Advice) -> std::io::Result<()> {
+        match self {
+            Self::ReadWrite(m) => m.advise(advice),
+            Self::ReadOnly(m) => m.advise(advice),
+        }
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        match self {
+            Self::ReadWrite(m) => m.flush(),
+            Self::ReadOnly(_) => Ok(()),
+        }
+    }
+
+    fn flush_range(&self, offset: usize, len: usize) -> std::io::Result<()> {
+        match self {
+            Self::ReadWrite(m) => m.flush_range(offset, len),
+            Self::ReadOnly(_) => Ok(()),
+        }
+    }
+}
+
+/// A file-backed memory mapping (`MAP_SHARED` writable or `PROT_READ` read-only).
+///
+/// Writes through a writable `map` land in the OS page cache of the backing
+/// file (`MAP_SHARED`), so data persists across drop/reopen even without an
+/// explicit `flush()`; `flush()` only adds durability (`msync` to disk).
+/// For read-only vectors the mapping is `PROT_READ` (`Mmap`), so page
+/// protection prevents writes and `MAP_POPULATE` faults clean file-backed
+/// pages without allocating private anonymous memory.
 struct FileMapping {
-    /// Kept open for set_len() during growth; the mapping itself holds its
+    /// Kept open for `set_len()` during growth; the mapping itself holds its
     /// own reference to the file, so ordering of drops does not matter.
     file: File,
-    map: MmapMut,
+    map: MappingKind,
 }
 
 /// Header for memory-mapped vector files (80 bytes, little-endian header fields on disk)
@@ -457,10 +511,10 @@ pub struct MmapVec<T> {
     mmap: Option<FileMapping>,
     /// Configuration
     config: MmapVecConfig,
-    /// Cached header pointer (into `mmap`)
+    /// Cached header pointer (into `mmap`; `Some` for writable mappings, `None` for read-only)
     header: Option<NonNull<MmapVecHeader>>,
-    /// Cached data pointer (into `mmap`, aligned for `T`)
-    data: Option<NonNull<T>>,
+    /// Cached data pointer (into `mmap`, validated aligned for `T` by `view_of`)
+    data: NonNull<T>,
     /// Number of elements; invariant `len <= cap`
     len: usize,
     /// Capacity in elements; invariant `cap <= mapped_cap`
@@ -565,8 +619,8 @@ where
             file_path,
             mmap: Some(FileMapping { file, map }),
             config,
-            header: Some(header_ptr),
-            data: Some(data),
+            header: header_ptr,
+            data,
             len,
             cap,
             mapped_cap,
@@ -598,6 +652,7 @@ where
     /// # Errors
     /// Returns an error if the vector is read-only, if the length would
     /// overflow `usize`, or if growing the file or its mapping fails.
+    #[inline]
     pub fn push(&mut self, value: T) -> Result<()> {
         if self.config.read_only {
             return Err(ZiporaError::invalid_data("Vector is read-only"));
@@ -613,12 +668,16 @@ where
             self.grow()?;
         }
 
-        // Write the element
-        let slot = self
-            .mapped_slice_mut(new_len)?
-            .get_mut(index)
-            .ok_or_else(|| ZiporaError::out_of_bounds(index, new_len))?;
-        *slot = value;
+        // Write the element directly into the validated mapped capacity
+        if index >= self.cap || self.cap > self.mapped_cap {
+            return Err(ZiporaError::out_of_bounds(index, self.cap));
+        }
+        // SAFETY: `!self.config.read_only` guarantees a writable `MmapMut`
+        // mapping; `self.data` was validated by `view_of` to be aligned for `T`
+        // and backed by `self.mapped_cap` elements in `self.mmap`; the check
+        // above verified `index < self.cap <= self.mapped_cap`; and `&mut self`
+        // guarantees exclusive access.
+        unsafe { self.data.as_ptr().add(index).write(value) };
 
         // Update length in header
         self.store_len(new_len)?;
@@ -670,6 +729,7 @@ where
     /// `MAP_SHARED` immediately, but `config.sync_on_write` cannot trigger an
     /// automatic `msync` when the borrow ends; call [`MmapVec::sync`] explicitly
     /// if crash durability is required.
+    #[inline]
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         if self.config.read_only {
             return None;
@@ -678,10 +738,17 @@ where
     }
 
     /// Get a slice of all elements
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
-        // `mapped_slice` cannot fail here: `len <= cap <= mapped_cap`, and
-        // the data pointer was checked when the mapping was made.
-        self.mapped_slice(self.len).unwrap_or(&[])
+        // SAFETY: `self.data` was validated by `view_of` to be aligned for `T`
+        // and backed by `self.mapped_cap` elements in the live mapping in
+        // `self.mmap` (`self.data`, `self.mapped_cap`, and `self.mmap` are
+        // only ever replaced together), and every path that sets `self.len`
+        // (`open`, `from_new_file`, `store_counts`, `store_len`) maintains
+        // `self.len <= self.cap <= self.mapped_cap`. `T: Pod` makes any mapped
+        // bit pattern valid, and `&self` prevents remapping or unmapping while
+        // the returned slice lives.
+        unsafe { slice::from_raw_parts(self.data.as_ptr(), self.len) }
     }
 
     /// Get a mutable slice of all elements.
@@ -690,14 +757,16 @@ where
     /// `MAP_SHARED` immediately, but `config.sync_on_write` cannot trigger an
     /// automatic `msync` when the borrow ends; call [`MmapVec::sync`] explicitly
     /// if crash durability is required.
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         if self.config.read_only {
             return &mut [];
         }
 
-        // As in `as_slice`, `mapped_slice_mut` cannot fail for `len`.
-        let len = self.len;
-        self.mapped_slice_mut(len).unwrap_or(&mut [])
+        // SAFETY: as in `as_slice`; in addition, `&mut self` guarantees
+        // exclusive access and `!self.config.read_only` guarantees `self.mmap`
+        // holds a writable `MappingKind::ReadWrite` mapping.
+        unsafe { slice::from_raw_parts_mut(self.data.as_ptr(), self.len) }
     }
 
     /// Clear all elements from the vector
@@ -944,8 +1013,8 @@ where
             file_path,
             mmap: Some(FileMapping { file, map }),
             config,
-            header: Some(header),
-            data: Some(data),
+            header,
+            data,
             len: 0,
             cap: 0,
             mapped_cap,
@@ -963,9 +1032,12 @@ where
 
     /// Apply the configured kernel advice to a fresh mapping.
     ///
-    /// madvise is purely a hint; failures are ignored (e.g. kernels
-    /// without transparent huge page support).
-    fn advise_mapping(map: &MmapMut, config: &MmapVecConfig) {
+    /// `madvise` is a non-semantic kernel performance hint; return values are
+    /// intentionally ignored because `MADV_HUGEPAGE` and access-pattern hints
+    /// can return `EINVAL` on filesystems or kernels without file-backed
+    /// transparent huge-page support, and failing `create` or `open` on
+    /// advisory hint rejection would break portability across filesystems.
+    fn advise_mapping(map: &MappingKind, config: &MmapVecConfig) {
         use memmap2::Advice;
 
         match config.access_pattern {
@@ -985,8 +1057,9 @@ where
     }
 
     /// Map the first `len` bytes of `file`, or the whole file when `len` is
-    /// `None`: shared and writable, or copy-on-write for read-only vectors.
-    fn map_file(file: &File, config: &MmapVecConfig, len: Option<usize>) -> Result<MmapMut> {
+    /// `None`: shared and writable (`MmapMut`), or read-only `PROT_READ`
+    /// (`Mmap`) for read-only vectors.
+    fn map_file(file: &File, config: &MmapVecConfig, len: Option<usize>) -> Result<MappingKind> {
         let mut options = MmapOptions::new();
         if let Some(len) = len {
             options.len(len);
@@ -997,15 +1070,18 @@ where
         }
 
         let map = if config.read_only {
-            // SAFETY: copy-on-write private mapping (`MAP_PRIVATE`) — the file
-            // is never modified through it. The `Pod` bound on `T` makes any
-            // file content a valid bit pattern, and the map lives as long as
-            // the `FileMapping` that stores it. As required by `memmap2`
+            // SAFETY: shared read-only mapping (`PROT_READ`) — hardware page
+            // protection prevents any writes through the mapping, and
+            // `MAP_POPULATE` faults clean file-backed page-cache pages
+            // (`RssFile`) rather than private anonymous copy-on-write pages
+            // (`RssAnon`). The `Pod` bound on `T` makes any file content a
+            // valid bit pattern, and the map lives as long as the
+            // `FileMapping` that stores it. As required by `memmap2`
             // (documented under `MmapVec` Limitations), the backing file must
             // not be concurrently truncated below the mapped length (which
             // raises `SIGBUS` on Unix) or mutated while references into the
             // mapping are live.
-            unsafe { options.map_copy(file) }
+            unsafe { options.map(file) }.map(MappingKind::ReadOnly)
         } else {
             // SAFETY: shared mutable mapping (`MAP_SHARED`) of the vector's own
             // file handle. The `Pod` bound on `T` makes any file content a
@@ -1014,7 +1090,7 @@ where
             // handle truncate the file below the mapped length (which raises
             // `SIGBUS` on Unix) or mutate mapped bytes concurrently with live
             // references.
-            unsafe { options.map_mut(file) }
+            unsafe { options.map_mut(file) }.map(MappingKind::ReadWrite)
         }
         .map_err(|e| ZiporaError::io_error(format!("Failed to mmap file: {}", e)))?;
         Self::advise_mapping(&map, config);
@@ -1073,32 +1149,51 @@ where
             .unwrap_or(usize::MAX))
     }
 
-    /// Header pointer, data pointer and element capacity of `map`, which
-    /// must be at least `required_len` bytes long.
+    /// Header pointer (`Some` for writable mappings, `None` for read-only),
+    /// data pointer and element capacity of `map`, which must be at least
+    /// `required_len` bytes long.
     ///
     /// Both pointers derive from one base pointer of `map`. They stay valid
     /// until `map` is dropped or replaced, so callers store them together
     /// with `map` and the returned capacity.
     fn view_of(
-        map: &mut MmapMut,
+        map: &mut MappingKind,
         required_len: usize,
-    ) -> Result<(NonNull<MmapVecHeader>, NonNull<T>, usize)> {
+    ) -> Result<(Option<NonNull<MmapVecHeader>>, NonNull<T>, usize)> {
         let map_len = map.len();
-        let base = map.as_mut_ptr();
-        let mapped_cap = Self::mapped_capacity_for(base.addr(), map_len)?;
-        if map_len < required_len {
-            return Err(ZiporaError::invalid_data(format!(
-                "MmapVec mapping is {} bytes, {} required",
-                map_len, required_len
-            )));
+        match map {
+            MappingKind::ReadWrite(m) => {
+                let base = m.as_mut_ptr();
+                let mapped_cap = Self::mapped_capacity_for(base.addr(), map_len)?;
+                if map_len < required_len {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "MmapVec mapping is {} bytes, {} required",
+                        map_len, required_len
+                    )));
+                }
+                let header = NonNull::new(base.cast::<MmapVecHeader>())
+                    .ok_or_else(|| ZiporaError::invalid_data("Invalid header pointer"))?;
+                // `wrapping_add` stays in bounds: `mapped_capacity_for` checked that
+                // the mapping holds at least `data_offset()` bytes.
+                let data = NonNull::new(base.wrapping_add(Self::data_offset()).cast::<T>())
+                    .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?;
+                Ok((Some(header), data, mapped_cap))
+            }
+            MappingKind::ReadOnly(m) => {
+                let base = m.as_ptr();
+                let mapped_cap = Self::mapped_capacity_for(base.addr(), map_len)?;
+                if map_len < required_len {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "MmapVec mapping is {} bytes, {} required",
+                        map_len, required_len
+                    )));
+                }
+                let data =
+                    NonNull::new(base.wrapping_add(Self::data_offset()).cast::<T>().cast_mut())
+                        .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?;
+                Ok((None, data, mapped_cap))
+            }
         }
-        let header = NonNull::new(base.cast::<MmapVecHeader>())
-            .ok_or_else(|| ZiporaError::invalid_data("Invalid header pointer"))?;
-        // `wrapping_add` stays in bounds: `mapped_capacity_for` checked that
-        // the mapping holds at least `data_offset()` bytes.
-        let data = NonNull::new(base.wrapping_add(Self::data_offset()).cast::<T>())
-            .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?;
-        Ok((header, data, mapped_cap))
     }
 
     /// Length and capacity declared by `header`, checked against a mapping
@@ -1124,23 +1219,19 @@ where
     }
 
     /// Get header pointer
+    #[inline]
     fn header(&self) -> Result<NonNull<MmapVecHeader>> {
         self.header
             .ok_or_else(|| ZiporaError::invalid_data("Header not initialized"))
     }
 
-    /// Get data pointer
-    fn data_ptr(&self) -> Result<NonNull<T>> {
-        self.data
-            .ok_or_else(|| ZiporaError::invalid_data("Data not initialized"))
-    }
-
     /// Apply `f` to the header in the mapping.
+    #[inline]
     fn update_header(&mut self, f: impl FnOnce(&mut MmapVecHeader)) -> Result<()> {
         let header = self.header()?;
         // SAFETY: `header` was derived by `view_of` from the base of the
-        // live mapping in `self.mmap` (`header` and `mmap` are only ever
-        // replaced together), which holds at least `data_offset() >=
+        // live writable mapping in `self.mmap` (`header` and `mmap` are only
+        // ever replaced together), which holds at least `data_offset() >=
         // HEADER_SIZE` bytes. `MmapVecHeader` is a byte array: alignment 1,
         // every bit pattern valid. `&mut self` makes this the only reference
         // into the mapping while `f` runs.
@@ -1170,36 +1261,43 @@ where
     }
 
     /// Adopt `len` (at most the capacity), writing it through to the header.
+    #[inline]
     fn store_len(&mut self, len: usize) -> Result<()> {
-        self.store_counts(len, self.cap)
+        if len > self.cap {
+            return Err(ZiporaError::invalid_state(format!(
+                "MmapVec length {} / capacity {} do not fit the {} mapped elements",
+                len, self.cap, self.mapped_cap
+            )));
+        }
+        let len64 = u64::try_from(len)
+            .map_err(|_| ZiporaError::invalid_data("MmapVec length overflows u64"))?;
+        self.update_header(|header| {
+            header.set_length(len64);
+        })?;
+        self.len = len;
+        Ok(())
     }
 
-    /// The data pointer, checked for a view of `count` elements: aligned for
-    /// `T`, and `count` within the elements the current mapping holds.
+    /// The data pointer, checked for a view of `count` elements within the
+    /// elements the current mapping holds (`self.data` alignment is verified
+    /// once by `view_of` when the mapping is created or remapped).
+    #[inline]
     fn checked_data(&self, count: usize) -> Result<NonNull<T>> {
-        let data = self.data_ptr()?;
-        let align = std::mem::align_of::<T>();
-        if !data.as_ptr().addr().is_multiple_of(align) {
-            return Err(ZiporaError::misaligned(
-                data.as_ptr().addr(),
-                align,
-                "MmapVec element data",
-            ));
-        }
         if count > self.mapped_cap {
             return Err(ZiporaError::out_of_bounds(count, self.mapped_cap));
         }
-        Ok(data)
+        Ok(self.data)
     }
 
     /// The first `count` elements of the mapped data region.
+    #[inline]
     fn mapped_slice(&self, count: usize) -> Result<&[T]> {
         let data = self.checked_data(count)?;
-        // SAFETY: `checked_data` verified that `data` is aligned for `T` and
-        // that `count <= mapped_cap`, the number of whole elements `view_of`
-        // found between `data` and the end of the live mapping in
-        // `self.mmap` (`data`, `mapped_cap` and `mmap` are only ever
-        // replaced together), so the range is in bounds and at most
+        // SAFETY: `view_of` verified that `data` is aligned for `T`, and
+        // `checked_data` verified that `count <= mapped_cap`, the number of
+        // whole elements `view_of` found between `data` and the end of the
+        // live mapping in `self.mmap` (`data`, `mapped_cap` and `mmap` are
+        // only ever replaced together), so the range is in bounds and at most
         // `isize::MAX` bytes. `T: Pod` makes any mapped bytes a valid `T`.
         // The slice borrows `self`, and every remap or unmap takes
         // `&mut self`, so the mapping outlives the slice.
@@ -1207,10 +1305,16 @@ where
     }
 
     /// The first `count` elements of the mapped data region, mutably.
+    #[inline]
     fn mapped_slice_mut(&mut self, count: usize) -> Result<&mut [T]> {
+        if self.config.read_only {
+            return Err(ZiporaError::invalid_data("Vector is read-only"));
+        }
         let data = self.checked_data(count)?;
-        // SAFETY: as in `mapped_slice`; in addition, `&mut self` makes this
-        // the only reference into the mapping while the slice lives.
+        // SAFETY: as in `mapped_slice`; in addition, `!self.config.read_only`
+        // guarantees a writable `MappingKind::ReadWrite` mapping and
+        // `&mut self` makes this the only reference into the mapping while
+        // the slice lives.
         Ok(unsafe { slice::from_raw_parts_mut(data.as_ptr(), count) })
     }
 
@@ -1279,8 +1383,8 @@ where
 
         // The new mapping is valid: only now is the old one unmapped.
         mmap.map = map;
-        self.header = Some(header);
-        self.data = Some(data);
+        self.header = header;
+        self.data = data;
         self.mapped_cap = mapped_cap;
 
         // Update capacity in header
@@ -2633,7 +2737,6 @@ mod tests {
     /// `Err`. The unfixed code multiplied without a check; a debug build
     /// panics there, which this test catches and reports.
     #[test]
-    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_c9_f1_with_capacity_simd_rejects_overflowing_capacity() {
         let result = std::panic::catch_unwind(|| {
             MmapVec::<u64>::with_capacity_simd(usize::MAX).map(|v| v.capacity())
@@ -3309,7 +3412,6 @@ mod tests {
     /// stayed all zeros (unreadable by `open`). `create` must reject a
     /// read-only configuration before touching the path.
     #[test]
-    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_c9_f9_create_rejects_read_only_config() {
         let dir = tempdir().unwrap();
         let existing = dir.path().join("existing.mmap");
@@ -3468,6 +3570,51 @@ mod tests {
                     ]
                 );
             }
+        }
+    }
+
+    /// S22-R5: `MmapVec::open` with `MmapVecConfig::read_only()` (`populate_pages: true`)
+    /// previously mapped the file via `MmapOptions::map_copy` (`MAP_PRIVATE` with
+    /// `PROT_READ | PROT_WRITE`). On Linux, combining `MAP_POPULATE` with a writable
+    /// `MAP_PRIVATE` mapping write-faulted every page into private anonymous memory
+    /// (`RssAnon`). With `MappingKind::ReadOnly(Mmap)` (`PROT_READ`), `MAP_POPULATE`
+    /// faults clean file-backed page-cache pages without inflating `RssAnon`.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_s22_r5_read_only_open_does_not_fault_into_rss_anon() {
+        fn rss_anon_kib() -> Option<u64> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            for line in status.lines() {
+                if let Some(rest) = line.strip_prefix("RssAnon:") {
+                    let digits = rest.trim().strip_suffix("kB")?.trim();
+                    return digits.parse::<u64>().ok();
+                }
+            }
+            None
+        }
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("ro_populate.mmap");
+        let n = 4 * 1024 * 1024usize; // 4M * u64 = 32 MiB
+        {
+            let config = MmapVecConfig::default().with_initial_capacity(n);
+            let mut vec = MmapVec::<u64>::create(&path, config).unwrap();
+            vec.resize(n, 7).unwrap();
+            vec.sync().unwrap();
+        }
+
+        let before = rss_anon_kib();
+        let ro = MmapVec::<u64>::open(&path, MmapVecConfig::read_only()).unwrap();
+        assert_eq!(ro.len(), n);
+        let sum: u64 = ro.as_slice().iter().step_by(512).copied().sum();
+        assert_eq!(sum, (n as u64 / 512) * 7);
+        if let (Some(b), Some(a)) = (before, rss_anon_kib()) {
+            let delta_kib = a.saturating_sub(b);
+            assert!(
+                delta_kib < 4096,
+                "opening 32 MiB read-only MmapVec with populate_pages inflated RssAnon by {delta_kib} KiB (before={b} KiB, after={a} KiB)"
+            );
         }
     }
 }
