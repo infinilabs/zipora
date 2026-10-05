@@ -10,7 +10,12 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use crate::error::{Result, ZiporaError};
 use crate::io::DataInput;
 
-/// A reader that limits access to a specific byte range within an underlying stream
+/// A reader that limits access to a specific byte range within an underlying stream.
+///
+/// Implementing [`Read`], [`Seek`], and [`DataInput`] for `RangeReader<R>`
+/// requires `R: Read + Seek` so the first read operation can seek the
+/// underlying stream to `start_pos` (unless already positioned via
+/// [`RangeReader::new_and_seek`]).
 pub struct RangeReader<R> {
     inner: R,
     start_pos: u64,
@@ -240,7 +245,12 @@ impl<R: Read + Seek> Seek for RangeReader<R> {
     }
 }
 
-/// A writer that limits writes to a specific byte range
+/// A writer that limits writes to a specific byte range.
+///
+/// Implementing [`Write`] and [`Seek`] for `RangeWriter<W>` requires
+/// `W: Write + Seek` so the first write operation can seek the underlying
+/// stream to `start_pos` (unless already positioned via
+/// [`RangeWriter::new_and_seek`]).
 pub struct RangeWriter<W> {
     inner: W,
     start_pos: u64,

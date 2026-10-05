@@ -557,7 +557,14 @@ impl<R: Read> Read for ZeroCopyReader<R> {
 
         // For large reads, bypass buffer
         if buf.len() >= self.buffer.capacity() / 2 {
-            return self.inner.read(buf);
+            let bytes_read = self.inner.read(buf)?;
+            if bytes_read > buf.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Reader reported more bytes than fit in destination buffer",
+                ));
+            }
+            return Ok(bytes_read);
         }
 
         // Fill buffer and read from it. This is a single `read` call: its
@@ -686,6 +693,17 @@ impl<W: Write> ZeroCopyWriter<W> {
         self.buffer.reset();
         Ok(())
     }
+
+    fn write_direct(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let written = self.get_mut().write(buf)?;
+        if written > buf.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Writer reported more bytes than present in source buffer",
+            ));
+        }
+        Ok(written)
+    }
 }
 
 impl<W: Write> Drop for ZeroCopyWriter<W> {
@@ -699,7 +717,7 @@ impl<W: Write> Write for ZeroCopyWriter<W> {
         // For large writes, flush buffer and write directly
         if buf.len() >= self.buffer.capacity() / 2 {
             self.flush_buffer()?;
-            return self.get_mut().write(buf);
+            return self.write_direct(buf);
         }
 
         // Try to fit in buffer
@@ -709,7 +727,7 @@ impl<W: Write> Write for ZeroCopyWriter<W> {
 
         // If still doesn't fit, write directly
         if self.buffer.write_available() < buf.len() {
-            return self.get_mut().write(buf);
+            return self.write_direct(buf);
         }
 
         // Write to buffer
@@ -766,7 +784,7 @@ impl VectoredIO {
         bufs: &mut [IoSliceMut<'_>],
     ) -> io::Result<usize> {
         // Fallback implementation for readers that don't support vectored I/O
-        let mut total = 0;
+        let mut total: usize = 0;
         for buf in bufs {
             let capacity = buf.len();
             if capacity == 0 {
@@ -774,8 +792,16 @@ impl VectoredIO {
             }
             match reader.read(buf) {
                 Ok(0) => break,
+                Ok(n) if n > capacity => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Reader reported more bytes than fit in destination slice",
+                    ));
+                }
                 Ok(n) => {
-                    total += n;
+                    total = total.checked_add(n).ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "Vectored read byte count overflow")
+                    })?;
                     // A short read has to end the operation. `total` describes a
                     // contiguous prefix of the buffer list, so filling the next
                     // slice after a partial one would leave an uninitialised hole
@@ -799,7 +825,7 @@ impl VectoredIO {
     /// the bytes already sent; otherwise propagates the error.
     pub fn write_vectored<W: Write>(writer: &mut W, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
         // Fallback implementation for writers that don't support vectored I/O
-        let mut total = 0;
+        let mut total: usize = 0;
         for buf in bufs {
             if buf.is_empty() {
                 continue;
@@ -809,8 +835,16 @@ impl VectoredIO {
                 // either; reporting progress here would make the caller resume
                 // past bytes that were never sent.
                 Ok(0) => break,
+                Ok(n) if n > buf.len() => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Writer reported more bytes than present in source slice",
+                    ));
+                }
                 Ok(n) => {
-                    total += n;
+                    total = total.checked_add(n).ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "Vectored write byte count overflow")
+                    })?;
                     // Same reasoning as `read_vectored`: moving on after a short
                     // write would drop this slice's tail from the stream while
                     // still counting the later slices as written.
@@ -2151,4 +2185,51 @@ mod tests {
         let mut buf = [0u8; 4];
         assert_eq!(reader.read(&mut buf).unwrap(), 0);
     }
+
+    #[test]
+    fn test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts() {
+        struct OverReportingReader(usize);
+        impl Read for OverReportingReader {
+            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                Ok(self.0)
+            }
+        }
+
+        struct OverReportingWriter(usize);
+        impl Write for OverReportingWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Ok(self.0)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        // ZeroCopyReader direct bypass path (`buf.len() >= buffer.len()` when empty)
+        let mut reader = ZeroCopyReader::with_capacity(OverReportingReader(64), 16).unwrap();
+        let mut direct_buf = [0u8; 32];
+        let err = reader.read(&mut direct_buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reader.zc_available(), 0);
+
+        // ZeroCopyWriter direct bypass path (`buf.len() >= buffer.capacity()`)
+        let mut writer = ZeroCopyWriter::with_capacity(OverReportingWriter(64), 16).unwrap();
+        let err = writer.write(&[0xAB; 32]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(writer.zc_write_available(), 16);
+
+        // VectoredIO::read_vectored
+        let mut v_reader = OverReportingReader(10);
+        let mut s0 = [0u8; 4];
+        let mut bufs = [IoSliceMut::new(&mut s0)];
+        let err = VectoredIO::read_vectored(&mut v_reader, &mut bufs).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+
+        // VectoredIO::write_vectored
+        let mut v_writer = OverReportingWriter(10);
+        let slices = [IoSlice::new(b"abcd")];
+        let err = VectoredIO::write_vectored(&mut v_writer, &slices).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
 }
+

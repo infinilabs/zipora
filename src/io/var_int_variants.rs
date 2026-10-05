@@ -20,7 +20,22 @@ pub enum VarIntStrategy {
     Zigzag,
     /// Delta encoding for sequences
     Delta,
-    /// Group varint encoding for bulk operations
+    /// Group varint encoding for bulk operations.
+    ///
+    /// # Wire Format
+    /// - Single values ([`VarIntEncoder::encode_u64`], [`VarIntEncoder::encode_i64`])
+    ///   are encoded with LEB128 (after zigzag mapping `((v << 1) ^ (v >> 63)) as u64`
+    ///   for signed `i64` values).
+    /// - Sequences ([`VarIntEncoder::encode_u64_sequence`],
+    ///   [`VarIntEncoder::encode_i64_sequence`]) write a LEB128 element count followed
+    ///   by groups of up to 4 values. Each group begins with a 2-byte little-endian
+    ///   `u16` selector header packing up to four 3-bit `(byte_len - 1)` tags (`0..=7`
+    ///   for `1..=8` little-endian value bytes) in bits `0..12` (bits `12..16` are zero),
+    ///   with signed `i64` values zigzag-mapped to `u64` before group encoding.
+    /// - **Wire compatibility note**: this 2-byte 3-bit-per-tag selector + zigzag `i64`
+    ///   wire format is incompatible with the pre-C9 1-byte 2-bit-per-tag selector
+    ///   format (which could only represent 1–4 bytes per value and truncated 5–8 byte
+    ///   `u64`s and negative `i64`s).
     GroupVarint,
     /// Prefix-free encoding with length prefix
     PrefixFree,
@@ -62,7 +77,8 @@ impl VarIntEncoder {
         Self::new(VarIntStrategy::Delta)
     }
 
-    /// Create encoder for group varint strategy
+    /// Create encoder for group varint strategy (see [`VarIntStrategy::GroupVarint`]
+    /// for the 2-byte selector and zigzag `i64` wire format).
     pub fn group_varint() -> Self {
         Self::new(VarIntStrategy::GroupVarint)
     }

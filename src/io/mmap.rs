@@ -246,7 +246,13 @@ impl MemoryMappedInput {
         Ok(())
     }
 
-    /// Apply advanced madvise hints for optimal performance
+    /// Apply advanced madvise hints for optimal performance.
+    ///
+    /// Return values from `libc::madvise` and `libc::mlock` are intentionally
+    /// ignored because both calls are non-semantic advisory hints: `MADV_HUGEPAGE`
+    /// returns `EINVAL` on filesystems or kernels without file-backed THP
+    /// support, and `mlock` returns `ENOMEM`/`EPERM` when `RLIMIT_MEMLOCK` is
+    /// exceeded on unprivileged processes.
     fn apply_madvise_hints(&self, mmap: &Mmap) -> Result<()> {
         #[cfg(target_os = "linux")]
         {

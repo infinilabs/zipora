@@ -9,7 +9,19 @@ use crate::io::smart_ptr::SerializableType;
 use crate::io::{DataInput, DataOutput};
 use std::collections::HashMap;
 
-/// Version identifier for serialization formats
+/// Version identifier for serialization formats.
+///
+/// # Wire Format ([`SerializableType`])
+/// - When `major < 255 && minor < 255`, [`SerializableType::serialize`] writes
+///   the 4-byte packed `u32` `0xMMmmpppp` ([`Version::to_u32`]).
+/// - When `major >= 255 || minor >= 255`, [`SerializableType::serialize`] writes
+///   the 4-byte sentinel `0xFFFF_pppp` followed by two `u16` values (`major`,
+///   `minor`) so the full `u16` range of all three fields round-trips losslessly.
+/// - **Wire compatibility note**: because `0xFFFF_pppp` is reserved as the
+///   extended-header sentinel, a 4-byte pre-C9 payload encoding `255.255.patch`
+///   (or any `major >= 255, minor >= 255` saturated by `to_u32()`) without the
+///   trailing 4-byte `(major, minor)` extension is incompatible with this
+///   format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Version {
     major: u16,
@@ -43,7 +55,8 @@ impl Version {
     /// Limitation: the 32-bit packed representation allocates 8 bits each to
     /// `major` and `minor`, so values above `255` saturate to `255` here
     /// rather than overflowing into adjacent fields. [`SerializableType`] for
-    /// [`Version`] preserves the full `u16` range of all three fields.
+    /// [`Version`] preserves the full `u16` range of all three fields using the
+    /// `0xFFFF_pppp` extended wire format documented on [`Version`].
     pub const fn to_u32(self) -> u32 {
         let major = if self.major > 0xFF { 0xFF } else { self.major };
         let minor = if self.minor > 0xFF { 0xFF } else { self.minor };

@@ -42,9 +42,18 @@ pub struct StreamBufferConfig {
     pub use_secure_pool: bool,
     /// Minimum read size to trigger bulk operations
     pub bulk_read_threshold: usize,
-    /// Enable read-ahead optimization
+    /// Enable read-ahead optimization.
+    ///
+    /// # Limitation
+    /// Retained for configuration compatibility; [`StreamBufferedReader`] and
+    /// [`StreamBufferedWriter`] fill up to the current buffer capacity per read
+    /// and do not consult `enable_readahead` or `readahead_multiplier`.
     pub enable_readahead: bool,
-    /// Read-ahead size multiplier
+    /// Read-ahead size multiplier.
+    ///
+    /// # Limitation
+    /// Retained for configuration compatibility; not consulted by
+    /// [`StreamBufferedReader`] or [`StreamBufferedWriter`].
     pub readahead_multiplier: usize,
 }
 
@@ -81,9 +90,12 @@ impl StreamBufferConfig {
                 "StreamBufferConfig::page_alignment must be a non-zero power of two",
             ));
         }
-        if !self.growth_factor.is_finite() || self.growth_factor <= 1.0 {
+        if !self.growth_factor.is_finite()
+            || self.growth_factor <= 1.0
+            || self.growth_factor > 1024.0
+        {
             return Err(ZiporaError::invalid_data(
-                "StreamBufferConfig::growth_factor must be finite and > 1.0",
+                "StreamBufferConfig::growth_factor must be finite and in (1.0, 1024.0]",
             ));
         }
         Ok(())
@@ -1534,8 +1546,19 @@ mod tests {
             growth_factor: 1.0,
             ..miri_fast_config()
         };
+        let huge_growth = StreamBufferConfig {
+            growth_factor: f64::MAX,
+            ..miri_fast_config()
+        };
 
-        for cfg in [zero_cap, zero_align, non_pow2_align, bad_max, bad_growth] {
+        for cfg in [
+            zero_cap,
+            zero_align,
+            non_pow2_align,
+            bad_max,
+            bad_growth,
+            huge_growth,
+        ] {
             let r_res = std::panic::catch_unwind(|| {
                 StreamBufferedReader::with_config(Cursor::new(b"x"), cfg.clone())
             });
