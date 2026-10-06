@@ -259,15 +259,12 @@ impl<K: SerializableType + Hash + Eq, V: SerializableType> ComplexSerialize for 
             return Ok(());
         }
 
-        crate::io::smart_ptr::with_active_ser_ctx(|context| {
-            context.run_nested(|| {
-                for (key, value) in self {
-                    key.serialize(output)?;
-                    value.serialize(output)?;
-                }
-                Ok(())
-            })
-        })
+        let _guard = crate::io::smart_ptr::enter_ser_depth()?;
+        for (key, value) in self {
+            key.serialize(output)?;
+            value.serialize(output)?;
+        }
+        Ok(())
     }
 
     fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
@@ -276,6 +273,7 @@ impl<K: SerializableType + Hash + Eq, V: SerializableType> ComplexSerialize for 
         if len == 0 {
             return Ok(HashMap::new());
         }
+        let _guard = crate::io::smart_ptr::enter_de_depth()?;
         // `len` is untrusted: reserve within the read-ahead budget and let
         // the map grow as entries arrive. hashbrown stores one control byte
         // per bucket next to each entry, hence the `+ 1`, and rounds the
@@ -287,16 +285,12 @@ impl<K: SerializableType + Hash + Eq, V: SerializableType> ComplexSerialize for 
             input.remaining_bytes(),
         ));
 
-        crate::io::smart_ptr::with_active_de_ctx(|context| {
-            context.run_nested(|| {
-                for _ in 0..len {
-                    let key = K::deserialize(input)?;
-                    let value = V::deserialize(input)?;
-                    map.insert(key, value);
-                }
-                Ok(map)
-            })
-        })
+        for _ in 0..len {
+            let key = K::deserialize(input)?;
+            let value = V::deserialize(input)?;
+            map.insert(key, value);
+        }
+        Ok(map)
     }
 }
 
@@ -312,14 +306,11 @@ impl<T: SerializableType + Hash + Eq> ComplexSerialize for HashSet<T> {
             return Ok(());
         }
 
-        crate::io::smart_ptr::with_active_ser_ctx(|context| {
-            context.run_nested(|| {
-                for item in self {
-                    item.serialize(output)?;
-                }
-                Ok(())
-            })
-        })
+        let _guard = crate::io::smart_ptr::enter_ser_depth()?;
+        for item in self {
+            item.serialize(output)?;
+        }
+        Ok(())
     }
 
     fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
@@ -328,6 +319,7 @@ impl<T: SerializableType + Hash + Eq> ComplexSerialize for HashSet<T> {
         if len == 0 {
             return Ok(HashSet::new());
         }
+        let _guard = crate::io::smart_ptr::enter_de_depth()?;
         // Untrusted `len`: see the HashMap impl above.
         let mut set = HashSet::with_capacity(prealloc_capacity(
             len,
@@ -335,14 +327,10 @@ impl<T: SerializableType + Hash + Eq> ComplexSerialize for HashSet<T> {
             input.remaining_bytes(),
         ));
 
-        crate::io::smart_ptr::with_active_de_ctx(|context| {
-            context.run_nested(|| {
-                for _ in 0..len {
-                    set.insert(T::deserialize(input)?);
-                }
-                Ok(set)
-            })
-        })
+        for _ in 0..len {
+            set.insert(T::deserialize(input)?);
+        }
+        Ok(set)
     }
 }
 
@@ -358,15 +346,12 @@ impl<K: SerializableType + Ord, V: SerializableType> ComplexSerialize for BTreeM
             return Ok(());
         }
 
-        crate::io::smart_ptr::with_active_ser_ctx(|context| {
-            context.run_nested(|| {
-                for (key, value) in self {
-                    key.serialize(output)?;
-                    value.serialize(output)?;
-                }
-                Ok(())
-            })
-        })
+        let _guard = crate::io::smart_ptr::enter_ser_depth()?;
+        for (key, value) in self {
+            key.serialize(output)?;
+            value.serialize(output)?;
+        }
+        Ok(())
     }
 
     fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
@@ -375,18 +360,15 @@ impl<K: SerializableType + Ord, V: SerializableType> ComplexSerialize for BTreeM
         if len == 0 {
             return Ok(BTreeMap::new());
         }
+        let _guard = crate::io::smart_ptr::enter_de_depth()?;
         let mut map = BTreeMap::new();
 
-        crate::io::smart_ptr::with_active_de_ctx(|context| {
-            context.run_nested(|| {
-                for _ in 0..len {
-                    let key = K::deserialize(input)?;
-                    let value = V::deserialize(input)?;
-                    map.insert(key, value);
-                }
-                Ok(map)
-            })
-        })
+        for _ in 0..len {
+            let key = K::deserialize(input)?;
+            let value = V::deserialize(input)?;
+            map.insert(key, value);
+        }
+        Ok(map)
     }
 }
 
@@ -402,14 +384,11 @@ impl<T: SerializableType + Ord> ComplexSerialize for BTreeSet<T> {
             return Ok(());
         }
 
-        crate::io::smart_ptr::with_active_ser_ctx(|context| {
-            context.run_nested(|| {
-                for item in self {
-                    item.serialize(output)?;
-                }
-                Ok(())
-            })
-        })
+        let _guard = crate::io::smart_ptr::enter_ser_depth()?;
+        for item in self {
+            item.serialize(output)?;
+        }
+        Ok(())
     }
 
     fn deserialize_with_version<I: DataInput>(input: &mut I, version: u32) -> Result<Self> {
@@ -418,16 +397,13 @@ impl<T: SerializableType + Ord> ComplexSerialize for BTreeSet<T> {
         if len == 0 {
             return Ok(BTreeSet::new());
         }
+        let _guard = crate::io::smart_ptr::enter_de_depth()?;
         let mut set = BTreeSet::new();
 
-        crate::io::smart_ptr::with_active_de_ctx(|context| {
-            context.run_nested(|| {
-                for _ in 0..len {
-                    set.insert(T::deserialize(input)?);
-                }
-                Ok(set)
-            })
-        })
+        for _ in 0..len {
+            set.insert(T::deserialize(input)?);
+        }
+        Ok(set)
     }
 }
 
@@ -722,8 +698,8 @@ pub trait NestedSerialize {
     where
         Self: Sized;
 
-    /// Maximum allowed nesting depth (`256`, sized so recursive deserialization
-    /// frames fit a 2 MiB thread stack in both debug and release builds)
+    /// Maximum allowed nesting depth (`256`, sized so pointer and typical
+    /// struct nodes fit a 2 MiB thread stack in both debug and release builds)
     fn max_depth() -> usize {
         DEFAULT_MAX_DEPTH
     }
@@ -732,15 +708,13 @@ pub trait NestedSerialize {
 // Default implementation using ComplexSerialize
 impl<T: ComplexSerialize> NestedSerialize for T {
     fn serialize_nested<O: DataOutput>(&self, output: &mut O, depth: usize) -> Result<()> {
-        crate::io::smart_ptr::with_nested_ser_depth(depth, Self::max_depth(), || {
-            self.serialize_data(output)
-        })
+        let _guard = crate::io::smart_ptr::enter_nested_ser_depth(depth, Self::max_depth())?;
+        self.serialize_data(output)
     }
 
     fn deserialize_nested<I: DataInput>(input: &mut I, depth: usize) -> Result<Self> {
-        crate::io::smart_ptr::with_nested_de_depth(depth, Self::max_depth(), || {
-            Self::deserialize_with_version(input, Self::version())
-        })
+        let _guard = crate::io::smart_ptr::enter_nested_de_depth(depth, Self::max_depth())?;
+        Self::deserialize_with_version(input, Self::version())
     }
 }
 
@@ -1315,13 +1289,40 @@ mod tests {
             children: BTreeMap<u32, BTreeNode>,
         });
 
-        let depth = if cfg!(miri) { 2_000usize } else { 100_000usize };
-        let mut btree_wire = Vec::with_capacity(depth * 8 + 4);
-        for _ in 0..depth {
-            btree_wire.extend_from_slice(&1u32.to_le_bytes()); // len = 1
-            btree_wire.extend_from_slice(&0u32.to_le_bytes()); // key = 0
+        let make_btree_wire = |d: usize| {
+            let mut wire = Vec::with_capacity(d * 8 + 4);
+            for _ in 0..d {
+                wire.extend_from_slice(&1u32.to_le_bytes()); // len = 1
+                wire.extend_from_slice(&0u32.to_le_bytes()); // key = 0
+            }
+            wire.extend_from_slice(&0u32.to_le_bytes()); // leaf len = 0
+            wire
+        };
+
+        // Depth 300 exceeds DEFAULT_MAX_DEPTH (256) but was accepted on 73a25d0 (where max_depth was 1000).
+        let wire_300 = make_btree_wire(300);
+        let mut in_300 = SliceDataInput::new(&wire_300);
+        if let Ok(mut root) = BTreeNode::deserialize_nested(&mut in_300, 0) {
+            while let Some((_, child)) = root.children.pop_first() {
+                root = child;
+            }
+            panic!("depth-300 BTreeNode must be rejected by NestedSerialize::deserialize_nested");
         }
-        btree_wire.extend_from_slice(&0u32.to_le_bytes()); // leaf len = 0
+        let mut in_300_map = SliceDataInput::new(&wire_300);
+        if let Ok(mut map) =
+            <BTreeMap<u32, BTreeNode> as ComplexSerialize>::deserialize_with_version(
+                &mut in_300_map,
+                1,
+            )
+        {
+            while let Some((_, mut node)) = map.pop_first() {
+                map = std::mem::take(&mut node.children);
+            }
+            panic!("depth-300 BTreeMap must be rejected by deserialize_with_version");
+        }
+
+        let depth = if cfg!(miri) { 2_000usize } else { 100_000usize };
+        let btree_wire = make_btree_wire(depth);
 
         std::thread::Builder::new()
             .name("s22-r1-btree-2mib".into())

@@ -13,18 +13,214 @@ use std::rc::{Rc, Weak as RcWeak};
 use std::sync::{Arc, Weak as ArcWeak};
 
 use std::any::Any;
-use std::cell::RefCell;
-
-thread_local! {
-    static ACTIVE_SER_CTX: RefCell<Option<SerializationContext>> = const { RefCell::new(None) };
-    static ACTIVE_DE_CTX: RefCell<Option<DeserializationContext>> = const { RefCell::new(None) };
-}
+use std::cell::{Cell, RefCell};
 
 /// Default maximum recursion depth across nested smart pointers and containers.
 ///
-/// Chosen so `max_depth` recursive deserialization frames fit comfortably within
-/// a standard 2 MiB thread stack even in unoptimized (`opt-level=0`) debug builds.
+/// Chosen so `max_depth` recursive deserialization frames for pointer and typical
+/// struct nodes fit within a standard 2 MiB thread stack in both debug
+/// (`opt-level=0`) and release builds. Types with very large inline stack
+/// payloads consume additional stack proportional to `size_of::<T>()` per frame
+/// in unoptimized builds.
 pub(crate) const DEFAULT_MAX_DEPTH: usize = 256;
+
+#[derive(Clone, Copy)]
+pub(crate) struct SerDepthState {
+    pub(crate) depth: u32,
+    pub(crate) max_depth: u32,
+    pub(crate) detect_cycles: bool,
+    pub(crate) compress_ids: bool,
+    pub(crate) dirty_ctx: bool,
+    pub(crate) active: bool,
+}
+
+impl SerDepthState {
+    #[inline]
+    const fn new() -> Self {
+        Self {
+            depth: 0,
+            max_depth: DEFAULT_MAX_DEPTH as u32,
+            detect_cycles: true,
+            compress_ids: false,
+            dirty_ctx: false,
+            active: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(crate) struct DeDepthState {
+    pub(crate) depth: u16,
+    pub(crate) max_depth: u16,
+    pub(crate) compress_ids: bool,
+    pub(crate) dirty_ctx: bool,
+    pub(crate) active: bool,
+}
+
+impl DeDepthState {
+    #[inline]
+    const fn new() -> Self {
+        Self {
+            depth: 0,
+            max_depth: DEFAULT_MAX_DEPTH as u16,
+            compress_ids: false,
+            dirty_ctx: false,
+            active: false,
+        }
+    }
+}
+
+thread_local! {
+    static SER_DEPTH: Cell<SerDepthState> = const { Cell::new(SerDepthState::new()) };
+    static DE_DEPTH: Cell<DeDepthState> = const { Cell::new(DeDepthState::new()) };
+    static ACTIVE_SER_CTX: RefCell<SerializationContext> = RefCell::new(SerializationContext::new());
+    static ACTIVE_DE_CTX: RefCell<DeserializationContext> = RefCell::new(DeserializationContext::new());
+}
+
+#[cold]
+#[inline(never)]
+fn clear_active_ser_ctx() {
+    ACTIVE_SER_CTX.with(|ctx| ctx.borrow_mut().clear());
+}
+
+#[cold]
+#[inline(never)]
+fn clear_active_de_ctx() {
+    ACTIVE_DE_CTX.with(|ctx| ctx.borrow_mut().clear());
+}
+
+pub(crate) struct SerDepthGuard {
+    prev: SerDepthState,
+}
+
+impl Drop for SerDepthGuard {
+    #[inline]
+    fn drop(&mut self) {
+        SER_DEPTH.with(|cell| {
+            let cur = cell.get();
+            if !self.prev.active {
+                if cur.dirty_ctx {
+                    clear_active_ser_ctx();
+                }
+                cell.set(SerDepthState::new());
+            } else {
+                cell.set(SerDepthState {
+                    dirty_ctx: cur.dirty_ctx,
+                    ..self.prev
+                });
+            }
+        });
+    }
+}
+
+pub(crate) struct DeDepthGuard {
+    prev: DeDepthState,
+}
+
+impl Drop for DeDepthGuard {
+    #[inline]
+    fn drop(&mut self) {
+        DE_DEPTH.with(|cell| {
+            let cur = cell.get();
+            if !self.prev.active {
+                if cur.dirty_ctx {
+                    clear_active_de_ctx();
+                }
+                cell.set(DeDepthState::new());
+            } else {
+                cell.set(DeDepthState {
+                    dirty_ctx: cur.dirty_ctx,
+                    ..self.prev
+                });
+            }
+        });
+    }
+}
+
+#[inline]
+pub(crate) fn enter_ser_depth() -> Result<SerDepthGuard> {
+    SER_DEPTH.with(|cell| {
+        let cur = cell.get();
+        if cur.depth >= cur.max_depth {
+            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+        }
+        cell.set(SerDepthState {
+            depth: cur.depth + 1,
+            active: true,
+            ..cur
+        });
+        Ok(SerDepthGuard { prev: cur })
+    })
+}
+
+#[inline]
+pub(crate) fn enter_de_depth() -> Result<DeDepthGuard> {
+    DE_DEPTH.with(|cell| {
+        let cur = cell.get();
+        if cur.depth >= cur.max_depth {
+            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+        }
+        cell.set(DeDepthState {
+            depth: cur.depth + 1,
+            active: true,
+            ..cur
+        });
+        Ok(DeDepthGuard { prev: cur })
+    })
+}
+
+#[inline]
+pub(crate) fn enter_nested_ser_depth(depth: usize, max_depth: usize) -> Result<SerDepthGuard> {
+    if depth > max_depth {
+        return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+    }
+    SER_DEPTH.with(|cell| {
+        let cur = cell.get();
+        let effective_depth = (cur.depth as usize).max(depth);
+        let effective_max = if cur.active {
+            (cur.max_depth as usize).min(max_depth)
+        } else {
+            max_depth
+        };
+        if effective_depth > effective_max {
+            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+        }
+        cell.set(SerDepthState {
+            depth: u32::try_from(effective_depth).unwrap_or(u32::MAX),
+            max_depth: u32::try_from(effective_max).unwrap_or(u32::MAX),
+            active: true,
+            ..cur
+        });
+        Ok(SerDepthGuard { prev: cur })
+    })
+}
+
+#[inline]
+pub(crate) fn enter_nested_de_depth(depth: usize, max_depth: usize) -> Result<DeDepthGuard> {
+    if depth > max_depth {
+        return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+    }
+    DE_DEPTH.with(|cell| {
+        let cur = cell.get();
+        let effective_depth = (cur.depth as usize).max(depth);
+        let effective_max = if cur.active {
+            (cur.max_depth as usize).min(max_depth)
+        } else {
+            max_depth
+        };
+        if effective_depth > effective_max {
+            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+        }
+        cell.set(DeDepthState {
+            depth: u16::try_from(effective_depth).unwrap_or(u16::MAX),
+            max_depth: u16::try_from(effective_max).unwrap_or(u16::MAX),
+            active: true,
+            ..cur
+        });
+        Ok(DeDepthGuard { prev: cur })
+    })
+}
 
 /// Convert a collection length to its 32-bit wire prefix, rejecting lengths above `u32::MAX`.
 pub(crate) fn checked_u32_len(len: usize, what: &str) -> Result<u32> {
@@ -81,24 +277,27 @@ impl SerializationContext {
     }
 
     /// Get or assign an ID for an object
+    #[inline]
     fn get_or_assign_id<T>(&mut self, ptr: &T) -> u32 {
         let addr = ptr as *const T as usize;
 
-        if let Some(&id) = self.object_ids.get(&addr) {
-            id
-        } else {
-            let id = self.next_id;
-            self.next_id = self.next_id.saturating_add(1);
-            if self.detect_cycles {
-                self.object_ids.insert(addr, id);
-            }
-            id
+        if self.detect_cycles
+            && let Some(&id) = self.object_ids.get(&addr)
+        {
+            return id;
         }
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        if self.detect_cycles {
+            self.object_ids.insert(addr, id);
+        }
+        id
     }
 
     /// Keep a clone of a serialized smart pointer alive for the lifetime of
     /// this context so its heap address cannot be recycled for an unrelated
     /// allocation.
+    #[inline]
     fn retain_object<P: 'static>(&mut self, ptr: P) {
         if self.detect_cycles {
             self.retained_objects.push(Box::new(ptr));
@@ -106,6 +305,7 @@ impl SerializationContext {
     }
 
     /// Check if an object has been seen before (for cycle detection)
+    #[inline]
     fn has_seen<T>(&self, ptr: &T) -> bool {
         if !self.detect_cycles {
             return false;
@@ -113,42 +313,6 @@ impl SerializationContext {
 
         let addr = ptr as *const T as usize;
         self.object_ids.contains_key(&addr)
-    }
-
-    fn write_id<O: DataOutput>(&self, output: &mut O, id: u32) -> Result<()> {
-        if self.compress_ids {
-            output.write_var_int(id as u64)
-        } else {
-            output.write_u32(id)
-        }
-    }
-
-    pub(crate) fn run_nested<R>(&mut self, f: impl FnOnce() -> Result<R>) -> Result<R> {
-        if self.depth >= self.max_depth {
-            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
-        }
-        struct Guard<'a> {
-            caller: &'a mut SerializationContext,
-            prev: Option<SerializationContext>,
-        }
-        impl Drop for Guard<'_> {
-            fn drop(&mut self) {
-                ACTIVE_SER_CTX.with(|cell| {
-                    if let Some(mut active) = cell.borrow_mut().take() {
-                        active.depth = active.depth.saturating_sub(1);
-                        *self.caller = active;
-                    }
-                    *cell.borrow_mut() = self.prev.take();
-                });
-            }
-        }
-        self.depth += 1;
-        let prev = ACTIVE_SER_CTX.with(|cell| {
-            let taken = std::mem::take(self);
-            cell.borrow_mut().replace(taken)
-        });
-        let _guard = Guard { caller: self, prev };
-        f()
     }
 
     /// Clear the context for reuse
@@ -169,12 +333,17 @@ impl Default for SerializationContext {
 /// Deserialization context for reconstructing shared objects.
 ///
 /// Note: `DeserializationContext` is non-generic and stores reconstructed
-/// shared pointers in type-erased `Box<dyn Any>` slots (`store_object<T: 'static>` /
-/// `get_object<T: 'static>`) so a single context can reconstruct heterogeneous
-/// object graphs containing multiple `Rc<T>` and `Arc<U>` pointee types.
+/// shared pointers in a dense sequential table (`Vec<Option<T>>`) for the
+/// primary smart-pointer type and type-erased `Box<dyn Any>` slots
+/// (`store_object<T: 'static>` / `get_object<T: 'static>`) so a single context
+/// can reconstruct both homogeneous vectors of smart pointers without per-node
+/// `Box<dyn Any>` allocations and heterogeneous object graphs containing
+/// multiple `Rc<T>` and `Arc<U>` pointee types.
 #[derive(Debug)]
 pub struct DeserializationContext {
-    /// Map from object ID to reconstructed smart pointer
+    /// Dense 1-based table (`Box<Vec<Option<T>>>`) for sequential IDs of the primary type
+    dense_objects: Option<Box<dyn Any>>,
+    /// Map from object ID to reconstructed smart pointer for non-sequential IDs or secondary types
     objects: HashMap<u32, Box<dyn Any>>,
     /// Decode object IDs with variable-length integers
     compress_ids: bool,
@@ -188,6 +357,7 @@ impl DeserializationContext {
     /// Create a new deserialization context
     pub fn new() -> Self {
         Self {
+            dense_objects: None,
             objects: HashMap::new(),
             compress_ids: false,
             depth: 0,
@@ -196,54 +366,58 @@ impl DeserializationContext {
     }
 
     /// Store an object with its ID
+    #[inline]
     pub fn store_object<T: 'static>(&mut self, id: u32, object: T) {
+        if id >= 1 {
+            let idx = (id - 1) as usize;
+            if self.dense_objects.is_none() && idx <= 64 {
+                let mut vec = Vec::<Option<T>>::with_capacity(16);
+                if idx > 0 {
+                    vec.resize_with(idx, || None);
+                }
+                vec.push(Some(object));
+                self.dense_objects = Some(Box::new(vec));
+                return;
+            }
+            if let Some(vec) = self
+                .dense_objects
+                .as_mut()
+                .and_then(|b| b.downcast_mut::<Vec<Option<T>>>())
+            {
+                if idx == vec.len() {
+                    vec.push(Some(object));
+                    return;
+                } else if idx < vec.len() {
+                    vec[idx] = Some(object);
+                    return;
+                } else if idx <= vec.len().saturating_add(64) {
+                    vec.resize_with(idx, || None);
+                    vec.push(Some(object));
+                    return;
+                }
+            }
+        }
         self.objects.insert(id, Box::new(object));
     }
 
     /// Get an object by its ID
+    #[inline]
     pub fn get_object<T: 'static>(&self, id: u32) -> Option<&T> {
+        if id >= 1
+            && let Some(vec) = self
+                .dense_objects
+                .as_ref()
+                .and_then(|b| b.downcast_ref::<Vec<Option<T>>>())
+            && let Some(Some(obj)) = vec.get((id - 1) as usize)
+        {
+            return Some(obj);
+        }
         self.objects.get(&id)?.downcast_ref::<T>()
-    }
-
-    fn read_id<I: DataInput>(&self, input: &mut I) -> Result<u32> {
-        if self.compress_ids {
-            u32::try_from(input.read_var_int()?)
-                .map_err(|_| ZiporaError::invalid_data("Compressed object ID overflows u32"))
-        } else {
-            input.read_u32()
-        }
-    }
-
-    pub(crate) fn run_nested<R>(&mut self, f: impl FnOnce() -> Result<R>) -> Result<R> {
-        if self.depth >= self.max_depth {
-            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
-        }
-        struct Guard<'a> {
-            caller: &'a mut DeserializationContext,
-            prev: Option<DeserializationContext>,
-        }
-        impl Drop for Guard<'_> {
-            fn drop(&mut self) {
-                ACTIVE_DE_CTX.with(|cell| {
-                    if let Some(mut active) = cell.borrow_mut().take() {
-                        active.depth = active.depth.saturating_sub(1);
-                        *self.caller = active;
-                    }
-                    *cell.borrow_mut() = self.prev.take();
-                });
-            }
-        }
-        self.depth += 1;
-        let prev = ACTIVE_DE_CTX.with(|cell| {
-            let taken = std::mem::take(self);
-            cell.borrow_mut().replace(taken)
-        });
-        let _guard = Guard { caller: self, prev };
-        f()
     }
 
     /// Clear the context for reuse
     pub fn clear(&mut self) {
+        self.dense_objects = None;
         self.objects.clear();
         self.depth = 0;
     }
@@ -255,198 +429,232 @@ impl Default for DeserializationContext {
     }
 }
 
+fn with_installed_ser_ctx<R>(
+    context: &mut SerializationContext,
+    f: impl FnOnce() -> Result<R>,
+) -> Result<R> {
+    if context.depth > context.max_depth {
+        return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+    }
+    struct InstalledSerGuard<'a> {
+        caller: &'a mut SerializationContext,
+        prev_ctx: SerializationContext,
+        prev_state: SerDepthState,
+        orig_depth: usize,
+    }
+    impl Drop for InstalledSerGuard<'_> {
+        fn drop(&mut self) {
+            ACTIVE_SER_CTX.with(|cell| {
+                let mut active = std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(&mut self.prev_ctx));
+                active.depth = self.orig_depth;
+                *self.caller = active;
+            });
+            SER_DEPTH.with(|cell| cell.set(self.prev_state));
+        }
+    }
+    let orig_depth = context.depth;
+    let new_state = SerDepthState {
+        depth: u32::try_from(context.depth).unwrap_or(u32::MAX),
+        max_depth: u32::try_from(context.max_depth).unwrap_or(u32::MAX),
+        detect_cycles: context.detect_cycles,
+        compress_ids: context.compress_ids,
+        dirty_ctx: false,
+        active: true,
+    };
+    let prev_state = SER_DEPTH.with(|cell| cell.replace(new_state));
+    let prev_ctx = ACTIVE_SER_CTX.with(|cell| {
+        std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(context))
+    });
+    let _guard = InstalledSerGuard {
+        caller: context,
+        prev_ctx,
+        prev_state,
+        orig_depth,
+    };
+    f()
+}
+
+fn with_installed_de_ctx<R>(
+    context: &mut DeserializationContext,
+    f: impl FnOnce() -> Result<R>,
+) -> Result<R> {
+    if context.depth > context.max_depth {
+        return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+    }
+    struct InstalledDeGuard<'a> {
+        caller: &'a mut DeserializationContext,
+        prev_ctx: DeserializationContext,
+        prev_state: DeDepthState,
+        orig_depth: usize,
+    }
+    impl Drop for InstalledDeGuard<'_> {
+        fn drop(&mut self) {
+            ACTIVE_DE_CTX.with(|cell| {
+                let mut active = std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(&mut self.prev_ctx));
+                active.depth = self.orig_depth;
+                *self.caller = active;
+            });
+            DE_DEPTH.with(|cell| cell.set(self.prev_state));
+        }
+    }
+    let orig_depth = context.depth;
+    let new_state = DeDepthState {
+        depth: u16::try_from(context.depth).unwrap_or(u16::MAX),
+        max_depth: u16::try_from(context.max_depth).unwrap_or(u16::MAX),
+        compress_ids: context.compress_ids,
+        dirty_ctx: false,
+        active: true,
+    };
+    let prev_state = DE_DEPTH.with(|cell| cell.replace(new_state));
+    let prev_ctx = ACTIVE_DE_CTX.with(|cell| {
+        std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(context))
+    });
+    let _guard = InstalledDeGuard {
+        caller: context,
+        prev_ctx,
+        prev_state,
+        orig_depth,
+    };
+    f()
+}
+
 pub(crate) fn with_active_ser_ctx<R>(
     f: impl FnOnce(&mut SerializationContext) -> Result<R>,
 ) -> Result<R> {
-    let existing = ACTIVE_SER_CTX.with(|cell| cell.borrow_mut().take());
-    match existing {
-        Some(ctx) => {
-            struct RestoreGuard(Option<SerializationContext>);
-            impl Drop for RestoreGuard {
-                fn drop(&mut self) {
-                    if let Some(ctx) = self.0.take() {
-                        ACTIVE_SER_CTX.with(|cell| {
-                            *cell.borrow_mut() = Some(ctx);
-                        });
-                    }
+    let mut ctx = ACTIVE_SER_CTX.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+    let state = SER_DEPTH.with(|cell| cell.get());
+    ctx.depth = state.depth as usize;
+    ctx.max_depth = state.max_depth as usize;
+    ctx.detect_cycles = state.detect_cycles;
+    ctx.compress_ids = state.compress_ids;
+    struct RestoreGuard {
+        ctx: Option<SerializationContext>,
+        clear_on_drop: bool,
+    }
+    impl Drop for RestoreGuard {
+        fn drop(&mut self) {
+            if let Some(mut ctx) = self.ctx.take() {
+                if self.clear_on_drop {
+                    ctx.clear();
                 }
+                ACTIVE_SER_CTX.with(|cell| {
+                    *cell.borrow_mut() = ctx;
+                });
             }
-            let mut guard = RestoreGuard(Some(ctx));
-            let ctx_ref = match guard.0.as_mut() {
-                Some(c) => c,
-                None => unreachable!(),
-            };
-            f(ctx_ref)
-        }
-        None => {
-            let mut fresh = SerializationContext::new();
-            f(&mut fresh)
         }
     }
+    let mut guard = RestoreGuard {
+        ctx: Some(ctx),
+        clear_on_drop: !state.active,
+    };
+    let ctx_ref = match guard.ctx.as_mut() {
+        Some(c) => c,
+        None => unreachable!(),
+    };
+    f(ctx_ref)
 }
 
 pub(crate) fn with_active_de_ctx<R>(
     f: impl FnOnce(&mut DeserializationContext) -> Result<R>,
 ) -> Result<R> {
-    let existing = ACTIVE_DE_CTX.with(|cell| cell.borrow_mut().take());
-    match existing {
-        Some(ctx) => {
-            struct RestoreGuard(Option<DeserializationContext>);
-            impl Drop for RestoreGuard {
-                fn drop(&mut self) {
-                    if let Some(ctx) = self.0.take() {
-                        ACTIVE_DE_CTX.with(|cell| {
-                            *cell.borrow_mut() = Some(ctx);
-                        });
-                    }
+    let mut ctx = ACTIVE_DE_CTX.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+    let state = DE_DEPTH.with(|cell| cell.get());
+    ctx.depth = state.depth as usize;
+    ctx.max_depth = state.max_depth as usize;
+    ctx.compress_ids = state.compress_ids;
+    struct RestoreGuard {
+        ctx: Option<DeserializationContext>,
+        clear_on_drop: bool,
+    }
+    impl Drop for RestoreGuard {
+        fn drop(&mut self) {
+            if let Some(mut ctx) = self.ctx.take() {
+                if self.clear_on_drop {
+                    ctx.clear();
                 }
-            }
-            let mut guard = RestoreGuard(Some(ctx));
-            let ctx_ref = match guard.0.as_mut() {
-                Some(c) => c,
-                None => unreachable!(),
-            };
-            f(ctx_ref)
-        }
-        None => {
-            let mut fresh = DeserializationContext::new();
-            f(&mut fresh)
-        }
-    }
-}
-
-pub(crate) fn with_nested_ser_depth<R>(
-    depth: usize,
-    max_depth: usize,
-    f: impl FnOnce() -> Result<R>,
-) -> Result<R> {
-    if depth > max_depth {
-        return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
-    }
-    let existing = ACTIVE_SER_CTX.with(|cell| cell.borrow_mut().take());
-    match existing {
-        Some(mut ctx) => {
-            let prev_depth = ctx.depth;
-            let prev_max = ctx.max_depth;
-            let effective_depth = prev_depth.max(depth);
-            let effective_max = prev_max.min(max_depth);
-            if effective_depth > effective_max {
-                ACTIVE_SER_CTX.with(|cell| {
-                    *cell.borrow_mut() = Some(ctx);
-                });
-                return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
-            }
-            ctx.depth = effective_depth;
-            ctx.max_depth = effective_max;
-            struct RestoreGuard {
-                prev_depth: usize,
-                prev_max: usize,
-            }
-            impl Drop for RestoreGuard {
-                fn drop(&mut self) {
-                    ACTIVE_SER_CTX.with(|cell| {
-                        if let Some(active) = cell.borrow_mut().as_mut() {
-                            active.depth = self.prev_depth;
-                            active.max_depth = self.prev_max;
-                        }
-                    });
-                }
-            }
-            ACTIVE_SER_CTX.with(|cell| {
-                *cell.borrow_mut() = Some(ctx);
-            });
-            let _guard = RestoreGuard {
-                prev_depth,
-                prev_max,
-            };
-            f()
-        }
-        None => {
-            let mut fresh = SerializationContext::new();
-            fresh.depth = depth;
-            fresh.max_depth = max_depth;
-            struct ClearGuard;
-            impl Drop for ClearGuard {
-                fn drop(&mut self) {
-                    ACTIVE_SER_CTX.with(|cell| {
-                        let _ = cell.borrow_mut().take();
-                    });
-                }
-            }
-            ACTIVE_SER_CTX.with(|cell| {
-                *cell.borrow_mut() = Some(fresh);
-            });
-            let _guard = ClearGuard;
-            f()
-        }
-    }
-}
-
-pub(crate) fn with_nested_de_depth<R>(
-    depth: usize,
-    max_depth: usize,
-    f: impl FnOnce() -> Result<R>,
-) -> Result<R> {
-    if depth > max_depth {
-        return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
-    }
-    let existing = ACTIVE_DE_CTX.with(|cell| cell.borrow_mut().take());
-    match existing {
-        Some(mut ctx) => {
-            let prev_depth = ctx.depth;
-            let prev_max = ctx.max_depth;
-            let effective_depth = prev_depth.max(depth);
-            let effective_max = prev_max.min(max_depth);
-            if effective_depth > effective_max {
                 ACTIVE_DE_CTX.with(|cell| {
-                    *cell.borrow_mut() = Some(ctx);
+                    *cell.borrow_mut() = ctx;
                 });
-                return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
             }
-            ctx.depth = effective_depth;
-            ctx.max_depth = effective_max;
-            struct RestoreGuard {
-                prev_depth: usize,
-                prev_max: usize,
-            }
-            impl Drop for RestoreGuard {
-                fn drop(&mut self) {
-                    ACTIVE_DE_CTX.with(|cell| {
-                        if let Some(active) = cell.borrow_mut().as_mut() {
-                            active.depth = self.prev_depth;
-                            active.max_depth = self.prev_max;
-                        }
-                    });
-                }
-            }
-            ACTIVE_DE_CTX.with(|cell| {
-                *cell.borrow_mut() = Some(ctx);
-            });
-            let _guard = RestoreGuard {
-                prev_depth,
-                prev_max,
-            };
-            f()
-        }
-        None => {
-            let mut fresh = DeserializationContext::new();
-            fresh.depth = depth;
-            fresh.max_depth = max_depth;
-            struct ClearGuard;
-            impl Drop for ClearGuard {
-                fn drop(&mut self) {
-                    ACTIVE_DE_CTX.with(|cell| {
-                        let _ = cell.borrow_mut().take();
-                    });
-                }
-            }
-            ACTIVE_DE_CTX.with(|cell| {
-                *cell.borrow_mut() = Some(fresh);
-            });
-            let _guard = ClearGuard;
-            f()
         }
     }
+    let mut guard = RestoreGuard {
+        ctx: Some(ctx),
+        clear_on_drop: !state.active,
+    };
+    let ctx_ref = match guard.ctx.as_mut() {
+        Some(c) => c,
+        None => unreachable!(),
+    };
+    f(ctx_ref)
+}
+
+#[inline]
+fn write_active_ser_id<O: DataOutput>(output: &mut O, id: u32, compress_ids: bool) -> Result<()> {
+    if compress_ids {
+        output.write_var_int(id as u64)
+    } else {
+        output.write_u32(id)
+    }
+}
+
+#[inline]
+fn read_active_de_id<I: DataInput>(input: &mut I) -> Result<u32> {
+    let compress_ids = DE_DEPTH.with(|cell| cell.get().compress_ids);
+    if compress_ids {
+        u32::try_from(input.read_var_int()?)
+            .map_err(|_| ZiporaError::invalid_data("Compressed object ID overflows u32"))
+    } else {
+        input.read_u32()
+    }
+}
+
+#[inline]
+fn store_active_de_object<T: 'static>(id: u32, object: T) {
+    DE_DEPTH.with(|cell| {
+        let cur = cell.get();
+        if !cur.dirty_ctx {
+            cell.set(DeDepthState {
+                dirty_ctx: true,
+                ..cur
+            });
+        }
+    });
+    ACTIVE_DE_CTX.with(|cell| {
+        cell.borrow_mut().store_object(id, object);
+    });
+}
+
+#[inline]
+fn get_active_de_object<T: Clone + 'static>(id: u32) -> Option<T> {
+    ACTIVE_DE_CTX.with(|cell| cell.borrow().get_object::<T>(id).cloned())
+}
+
+#[inline]
+fn register_active_ser_ptr<T, P: 'static>(obj_ref: &T, retained: Option<P>) -> (bool, u32, bool) {
+    let state = SER_DEPTH.with(|cell| {
+        let cur = cell.get();
+        if !cur.dirty_ctx {
+            cell.set(SerDepthState {
+                dirty_ctx: true,
+                ..cur
+            });
+        }
+        cur
+    });
+    let (seen, id) = ACTIVE_SER_CTX.with(|cell| {
+        let mut ctx = cell.borrow_mut();
+        ctx.detect_cycles = state.detect_cycles;
+        let seen = ctx.has_seen(obj_ref);
+        let id = ctx.get_or_assign_id(obj_ref);
+        if !seen
+            && let Some(ptr) = retained
+        {
+            ctx.retain_object(ptr);
+        }
+        (seen, id)
+    });
+    (seen, id, state.compress_ids)
 }
 
 /// Trait for types that can be serialized as smart pointers
@@ -515,20 +723,36 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Box<T> {
         output: &mut O,
         context: &mut SerializationContext,
     ) -> Result<()> {
-        // Box is always unique, no need for reference tracking
-        output.write_u8(1)?; // Non-null marker
-        context.run_nested(|| self.as_ref().serialize(output))
+        with_installed_ser_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::serialize(self, output)
+        })
     }
 
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
         context: &mut DeserializationContext,
     ) -> Result<Self> {
+        with_installed_de_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::deserialize(input)
+        })
+    }
+
+    #[inline]
+    fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+        // Box is always unique, no need for reference tracking
+        output.write_u8(1)?; // Non-null marker
+        let _guard = enter_ser_depth()?;
+        self.as_ref().serialize(output)
+    }
+
+    #[inline]
+    fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
             0 => Err(ZiporaError::invalid_data("Box cannot be null")),
             1 => {
-                let value = context.run_nested(|| T::deserialize(input))?;
+                let _guard = enter_de_depth()?;
+                let value = T::deserialize(input)?;
                 Ok(Box::new(value))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Box marker")),
@@ -543,10 +767,26 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Option<Box<T>> {
         output: &mut O,
         context: &mut SerializationContext,
     ) -> Result<()> {
+        with_installed_ser_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::serialize(self, output)
+        })
+    }
+
+    fn deserialize_with_context<I: DataInput>(
+        input: &mut I,
+        context: &mut DeserializationContext,
+    ) -> Result<Self> {
+        with_installed_de_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::deserialize(input)
+        })
+    }
+
+    #[inline]
+    fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         match self {
             Some(boxed) => {
                 output.write_u8(1)?; // Non-null marker
-                boxed.serialize_with_context(output, context)
+                <Box<T> as SmartPtrSerialize<T>>::serialize(boxed, output)
             }
             None => {
                 output.write_u8(0)?; // Null marker
@@ -555,15 +795,13 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Option<Box<T>> {
         }
     }
 
-    fn deserialize_with_context<I: DataInput>(
-        input: &mut I,
-        context: &mut DeserializationContext,
-    ) -> Result<Self> {
+    #[inline]
+    fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
             0 => Ok(None),
             1 => {
-                let boxed = Box::<T>::deserialize_with_context(input, context)?;
+                let boxed = <Box<T> as SmartPtrSerialize<T>>::deserialize(input)?;
                 Ok(Some(boxed))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Option<Box> marker")),
@@ -578,46 +816,51 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Rc<T> {
         output: &mut O,
         context: &mut SerializationContext,
     ) -> Result<()> {
-        let obj_ref = self.as_ref();
-
-        if context.has_seen(obj_ref) {
-            // Object already serialized, write reference
-            let id = context.get_or_assign_id(obj_ref);
-            output.write_u8(2)?; // Reference marker
-            context.write_id(output, id)?;
-        } else {
-            // First time seeing this object, serialize it
-            let id = context.get_or_assign_id(obj_ref);
-            context.retain_object(self.clone());
-            output.write_u8(1)?; // New object marker
-            context.write_id(output, id)?;
-            context.run_nested(|| obj_ref.serialize(output))?;
-        }
-
-        Ok(())
+        with_installed_ser_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::serialize(self, output)
+        })
     }
 
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
         context: &mut DeserializationContext,
     ) -> Result<Self> {
+        with_installed_de_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::deserialize(input)
+        })
+    }
+
+    #[inline]
+    fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+        let obj_ref = self.as_ref();
+        let (seen, id, compress_ids) = register_active_ser_ptr(obj_ref, Some(self.clone()));
+        if seen {
+            output.write_u8(2)?; // Reference marker
+            write_active_ser_id(output, id, compress_ids)
+        } else {
+            let _guard = enter_ser_depth()?;
+            output.write_u8(1)?; // New object marker
+            write_active_ser_id(output, id, compress_ids)?;
+            obj_ref.serialize(output)
+        }
+    }
+
+    #[inline]
+    fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
             0 => Err(ZiporaError::invalid_data("Rc cannot be null")),
             1 => {
-                // New object
-                let id = context.read_id(input)?;
-                let value = context.run_nested(|| T::deserialize(input))?;
+                let _guard = enter_de_depth()?;
+                let id = read_active_de_id(input)?;
+                let value = T::deserialize(input)?;
                 let rc = Rc::new(value);
-                context.store_object(id, rc.clone());
+                store_active_de_object(id, rc.clone());
                 Ok(rc)
             }
             2 => {
-                // Reference to existing object
-                let id = context.read_id(input)?;
-                context
-                    .get_object::<Self>(id)
-                    .cloned()
+                let id = read_active_de_id(input)?;
+                get_active_de_object::<Self>(id)
                     .ok_or_else(|| ZiporaError::invalid_data("Referenced object not found"))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Rc marker")),
@@ -632,46 +875,51 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for Arc<T> {
         output: &mut O,
         context: &mut SerializationContext,
     ) -> Result<()> {
-        let obj_ref = self.as_ref();
-
-        if context.has_seen(obj_ref) {
-            // Object already serialized, write reference
-            let id = context.get_or_assign_id(obj_ref);
-            output.write_u8(2)?; // Reference marker
-            context.write_id(output, id)?;
-        } else {
-            // First time seeing this object, serialize it
-            let id = context.get_or_assign_id(obj_ref);
-            context.retain_object(self.clone());
-            output.write_u8(1)?; // New object marker
-            context.write_id(output, id)?;
-            context.run_nested(|| obj_ref.serialize(output))?;
-        }
-
-        Ok(())
+        with_installed_ser_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::serialize(self, output)
+        })
     }
 
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
         context: &mut DeserializationContext,
     ) -> Result<Self> {
+        with_installed_de_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::deserialize(input)
+        })
+    }
+
+    #[inline]
+    fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+        let obj_ref = self.as_ref();
+        let (seen, id, compress_ids) = register_active_ser_ptr(obj_ref, Some(self.clone()));
+        if seen {
+            output.write_u8(2)?; // Reference marker
+            write_active_ser_id(output, id, compress_ids)
+        } else {
+            let _guard = enter_ser_depth()?;
+            output.write_u8(1)?; // New object marker
+            write_active_ser_id(output, id, compress_ids)?;
+            obj_ref.serialize(output)
+        }
+    }
+
+    #[inline]
+    fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
             0 => Err(ZiporaError::invalid_data("Arc cannot be null")),
             1 => {
-                // New object
-                let id = context.read_id(input)?;
-                let value = context.run_nested(|| T::deserialize(input))?;
+                let _guard = enter_de_depth()?;
+                let id = read_active_de_id(input)?;
+                let value = T::deserialize(input)?;
                 let arc = Arc::new(value);
-                context.store_object(id, arc.clone());
+                store_active_de_object(id, arc.clone());
                 Ok(arc)
             }
             2 => {
-                // Reference to existing object
-                let id = context.read_id(input)?;
-                context
-                    .get_object::<Self>(id)
-                    .cloned()
+                let id = read_active_de_id(input)?;
+                get_active_de_object::<Self>(id)
                     .ok_or_else(|| ZiporaError::invalid_data("Referenced object not found"))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Arc marker")),
@@ -686,10 +934,26 @@ impl<T: SerializableType> SmartPtrSerialize<T> for RcWeak<T> {
         output: &mut O,
         context: &mut SerializationContext,
     ) -> Result<()> {
+        with_installed_ser_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::serialize(self, output)
+        })
+    }
+
+    fn deserialize_with_context<I: DataInput>(
+        input: &mut I,
+        context: &mut DeserializationContext,
+    ) -> Result<Self> {
+        with_installed_de_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::deserialize(input)
+        })
+    }
+
+    #[inline]
+    fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         match self.upgrade() {
             Some(rc) => {
                 output.write_u8(1)?; // Valid weak reference
-                rc.serialize_with_context(output, context)
+                <Rc<T> as SmartPtrSerialize<T>>::serialize(&rc, output)
             }
             None => {
                 output.write_u8(0)?; // Dangling weak reference
@@ -698,15 +962,13 @@ impl<T: SerializableType> SmartPtrSerialize<T> for RcWeak<T> {
         }
     }
 
-    fn deserialize_with_context<I: DataInput>(
-        input: &mut I,
-        context: &mut DeserializationContext,
-    ) -> Result<Self> {
+    #[inline]
+    fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
             0 => Ok(RcWeak::new()),
             1 => {
-                let rc = Rc::<T>::deserialize_with_context(input, context)?;
+                let rc = <Rc<T> as SmartPtrSerialize<T>>::deserialize(input)?;
                 Ok(Rc::downgrade(&rc))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Weak<Rc> marker")),
@@ -721,10 +983,26 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for ArcWeak<T> {
         output: &mut O,
         context: &mut SerializationContext,
     ) -> Result<()> {
+        with_installed_ser_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::serialize(self, output)
+        })
+    }
+
+    fn deserialize_with_context<I: DataInput>(
+        input: &mut I,
+        context: &mut DeserializationContext,
+    ) -> Result<Self> {
+        with_installed_de_ctx(context, || {
+            <Self as SmartPtrSerialize<T>>::deserialize(input)
+        })
+    }
+
+    #[inline]
+    fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         match self.upgrade() {
             Some(arc) => {
                 output.write_u8(1)?; // Valid weak reference
-                arc.serialize_with_context(output, context)
+                <Arc<T> as SmartPtrSerialize<T>>::serialize(&arc, output)
             }
             None => {
                 output.write_u8(0)?; // Dangling weak reference
@@ -733,15 +1011,13 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for ArcWeak<T> {
         }
     }
 
-    fn deserialize_with_context<I: DataInput>(
-        input: &mut I,
-        context: &mut DeserializationContext,
-    ) -> Result<Self> {
+    #[inline]
+    fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         let marker = input.read_u8()?;
         match marker {
             0 => Ok(ArcWeak::new()),
             1 => {
-                let arc = Arc::<T>::deserialize_with_context(input, context)?;
+                let arc = <Arc<T> as SmartPtrSerialize<T>>::deserialize(input)?;
                 Ok(Arc::downgrade(&arc))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Weak<Arc> marker")),
@@ -788,12 +1064,13 @@ impl SmartPtrConfig {
         }
     }
 
-    /// Configuration for robust handling of complex graphs (`max_depth: 384`,
-    /// sized to stay within a 2 MiB thread stack in both debug and release builds)
+    /// Configuration for robust handling of complex graphs (`max_depth: 256`,
+    /// sized so pointer and typical struct nodes stay within a 2 MiB thread
+    /// stack even in unoptimized `opt-level=0` builds)
     pub fn robust() -> Self {
         Self {
             cycle_detection: true,
-            max_depth: 384,
+            max_depth: DEFAULT_MAX_DEPTH,
             compress_ids: false,
         }
     }
@@ -893,14 +1170,11 @@ impl<T: SerializableType> SerializableType for Vec<T> {
         if self.is_empty() {
             return Ok(());
         }
-        with_active_ser_ctx(|context| {
-            context.run_nested(|| {
-                for item in self {
-                    item.serialize(output)?;
-                }
-                Ok(())
-            })
-        })
+        let _guard = enter_ser_depth()?;
+        for item in self {
+            item.serialize(output)?;
+        }
+        Ok(())
     }
 
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
@@ -908,6 +1182,7 @@ impl<T: SerializableType> SerializableType for Vec<T> {
         if len == 0 {
             return Ok(Vec::new());
         }
+        let _guard = enter_de_depth()?;
         // `len` is untrusted: reserve within the read-ahead budget and let
         // the vector grow as elements arrive.
         let mut vec = Vec::with_capacity(prealloc_capacity(
@@ -915,14 +1190,10 @@ impl<T: SerializableType> SerializableType for Vec<T> {
             std::mem::size_of::<T>(),
             input.remaining_bytes(),
         ));
-        with_active_de_ctx(|context| {
-            context.run_nested(|| {
-                for _ in 0..len {
-                    vec.push(T::deserialize(input)?);
-                }
-                Ok(vec)
-            })
-        })
+        for _ in 0..len {
+            vec.push(T::deserialize(input)?);
+        }
+        Ok(vec)
     }
 }
 
@@ -1223,7 +1494,7 @@ mod tests {
 
         let config = SmartPtrConfig::robust();
         assert!(config.cycle_detection);
-        assert_eq!(config.max_depth, 384);
+        assert_eq!(config.max_depth, 256);
     }
 
     #[test]
@@ -1623,5 +1894,123 @@ mod tests {
             .expect("spawn 2 MiB thread")
             .join()
             .expect("2 MiB thread must not overflow stack or panic");
+    }
+
+    #[test]
+    fn test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack() {
+        struct BigChain {
+            payload: [u8; 512],
+            next: Option<Box<BigChain>>,
+        }
+        impl Drop for BigChain {
+            fn drop(&mut self) {
+                let mut curr = self.next.take();
+                while let Some(mut node) = curr {
+                    curr = node.next.take();
+                }
+            }
+        }
+        impl SerializableType for BigChain {
+            fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+                output.write_bytes(&self.payload)?;
+                <Option<Box<BigChain>> as SmartPtrSerialize<BigChain>>::serialize(
+                    &self.next, output,
+                )
+            }
+            fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
+                let mut payload = [0u8; 512];
+                input.read_bytes(&mut payload)?;
+                let next =
+                    <Option<Box<BigChain>> as SmartPtrSerialize<BigChain>>::deserialize(input)?;
+                Ok(Self { payload, next })
+            }
+        }
+
+        let make_big_chain_wire = |depth: usize| {
+            let mut wire = Vec::with_capacity(depth * 514 + 1);
+            for i in 0..depth {
+                if i > 0 {
+                    wire.push(1u8); // Option::Some
+                }
+                wire.push(1u8); // Box non-null marker
+                wire.extend_from_slice(&[0xABu8; 512]);
+            }
+            wire.push(0u8); // Option::None
+            wire
+        };
+
+        std::thread::Builder::new()
+            .name("s23-r5-bigchain-2mib".into())
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                for config in [
+                    SmartPtrConfig::default(),
+                    SmartPtrConfig::performance_optimized(),
+                    SmartPtrConfig::space_optimized(),
+                    SmartPtrConfig::robust(),
+                ] {
+                    let limit = if cfg!(miri) {
+                        16usize
+                    } else {
+                        config.max_depth
+                    };
+                    let eff_config = SmartPtrConfig {
+                        max_depth: limit,
+                        ..config
+                    };
+                    let ser = SmartPtrSerializer::new(eff_config);
+
+                    let ok_wire = make_big_chain_wire(limit);
+                    let decoded = ser
+                        .deserialize_from_bytes::<BigChain, Box<BigChain>>(&ok_wire)
+                        .expect("BigChain at max_depth must succeed within 2 MiB stack");
+                    assert_eq!(decoded.payload[0], 0xAB);
+
+                    let err_wire = make_big_chain_wire(limit + 1);
+                    assert!(
+                        ser.deserialize_from_bytes::<BigChain, Box<BigChain>>(&err_wire)
+                            .is_err(),
+                        "BigChain at max_depth + 1 must return Err"
+                    );
+                }
+            })
+            .expect("spawn 2 MiB thread")
+            .join()
+            .expect("BigChain 2 MiB thread must not overflow stack");
+
+        if !cfg!(miri) {
+            // Timing check for Vec<u64>, Vec<Rc<u64>>, and Vec<Vec<u32>>
+            let vec_u64: Vec<u64> = (0..1_000_000u64).collect();
+            let mut out_u64 = VecDataOutput::with_capacity(4 + 1_000_000 * 8);
+            vec_u64.serialize(&mut out_u64).unwrap();
+            let bytes_u64 = out_u64.into_vec();
+
+            let vec_rc: Vec<Rc<u64>> = (0..100_000u64).map(Rc::new).collect();
+            let mut out_rc = VecDataOutput::with_capacity(4 + 100_000 * 13);
+            vec_rc.serialize(&mut out_rc).unwrap();
+            let bytes_rc = out_rc.into_vec();
+
+            let vec_vec: Vec<Vec<u32>> = (0..1_000u32)
+                .map(|i| (0..100u32).map(|j| i * 100 + j).collect())
+                .collect();
+            let mut out_vv = VecDataOutput::with_capacity(4 + 1_000 * 404);
+            vec_vec.serialize(&mut out_vv).unwrap();
+            let bytes_vv = out_vv.into_vec();
+
+            // Warmup & correctness
+            let mut in_u64 = SliceDataInput::new(&bytes_u64);
+            let dec_u64 = Vec::<u64>::deserialize(&mut in_u64).unwrap();
+            assert_eq!(dec_u64.len(), 1_000_000);
+
+            let mut in_rc = SliceDataInput::new(&bytes_rc);
+            let dec_rc = Vec::<Rc<u64>>::deserialize(&mut in_rc).unwrap();
+            assert_eq!(dec_rc.len(), 100_000);
+            assert_eq!(*dec_rc[99_999], 99_999);
+
+            let mut in_vv = SliceDataInput::new(&bytes_vv);
+            let dec_vv = Vec::<Vec<u32>>::deserialize(&mut in_vv).unwrap();
+            assert_eq!(dec_vv.len(), 1_000);
+            assert_eq!(dec_vv[999][99], 99_999);
+        }
     }
 }

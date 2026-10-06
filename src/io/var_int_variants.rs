@@ -35,7 +35,11 @@ pub enum VarIntStrategy {
     /// - **Wire compatibility note**: this 2-byte 3-bit-per-tag selector + zigzag `i64`
     ///   wire format is incompatible with the pre-C9 1-byte 2-bit-per-tag selector
     ///   format (which could only represent 1–4 bytes per value and truncated 5–8 byte
-    ///   `u64`s and negative `i64`s).
+    ///   `u64`s and negative `i64`s). There is no magic/version header, so pre-C9 bytes
+    ///   are not reliably rejected with `Err`: for example, a pre-C9 single-value
+    ///   `encode_i64(5)` payload (`[0x05]`, un-zigzagged LEB128) decodes as `Ok(-3)`
+    ///   under zigzag, and a pre-C9 1-byte group header is misread by taking the first
+    ///   value byte as the high byte of the 2-byte `u16` selector.
     GroupVarint,
     /// Prefix-free encoding with length prefix
     PrefixFree,

@@ -939,7 +939,10 @@ mod tests {
         use crate::io::data_output::VecDataOutput;
         use crate::io::smart_ptr::SerializableType;
 
-        let n = if cfg!(miri) { 1024 } else { 100_000 };
+        // 10_000 u64s = 80 KiB > MAX_READ_AHEAD_ALLOC (64 KiB): without the
+        // known-remaining budget, Vec::with_capacity reserved 8192 and grew by
+        // doubling to 16_384 (or 131_072 for 100_000).
+        let n = if cfg!(miri) { 10_000 } else { 100_000 };
         let expected: Vec<u64> = (0..n as u64).collect();
         let mut out = VecDataOutput::with_capacity(4 + n * 8);
         expected.serialize(&mut out).unwrap();
@@ -947,6 +950,7 @@ mod tests {
         let mut input = SliceDataInput::new(out.as_slice());
         assert_eq!(input.remaining_bytes(), Some((4 + n * 8) as u64));
         let decoded = Vec::<u64>::deserialize(&mut input).unwrap();
+        assert_eq!(decoded.capacity(), n);
         assert_eq!(decoded, expected);
     }
 }

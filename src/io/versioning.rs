@@ -21,7 +21,10 @@ use std::collections::HashMap;
 ///   extended-header sentinel, a 4-byte pre-C9 payload encoding `255.255.patch`
 ///   (or any `major >= 255, minor >= 255` saturated by `to_u32()`) without the
 ///   trailing 4-byte `(major, minor)` extension is incompatible with this
-///   format.
+///   format: if `255.255.patch` is at the end of the stream it fails with EOF,
+///   and if at least 4 bytes of subsequent stream data follow (for example
+///   `[0x01, 0x00, 0x02, 0x00]`), `Version::deserialize` consumes those 4 bytes
+///   as `(major, minor)` and silently decodes `Ok(Version::new(1, 2, patch))`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Version {
     major: u16,
