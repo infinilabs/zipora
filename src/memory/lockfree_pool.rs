@@ -19,9 +19,7 @@
 
 use super::CachePadded;
 use crate::error::{Result, ZiporaError};
-use crate::memory::cache_layout::{
-    CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint,
-};
+use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint};
 use crate::memory::simd_ops::{fast_fill, fast_prefetch};
 use std::alloc::{Layout, alloc, dealloc};
 use std::ptr::NonNull;
@@ -219,6 +217,7 @@ pub struct LockFreePoolStats {
 impl LockFreePoolStats {
     /// Get current allocation rate (allocs per second)
     pub fn allocation_rate(&self) -> f64 {
+        // ORDERING: Relaxed is sufficient for diagnostic allocation counters.
         let total_allocs =
             self.fast_allocs.load(Ordering::Relaxed) + self.skip_allocs.load(Ordering::Relaxed);
         // Simplified calculation - in practice would track time
@@ -227,7 +226,9 @@ impl LockFreePoolStats {
 
     /// Get CAS contention ratio (failures / total operations)
     pub fn contention_ratio(&self) -> f64 {
+        // ORDERING: Relaxed is sufficient for diagnostic CAS contention counters.
         let failures = self.cas_failures.load(Ordering::Relaxed);
+        // ORDERING: Relaxed is sufficient for diagnostic CAS contention counters.
         let successes = self.cas_successes.load(Ordering::Relaxed);
         let total = failures + successes;
         if total == 0 {
@@ -606,6 +607,9 @@ impl LockFreeMemoryPool {
             // the block header, which user code can never reach, so this load
             // only ever overlaps a pusher's atomic store. If it was stale the
             // generation tag makes the CAS below fail and the value is dropped.
+            // ORDERING: The Acquire load of `bin.head` above synchronizes-with the pusher's
+            // AcqRel CAS in `deallocate_to_fast_bin`, which happens-after the pusher's
+            // `link_slot(offset).store(current_offset, Relaxed)`, establishing happens-before.
             let next_offset = self.link_slot(current_offset)?.load(Ordering::Relaxed);
 
             // ABA-SAFE: Pack next offset with INCREMENTED generation counter
@@ -625,7 +629,9 @@ impl LockFreeMemoryPool {
                     bin.count.fetch_sub(1, Ordering::Release);
 
                     if let Some(stats) = &self.stats {
+                        // ORDERING: Relaxed is sufficient for diagnostic allocation counters.
                         stats.fast_allocs.fetch_add(1, Ordering::Relaxed);
+                        // ORDERING: Relaxed is sufficient for diagnostic CAS counters.
                         stats.cas_successes.fetch_add(1, Ordering::Relaxed);
                     }
 
@@ -633,6 +639,7 @@ impl LockFreeMemoryPool {
                 }
                 Err(_) => {
                     if let Some(stats) = &self.stats {
+                        // ORDERING: Relaxed is sufficient for diagnostic CAS failure counters.
                         stats.cas_failures.fetch_add(1, Ordering::Relaxed);
                     }
 
@@ -700,22 +707,31 @@ impl LockFreeMemoryPool {
 
             // Link to the current head through the block header (offset only;
             // the generation lives in the bin head).
-            self.link_slot(offset)?.store(current_offset, Ordering::Relaxed);
+            // ORDERING: Relaxed is sufficient because this store is sequenced-before the
+            // AcqRel CAS on `bin.head` below, which releases the link write to Acquire poppers.
+            self.link_slot(offset)?
+                .store(current_offset, Ordering::Relaxed);
 
             // ABA-SAFE: Pack new offset with INCREMENTED generation counter
             let new_packed = Self::pack_head(offset, current_gen.wrapping_add(1));
 
+            // ORDERING: AcqRel on success releases the caller's writes to the block and the
+            // `link_slot` store above; Relaxed on failure is sufficient as the loop reloads
+            // `bin.head` with Acquire on the next iteration.
             match bin.head.compare_exchange(
                 packed,     // Compare full packed value (offset + generation)
                 new_packed, // New packed value with incremented generation
-                Ordering::Release,
+                Ordering::AcqRel,
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
+                    // ORDERING: Relaxed is sufficient for diagnostic bin count increments.
                     bin.count.fetch_add(1, Ordering::Relaxed);
 
                     if let Some(stats) = &self.stats {
+                        // ORDERING: Relaxed is sufficient for diagnostic deallocation counters.
                         stats.fast_deallocs.fetch_add(1, Ordering::Relaxed);
+                        // ORDERING: Relaxed is sufficient for diagnostic CAS counters.
                         stats.cas_successes.fetch_add(1, Ordering::Relaxed);
                     }
 
@@ -723,6 +739,7 @@ impl LockFreeMemoryPool {
                 }
                 Err(_) => {
                     if let Some(stats) = &self.stats {
+                        // ORDERING: Relaxed is sufficient for diagnostic CAS failure counters.
                         stats.cas_failures.fetch_add(1, Ordering::Relaxed);
                     }
 
@@ -747,6 +764,7 @@ impl LockFreeMemoryPool {
         };
 
         if let Some(stats) = &self.stats {
+            // ORDERING: Relaxed is sufficient for diagnostic large-allocation counters.
             stats.skip_allocs.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -774,6 +792,7 @@ impl LockFreeMemoryPool {
         drop(free_list);
 
         if let Some(stats) = &self.stats {
+            // ORDERING: Relaxed is sufficient for diagnostic large-deallocation counters.
             stats.skip_deallocs.fetch_add(1, Ordering::Relaxed);
         }
         Ok(())
@@ -788,6 +807,8 @@ impl LockFreeMemoryPool {
 
         // Always allocate from backing memory to ensure consistent pointer validation
         // External cache allocations would cause pointer validation failures in deallocate
+        // ORDERING: Relaxed is sufficient for the bump cursor because each carved range
+        // `[current, next)` is disjoint and never overlaps another thread's range.
         let mut current = self.next_offset.load(Ordering::Relaxed);
         loop {
             if current as usize + carve > self.config.memory_size {
@@ -797,6 +818,7 @@ impl LockFreeMemoryPool {
                 Some(val) => val,
                 None => return Err(ZiporaError::out_of_memory(aligned_size)),
             };
+            // ORDERING: Relaxed is sufficient for disjoint monotonic bump allocation.
             match self.next_offset.compare_exchange_weak(
                 current,
                 next,
@@ -816,6 +838,7 @@ impl LockFreeMemoryPool {
             && self.config.enable_cache_alignment
         {
             if let Some(stats) = &self.stats {
+                // ORDERING: Relaxed is sufficient for diagnostic cache-aligned counters.
                 stats.cache_aligned_allocs.fetch_add(1, Ordering::Relaxed);
             }
 
@@ -835,7 +858,10 @@ impl LockFreeMemoryPool {
         }
 
         if let Some(stats) = &self.stats {
-            stats.memory_usage.fetch_add(carve as u64, Ordering::Relaxed);
+            // ORDERING: Relaxed is sufficient for diagnostic memory usage counters.
+            stats
+                .memory_usage
+                .fetch_add(carve as u64, Ordering::Relaxed);
         }
 
         Ok(ptr)
@@ -870,7 +896,7 @@ impl LockFreeMemoryPool {
         // fits in the arena fits in a u32.
         let width = u32::try_from(width)
             .map_err(|_| ZiporaError::invalid_data("Block width exceeds 32 bits"))?;
-        self.link_slot(offset)?.store(width, Ordering::Relaxed);
+        self.link_slot(offset)?.store(width, Ordering::Release);
         Ok(())
     }
 
@@ -883,7 +909,7 @@ impl LockFreeMemoryPool {
     /// did not come from this pool's large path, so the pool refuses it rather
     /// than filing a bogus region on the free list.
     fn load_block_width(&self, offset: u32, least: usize) -> Result<usize> {
-        let width = self.link_slot(offset)?.load(Ordering::Relaxed) as usize;
+        let width = self.link_slot(offset)?.load(Ordering::Acquire) as usize;
         if width < least || offset as usize + width > self.config.memory_size {
             return Err(ZiporaError::invalid_data(
                 "Block header does not describe a large block of at least the \
@@ -1054,7 +1080,6 @@ mod tests {
             pool.backoff(retry);
         }
     }
-
 
     /// C3.10. `allocate_from_skip_list` takes a best-fit free block of
     /// `best_size >= aligned_size` and hands it over *whole*, while
@@ -1335,8 +1360,7 @@ mod tests {
         const PER_THREAD: usize = 64;
         const MAX_SIZE: usize = 256;
         // Worst case: nothing is ever reused, across both rounds.
-        const ARENA: usize =
-            2 * THREADS * PER_THREAD * (MAX_SIZE + BLOCK_HEADER) + ALIGN_SIZE;
+        const ARENA: usize = 2 * THREADS * PER_THREAD * (MAX_SIZE + BLOCK_HEADER) + ALIGN_SIZE;
 
         let pool = Arc::new(
             LockFreeMemoryPool::new(LockFreePoolConfig {
@@ -1370,16 +1394,12 @@ mod tests {
                         // see (`make tsan_pool`).
                         // SAFETY: the pool just handed this block over and
                         // nothing else holds it; `size` bytes are ours.
-                        unsafe {
-                            std::ptr::write_bytes(ptr.as_ptr(), thread_id as u8, size)
-                        };
+                        unsafe { std::ptr::write_bytes(ptr.as_ptr(), thread_id as u8, size) };
                         blocks.push((ptr.as_ptr() as usize, size));
                     }
                     for &(addr, size) in &blocks {
                         // SAFETY: as above -- still ours, still `size` wide.
-                        let ours = unsafe {
-                            std::slice::from_raw_parts(addr as *const u8, size)
-                        };
+                        let ours = unsafe { std::slice::from_raw_parts(addr as *const u8, size) };
                         assert!(
                             ours.iter().all(|&byte| byte == thread_id as u8),
                             "round {round}, thread {thread_id}: block at \

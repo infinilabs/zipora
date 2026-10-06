@@ -108,7 +108,9 @@ impl ConcurrentLruMapStatistics {
                 .iter()
                 .fold((0u64, 0u64), |(hits, gets), stats| {
                     (
+                        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
                         hits + stats.hit_count.load(Ordering::Relaxed),
+                        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
                         gets + stats.get_count.load(Ordering::Relaxed),
                     )
                 });
@@ -124,6 +126,7 @@ impl ConcurrentLruMapStatistics {
     pub fn total_entries(&self) -> usize {
         self.shard_stats
             .iter()
+            // ORDERING: Standalone telemetry snapshot across independent shards.
             .map(|stats| stats.entry_count.load(Ordering::Relaxed))
             .sum()
     }
@@ -132,6 +135,7 @@ impl ConcurrentLruMapStatistics {
     pub fn total_memory_usage(&self) -> usize {
         self.shard_stats
             .iter()
+            // ORDERING: Standalone telemetry snapshot across independent shards.
             .map(|stats| stats.memory_usage.load(Ordering::Relaxed))
             .sum()
     }
@@ -141,6 +145,7 @@ impl ConcurrentLruMapStatistics {
         self.shard_stats
             .iter()
             .enumerate()
+            // ORDERING: Standalone telemetry snapshot across independent shards.
             .min_by_key(|(_, stats)| stats.entry_count.load(Ordering::Relaxed))
             .map(|(idx, _)| idx)
             .unwrap_or(0)
@@ -151,6 +156,7 @@ impl ConcurrentLruMapStatistics {
         self.shard_stats
             .iter()
             .enumerate()
+            // ORDERING: Standalone telemetry snapshot across independent shards.
             .max_by_key(|(_, stats)| stats.entry_count.load(Ordering::Relaxed))
             .map(|(idx, _)| idx)
             .unwrap_or(0)
@@ -165,6 +171,7 @@ impl ConcurrentLruMapStatistics {
         let loads: Vec<usize> = self
             .shard_stats
             .iter()
+            // ORDERING: Standalone telemetry snapshot across independent shards.
             .map(|stats| stats.entry_count.load(Ordering::Relaxed))
             .collect();
 

@@ -140,6 +140,8 @@ impl SharedPool {
 
     #[inline(always)]
     fn load_relaxed(&self, pos: usize) -> u32 {
+        // ORDERING: Relaxed is used only for uncontested newly-allocated/thread-local slots or
+        // freelist next-slot links synchronized by the enclosing Treiber head AcqRel/Acquire CAS.
         self.data[pos].load(Ordering::Relaxed)
     }
 
@@ -150,6 +152,8 @@ impl SharedPool {
 
     #[inline(always)]
     fn store_relaxed(&self, pos: usize, val: u32) {
+        // ORDERING: Relaxed is used only on newly-allocated uncontested slots prior to the
+        // parent's AcqRel child-pointer CAS (or freelist head AcqRel CAS) that publishes them.
         self.data[pos].store(val, Ordering::Relaxed);
     }
 
@@ -174,6 +178,7 @@ impl SharedPool {
     /// Atomically bump-allocate `slots` contiguous positions.
     fn bump_alloc(&self, slots: usize) -> u32 {
         loop {
+            // ORDERING: Relaxed is sufficient for reading the candidate CAS operand `old_len`.
             let old_len = self.len.load(Ordering::Relaxed);
             let new_len = old_len + slots;
             assert!(
@@ -183,6 +188,8 @@ impl SharedPool {
                 slots,
                 self.data.len()
             );
+            // ORDERING: AcqRel on success publishes the new bump watermark; Relaxed on failure
+            // is sufficient because the loop retries immediately.
             if self
                 .len
                 .compare_exchange_weak(old_len, new_len, Ordering::AcqRel, Ordering::Relaxed)
@@ -195,9 +202,12 @@ impl SharedPool {
     }
 
     /// Read node content as MetaInfo.
+    ///
+    /// Acquire ordering: pairs with the release/AcqRel CAS that published the node
+    /// or updated its flags (`IS_FINAL`, `LOCK`, `LAZY_FREE`).
     #[inline(always)]
     fn load_meta(&self, pos: u32) -> MetaInfo {
-        u32_to_meta(self.load_relaxed(pos as usize))
+        u32_to_meta(self.load_acquire(pos as usize))
     }
 
     /// Read a child pointer at pos + offset.
@@ -213,9 +223,12 @@ impl SharedPool {
     }
 
     /// Read 4 bytes at pos + offset as [u8; 4].
+    ///
+    /// Acquire ordering: pairs with the parent's AcqRel child-pointer CAS that
+    /// published the node containing these label bytes.
     #[inline(always)]
     fn load_bytes(&self, pos: u32, offset: usize) -> [u8; 4] {
-        let bits = self.load_relaxed(pos as usize + offset);
+        let bits = self.load_acquire(pos as usize + offset);
         bits.to_ne_bytes()
     }
 
@@ -293,15 +306,20 @@ impl LockFreeFreelist {
         }
         let bin = &self.bins[slots - 1];
         loop {
+            // ORDERING: Relaxed is sufficient for the initial Treiber head read; the
+            // AcqRel CAS below validates `head` and publishes `store_relaxed(slot, head_slot)`.
             let head = bin.load(Ordering::Relaxed);
             let head_slot = tagged_slot(head);
             pool.store_relaxed(slot as usize, head_slot);
             let new_gen = tagged_gen(head).wrapping_add(1);
             let new_head = tagged_pack(new_gen, slot);
+            // ORDERING: AcqRel on success releases the `store_relaxed` next-slot write to
+            // subsequent Acquire poppers; Relaxed on failure is sufficient as the loop retries.
             if bin
                 .compare_exchange_weak(head, new_head, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
             {
+                // ORDERING: Relaxed is sufficient for diagnostic fragmentation byte accounting.
                 self.frag_size
                     .fetch_add(slots * ALIGN_SIZE, Ordering::Relaxed);
                 break;
@@ -320,13 +338,18 @@ impl LockFreeFreelist {
             if head_slot == FREE_LIST_NIL {
                 return None;
             }
+            //The Acquire load of `head` above synchronizes-with the AcqRel CAS in `push`,
+            // establishing happens-before for the `store_relaxed(head_slot, next_slot)` write.
             let next_slot = pool.load_relaxed(head_slot as usize);
             let new_gen = tagged_gen(head).wrapping_add(1);
             let new_head = tagged_pack(new_gen, next_slot);
+            // ORDERING: AcqRel on success claims `head_slot`; Relaxed on failure is sufficient
+            // because the loop reloads `bin` with Acquire on the next iteration.
             if bin
                 .compare_exchange_weak(head, new_head, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
             {
+                // ORDERING: Relaxed is sufficient for diagnostic fragmentation byte accounting.
                 self.frag_size
                     .fetch_sub(slots * ALIGN_SIZE, Ordering::Relaxed);
                 return Some(head_slot);
@@ -452,7 +475,7 @@ impl<'a> ConcurrentNodeView<'a> {
         if t <= 6 {
             t as usize
         } else {
-            let big: BigCount = bytemuck::cast(self.pool.load_relaxed(self.curr as usize));
+            let big: BigCount = bytemuck::cast(self.pool.load_acquire(self.curr as usize));
             big.n_children as usize
         }
     }
@@ -813,8 +836,7 @@ impl ConcurrentCsppTrie {
         }
 
         // Mark pool length
-        pool.len
-            .store(root_slots + val_words, Ordering::Release);
+        pool.len.store(root_slots + val_words, Ordering::Release);
 
         Self {
             inner: std::sync::Arc::new(SharedInner {
@@ -834,6 +856,7 @@ impl ConcurrentCsppTrie {
     /// Number of inserted keys.
     #[inline]
     pub fn num_words(&self) -> usize {
+        // ORDERING: Relaxed is sufficient for diagnostic word count reads.
         self.n_words.load(Ordering::Relaxed)
     }
 
@@ -846,6 +869,7 @@ impl ConcurrentCsppTrie {
     /// Total fragmented bytes in freelists.
     #[inline]
     pub fn frag_size(&self) -> usize {
+        // ORDERING: Relaxed is sufficient for diagnostic fragmentation byte reads.
         self.inner.freelist.frag_size.load(Ordering::Relaxed)
     }
 
@@ -856,6 +880,7 @@ impl ConcurrentCsppTrie {
     /// runs. Bounded above by the total number of node replacements.
     #[inline]
     pub fn pending_reclaims(&self) -> usize {
+        // ORDERING: Relaxed is sufficient for diagnostic pending reclaim count reads.
         self.inner.pending_reclaims.load(Ordering::Relaxed)
     }
 
@@ -1104,7 +1129,9 @@ impl ConcurrentCsppTrie {
         if tail != 0 {
             let mut bytes = [0u8; 4];
             // SAFETY: reads exactly the final `tail` bytes of `val`.
-            unsafe { std::ptr::copy_nonoverlapping(src.add(size - tail), bytes.as_mut_ptr(), tail) };
+            unsafe {
+                std::ptr::copy_nonoverlapping(src.add(size - tail), bytes.as_mut_ptr(), tail)
+            };
             self.inner
                 .pool
                 .store_release(word_offset + size / 4, u32::from_ne_bytes(bytes));
@@ -1196,11 +1223,14 @@ impl ConcurrentCsppTrie {
 
     fn free_node_deferred(&self, guard: &Guard, slot: u32, slots: usize) {
         let inner = std::sync::Arc::clone(&self.inner);
+        // ORDERING: Relaxed is sufficient for diagnostic pending reclaim counter increments.
         self.inner.pending_reclaims.fetch_add(1, Ordering::Relaxed);
         // SAFETY: Arc clone keeps pool/freelist alive until the deferred fn runs.
         unsafe {
             guard.defer_unchecked(move || {
                 inner.freelist.push(&inner.pool, slot, slots);
+                // ORDERING: Relaxed is sufficient for diagnostic pending reclaim counter decrements;
+                // epoch reclamation and freelist AcqRel CAS provide memory synchronization.
                 inner.pending_reclaims.fetch_sub(1, Ordering::Relaxed);
             });
         }
@@ -1435,7 +1465,7 @@ impl ConcurrentCsppTrie {
         let zpath_len = meta.n_zpath_len as usize;
         let is_final = meta.flags & FLAG_IS_FINAL != 0;
         let old_n = {
-            let big: BigCount = bytemuck::cast(self.inner.pool.load_relaxed(curr as usize));
+            let big: BigCount = bytemuck::cast(self.inner.pool.load_acquire(curr as usize));
             big.n_children as usize
         };
 
@@ -1541,7 +1571,7 @@ impl ConcurrentCsppTrie {
         let old_n: usize = if cnt_type <= 6 {
             cnt_type as usize
         } else {
-            let big: BigCount = bytemuck::cast(self.inner.pool.load_relaxed(curr as usize));
+            let big: BigCount = bytemuck::cast(self.inner.pool.load_acquire(curr as usize));
             big.n_children as usize
         };
 
@@ -1627,8 +1657,7 @@ impl ConcurrentCsppTrie {
         let new_size = (new_skip + new_n) * ALIGN_SIZE + trailing_len;
         let node = self.alloc_node(new_size);
         // Sanitize transient LOCK/LAZY_FREE bits read from the live node.
-        let new_flags =
-            (meta.flags & !(FLAG_CNT_MASK | FLAG_LOCK | FLAG_LAZY_FREE)) | new_cnt_type;
+        let new_flags = (meta.flags & !(FLAG_CNT_MASK | FLAG_LOCK | FLAG_LAZY_FREE)) | new_cnt_type;
 
         match new_cnt_type {
             1 | 2 => {
@@ -1906,8 +1935,8 @@ impl ConcurrentCsppTrie {
             let v = self.inner.pool.load_acquire(old_slot as usize + i);
             self.inner.pool.store_relaxed(new_slot as usize + i, v);
         }
-        let w0 = self.inner.pool.load_relaxed(new_slot as usize)
-            & !(U32_FLAG_LOCK | U32_FLAG_LAZY_FREE);
+        let w0 =
+            self.inner.pool.load_relaxed(new_slot as usize) & !(U32_FLAG_LOCK | U32_FLAG_LAZY_FREE);
         self.inner.pool.store_relaxed(new_slot as usize, w0);
         new_slot
     }
@@ -2011,6 +2040,7 @@ impl ConcurrentCsppTrie {
                             self.free_single_node(new_parent);
                             continue 'retry;
                         }
+                        // ORDERING: Relaxed is sufficient for diagnostic word count increments.
                         self.n_words.fetch_add(1, Ordering::Relaxed);
                         self.update_max_word_len(key.len());
                         return (true, valpos);
@@ -2046,6 +2076,7 @@ impl ConcurrentCsppTrie {
                             self.free_single_node(prefix_node);
                             continue 'retry;
                         }
+                        // ORDERING: Relaxed is sufficient for diagnostic word count increments.
                         self.n_words.fetch_add(1, Ordering::Relaxed);
                         self.update_max_word_len(key.len());
                         return (true, valpos);
@@ -2090,6 +2121,7 @@ impl ConcurrentCsppTrie {
                             self.free_single_node(new_curr);
                             continue 'retry;
                         }
+                        // ORDERING: Relaxed is sufficient for diagnostic word count increments.
                         self.n_words.fetch_add(1, Ordering::Relaxed);
                         self.update_max_word_len(key.len());
                         return (true, vp);
@@ -2115,6 +2147,7 @@ impl ConcurrentCsppTrie {
                                 let new = old | U32_FLAG_IS_FINAL | U32_FLAG_SET_FINAL;
                                 if self.inner.pool.cas_weak(curr as usize, old, new).is_ok() {
                                     let vp = view.valpos();
+                                    // ORDERING: Relaxed is sufficient for diagnostic word count increments.
                                     self.n_words.fetch_add(1, Ordering::Relaxed);
                                     self.update_max_word_len(key.len());
                                     return (true, vp);
@@ -2155,6 +2188,7 @@ impl ConcurrentCsppTrie {
                             self.free_single_node(new_curr);
                             continue 'retry;
                         }
+                        // ORDERING: Relaxed is sufficient for diagnostic word count increments.
                         self.n_words.fetch_add(1, Ordering::Relaxed);
                         self.update_max_word_len(key.len());
                         return (true, vp);
@@ -2192,11 +2226,13 @@ impl ConcurrentCsppTrie {
                                         break;
                                     }
                                 }
+                                // ORDERING: Relaxed is sufficient for diagnostic word count increments.
                                 self.n_words.fetch_add(1, Ordering::Relaxed);
                                 self.update_max_word_len(key.len());
                                 return (true, valpos);
                             }
                             Err(_) => {
+                                // ORDERING: Relaxed is sufficient for contention diagnostics.
                                 self.race_stats
                                     .fast_node_cas_fail
                                     .fetch_add(1, Ordering::Relaxed);
@@ -2222,6 +2258,7 @@ impl ConcurrentCsppTrie {
                             self.free_single_node(new_curr);
                             continue 'retry;
                         }
+                        // ORDERING: Relaxed is sufficient for diagnostic word count increments.
                         self.n_words.fetch_add(1, Ordering::Relaxed);
                         self.update_max_word_len(key.len());
                         return (true, valpos);
@@ -2274,6 +2311,7 @@ impl ConcurrentCsppTrie {
 
         // Step 1: Lock parent
         if self.try_lock_node(parent).is_err() {
+            // ORDERING: Relaxed is sufficient for contention diagnostics.
             self.race_stats
                 .parent_lock_fail
                 .fetch_add(1, Ordering::Relaxed);
@@ -2286,6 +2324,7 @@ impl ConcurrentCsppTrie {
             Ok(orig) => orig,
             Err(()) => {
                 self.unlock_node(parent);
+                // ORDERING: Relaxed is sufficient for contention diagnostics.
                 self.race_stats
                     .lazy_free_fail
                     .fetch_add(1, Ordering::Relaxed);
@@ -2304,6 +2343,7 @@ impl ConcurrentCsppTrie {
             if self.inner.pool.load_acquire(curr as usize + curr_skip + i) != snap {
                 self.unmark_lazy_free(curr);
                 self.unlock_node(parent);
+                // ORDERING: Relaxed is sufficient for contention diagnostics.
                 self.race_stats
                     .backup_mismatch
                     .fetch_add(1, Ordering::Relaxed);
@@ -2353,6 +2393,7 @@ impl ConcurrentCsppTrie {
                 // CAS failed — undo lazy_free and unlock parent
                 self.unmark_lazy_free(curr);
                 self.unlock_node(parent);
+                // ORDERING: Relaxed is sufficient for contention diagnostics.
                 self.race_stats
                     .child_cas_fail
                     .fetch_add(1, Ordering::Relaxed);
@@ -2368,13 +2409,7 @@ impl ConcurrentCsppTrie {
         let skip = SKIP_SLOTS[cnt as usize] as usize;
         let zlen = meta.n_zpath_len as usize;
         let is_final = meta.flags & FLAG_IS_FINAL != 0;
-        (skip + n_children)
-            + zlen.div_ceil(4)
-            + if is_final {
-                self.node_val_slots()
-            } else {
-                0
-            }
+        (skip + n_children) + zlen.div_ceil(4) + if is_final { self.node_val_slots() } else { 0 }
     }
 
     /// Free a single unpublished node to thread-local freelist.
@@ -2439,8 +2474,10 @@ impl ConcurrentCsppTrie {
 
     #[inline]
     fn update_max_word_len(&self, len: usize) {
+        // ORDERING: Relaxed is sufficient for monotonic diagnostic max_word_len tracking.
         let mut cur = self.max_word_len.load(Ordering::Relaxed);
         while len > cur {
+            // ORDERING: Relaxed is sufficient for monotonic diagnostic max_word_len CAS.
             match self.max_word_len.compare_exchange_weak(
                 cur,
                 len,
@@ -2626,7 +2663,11 @@ mod tests {
             writers.push(thread::spawn(move || {
                 let mut i = 0u32;
                 while !stop.load(Ordering::Relaxed) {
-                    let val = if (i + w).is_multiple_of(2) { PATTERN_A } else { PATTERN_B };
+                    let val = if (i + w).is_multiple_of(2) {
+                        PATTERN_A
+                    } else {
+                        PATTERN_B
+                    };
                     trie.set_value(vp, val);
                     i = i.wrapping_add(1);
                 }
@@ -2743,7 +2784,9 @@ mod tests {
     fn shuffle_keys(keys: &mut [Vec<u8>], seed: u64) {
         let mut state = seed | 1;
         for i in (1..keys.len()).rev() {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let j = (state >> 33) as usize % (i + 1);
             keys.swap(i, j);
         }

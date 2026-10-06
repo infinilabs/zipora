@@ -168,37 +168,47 @@ impl LruMapStatistics {
 
     /// Get hit ratio as percentage
     pub fn hit_ratio(&self) -> f64 {
+        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
         let hits = self.hit_count.load(Ordering::Relaxed) as f64;
+        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
         let total = self.get_count.load(Ordering::Relaxed) as f64;
         if total > 0.0 { hits / total } else { 0.0 }
     }
 
     /// Get average probe distance
     pub fn avg_probe_distance(&self) -> f64 {
+        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
         let gets = self.get_count.load(Ordering::Relaxed) as f64;
+        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
         let max_probe = self.max_probe_distance.load(Ordering::Relaxed) as f64;
         if gets > 0.0 { max_probe / gets } else { 0.0 }
     }
 
     /// Record a cache hit
     pub fn record_hit(&self) {
+        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
         self.get_count.fetch_add(1, Ordering::Relaxed);
+        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
         self.hit_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a cache miss
     pub fn record_miss(&self) {
+        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
         self.get_count.fetch_add(1, Ordering::Relaxed);
+        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
         self.miss_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a put operation
     pub fn record_put(&self) {
+        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
         self.put_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record an eviction
     pub fn record_eviction(&self) {
+        // ORDERING: Monotonic telemetry counter; no cross-thread data dependency.
         self.eviction_count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -206,9 +216,11 @@ impl LruMapStatistics {
     pub fn update_memory_usage(&self, delta: isize) {
         if delta > 0 {
             self.memory_usage
+                // ORDERING: Telemetry counter; no cross-thread data dependency.
                 .fetch_add(delta as usize, Ordering::Relaxed);
         } else {
             self.memory_usage
+                // ORDERING: Telemetry counter; no cross-thread data dependency.
                 .fetch_sub((-delta) as usize, Ordering::Relaxed);
         }
     }
@@ -279,8 +291,10 @@ impl<K, V> LruNode<K, V> {
 
     /// Update access statistics
     fn update_access(&self) {
+        // ORDERING: Mutated under the exclusive `nodes` write lock; telemetry only.
         self.access_count.fetch_add(1, Ordering::Relaxed);
         self.last_access
+            // ORDERING: Mutated under the exclusive `nodes` write lock; telemetry only.
             .store(Self::current_timestamp(), Ordering::Relaxed);
     }
 
@@ -292,9 +306,13 @@ impl<K, V> LruNode<K, V> {
     {
         self.key = K::default();
         self.value = V::default();
+        // ORDERING: Synchronized by `&mut self` under the exclusive `nodes` write lock.
         self.prev.store(INVALID_NODE, Ordering::Relaxed);
+        // ORDERING: Synchronized by `&mut self` under the exclusive `nodes` write lock.
         self.next.store(INVALID_NODE, Ordering::Relaxed);
+        // ORDERING: Synchronized by `&mut self` under the exclusive `nodes` write lock.
         self.access_count.store(0, Ordering::Relaxed);
+        // ORDERING: Synchronized by `&mut self` under the exclusive `nodes` write lock.
         self.last_access.store(0, Ordering::Relaxed);
         self.is_valid = false;
     }
@@ -324,59 +342,75 @@ impl LruList {
 
     /// Insert node at head (most recently used position)
     fn insert_head<K, V>(&self, nodes: &mut [LruNode<K, V>], node_idx: u32) {
+        // ORDERING: All LruList link mutations are serialized by the exclusive `nodes: &mut` write lock.
         let old_head = self.head.swap(node_idx, Ordering::Relaxed);
 
         nodes[node_idx as usize]
             .prev
+            // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
             .store(INVALID_NODE, Ordering::Relaxed);
         nodes[node_idx as usize]
             .next
+            // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
             .store(old_head, Ordering::Relaxed);
 
         if old_head != INVALID_NODE {
             nodes[old_head as usize]
                 .prev
+                // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
                 .store(node_idx, Ordering::Relaxed);
         } else {
             // First node, also set as tail
+            // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
             self.tail.store(node_idx, Ordering::Relaxed);
         }
 
+        // ORDERING: Serialized by the exclusive `nodes: &mut` write lock; lock-free readers only observe the scalar count.
         self.count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Remove node from anywhere in the list
     fn remove<K, V>(&self, nodes: &mut [LruNode<K, V>], node_idx: u32) {
+        // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
         let prev = nodes[node_idx as usize].prev.load(Ordering::Relaxed);
+        // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
         let next = nodes[node_idx as usize].next.load(Ordering::Relaxed);
 
         if prev != INVALID_NODE {
+            // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
             nodes[prev as usize].next.store(next, Ordering::Relaxed);
         } else {
             // Removing head
+            // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
             self.head.store(next, Ordering::Relaxed);
         }
 
         if next != INVALID_NODE {
+            // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
             nodes[next as usize].prev.store(prev, Ordering::Relaxed);
         } else {
             // Removing tail
+            // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
             self.tail.store(prev, Ordering::Relaxed);
         }
 
         nodes[node_idx as usize]
             .prev
+            // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
             .store(INVALID_NODE, Ordering::Relaxed);
         nodes[node_idx as usize]
             .next
+            // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
             .store(INVALID_NODE, Ordering::Relaxed);
 
+        // ORDERING: Serialized by the exclusive `nodes: &mut` write lock; lock-free readers only observe the scalar count.
         self.count.fetch_sub(1, Ordering::Relaxed);
     }
 
     /// Move node to head (mark as most recently used)
     fn move_to_head<K, V>(&self, nodes: &mut [LruNode<K, V>], node_idx: u32) {
         // If already at head, just update access info
+        // ORDERING: Serialized by the exclusive `nodes: &mut` write lock.
         if self.head.load(Ordering::Relaxed) == node_idx {
             nodes[node_idx as usize].update_access();
             return;
@@ -389,11 +423,13 @@ impl LruList {
 
     /// Get least recently used node index
     fn get_lru_node(&self) -> u32 {
+        // ORDERING: Called by `evict_lru` while holding the exclusive `nodes` write lock.
         self.tail.load(Ordering::Relaxed)
     }
 
     /// Get current count
     fn len(&self) -> usize {
+        // ORDERING: Standalone scalar length read; callers accessing nodes acquire the `nodes` lock.
         self.count.load(Ordering::Relaxed)
     }
 }
@@ -677,15 +713,18 @@ where
 
             nodes[node_idx as usize] = LruNode::new(key.clone(), value, hash);
             self.lru_list.insert_head(&mut nodes, node_idx);
+            if self.config.enable_statistics {
+                self.stats
+                    .entry_count
+                    // ORDERING: Serialized by the exclusive `nodes` write lock; stores exact post-insert count.
+                    .store(self.lru_list.len(), Ordering::Relaxed);
+            }
             drop(nodes);
             hash_map.insert(key, node_idx);
         }
 
         if self.config.enable_statistics {
             self.stats.record_put();
-            self.stats
-                .entry_count
-                .store(self.lru_list.len(), Ordering::Relaxed);
         }
 
         Ok(None)
@@ -717,6 +756,7 @@ where
         if self.config.enable_statistics {
             self.stats
                 .entry_count
+                // ORDERING: Serialized by the exclusive `nodes` write lock; stores exact post-remove count.
                 .store(self.lru_list.len(), Ordering::Relaxed);
         }
 
@@ -788,11 +828,15 @@ where
         }
 
         // Reset LRU list
+        // ORDERING: Serialized by the exclusive `nodes` write lock.
         self.lru_list.head.store(INVALID_NODE, Ordering::Relaxed);
+        // ORDERING: Serialized by the exclusive `nodes` write lock.
         self.lru_list.tail.store(INVALID_NODE, Ordering::Relaxed);
+        // ORDERING: Serialized by the exclusive `nodes` write lock.
         self.lru_list.count.store(0, Ordering::Relaxed);
 
         if self.config.enable_statistics {
+            // ORDERING: Serialized by the exclusive `nodes` write lock.
             self.stats.entry_count.store(0, Ordering::Relaxed);
         }
 
@@ -870,6 +914,12 @@ where
         // Remove from LRU list, reset node and return it to the free list
         self.lru_list.remove(&mut nodes, lru_node_idx);
         nodes[lru_node_idx as usize].reset();
+        if self.config.enable_statistics {
+            self.stats
+                .entry_count
+                // ORDERING: Serialized by the exclusive `nodes` write lock; stores exact post-eviction count.
+                .store(self.lru_list.len(), Ordering::Relaxed);
+        }
 
         drop(nodes);
         drop(hash_map);
@@ -888,9 +938,6 @@ where
 
         if self.config.enable_statistics {
             self.stats.record_eviction();
-            self.stats
-                .entry_count
-                .store(self.lru_list.len(), Ordering::Relaxed);
         }
 
         Ok(())
