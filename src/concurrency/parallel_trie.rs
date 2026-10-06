@@ -42,31 +42,55 @@ impl ParallelTrieBuilder {
         I: IntoIterator<Item = Vec<u8>>,
         I::IntoIter: Send,
     {
+        if self.chunk_size == 0 {
+            return Err(ZiporaError::invalid_parameter(
+                "ParallelTrieBuilder chunk_size cannot be zero",
+            ));
+        }
+        if self.max_workers == 0 {
+            return Err(ZiporaError::invalid_parameter(
+                "ParallelTrieBuilder max_workers cannot be zero",
+            ));
+        }
+
         let keys: Vec<Vec<u8>> = keys.into_iter().collect();
 
         if keys.is_empty() {
             return Ok(ParallelLoudsTrie::new());
         }
 
-        // Build trie in parallel chunks
+        // Build trie in parallel chunks bounded by max_workers
         let chunks: Vec<Vec<Vec<u8>>> = keys
             .chunks(self.chunk_size)
             .map(|chunk| chunk.to_vec())
             .collect();
 
-        let mut partial_tries = Vec::new();
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(self.max_workers));
+        let mut handles = Vec::with_capacity(chunks.len());
 
         for chunk in chunks {
-            let trie = tokio::task::spawn_blocking(move || -> Result<ZiporaTrie> {
-                let mut trie = ZiporaTrie::new();
-                for key in chunk {
-                    trie.insert(&key)?;
-                }
-                Ok(trie)
-            })
-            .await
-            .map_err(|e| ZiporaError::configuration(format!("parallel build failed: {}", e)))??;
+            let sem = Arc::clone(&semaphore);
+            handles.push(tokio::spawn(async move {
+                let _permit = sem.acquire_owned().await.map_err(|_| {
+                    ZiporaError::configuration("parallel trie builder semaphore closed")
+                })?;
+                tokio::task::spawn_blocking(move || -> Result<ZiporaTrie> {
+                    let mut trie = ZiporaTrie::new();
+                    for key in chunk {
+                        trie.insert(&key)?;
+                    }
+                    Ok(trie)
+                })
+                .await
+                .map_err(|e| ZiporaError::configuration(format!("parallel build failed: {}", e)))?
+            }));
+        }
 
+        let mut partial_tries = Vec::with_capacity(handles.len());
+        for handle in handles {
+            let trie = handle.await.map_err(|e| {
+                ZiporaError::configuration(format!("parallel build join failed: {}", e))
+            })??;
             partial_tries.push(trie);
         }
 
@@ -76,22 +100,18 @@ impl ParallelTrieBuilder {
 
     /// Merge multiple tries into a single trie
     async fn merge_tries(&self, tries: Vec<ZiporaTrie>) -> Result<ParallelLoudsTrie> {
-        if tries.is_empty() {
+        let mut iter = tries.into_iter();
+        let Some(first) = iter.next() else {
             return Ok(ParallelLoudsTrie::new());
-        }
+        };
+        let Some(second) = iter.next() else {
+            return Ok(ParallelLoudsTrie::from_trie(first));
+        };
 
-        if tries.len() == 1 {
-            // SAFETY: len() == 1 check above guarantees exactly one element
-            return Ok(ParallelLoudsTrie::from_trie(
-                tries.into_iter().next().expect("non-empty tries"),
-            ));
-        }
+        let mut all_keys = self.extract_keys_from_trie(&first).await?;
+        all_keys.extend(self.extract_keys_from_trie(&second).await?);
 
-        // For now, use a simple approach: extract all keys and rebuild
-        // In a production implementation, this would be optimized
-        let mut all_keys = Vec::new();
-
-        for trie in tries {
+        for trie in iter {
             let keys = self.extract_keys_from_trie(&trie).await?;
             all_keys.extend(keys);
         }
@@ -142,11 +162,12 @@ impl ParallelLoudsTrie {
             .map(|n| n.get())
             .unwrap_or(1);
         let empty_trie = ZiporaTrie::new();
+        let shared_snapshot = Arc::new(empty_trie.clone());
         let mut read_replicas = Vec::with_capacity(replica_count);
 
         // Create initial empty replicas
         for _ in 0..replica_count {
-            read_replicas.push(Arc::new(empty_trie.clone()));
+            read_replicas.push(Arc::clone(&shared_snapshot));
         }
 
         Self {
@@ -161,11 +182,12 @@ impl ParallelLoudsTrie {
         let replica_count = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
+        let shared_snapshot = Arc::new(trie.clone());
         let mut read_replicas = Vec::with_capacity(replica_count);
 
-        // Create read replicas by cloning the main trie
+        // Create read replicas sharing the immutable snapshot
         for _ in 0..replica_count {
-            read_replicas.push(Arc::new(trie.clone()));
+            read_replicas.push(Arc::clone(&shared_snapshot));
         }
 
         Self {
@@ -175,15 +197,26 @@ impl ParallelLoudsTrie {
         }
     }
 
+    /// Update all read replicas from an already-locked primary trie so concurrent writers
+    /// cannot publish snapshots out of order.
+    async fn update_replicas_locked(&self, trie: &ZiporaTrie) {
+        let snapshot = Arc::new(trie.clone());
+        let mut replicas = self.read_replicas.lock().await;
+        replicas.clear();
+        for _ in 0..self.replica_count {
+            replicas.push(Arc::clone(&snapshot));
+        }
+    }
+
     /// Insert a key (requires write lock)
     pub async fn insert(&self, key: &[u8]) -> Result<StateId> {
         let mut trie = self.inner.lock().await;
         let result = trie.insert_and_get_node_id(key);
-        drop(trie);
 
-        // Refresh replicas after modification
+        // Refresh replicas while still holding the primary write lock so concurrent
+        // insertions cannot overwrite read_replicas with an older snapshot.
         if result.is_ok() {
-            self.refresh_replicas().await?;
+            self.update_replicas_locked(&trie).await;
         }
 
         result
@@ -211,19 +244,21 @@ impl ParallelLoudsTrie {
         // blocking pool so it cannot stall the async runtime's workers.
         let replicas = self.replica_snapshot().await;
         let replica_count = self.replica_count;
+        let key_len = keys.len();
         tokio::task::spawn_blocking(move || {
             let counter = std::sync::atomic::AtomicUsize::new(0);
             keys.par_iter()
                 .map(|key| {
-                    let replica_id = counter
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                        % replica_count;
+                    // ORDERING: Relaxed is sufficient for stateless round-robin replica selection;
+                    // the Arc<ZiporaTrie> snapshot itself was acquired via Mutex lock.
+                    let replica_id =
+                        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % replica_count;
                     replicas[replica_id].contains(key)
                 })
                 .collect()
         })
         .await
-        .expect("parallel_contains blocking task panicked")
+        .unwrap_or_else(|_| vec![false; key_len])
     }
 
     /// Parallel prefix search
@@ -238,22 +273,23 @@ impl ParallelLoudsTrie {
         // holding the replica lock.
         let replicas = self.replica_snapshot().await;
         let replica_count = self.replica_count;
+        let prefix_len = prefixes.len();
         tokio::task::spawn_blocking(move || {
             let counter = std::sync::atomic::AtomicUsize::new(0);
             prefixes
                 .par_iter()
                 .map(|prefix| {
-                    let replica_id = counter
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                        % replica_count;
+                    // ORDERING: Relaxed is sufficient for stateless round-robin replica selection;
+                    // the Arc<ZiporaTrie> snapshot itself was acquired via Mutex lock.
+                    let replica_id =
+                        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % replica_count;
 
-                    // Collect results from iterator (simplified)
                     replicas[replica_id].iter_prefix(prefix).collect()
                 })
                 .collect()
         })
         .await
-        .expect("parallel_prefix_search blocking task panicked")
+        .unwrap_or_else(|_| (0..prefix_len).map(|_| Vec::new()).collect())
     }
 
     /// Clone the current replica set (Arc clones) under a short-lived lock
@@ -265,22 +301,15 @@ impl ParallelLoudsTrie {
     fn select_replica(&self) -> usize {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        // ORDERING: Relaxed is sufficient for round-robin replica index selection;
+        // subsequent replica access synchronizes through the read_replicas Mutex.
         COUNTER.fetch_add(1, Ordering::Relaxed) % self.replica_count
     }
 
     /// Rebuild read replicas from the current state
     pub async fn refresh_replicas(&self) -> Result<()> {
         let trie = self.inner.lock().await;
-        let trie_clone = trie.clone();
-        drop(trie);
-
-        // Update all read replicas with the current state
-        let mut replicas = self.read_replicas.lock().await;
-        replicas.clear();
-        for _ in 0..self.replica_count {
-            replicas.push(Arc::new(trie_clone.clone()));
-        }
-
+        self.update_replicas_locked(&trie).await;
         Ok(())
     }
 
@@ -304,18 +333,17 @@ impl ParallelLoudsTrie {
         let keys: Vec<Vec<u8>> = keys.into_iter().collect();
         let mut results = Vec::with_capacity(keys.len());
 
-        // For bulk operations, we need to hold the write lock
+        // Hold the write lock across both primary updates and replica publication.
         let mut trie = self.inner.lock().await;
 
         for key in keys {
-            let state_id = trie.insert_and_get_node_id(&key)?;
-            results.push(state_id);
+            if let Err(err) = trie.insert_and_get_node_id(&key).map(|id| results.push(id)) {
+                self.update_replicas_locked(&trie).await;
+                return Err(err);
+            }
         }
 
-        drop(trie);
-
-        // Refresh replicas after bulk modifications
-        self.refresh_replicas().await?;
+        self.update_replicas_locked(&trie).await;
 
         Ok(results)
     }
@@ -330,20 +358,34 @@ impl ParallelLoudsTrie {
         // holding the replica lock.
         let replicas = self.replica_snapshot().await;
         let replica_count = self.replica_count;
+        let op_count = operations.len();
         tokio::task::spawn_blocking(move || {
             let counter = std::sync::atomic::AtomicUsize::new(0);
             operations
                 .par_iter()
                 .map(|op| {
-                    let replica_id = counter
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                        % replica_count;
-                    op(&replicas[replica_id])
+                    // ORDERING: Relaxed is sufficient for stateless round-robin replica selection;
+                    // the Arc<ZiporaTrie> snapshot itself was acquired via Mutex lock.
+                    let replica_id =
+                        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % replica_count;
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        op(&replicas[replica_id])
+                    })) {
+                        Ok(res) => res,
+                        Err(_) => Err(ZiporaError::system_error(
+                            "parallel_process operation panicked",
+                        )),
+                    }
                 })
                 .collect()
         })
         .await
-        .expect("parallel_process blocking task panicked")
+        .unwrap_or_else(|e| {
+            let msg = format!("parallel_process blocking task failed: {}", e);
+            (0..op_count)
+                .map(|_| Err(ZiporaError::system_error(msg.clone())))
+                .collect()
+        })
     }
 }
 
@@ -437,19 +479,17 @@ impl ParallelTrieOps {
 
     /// Merge multiple tries in parallel
     pub async fn merge_tries(tries: Vec<ParallelLoudsTrie>) -> Result<ParallelLoudsTrie> {
-        if tries.is_empty() {
+        let mut iter = tries.into_iter();
+        let Some(first) = iter.next() else {
             return Ok(ParallelLoudsTrie::new());
-        }
-
-        if tries.len() == 1 {
-            // SAFETY: len() == 1 check above guarantees exactly one element
-            return Ok(tries.into_iter().next().expect("non-empty tries"));
-        }
+        };
+        let Some(second) = iter.next() else {
+            return Ok(first);
+        };
 
         // Extract and merge all keys from all tries
         let mut all_keys = Vec::new();
-
-        for trie in tries {
+        for trie in [first, second].into_iter().chain(iter) {
             let trie_inner = trie.inner.lock().await;
             let keys: Vec<Vec<u8>> = trie_inner.iter_all().collect();
             all_keys.extend(keys);
@@ -673,5 +713,48 @@ mod tests {
         // Should have at least the keys from both tries (allowing for deduplication)
         assert!(merged_len > 0);
         assert!(merged_len <= len1 + len2);
+    }
+
+    #[tokio::test]
+    async fn test_c10_pt1_zero_chunk_size_or_workers_returns_err_instead_of_panic() {
+        let zero_chunk = ParallelTrieBuilder::new()
+            .chunk_size(0)
+            .build_louds_trie(vec![b"alpha".to_vec()])
+            .await;
+        assert!(
+            zero_chunk.is_err(),
+            "ParallelTrieBuilder with chunk_size == 0 must return Err instead of panicking"
+        );
+
+        let zero_workers = ParallelTrieBuilder::new()
+            .max_workers(0)
+            .build_louds_trie(vec![b"alpha".to_vec()])
+            .await;
+        assert!(
+            zero_workers.is_err(),
+            "ParallelTrieBuilder with max_workers == 0 must return Err"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_c10_pt3_parallel_process_catches_closure_panic_as_err() {
+        let trie = ParallelLoudsTrie::new();
+        trie.insert(b"hello").await.unwrap();
+
+        type OpFn = Box<dyn Fn(&ZiporaTrie) -> Result<usize> + Send + Sync>;
+        let ops: Vec<OpFn> = vec![
+            Box::new(|_t: &ZiporaTrie| -> Result<usize> {
+                panic!("intentional closure panic in parallel_process");
+            }),
+            Box::new(|t: &ZiporaTrie| -> Result<usize> { Ok(t.len()) }),
+        ];
+
+        let results = trie.parallel_process(ops).await;
+        assert_eq!(results.len(), 2);
+        assert!(
+            results[0].is_err(),
+            "panicking closure in parallel_process must return Err instead of panicking caller"
+        );
+        assert_eq!(*results[1].as_ref().unwrap(), 1);
     }
 }

@@ -118,6 +118,7 @@ pub struct FiberPool {
     semaphore: Arc<Semaphore>,
     queue_semaphore: Arc<Semaphore>,
     stats: Arc<FiberPoolStats>,
+    shutdown: std::sync::atomic::AtomicBool,
     _runtime: tokio::runtime::Handle,
 }
 
@@ -131,14 +132,14 @@ struct FiberPoolStats {
 }
 
 impl FiberPoolStats {
-    fn new() -> Self {
+    fn new(initial_workers: usize) -> Self {
         Self {
             total_spawned: AtomicU64::new(0),
             active_fibers: AtomicUsize::new(0),
             completed: AtomicU64::new(0),
             failed: AtomicU64::new(0),
             total_execution_time_us: AtomicU64::new(0),
-            active_workers: AtomicUsize::new(0),
+            active_workers: AtomicUsize::new(initial_workers),
         }
     }
 }
@@ -146,23 +147,49 @@ impl FiberPoolStats {
 impl FiberPool {
     /// Create a new fiber pool with the given configuration
     pub fn new(config: FiberPoolConfig) -> Result<Self> {
+        if config.max_fibers == 0 {
+            return Err(ZiporaError::invalid_parameter(
+                "FiberPool max_fibers cannot be zero",
+            ));
+        }
+        if config.initial_workers == 0 {
+            return Err(ZiporaError::invalid_parameter(
+                "FiberPool initial_workers cannot be zero",
+            ));
+        }
+        if config.initial_workers > config.max_workers {
+            return Err(ZiporaError::invalid_parameter(
+                "FiberPool initial_workers cannot exceed max_workers",
+            ));
+        }
+        let total_permits = config
+            .max_fibers
+            .checked_add(config.queue_capacity)
+            .ok_or_else(|| {
+                ZiporaError::invalid_parameter(
+                    "FiberPool max_fibers + queue_capacity overflows usize",
+                )
+            })?;
+        let max_permits = Semaphore::MAX_PERMITS.min(u32::MAX as usize);
+        if total_permits > max_permits {
+            return Err(ZiporaError::invalid_parameter(
+                "FiberPool max_fibers + queue_capacity exceeds maximum semaphore permits",
+            ));
+        }
+
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| ZiporaError::configuration("no tokio runtime found"))?;
 
         let semaphore = Arc::new(Semaphore::new(config.max_fibers));
-        let queue_semaphore = Arc::new(Semaphore::new(config.max_fibers + config.queue_capacity));
-        let stats = Arc::new(FiberPoolStats::new());
-
-        // Initialize with minimum number of workers
-        stats
-            .active_workers
-            .store(config.initial_workers, Ordering::Relaxed);
+        let queue_semaphore = Arc::new(Semaphore::new(total_permits));
+        let stats = Arc::new(FiberPoolStats::new(config.initial_workers));
 
         Ok(Self {
             config,
             semaphore,
             queue_semaphore,
             stats,
+            shutdown: std::sync::atomic::AtomicBool::new(false),
             _runtime: runtime,
         })
     }
@@ -179,22 +206,30 @@ impl FiberPool {
         F: Future<Output = Result<T>> + Send + 'static,
         T: Send + 'static,
     {
-        let id = self.stats.total_spawned.fetch_add(1, Ordering::Relaxed);
-        let semaphore = self.semaphore.clone();
-        let queue_semaphore = self.queue_semaphore.clone();
-        let stats = self.stats.clone();
+        if self.shutdown.load(Ordering::Acquire) {
+            return Err(ZiporaError::invalid_state("Fiber pool is shut down"));
+        }
 
-        // Enforce queue capacity limit before spawning
-        let permit = queue_semaphore
+        // Enforce queue capacity limit before spawning so `shutdown()` can wait on
+        // `queue_semaphore` for all spawned (running and queued) fibers to finish.
+        let queue_permit = self
+            .queue_semaphore
+            .clone()
             .try_acquire_owned()
             .map_err(|_| ZiporaError::invalid_state("Fiber pool queue capacity exceeded"))?;
 
+        // ORDERING: Relaxed is sufficient because total_spawned is a monotonic ID/telemetry
+        // counter; task synchronization is provided by `queue_semaphore` and `JoinHandle`.
+        let id = self.stats.total_spawned.fetch_add(1, Ordering::Relaxed);
+        let semaphore = self.semaphore.clone();
+        let stats = self.stats.clone();
+
         let handle = tokio::task::spawn(async move {
-            // Keep queue permit until the execution finishes
-            let _queue_permit = permit;
+            // Keep queue permit across the entire lifecycle of the task.
+            let _queue_permit = queue_permit;
 
             // Acquire running semaphore permit
-            let _permit = semaphore
+            let _run_permit = semaphore
                 .acquire()
                 .await
                 .map_err(|_| ZiporaError::configuration("semaphore acquire failed"))?;
@@ -209,14 +244,15 @@ impl FiberPool {
             }
             impl Drop for ActiveFiberGuard {
                 fn drop(&mut self) {
-                    self.stats.active_fibers.fetch_sub(1, Ordering::Relaxed);
+                    self.stats.active_fibers.fetch_sub(1, Ordering::AcqRel);
                     if !self.finished {
+                        // ORDERING: Relaxed is sufficient for cumulative failure telemetry.
                         self.stats.failed.fetch_add(1, Ordering::Relaxed);
                     }
                 }
             }
 
-            stats.active_fibers.fetch_add(1, Ordering::Relaxed);
+            stats.active_fibers.fetch_add(1, Ordering::AcqRel);
             let mut guard = ActiveFiberGuard {
                 stats: stats.clone(),
                 finished: false,
@@ -226,6 +262,7 @@ impl FiberPool {
             let result = future.await;
 
             let execution_time = start_time.elapsed().as_micros() as u64;
+            // ORDERING: Relaxed is sufficient for aggregate execution-time telemetry.
             stats
                 .total_execution_time_us
                 .fetch_add(execution_time, Ordering::Relaxed);
@@ -233,9 +270,11 @@ impl FiberPool {
 
             match &result {
                 Ok(_) => {
+                    // ORDERING: Relaxed is sufficient for cumulative completion telemetry.
                     stats.completed.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(_) => {
+                    // ORDERING: Relaxed is sufficient for cumulative failure telemetry.
                     stats.failed.fetch_add(1, Ordering::Relaxed);
                 }
             }
@@ -248,18 +287,23 @@ impl FiberPool {
 
     /// Get current pool statistics
     pub fn stats(&self) -> FiberStats {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry snapshots.
         let total_spawned = self.stats.total_spawned.load(Ordering::Relaxed);
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry snapshots.
         let completed = self.stats.completed.load(Ordering::Relaxed);
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry snapshots.
         let total_time = self.stats.total_execution_time_us.load(Ordering::Relaxed);
 
         let avg_execution_time_us = total_time.checked_div(completed).unwrap_or(0);
 
-        let active_fibers = self.stats.active_fibers.load(Ordering::Relaxed);
-        
+        let active_fibers = self.stats.active_fibers.load(Ordering::Acquire);
+
         let total_queue_slots = self.config.max_fibers + self.config.queue_capacity;
         let available_permits = self.queue_semaphore.available_permits();
         let acquired = total_queue_slots.saturating_sub(available_permits);
-        let queued = acquired.saturating_sub(active_fibers);
+        let queued = acquired
+            .saturating_sub(active_fibers)
+            .min(self.config.queue_capacity);
 
         let queue_utilization = if self.config.queue_capacity > 0 {
             queued as f64 / self.config.queue_capacity as f64
@@ -271,19 +315,22 @@ impl FiberPool {
             total_spawned,
             active_fibers,
             completed,
+            // ORDERING: Relaxed is sufficient for point-in-time telemetry snapshots.
             failed: self.stats.failed.load(Ordering::Relaxed),
             avg_execution_time_us,
+            // ORDERING: Relaxed is sufficient for point-in-time telemetry snapshots.
             active_workers: self.stats.active_workers.load(Ordering::Relaxed),
             queue_utilization,
         }
     }
 
-    /// Wait for all active fibers to complete
+    /// Wait for all spawned (active and queued) fibers to complete
     pub async fn shutdown(&self) -> Result<()> {
-        // Wait for all permits to be available (no active fibers)
-        let semaphore = self.semaphore.clone();
-        let _permits = semaphore
-            .acquire_many(self.config.max_fibers as u32)
+        self.shutdown.store(true, Ordering::Release);
+        let total_permits = (self.config.max_fibers + self.config.queue_capacity) as u32;
+        let _permits = self
+            .queue_semaphore
+            .acquire_many(total_permits)
             .await
             .map_err(|_| ZiporaError::configuration("shutdown acquire failed"))?;
 
@@ -292,7 +339,7 @@ impl FiberPool {
 
     /// Get the current load factor (0.0 to 1.0)
     pub fn load_factor(&self) -> f64 {
-        let active = self.stats.active_fibers.load(Ordering::Relaxed);
+        let active = self.stats.active_fibers.load(Ordering::Acquire);
         active as f64 / self.config.max_fibers as f64
     }
 
@@ -439,7 +486,8 @@ mod tests {
                 pool.spawn(async move {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     Ok(i)
-                }).unwrap()
+                })
+                .unwrap()
             })
             .collect();
 
@@ -465,17 +513,19 @@ mod tests {
         let pool = FiberPool::new(config).unwrap();
 
         // Spawn 1st task to block the only running slot
-        let _h1 = pool.spawn(async {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            Ok(())
-        }).unwrap();
+        let _h1 = pool
+            .spawn(async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(())
+            })
+            .unwrap();
 
         // Yield to allow task to start and acquire the run permit
         tokio::task::yield_now().await;
 
         // Spawn 2nd and 3rd tasks to fill the queue capacity (queue_capacity = 2)
         let _h2 = pool.spawn(async { Ok(()) }).unwrap();
-        
+
         let stats_half = pool.stats();
         assert_eq!(stats_half.active_fibers, 1);
         // queue_utilization should be 0.5 (1 task queued out of 2)
@@ -496,7 +546,7 @@ mod tests {
 
         // Wait for the running task to complete so permits are released
         let _ = _h1.await;
-        
+
         // Wait for queued tasks to complete
         let _ = _h2.await;
         let _ = _h3.await;
@@ -505,5 +555,69 @@ mod tests {
         let result_again = pool.spawn(async { Ok(100) });
         assert!(result_again.is_ok());
         assert_eq!(result_again.unwrap().await.unwrap(), 100);
+    }
+
+    #[tokio::test]
+    async fn test_c10_fp1_shutdown_waits_for_spawned_and_queued_fibers() {
+        let config = FiberPoolConfig {
+            max_fibers: 1,
+            queue_capacity: 4,
+            initial_workers: 1,
+            max_workers: 1,
+            idle_timeout: Duration::from_secs(60),
+        };
+        let pool = FiberPool::new(config).unwrap();
+        let done = Arc::new(AtomicUsize::new(0));
+
+        for _ in 0..3 {
+            let done = Arc::clone(&done);
+            let _ = pool
+                .spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    done.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+                .unwrap();
+        }
+
+        // Immediately shut down without yielding first: shutdown() must wait for both
+        // active and queued fibers to complete before returning.
+        pool.shutdown().await.unwrap();
+        assert_eq!(
+            done.load(Ordering::SeqCst),
+            3,
+            "FiberPool::shutdown() returned before all spawned/queued fibers completed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_c10_fp2_invalid_config_returns_err_instead_of_panic_or_nan() {
+        let zero_fibers = FiberPoolConfig {
+            max_fibers: 0,
+            ..FiberPoolConfig::default()
+        };
+        assert!(
+            FiberPool::new(zero_fibers).is_err(),
+            "FiberPool::new with max_fibers == 0 must return Err"
+        );
+
+        let zero_workers = FiberPoolConfig {
+            initial_workers: 0,
+            ..FiberPoolConfig::default()
+        };
+        assert!(
+            FiberPool::new(zero_workers).is_err(),
+            "FiberPool::new with initial_workers == 0 must return Err"
+        );
+
+        let overflow_queue = FiberPoolConfig {
+            max_fibers: 16,
+            queue_capacity: usize::MAX,
+            ..FiberPoolConfig::default()
+        };
+        assert!(
+            FiberPool::new(overflow_queue).is_err(),
+            "FiberPool::new with overflowing max_fibers + queue_capacity must return Err"
+        );
     }
 }

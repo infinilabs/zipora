@@ -48,7 +48,15 @@ impl FiberId {
     pub fn new() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
+        // ORDERING: Relaxed is sufficient because COUNTER only generates unique monotonic IDs
+        // and does not synchronize any shared state across threads.
         Self(COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Return the raw numeric identifier.
+    #[inline]
+    pub fn as_u64(self) -> u64 {
+        self.0
     }
 }
 

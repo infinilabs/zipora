@@ -183,6 +183,7 @@ where
     /// Returns Some(batch) if a batch is ready to be processed
     pub async fn add(&self, item: T) -> Result<Option<Vec<T>>> {
         let mut buffer = self.buffer.lock().await;
+        let was_empty = buffer.is_empty();
         buffer.push_back(item);
 
         if buffer.len() >= self.max_batch_size {
@@ -190,6 +191,11 @@ where
             *self.last_flush.lock().await = Instant::now();
             Ok(Some(batch))
         } else {
+            if was_empty {
+                // Start the batch timeout window from the arrival of the first item in a batch
+                // rather than the previous flush timestamp across an idle period.
+                *self.last_flush.lock().await = Instant::now();
+            }
             Ok(None)
         }
     }
@@ -197,17 +203,15 @@ where
     /// Check if a timeout-based flush should occur
     /// Returns Some(batch) if items should be flushed due to timeout
     pub async fn check_timeout(&self) -> Result<Option<Vec<T>>> {
-        let buffer = self.buffer.lock().await;
-        let last_flush = *self.last_flush.lock().await;
-
-        if !buffer.is_empty() && last_flush.elapsed() >= self.batch_timeout {
-            drop(buffer); // Release lock before acquiring again
-            let mut buffer = self.buffer.lock().await;
-            if !buffer.is_empty() {
-                let batch = buffer.drain(..).collect();
-                *self.last_flush.lock().await = Instant::now();
-                return Ok(Some(batch));
-            }
+        let mut buffer = self.buffer.lock().await;
+        if buffer.is_empty() {
+            return Ok(None);
+        }
+        let mut last_flush = self.last_flush.lock().await;
+        if last_flush.elapsed() >= self.batch_timeout {
+            let batch = buffer.drain(..).collect();
+            *last_flush = Instant::now();
+            return Ok(Some(batch));
         }
 
         Ok(None)
@@ -249,7 +253,8 @@ where
         };
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(collector.batch_timeout / 4);
+            let check_period = (collector.batch_timeout / 4).max(Duration::from_millis(1));
+            let mut interval = tokio::time::interval(check_period);
 
             loop {
                 interval.tick().await;
@@ -283,6 +288,26 @@ struct StageStatsInner {
     active_items: AtomicUsize,
 }
 
+struct AtomicCountGuard<'a> {
+    counter: &'a AtomicUsize,
+    count: usize,
+}
+
+impl<'a> AtomicCountGuard<'a> {
+    fn new(counter: &'a AtomicUsize, count: usize) -> Self {
+        // ORDERING: Relaxed is sufficient for telemetry gauge increments.
+        counter.fetch_add(count, Ordering::Relaxed);
+        Self { counter, count }
+    }
+}
+
+impl Drop for AtomicCountGuard<'_> {
+    fn drop(&mut self) {
+        // ORDERING: Relaxed is sufficient for telemetry gauge decrements.
+        self.counter.fetch_sub(self.count, Ordering::Relaxed);
+    }
+}
+
 impl Pipeline {
     /// Create a new pipeline with the given configuration
     pub fn new(config: PipelineConfig) -> Self {
@@ -306,18 +331,19 @@ impl Pipeline {
         U: Send + 'static,
     {
         let start_time = Instant::now();
-        self.stats.items_in_flight.fetch_add(1, Ordering::Relaxed);
+        let _in_flight = AtomicCountGuard::new(&self.stats.items_in_flight, 1);
 
         let result = timeout(self.config.stage_timeout, stage.process(input))
             .await
             .map_err(|_| ZiporaError::configuration("stage timeout"))?;
 
         let processing_time = start_time.elapsed().as_micros() as u64;
+        // ORDERING: Relaxed is sufficient for cumulative processing time telemetry.
         self.stats
             .total_processing_time_us
             .fetch_add(processing_time, Ordering::Relaxed);
+        // ORDERING: Relaxed is sufficient for cumulative item count telemetry.
         self.stats.total_processed.fetch_add(1, Ordering::Relaxed);
-        self.stats.items_in_flight.fetch_sub(1, Ordering::Relaxed);
 
         result
     }
@@ -369,18 +395,22 @@ impl Pipeline {
         }
 
         let num_stages = stages.len();
+        let channel_cap = self.config.buffer_size.max(1);
 
-        // Create channels between stages
-        let mut channels: Vec<Option<(mpsc::Sender<T>, mpsc::Receiver<T>)>> = Vec::new();
+        // Keep inter-stage senders and receivers in separate vectors so taking stage i's
+        // output sender does not consume stage (i + 1)'s input receiver.
+        let mut inter_txs: Vec<Option<mpsc::Sender<T>>> = Vec::with_capacity(num_stages - 1);
+        let mut inter_rxs: Vec<Option<mpsc::Receiver<T>>> = Vec::with_capacity(num_stages - 1);
         for _ in 0..(num_stages - 1) {
-            // One less channel than stages
-            let (tx, rx) = mpsc::channel(self.config.buffer_size);
-            channels.push(Some((tx, rx)));
+            let (tx, rx) = mpsc::channel(channel_cap);
+            inter_txs.push(Some(tx));
+            inter_rxs.push(Some(rx));
         }
 
         // Spawn tasks for each stage
-        let mut handles = Vec::new();
+        let mut handles = Vec::with_capacity(num_stages);
         let mut current_input = Some(input_rx);
+        let mut final_output = Some(output_tx);
 
         for (i, stage) in stages.into_iter().enumerate() {
             let stage_stats = {
@@ -389,89 +419,111 @@ impl Pipeline {
             };
 
             let mut stage_input_rx = if i == 0 {
-                // First stage reads from pipeline input. `current_input` is Some
-                // (initialized at line 383, taken exactly once when i == 0), so
-                // this is unreachable in practice; propagate rather than panic if
-                // the invariant is ever broken.
                 current_input.take().ok_or_else(|| {
                     ZiporaError::invalid_state("pipeline: input missing for first stage")
                 })?
             } else {
-                // channels[i-1] exists (i >= 1, channels has num_stages-1
-                // elements) and is Some (initialized at line 378, taken exactly
-                // once); propagate instead of panicking if that ever fails.
-                channels[i - 1]
-                    .take()
-                    .ok_or_else(|| {
-                        ZiporaError::invalid_state("pipeline: channel missing for prior stage")
-                    })?
-                    .1
+                inter_rxs[i - 1].take().ok_or_else(|| {
+                    ZiporaError::invalid_state("pipeline: channel missing for prior stage")
+                })?
             };
 
-            let output_tx = if i == num_stages - 1 {
-                // Last stage writes to pipeline output
-                output_tx.clone()
+            let stage_output_tx = if i == num_stages - 1 {
+                final_output.take().ok_or_else(|| {
+                    ZiporaError::invalid_state("pipeline: output missing for final stage")
+                })?
             } else {
-                // channels[i] exists (i < num_stages-1, channels has num_stages-1
-                // elements) and is Some (initialized at line 378, taken exactly
-                // once); propagate instead of panicking.
-                channels[i]
-                    .take()
-                    .ok_or_else(|| {
-                        ZiporaError::invalid_state("pipeline: channel missing for next stage")
-                    })?
-                    .0
+                inter_txs[i].take().ok_or_else(|| {
+                    ZiporaError::invalid_state("pipeline: channel missing for next stage")
+                })?
             };
 
             let config = self.config.clone();
             let pipeline_stats = self.stats.clone();
 
             let handle = tokio::spawn(async move {
-                while let Some(item) = stage_input_rx.recv().await {
+                let mut stage_result: Result<()> = Ok(());
+
+                loop {
+                    let maybe_item = tokio::select! {
+                        biased;
+                        () = stage_output_tx.closed() => break,
+                        item = stage_input_rx.recv() => item,
+                    };
+                    let Some(item) = maybe_item else {
+                        break;
+                    };
+
                     let start_time = Instant::now();
-                    stage_stats.active_items.fetch_add(1, Ordering::Relaxed);
-                    pipeline_stats
-                        .items_in_flight
-                        .fetch_add(1, Ordering::Relaxed);
+                    let _stage_active = AtomicCountGuard::new(&stage_stats.active_items, 1);
+                    let _in_flight = AtomicCountGuard::new(&pipeline_stats.items_in_flight, 1);
 
                     let result = timeout(config.stage_timeout, stage.process(item)).await;
 
                     let processing_time = start_time.elapsed().as_micros() as u64;
+                    // ORDERING: Relaxed is sufficient for per-stage cumulative time telemetry.
                     stage_stats
                         .total_time_us
                         .fetch_add(processing_time, Ordering::Relaxed);
+                    // ORDERING: Relaxed is sufficient for per-stage processed count telemetry.
                     stage_stats.processed.fetch_add(1, Ordering::Relaxed);
-                    stage_stats.active_items.fetch_sub(1, Ordering::Relaxed);
+                    // ORDERING: Relaxed is sufficient for pipeline cumulative time telemetry.
+                    pipeline_stats
+                        .total_processing_time_us
+                        .fetch_add(processing_time, Ordering::Relaxed);
 
                     match result {
                         Ok(Ok(output)) => {
-                            if output_tx.send(output).await.is_err() {
-                                break; // Output channel closed
+                            if stage_output_tx.send(output).await.is_err() {
+                                break; // Downstream receiver closed
                             }
+                            // ORDERING: Relaxed is sufficient for pipeline processed count telemetry.
                             pipeline_stats
                                 .total_processed
                                 .fetch_add(1, Ordering::Relaxed);
                         }
-                        Ok(Err(_)) | Err(_) => {
-                            // Stage failed or timed out
+                        Ok(Err(err)) => {
+                            stage_result = Err(err);
+                            break;
+                        }
+                        Err(_) => {
+                            stage_result = Err(ZiporaError::configuration("stage timeout"));
                             break;
                         }
                     }
-
-                    pipeline_stats
-                        .items_in_flight
-                        .fetch_sub(1, Ordering::Relaxed);
                 }
 
-                drop(output_tx); // Signal end of stream
+                drop(stage_input_rx);
+                drop(stage_output_tx);
+                stage_result
             });
 
             handles.push(handle);
         }
 
-        // Wait for all stages to complete
+        // Wait for all stages to complete and propagate the first stage failure if any.
+        let mut first_err: Option<ZiporaError> = None;
         for handle in handles {
-            let _ = handle.await;
+            match handle.await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                }
+                Err(join_err) => {
+                    if first_err.is_none() {
+                        first_err = Some(ZiporaError::system_error(format!(
+                            "pipeline stage task failed: {}",
+                            join_err
+                        )));
+                    }
+                }
+            }
+        }
+
+        if let Some(err) = first_err {
+            return Err(err);
         }
 
         Ok(())
@@ -490,10 +542,7 @@ impl Pipeline {
 
         let start_time = Instant::now();
         let batch_size = inputs.len();
-
-        self.stats
-            .items_in_flight
-            .fetch_add(batch_size, Ordering::Relaxed);
+        let _in_flight = AtomicCountGuard::new(&self.stats.items_in_flight, batch_size);
 
         let result = if stage.supports_batching() && self.config.enable_batching {
             timeout(self.config.stage_timeout, stage.process_batch(inputs))
@@ -512,22 +561,23 @@ impl Pipeline {
         };
 
         let processing_time = start_time.elapsed().as_micros() as u64;
+        // ORDERING: Relaxed is sufficient for cumulative processing time telemetry.
         self.stats
             .total_processing_time_us
             .fetch_add(processing_time, Ordering::Relaxed);
+        // ORDERING: Relaxed is sufficient for cumulative item count telemetry.
         self.stats
             .total_processed
             .fetch_add(batch_size as u64, Ordering::Relaxed);
-        self.stats
-            .items_in_flight
-            .fetch_sub(batch_size, Ordering::Relaxed);
 
         result
     }
 
     /// Get current pipeline statistics
     pub async fn stats(&self) -> PipelineStats {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry reads.
         let total_processed = self.stats.total_processed.load(Ordering::Relaxed);
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry reads.
         let total_time = self.stats.total_processing_time_us.load(Ordering::Relaxed);
 
         let avg_processing_time_us = total_time.checked_div(total_processed).unwrap_or(0);
@@ -539,24 +589,37 @@ impl Pipeline {
             0.0
         };
 
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry reads.
         let items_in_flight = self.stats.items_in_flight.load(Ordering::Relaxed);
-        let utilization = items_in_flight as f64 / self.config.max_in_flight as f64;
+        let utilization = if self.config.max_in_flight > 0 {
+            items_in_flight as f64 / self.config.max_in_flight as f64
+        } else {
+            0.0
+        };
 
         let stage_stats_inner = self.stats.stage_stats.read().await;
         let stage_stats = stage_stats_inner
             .iter()
             .map(|stats| {
+                // ORDERING: Relaxed is sufficient for point-in-time stage telemetry reads.
                 let processed = stats.processed.load(Ordering::Relaxed);
+                // ORDERING: Relaxed is sufficient for point-in-time stage telemetry reads.
                 let total_time = stats.total_time_us.load(Ordering::Relaxed);
                 let avg_time_us = total_time.checked_div(processed).unwrap_or(0);
+                // ORDERING: Relaxed is sufficient for point-in-time stage telemetry reads.
                 let active_items = stats.active_items.load(Ordering::Relaxed);
+                let stage_utilization = if self.config.max_in_flight > 0 {
+                    active_items as f64 / self.config.max_in_flight as f64
+                } else {
+                    0.0
+                };
 
                 StageStats {
                     name: stats.name.clone(),
                     processed,
                     avg_time_us,
                     active_items,
-                    utilization: active_items as f64 / self.config.max_in_flight as f64,
+                    utilization: stage_utilization,
                 }
             })
             .collect();
@@ -2179,5 +2242,125 @@ mod tests {
         let stage = MapStage::new("cleanup_test".to_string(), |x: i32| Ok(x + 1));
         let pipeline_result = pipeline.execute_single(stage, 10).await.unwrap();
         assert_eq!(pipeline_result, 11);
+    }
+
+    #[tokio::test]
+    async fn test_c10_p1_execute_stream_multi_stage_and_error_propagation() {
+        let pipeline = Pipeline::new(PipelineConfig::default());
+
+        // 1. Multi-stage stream must wire inter-stage channels without losing rx,
+        //    update total_processing_time_us, and close output_tx on completion.
+        let (in_tx, in_rx) = mpsc::channel::<i32>(8);
+        let (out_tx, mut out_rx) = mpsc::channel::<i32>(8);
+        in_tx.send(7).await.unwrap();
+        drop(in_tx);
+
+        let ok_stages: Vec<Box<dyn PipelineStage<i32, i32>>> = vec![
+            Box::new(MapStage::new("stage0_inc".to_string(), |x: i32| Ok(x + 1))),
+            Box::new(MapStage::new("stage1_mul".to_string(), |x: i32| Ok(x * 2))),
+        ];
+        pipeline
+            .execute_stream(ok_stages, in_rx, out_tx)
+            .await
+            .expect("2-stage execute_stream must succeed");
+        assert_eq!(out_rx.recv().await, Some(16));
+        assert_eq!(out_rx.recv().await, None);
+
+        // 2. Stage error in execute_stream must propagate Err and terminate upstream
+        //    even when upstream input_tx remains open.
+        let (err_in_tx, err_in_rx) = mpsc::channel::<i32>(8);
+        let (err_out_tx, _err_out_rx) = mpsc::channel::<i32>(8);
+        err_in_tx.send(7).await.unwrap();
+
+        let err_stages: Vec<Box<dyn PipelineStage<i32, i32>>> = vec![
+            Box::new(MapStage::new("stage0_pass".to_string(), |x: i32| Ok(x + 1))),
+            Box::new(MapStage::new("stage1_fail".to_string(), |_x: i32| {
+                Err(ZiporaError::invalid_data("stage 1 boom"))
+            })),
+        ];
+
+        let stream_res = tokio::time::timeout(
+            Duration::from_millis(200),
+            pipeline.execute_stream(err_stages, err_in_rx, err_out_tx),
+        )
+        .await
+        .expect("execute_stream hung waiting on upstream after downstream stage failed");
+
+        assert!(
+            stream_res.is_err(),
+            "execute_stream must propagate stage errors instead of returning Ok(())"
+        );
+        drop(err_in_tx);
+    }
+
+    #[tokio::test]
+    async fn test_c10_p2_items_in_flight_decremented_on_timeout_and_error() {
+        let pipeline = PipelineBuilder::new()
+            .stage_timeout(Duration::from_millis(10))
+            .build();
+
+        let err_stage = MapStage::new("err".to_string(), |_x: i32| -> Result<i32> {
+            Err(ZiporaError::invalid_data("boom"))
+        });
+        assert!(
+            pipeline
+                .process_batch(err_stage, vec![1, 2, 3])
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            pipeline.stats().await.items_in_flight,
+            0,
+            "items_in_flight must be decremented when process_batch fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_c10_p3_zero_buffer_size_max_in_flight_and_zero_batch_timeout_do_not_panic_or_nan()
+    {
+        let pipeline = PipelineBuilder::new()
+            .buffer_size(0)
+            .max_in_flight(0)
+            .build();
+
+        let stats = pipeline.stats().await;
+        assert!(
+            !stats.utilization.is_nan(),
+            "Pipeline::stats().utilization must not be NaN when max_in_flight == 0"
+        );
+
+        let (input_tx, input_rx) = mpsc::channel::<i32>(4);
+        let (output_tx, mut output_rx) = mpsc::channel::<i32>(4);
+        input_tx.send(10).await.unwrap();
+        drop(input_tx);
+
+        let stages: Vec<Box<dyn PipelineStage<i32, i32>>> = vec![
+            Box::new(MapStage::new("s0".to_string(), |x: i32| Ok(x + 1))),
+            Box::new(MapStage::new("s1".to_string(), |x: i32| Ok(x * 2))),
+        ];
+        pipeline
+            .execute_stream(stages, input_rx, output_tx)
+            .await
+            .unwrap();
+        assert_eq!(output_rx.recv().await, Some(22));
+
+        let collector = BatchCollector::<i32>::new(4, Duration::ZERO);
+        let handle = collector.start_timeout_checker(|_batch| Box::pin(async {}));
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_c10_p5_batch_collector_idle_before_first_item_waits_full_timeout() {
+        let collector = BatchCollector::new(4, Duration::from_millis(80));
+        // Let the collector sit empty past batch_timeout before the first item arrives.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert!(collector.add(1).await.unwrap().is_none());
+        // Immediately after adding the first item of a new batch, timeout has NOT elapsed yet.
+        assert_eq!(
+            collector.check_timeout().await.unwrap(),
+            None,
+            "first item after an idle period must start a fresh batch_timeout window"
+        );
     }
 }
