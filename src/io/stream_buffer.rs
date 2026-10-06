@@ -277,6 +277,16 @@ impl<R: Read> StreamBufferedReader<R> {
     fn read_inner_retry_interrupted(inner: &mut R, buf: &mut [u8]) -> io::Result<usize> {
         loop {
             match inner.read(buf) {
+                Ok(n) if n > buf.len() => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "inner reader reported {} bytes read into a {}-byte buffer",
+                            n,
+                            buf.len()
+                        ),
+                    ));
+                }
                 Ok(n) => return Ok(n),
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
@@ -651,11 +661,23 @@ impl<W: Write> StreamBufferedWriter<W> {
         let mut ret = Ok(());
 
         while written < len {
-            match inner.write(&buffer[written..len]) {
+            let remaining = &buffer[written..len];
+            match inner.write(remaining) {
                 Ok(0) => {
                     ret = Err(io::Error::new(
                         io::ErrorKind::WriteZero,
                         "failed to write buffered data",
+                    ));
+                    break;
+                }
+                Ok(n) if n > remaining.len() => {
+                    ret = Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "inner writer reported {} bytes written from a {}-byte slice",
+                            n,
+                            remaining.len()
+                        ),
                     ));
                     break;
                 }
@@ -793,6 +815,16 @@ impl<W: Write> Write for StreamBufferedWriter<W> {
 
             loop {
                 match self.inner.write(buf) {
+                    Ok(written) if written > buf.len() => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "inner writer reported {} bytes written from a {}-byte buffer",
+                                written,
+                                buf.len()
+                            ),
+                        ));
+                    }
                     Ok(written) => {
                         self.total_written += written as u64;
                         return Ok(written);
@@ -1633,5 +1665,57 @@ mod tests {
             "fill_buf should fill up to buffer capacity per read call, got {} calls",
             r.get_ref().calls
         );
+    }
+
+    #[test]
+    fn test_s23_r4_stream_buffer_rejects_over_reporting_read_and_write() {
+        struct OverReportingReader;
+        impl Read for OverReportingReader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                Ok(buf.len() + 5)
+            }
+        }
+
+        struct OverReportingWriter;
+        impl Write for OverReportingWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                Ok(buf.len() + 5)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        // 1. Reader: both buffered fill (`fill_buf`/`read`) and direct bulk read must reject `n > buf.len()`.
+        let mut reader =
+            StreamBufferedReader::with_config(OverReportingReader, miri_fast_config()).unwrap();
+        let mut small = [0u8; 4];
+        let err = reader.read(&mut small).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reader.total_read(), 0);
+
+        let mut large = vec![0u8; 8192];
+        let err_bulk = reader.read(&mut large).unwrap_err();
+        assert_eq!(err_bulk.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reader.total_read(), 0);
+
+        // 2. Writer: flushing buffered data and direct bulk write must reject `n > slice.len()`
+        // without underflowing `pos` or panicking/aborting on `Drop`.
+        let mut writer =
+            StreamBufferedWriter::with_config(OverReportingWriter, miri_fast_config()).unwrap();
+        writer.write_all(b"hello").unwrap();
+        assert_eq!(writer.buffer_usage(), 5);
+        let flush_err = writer.flush().unwrap_err();
+        assert_eq!(flush_err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(writer.buffer_usage(), 5);
+        assert_eq!(writer.total_written(), 0);
+        drop(writer);
+
+        let mut writer2 =
+            StreamBufferedWriter::with_config(OverReportingWriter, miri_fast_config()).unwrap();
+        let big = vec![b'a'; 8192];
+        let direct_err = writer2.write(&big).unwrap_err();
+        assert_eq!(direct_err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(writer2.total_written(), 0);
     }
 }

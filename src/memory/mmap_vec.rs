@@ -410,6 +410,22 @@ impl MmapVecConfig {
             ..Self::default()
         }
     }
+
+    /// Validate configuration parameters.
+    ///
+    /// # Errors
+    /// Returns [`ZiporaError::InvalidParameter`] if `growth_factor` is not
+    /// finite or outside `(1.0, 1024.0]`.
+    pub fn validate(&self) -> Result<()> {
+        if !self.growth_factor.is_finite() || self.growth_factor <= 1.0 || self.growth_factor > 1024.0
+        {
+            return Err(ZiporaError::invalid_parameter(format!(
+                "MmapVecConfig::growth_factor must be finite and in (1.0, 1024.0], got {}",
+                self.growth_factor
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// Statistics for memory-mapped vectors
@@ -466,9 +482,9 @@ impl MmapVecStats {
 /// raw pointers or slices derived from this vector (`as_slice`,
 /// `as_mut_slice`, `get`, iterator items) must never be held across any
 /// `&mut self` call — Rust's borrow rules enforce this for safe callers, and
-/// every internal use of `data_ptr()` re-reads the cached pointer *after*
-/// any potential remap. Unsafe code must not stash `data_ptr()` results
-/// across growth operations.
+/// every internal access via `checked_data` / `mapped_slice` reads the cached
+/// `self.data` pointer *after* any potential remap. Unsafe code must not
+/// stash raw pointers derived from `self.data` across growth operations.
 ///
 /// # Length and capacity
 ///
@@ -536,9 +552,10 @@ where
     /// Create a new memory-mapped vector at `path`, truncating any existing file.
     ///
     /// # Errors
-    /// Returns an error if `config.read_only` is `true`, if the initial
-    /// capacity overflows the file-size calculation, or if the file cannot be
-    /// created, sized, or mapped.
+    /// Returns an error if `config.read_only` is `true`, if `config` fails
+    /// [`MmapVecConfig::validate`], if the initial capacity overflows the
+    /// file-size calculation, or if the file cannot be created, sized, or
+    /// mapped.
     ///
     /// # Limitations
     /// Truncating `path` while another [`MmapVec`] handle or process has the
@@ -551,6 +568,7 @@ where
                 "MmapVec::create cannot use a read-only configuration",
             ));
         }
+        config.validate()?;
 
         let file_path = path.as_ref().to_path_buf();
 
@@ -573,10 +591,11 @@ where
     /// Open an existing memory-mapped vector at `path`.
     ///
     /// # Errors
-    /// Returns an error if `path` does not exist, cannot be opened or mapped,
-    /// has an invalid/mismatched [`MmapVecHeader`] (magic, version, endianness
-    /// or word-size flags, `size_of::<T>()`, extended `align_of::<T>()`), or
-    /// is smaller than the header-declared capacity.
+    /// Returns an error if `config` fails [`MmapVecConfig::validate`], if
+    /// `path` does not exist, cannot be opened or mapped, has an
+    /// invalid/mismatched [`MmapVecHeader`] (magic, version, endianness or
+    /// word-size flags, `size_of::<T>()`, extended `align_of::<T>()`), or is
+    /// smaller than the header-declared capacity.
     ///
     /// # Limitations
     /// The returned handle caches `len` and `cap` from the header at open time
@@ -584,6 +603,7 @@ where
     /// mapped length or mutates mapped bytes concurrently with live references;
     /// see the struct-level [Limitations](Self#limitations).
     pub fn open<P: AsRef<Path>>(path: P, config: MmapVecConfig) -> Result<Self> {
+        config.validate()?;
         let file_path = path.as_ref().to_path_buf();
 
         if !file_path.exists() {
@@ -801,8 +821,8 @@ where
         })?;
 
         if required_capacity > current_capacity {
-            let new_capacity = required_capacity
-                .max((current_capacity as f64 * self.config.growth_factor) as usize);
+            let grown = self.scaled_capacity(current_capacity)?;
+            let new_capacity = required_capacity.max(grown);
             self.resize_to_capacity(new_capacity)?;
         }
 
@@ -1318,16 +1338,25 @@ where
         Ok(unsafe { slice::from_raw_parts_mut(data.as_ptr(), count) })
     }
 
+    /// Compute `current_capacity * growth_factor` with configuration validation
+    /// and overflow checking.
+    fn scaled_capacity(&self, current_capacity: usize) -> Result<usize> {
+        self.config.validate()?;
+        let scaled = (current_capacity as f64) * self.config.growth_factor;
+        if !scaled.is_finite() || scaled >= (usize::MAX as f64) {
+            return Err(ZiporaError::invalid_data("MmapVec capacity overflows usize"));
+        }
+        Ok(scaled as usize)
+    }
+
     /// Grow the vector capacity
     fn grow(&mut self) -> Result<()> {
         let current_capacity = self.cap;
         let min_capacity = current_capacity
             .checked_add(1)
             .ok_or_else(|| ZiporaError::invalid_data("MmapVec capacity overflows usize"))?;
-        let new_capacity = std::cmp::max(
-            (current_capacity as f64 * self.config.growth_factor) as usize,
-            min_capacity,
-        );
+        let grown = self.scaled_capacity(current_capacity)?;
+        let new_capacity = std::cmp::max(grown, min_capacity);
         self.resize_to_capacity(new_capacity)
     }
 
@@ -3614,6 +3643,60 @@ mod tests {
             assert!(
                 delta_kib < 4096,
                 "opening 32 MiB read-only MmapVec with populate_pages inflated RssAnon by {delta_kib} KiB (before={b} KiB, after={a} KiB)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor() {
+        let invalid_factors = [
+            0.0,
+            1.0,
+            -2.0,
+            1024.1,
+            1e30,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ];
+
+        #[cfg(not(miri))]
+        {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("valid.mmap");
+            {
+                let mut vec = MmapVec::<u64>::create(
+                    &path,
+                    MmapVecConfig::default().with_initial_capacity(4),
+                )
+                .unwrap();
+                vec.push(42).unwrap();
+                vec.sync().unwrap();
+            }
+
+            // Calling create() or open() with an invalid growth_factor must fail
+            // before truncating or mapping `path`.
+            for &bad in &invalid_factors {
+                let cfg = MmapVecConfig::default().with_growth_factor(bad);
+                assert!(
+                    MmapVec::<u64>::create(&path, cfg.clone()).is_err(),
+                    "growth_factor {bad} must be rejected by MmapVec::create"
+                );
+                assert!(
+                    MmapVec::<u64>::open(&path, cfg).is_err(),
+                    "growth_factor {bad} must be rejected by MmapVec::open"
+                );
+            }
+
+            let reopened = MmapVec::<u64>::open(&path, MmapVecConfig::read_only()).unwrap();
+            assert_eq!(reopened.as_slice(), &[42]);
+        }
+
+        for &bad in &invalid_factors {
+            let cfg = MmapVecConfig::default().with_growth_factor(bad);
+            assert!(
+                MmapVec::<u64>::create("/nonexistent/s23_r3_never_opened.mmap", cfg).is_err(),
+                "growth_factor {bad} must be rejected by create() before touching disk"
             );
         }
     }
