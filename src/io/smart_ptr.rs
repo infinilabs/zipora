@@ -234,8 +234,7 @@ pub(crate) fn enter_nested_de_depth(depth: usize, max_depth: usize) -> Result<Ne
         }
         let d = effective_depth.min(MAX_DEPTH_MASK as usize) as u64;
         let m = effective_max.min(MAX_DEPTH_MASK as usize) as u64;
-        let flags =
-            (cur & (STATE_COMPRESS_IDS_BIT | STATE_DIRTY_CTX_BIT)) | STATE_INSTALLED_BIT;
+        let flags = (cur & (STATE_COMPRESS_IDS_BIT | STATE_DIRTY_CTX_BIT)) | STATE_INSTALLED_BIT;
         cell.set(d | (m << 32) | flags);
         Ok(NestedDeDepthGuard { prev: cur })
     })
@@ -459,10 +458,8 @@ fn with_installed_ser_ctx<R>(
     impl Drop for InstalledSerGuard<'_> {
         fn drop(&mut self) {
             ACTIVE_SER_CTX.with(|cell| {
-                let mut active = std::mem::replace(
-                    &mut *cell.borrow_mut(),
-                    std::mem::take(&mut self.prev_ctx),
-                );
+                let mut active =
+                    std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(&mut self.prev_ctx));
                 active.depth = self.orig_depth;
                 *self.caller = active;
             });
@@ -485,9 +482,8 @@ fn with_installed_ser_ctx<R>(
         };
     let new_state = d | (m << 32) | flags;
     let prev_state = SER_DEPTH.with(|cell| cell.replace(new_state));
-    let prev_ctx = ACTIVE_SER_CTX.with(|cell| {
-        std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(context))
-    });
+    let prev_ctx = ACTIVE_SER_CTX
+        .with(|cell| std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(context)));
     let _guard = InstalledSerGuard {
         caller: context,
         prev_ctx,
@@ -513,10 +509,8 @@ fn with_installed_de_ctx<R>(
     impl Drop for InstalledDeGuard<'_> {
         fn drop(&mut self) {
             ACTIVE_DE_CTX.with(|cell| {
-                let mut active = std::mem::replace(
-                    &mut *cell.borrow_mut(),
-                    std::mem::take(&mut self.prev_ctx),
-                );
+                let mut active =
+                    std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(&mut self.prev_ctx));
                 active.depth = self.orig_depth;
                 *self.caller = active;
             });
@@ -534,9 +528,8 @@ fn with_installed_de_ctx<R>(
         };
     let new_state = d | (m << 32) | flags;
     let prev_state = DE_DEPTH.with(|cell| cell.replace(new_state));
-    let prev_ctx = ACTIVE_DE_CTX.with(|cell| {
-        std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(context))
-    });
+    let prev_ctx = ACTIVE_DE_CTX
+        .with(|cell| std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(context)));
     let _guard = InstalledDeGuard {
         caller: context,
         prev_ctx,
@@ -673,9 +666,7 @@ fn register_active_ser_ptr<T, P: 'static>(obj_ref: &T, retained: Option<P>) -> (
         ctx.detect_cycles = detect_cycles;
         let seen = ctx.has_seen(obj_ref);
         let id = ctx.get_or_assign_id(obj_ref);
-        if !seen
-            && let Some(ptr) = retained
-        {
+        if !seen && let Some(ptr) = retained {
             ctx.retain_object(ptr);
         }
         (seen, id)
@@ -1656,7 +1647,10 @@ mod tests {
         let pair_back =
             <Box<StrongAndWeak> as SmartPtrSerialize<StrongAndWeak>>::deserialize(&mut pair_in)
                 .unwrap();
-        let upgraded = pair_back.weak.upgrade().expect("weak reference must upgrade");
+        let upgraded = pair_back
+            .weak
+            .upgrade()
+            .expect("weak reference must upgrade");
         assert_eq!(*upgraded, 5);
         assert!(Rc::ptr_eq(&pair_back.strong, &upgraded));
     }
@@ -2050,30 +2044,29 @@ mod tests {
         }
         for i in 0..count {
             let id = 1u32 + (i as u32) * 65;
-            let got = ctx.get_object::<Rc<u64>>(id).expect("stored stride-65 object");
+            let got = ctx
+                .get_object::<Rc<u64>>(id)
+                .expect("stored stride-65 object");
             assert_eq!(**got, i as u64);
         }
 
         // Only id == 1 belongs in the sequential 1-based dense table; non-sequential
         // IDs (66, 131, ...) must fall back to `objects` without padding 64 gap slots each.
-        let dense_len_and_cap = ctx
-            .dense_objects
-            .as_ref()
-            .and_then(|b| {
-                b.downcast_ref::<Vec<Rc<u64>>>()
-                    .map(|v| (v.len(), v.capacity()))
-                    .or_else(|| {
-                        b.downcast_ref::<Vec<Option<Rc<u64>>>>()
-                            .map(|v| (v.len(), v.capacity()))
-                    })
-            });
+        let dense_len_and_cap = ctx.dense_objects.as_ref().and_then(|b| {
+            b.downcast_ref::<Vec<Rc<u64>>>()
+                .map(|v| (v.len(), v.capacity()))
+                .or_else(|| {
+                    b.downcast_ref::<Vec<Option<Rc<u64>>>>()
+                        .map(|v| (v.len(), v.capacity()))
+                })
+        });
         assert_eq!(
             dense_len_and_cap.map(|(len, _)| len),
             Some(1),
             "stride-65 object IDs must not grow dense_objects beyond id == 1 (got {dense_len_and_cap:?})"
         );
         assert!(
-            dense_len_and_cap.map_or(false, |(_, cap)| cap <= 16),
+            dense_len_and_cap.is_some_and(|(_, cap)| cap <= 16),
             "stride-65 object IDs must not amplify dense_objects capacity (got {dense_len_and_cap:?})"
         );
         assert_eq!(ctx.objects.len(), count - 1);
@@ -2184,5 +2177,3 @@ mod tests {
         );
     }
 }
-
-

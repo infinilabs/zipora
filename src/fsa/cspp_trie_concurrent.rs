@@ -232,28 +232,38 @@ impl SharedPool {
         bits.to_ne_bytes()
     }
 
-    /// Get a raw const pointer to the underlying data for multi-byte reads.
-    /// SAFETY: The caller must ensure the data is immutable (written before parent CAS).
+    /// Read `dst.len()` bytes starting at `slot` using Acquire 32-bit word loads.
     #[inline(always)]
-    unsafe fn raw_ptr(&self, slot: usize) -> *const u8 {
-        debug_assert!(
-            slot < self.data.len(),
-            "slot out of bounds: {} >= {}",
-            slot,
-            self.data.len()
-        );
-        // SAFETY: caller guarantees slot is within allocated bounds
-        unsafe { self.data.as_ptr().add(slot) as *const u8 }
+    fn read_bytes_acquire(&self, slot: usize, dst: &mut [u8]) {
+        let full_words = dst.len() / 4;
+        for i in 0..full_words {
+            let bytes = self.load_acquire(slot + i).to_ne_bytes();
+            dst[i * 4..i * 4 + 4].copy_from_slice(&bytes);
+        }
+        let rem = dst.len() % 4;
+        if rem != 0 {
+            let bytes = self.load_acquire(slot + full_words).to_ne_bytes();
+            let base = full_words * 4;
+            dst[base..base + rem].copy_from_slice(&bytes[..rem]);
+        }
     }
 
-    /// Get a slice of bytes from pool slots.
-    /// SAFETY: The caller must ensure the data is immutable and slot+len is within bounds.
+    /// Write `src.len()` bytes starting at `slot` (zero-padding any trailing partial 32-bit word)
+    /// using Relaxed 32-bit word stores on newly-allocated uncontested slots.
     #[inline(always)]
-    unsafe fn get_slice(&self, slot: usize, len: usize) -> &[u8] {
-        // SAFETY: caller guarantees data is immutable and slot+len within bounds
-        unsafe {
-            let ptr = self.raw_ptr(slot);
-            std::slice::from_raw_parts(ptr, len)
+    fn write_bytes_relaxed(&self, slot: usize, src: &[u8]) {
+        let full_words = src.len() / 4;
+        for i in 0..full_words {
+            let mut bytes = [0u8; 4];
+            bytes.copy_from_slice(&src[i * 4..i * 4 + 4]);
+            self.store_relaxed(slot + i, u32::from_ne_bytes(bytes));
+        }
+        let rem = src.len() % 4;
+        if rem != 0 {
+            let mut bytes = [0u8; 4];
+            let base = full_words * 4;
+            bytes[..rem].copy_from_slice(&src[base..]);
+            self.store_relaxed(slot + full_words, u32::from_ne_bytes(bytes));
         }
     }
 }
@@ -588,12 +598,11 @@ impl<'a> ConcurrentNodeView<'a> {
             }
             7 => {
                 let n_children = self.n_children();
-                // SAFETY: Labels at slots 1-4 (16 bytes), immutable after init.
-                let label_slice = unsafe { self.pool.get_slice(self.curr as usize + 1, 16) };
-                let idx = crate::fsa::fast_search::fast_search_byte_max_16(
-                    &label_slice[..n_children],
-                    ch,
-                );
+                let mut label_buf = [0u8; 16];
+                self.pool
+                    .read_bytes_acquire(self.curr as usize + 1, &mut label_buf);
+                let idx =
+                    crate::fsa::fast_search::fast_search_byte_max_16(&label_buf[..n_children], ch);
                 if idx < n_children {
                     self.child(5 + idx)
                 } else {
@@ -601,19 +610,16 @@ impl<'a> ConcurrentNodeView<'a> {
                 }
             }
             8 => {
-                // SAFETY: Bitmap at slots 2-9, immutable after init.
-                let bitmap_slice = unsafe { self.pool.get_slice(self.curr as usize + 2, 32) };
-                let byte_idx = (ch / 8) as usize;
-                let bit_idx = ch % 8;
-                if (bitmap_slice[byte_idx] & (1 << bit_idx)) != 0 {
-                    // SAFETY: Rank prefix at slot 1, valid for initialized cnt_type=8 node.
-                    let data_ptr = unsafe { self.pool.raw_ptr(self.curr as usize + 1) };
+                let word_idx = (ch / 32) as usize;
+                let bit_idx = ch % 32;
+                let bmp_word = self.pool.load_acquire(self.curr as usize + 2 + word_idx);
+                if (bmp_word & (1u32 << bit_idx)) != 0 {
                     let i = (ch / 64) as usize;
-                    // SAFETY: Reading u64 from bitmap at 8-byte aligned offset within 32-byte buffer.
-                    let w =
-                        unsafe { std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64) };
-                    // SAFETY: Reading rank prefix byte at offset i, within 4-byte rank array.
-                    let b = unsafe { *data_ptr.add(i) } as usize;
+                    let rank_bytes = self.pool.load_bytes(self.curr, 1);
+                    let b = rank_bytes[i] as usize;
+                    let lo = self.pool.load_acquire(self.curr as usize + 2 + i * 2) as u64;
+                    let hi = self.pool.load_acquire(self.curr as usize + 2 + i * 2 + 1) as u64;
+                    let w = lo | (hi << 32);
                     let mask = (1u64 << (ch % 64)) - 1;
                     let idx = b + (w & mask).count_ones() as usize;
                     self.child(10 + idx)
@@ -626,16 +632,16 @@ impl<'a> ConcurrentNodeView<'a> {
         }
     }
 
-    fn zpath_slice(&self) -> &'a [u8] {
-        let zlen = self.zpath_len();
-        if zlen == 0 {
-            return &[];
+    #[inline(always)]
+    fn read_zpath(&self, dst: &mut [u8]) {
+        if dst.is_empty() {
+            return;
         }
         let skip = self.skip_slots();
         let n_children = self.n_children();
         let offset = skip + n_children;
-        // SAFETY: zpath is immutable after init, within bounds.
-        unsafe { self.pool.get_slice(self.curr as usize + offset, zlen) }
+        self.pool
+            .read_bytes_acquire(self.curr as usize + offset, dst);
     }
 
     fn valpos(&self) -> usize {
@@ -683,9 +689,10 @@ impl<'a> ConcurrentNodeView<'a> {
             }
             7 => {
                 let n = self.n_children();
-                // SAFETY: Labels at slots 1-4 (16 bytes), immutable after parent CAS.
-                let label_slice = unsafe { self.pool.get_slice(self.curr as usize + 1, 16) };
-                let idx = crate::fsa::fast_search::fast_search_byte_max_16(&label_slice[..n], ch);
+                let mut label_buf = [0u8; 16];
+                self.pool
+                    .read_bytes_acquire(self.curr as usize + 1, &mut label_buf);
+                let idx = crate::fsa::fast_search::fast_search_byte_max_16(&label_buf[..n], ch);
                 if idx < n {
                     self.curr + 5 + idx as u32
                 } else {
@@ -693,19 +700,16 @@ impl<'a> ConcurrentNodeView<'a> {
                 }
             }
             8 => {
-                // SAFETY: Bitmap at slots 2-9, immutable after parent CAS.
-                let bitmap_slice = unsafe { self.pool.get_slice(self.curr as usize + 2, 32) };
-                let byte_idx = (ch / 8) as usize;
-                let bit_idx = ch % 8;
-                if (bitmap_slice[byte_idx] & (1 << bit_idx)) != 0 {
-                    // SAFETY: Rank prefix at slot 1, valid for initialized cnt_type=8 node.
-                    let data_ptr = unsafe { self.pool.raw_ptr(self.curr as usize + 1) };
+                let word_idx = (ch / 32) as usize;
+                let bit_idx = ch % 32;
+                let bmp_word = self.pool.load_acquire(self.curr as usize + 2 + word_idx);
+                if (bmp_word & (1u32 << bit_idx)) != 0 {
                     let i = (ch / 64) as usize;
-                    // SAFETY: Reading u64 from bitmap at 8-byte aligned offset within 32-byte buffer.
-                    let w =
-                        unsafe { std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64) };
-                    // SAFETY: Reading rank prefix byte at offset i, within 4-byte rank array.
-                    let b = unsafe { *data_ptr.add(i) } as usize;
+                    let rank_bytes = self.pool.load_bytes(self.curr, 1);
+                    let b = rank_bytes[i] as usize;
+                    let lo = self.pool.load_acquire(self.curr as usize + 2 + i * 2) as u64;
+                    let hi = self.pool.load_acquire(self.curr as usize + 2 + i * 2 + 1) as u64;
+                    let w = lo | (hi << 32);
                     let mask = (1u64 << (ch % 64)) - 1;
                     let idx = b + (w & mask).count_ones() as usize;
                     self.curr + 10 + idx as u32
@@ -986,7 +990,8 @@ impl ConcurrentCsppTrie {
             let view = self.node_view(curr);
             let zlen = view.zpath_len();
             if zlen > 0 {
-                let zpath = view.zpath_slice();
+                let mut zpath = [0u8; 256];
+                view.read_zpath(&mut zpath);
                 let remaining = key.len() - pos;
                 let match_len = std::cmp::min(zlen, remaining);
                 if key[pos..pos + match_len] != zpath[..match_len] {
@@ -1339,14 +1344,9 @@ impl ConcurrentCsppTrie {
                 .pool
                 .store_relaxed(node as usize, meta_to_u32(meta));
             self.inner.pool.store_relaxed(node as usize + 1, NIL_STATE);
-            // SAFETY: Writing zpath to newly allocated, uncontested slots.
-            unsafe {
-                let zpath_dst =
-                    (self.inner.pool.data.as_ptr() as *mut u8).add((node as usize + 2) * 4);
-                std::ptr::copy_nonoverlapping(remaining.as_ptr(), zpath_dst, MAX_ZPATH);
-                *zpath_dst.add(254) = 0;
-                *zpath_dst.add(255) = 0;
-            }
+            self.inner
+                .pool
+                .write_bytes_relaxed(node as usize + 2, &remaining[..MAX_ZPATH]);
             if head == NIL_STATE {
                 head = node;
             }
@@ -1370,14 +1370,9 @@ impl ConcurrentCsppTrie {
         self.inner
             .pool
             .store_relaxed(node as usize, meta_to_u32(meta));
-        // SAFETY: Writing zpath to newly allocated, uncontested slots.
-        unsafe {
-            let zpath_dst = (self.inner.pool.data.as_ptr() as *mut u8).add((node as usize + 1) * 4);
-            std::ptr::copy_nonoverlapping(remaining.as_ptr(), zpath_dst, remaining.len());
-            for i in remaining.len()..zpath_padded {
-                *zpath_dst.add(i) = 0;
-            }
-        }
+        self.inner
+            .pool
+            .write_bytes_relaxed(node as usize + 1, remaining);
         let valpos = if self.valsize > 0 {
             let vp = self.alloc_val_pos();
             self.inner
@@ -1421,27 +1416,22 @@ impl ConcurrentCsppTrie {
         };
         self.write_meta_with_n_children(node, meta, n_children as u16);
 
-        // SAFETY: Writing bitmap and rank to newly allocated, uncontested slots.
-        unsafe {
-            let base = self.inner.pool.data.as_ptr() as *mut u8;
-            let p = base.add(node as usize * 4);
-
-            // Build bitmap at slots 2-9 (32 bytes)
-            let bmp = p.add(2 * 4);
-            std::ptr::write_bytes(bmp, 0, 32);
-            for i in 0..n_children {
-                let label = labels[i];
-                *bmp.add(label as usize / 8) |= 1 << (label % 8);
-            }
-            // Compute rank prefix at slot 1 bytes 0-3
-            let rank = p.add(4);
-            let mut cumulative = 0u32;
-            for q in 0..4 {
-                *rank.add(q) = cumulative as u8;
-                let w = std::ptr::read_unaligned(bmp.add(q * 8) as *const u64);
-                cumulative += w.count_ones();
-            }
+        let mut bmp = [0u8; 32];
+        for &label in &labels[..n_children] {
+            bmp[label as usize / 8] |= 1 << (label % 8);
         }
+        let mut rank = [0u8; 4];
+        let mut cumulative = 0u32;
+        for q in 0..4 {
+            rank[q] = cumulative as u8;
+            let mut qw = [0u8; 8];
+            qw.copy_from_slice(&bmp[q * 8..q * 8 + 8]);
+            cumulative += u64::from_ne_bytes(qw).count_ones();
+        }
+        self.inner
+            .pool
+            .write_bytes_relaxed(node as usize + 1, &rank);
+        self.inner.pool.write_bytes_relaxed(node as usize + 2, &bmp);
         // Children at slots 10+
         for i in 0..n_children {
             self.inner
@@ -1450,12 +1440,9 @@ impl ConcurrentCsppTrie {
         }
         // Trailing data (zpath + value)
         if trailing_len > 0 {
-            // SAFETY: Writing trailing data to newly allocated, uncontested slots.
-            unsafe {
-                let dst = (self.inner.pool.data.as_ptr() as *mut u8)
-                    .add((node as usize + 10 + n_children) * 4);
-                std::ptr::copy_nonoverlapping(trailing.as_ptr(), dst, trailing_len);
-            }
+            self.inner
+                .pool
+                .write_bytes_relaxed(node as usize + 10 + n_children, &trailing[..trailing_len]);
         }
         node
     }
@@ -1471,13 +1458,12 @@ impl ConcurrentCsppTrie {
 
         let mut bitmap = [0u8; 32];
         let mut rank_prefix = [0u8; 4];
-        // SAFETY: Reading bitmap and rank from curr node, immutable after parent CAS.
-        unsafe {
-            let bmp_src = self.inner.pool.raw_ptr(curr as usize + 2);
-            std::ptr::copy_nonoverlapping(bmp_src, bitmap.as_mut_ptr(), 32);
-            let rank_src = self.inner.pool.raw_ptr(curr as usize + 1);
-            std::ptr::copy_nonoverlapping(rank_src, rank_prefix.as_mut_ptr(), 4);
-        }
+        self.inner
+            .pool
+            .read_bytes_acquire(curr as usize + 2, &mut bitmap);
+        self.inner
+            .pool
+            .read_bytes_acquire(curr as usize + 1, &mut rank_prefix);
         let mut old_children = [0u32; 257];
         for i in 0..old_n {
             // Acquire: child pointers are published by release CAS.
@@ -1500,8 +1486,9 @@ impl ConcurrentCsppTrie {
 
         let ch_rank = {
             let q = (ch / 64) as usize;
-            // SAFETY: Reading u64 from bitmap at 8-byte aligned offset within 32-byte buffer.
-            let w = unsafe { std::ptr::read_unaligned(bitmap.as_ptr().add(q * 8) as *const u64) };
+            let mut qw = [0u8; 8];
+            qw.copy_from_slice(&bitmap[q * 8..q * 8 + 8]);
+            let w = u64::from_ne_bytes(qw);
             let mask = (1u64 << (ch % 64)) - 1;
             rank_prefix[q] as usize + (w & mask).count_ones() as usize
         };
@@ -1509,8 +1496,9 @@ impl ConcurrentCsppTrie {
         let mut cumulative = 0u32;
         for q in 0..4 {
             rank_prefix[q] = cumulative as u8;
-            // SAFETY: Reading u64 from bitmap at 8-byte aligned offset within 32-byte buffer.
-            let w = unsafe { std::ptr::read_unaligned(bitmap.as_ptr().add(q * 8) as *const u64) };
+            let mut qw = [0u8; 8];
+            qw.copy_from_slice(&bitmap[q * 8..q * 8 + 8]);
+            let w = u64::from_ne_bytes(qw);
             cumulative += w.count_ones();
         }
         for i in (ch_rank..old_n).rev() {
@@ -1532,27 +1520,21 @@ impl ConcurrentCsppTrie {
             new_n as u16,
         );
 
-        // SAFETY: Writing bitmap and rank to newly allocated, uncontested slots.
-        unsafe {
-            let base = self.inner.pool.data.as_ptr() as *mut u8;
-            let p = base.add(node as usize * 4);
-            let rank_dst = p.add(4);
-            std::ptr::copy_nonoverlapping(rank_prefix.as_ptr(), rank_dst, 4);
-            let bmp_dst = p.add(2 * 4);
-            std::ptr::copy_nonoverlapping(bitmap.as_ptr(), bmp_dst, 32);
-        }
+        self.inner
+            .pool
+            .write_bytes_relaxed(node as usize + 1, &rank_prefix);
+        self.inner
+            .pool
+            .write_bytes_relaxed(node as usize + 2, &bitmap);
         for i in 0..new_n {
             self.inner
                 .pool
                 .store_relaxed(node as usize + 10 + i, old_children[i]);
         }
         if trailing_len > 0 {
-            // SAFETY: Writing trailing data to newly allocated, uncontested slots.
-            unsafe {
-                let dst = (self.inner.pool.data.as_ptr() as *mut u8)
-                    .add((node as usize + 10 + new_n) * 4);
-                std::ptr::copy_nonoverlapping(trailing.as_ptr(), dst, trailing_len);
-            }
+            self.inner
+                .pool
+                .write_bytes_relaxed(node as usize + 10 + new_n, &trailing[..trailing_len]);
         }
         node
     }
@@ -1591,13 +1573,9 @@ impl ConcurrentCsppTrie {
                 labels[2..old_n].copy_from_slice(&pad[..old_n - 2]);
             }
             7 => {
-                // SAFETY: Reading labels from curr node, immutable after parent CAS.
-                unsafe {
-                    let src = self.inner.pool.raw_ptr(curr as usize + 1);
-                    for i in 0..old_n {
-                        labels[i] = *src.add(i);
-                    }
-                }
+                self.inner
+                    .pool
+                    .read_bytes_acquire(curr as usize + 1, &mut labels[..old_n]);
             }
 
             _ => unreachable!(),
@@ -1688,17 +1666,11 @@ impl ConcurrentCsppTrie {
                     c_label: [0, 0],
                 };
                 self.write_meta_with_n_children(node, m, new_n as u16);
-                // SAFETY: Writing labels to newly allocated, uncontested slots.
-                unsafe {
-                    let lbl_ptr =
-                        (self.inner.pool.data.as_ptr() as *mut u8).add((node as usize + 1) * 4);
-                    for i in 0..new_n {
-                        *lbl_ptr.add(i) = labels[i];
-                    }
-                    for i in new_n..16 {
-                        *lbl_ptr.add(i) = 0;
-                    }
-                }
+                let mut lbl_padded = [0u8; 16];
+                lbl_padded[..new_n].copy_from_slice(&labels[..new_n]);
+                self.inner
+                    .pool
+                    .write_bytes_relaxed(node as usize + 1, &lbl_padded);
             }
             _ => unreachable!(),
         }
@@ -1709,12 +1681,9 @@ impl ConcurrentCsppTrie {
                 .store_relaxed(node as usize + new_skip + i, children[i]);
         }
         if trailing_len > 0 {
-            // SAFETY: Writing trailing data to newly allocated, uncontested slots.
-            unsafe {
-                let dst = (self.inner.pool.data.as_ptr() as *mut u8)
-                    .add((node as usize + new_skip + new_n) * 4);
-                std::ptr::copy_nonoverlapping(trailing.as_ptr(), dst, trailing_len);
-            }
+            self.inner
+                .pool
+                .write_bytes_relaxed(node as usize + new_skip + new_n, &trailing[..trailing_len]);
         }
         node
     }
@@ -1759,20 +1728,10 @@ impl ConcurrentCsppTrie {
             .pool
             .store_relaxed(suffix_node as usize, meta_to_u32(suffix_meta));
 
-        // SAFETY: `suffix_node` is newly allocated and uncontested; the
-        // zpath source is a local buffer.
-        unsafe {
-            let base = self.inner.pool.data.as_ptr() as *mut u8;
-            let dst = base.add(suffix_node as usize * 4);
-            let struct_size = struct_slots * ALIGN_SIZE;
-            let zpath_dst = dst.add(struct_size);
-            for i in 0..suffix_zlen {
-                *zpath_dst.add(i) = zpath_buf[zidx + 1 + i];
-            }
-            for i in suffix_zlen..suffix_zpath_padded {
-                *zpath_dst.add(i) = 0;
-            }
-        }
+        self.inner.pool.write_bytes_relaxed(
+            suffix_node as usize + struct_slots,
+            &zpath_buf[zidx + 1..zidx + 1 + suffix_zlen],
+        );
         if val_size > 0 {
             // Value words are mutable via set_value → atomic word copies.
             let src_base = curr as usize + struct_slots + ((zpath_len + 3) & !3) / 4;
@@ -1802,18 +1761,9 @@ impl ConcurrentCsppTrie {
         self.inner.pool.store_relaxed(parent as usize + 1, child0);
         self.inner.pool.store_relaxed(parent as usize + 2, child1);
 
-        // SAFETY: `parent` is newly allocated and uncontested.
-        // Writing prefix zpath.
-        unsafe {
-            let zpath_dst =
-                (self.inner.pool.data.as_ptr() as *mut u8).add((parent as usize + 3) * 4);
-            for i in 0..zidx {
-                *zpath_dst.add(i) = zpath_buf[i];
-            }
-            for i in zidx..prefix_zpath_padded {
-                *zpath_dst.add(i) = 0;
-            }
-        }
+        self.inner
+            .pool
+            .write_bytes_relaxed(parent as usize + 3, &zpath_buf[..zidx]);
         (parent, suffix_node)
     }
 
@@ -1854,20 +1804,10 @@ impl ConcurrentCsppTrie {
             .pool
             .store_relaxed(suffix_node as usize, meta_to_u32(suffix_meta));
 
-        // SAFETY: `suffix_node` is newly allocated and uncontested; the
-        // zpath source is a local buffer.
-        unsafe {
-            let base = self.inner.pool.data.as_ptr() as *mut u8;
-            let dst = base.add(suffix_node as usize * 4);
-            let struct_size = struct_slots * ALIGN_SIZE;
-            let zpath_dst = dst.add(struct_size);
-            for i in 0..suffix_zlen {
-                *zpath_dst.add(i) = zpath_buf[split_pos + 1 + i];
-            }
-            for i in suffix_zlen..suffix_zpath_padded {
-                *zpath_dst.add(i) = 0;
-            }
-        }
+        self.inner.pool.write_bytes_relaxed(
+            suffix_node as usize + struct_slots,
+            &zpath_buf[split_pos + 1..split_pos + 1 + suffix_zlen],
+        );
         if val_size > 0 {
             // Value words are mutable via set_value → atomic word copies.
             let src_base = curr as usize + struct_slots + ((zpath_len + 3) & !3) / 4;
@@ -1893,17 +1833,9 @@ impl ConcurrentCsppTrie {
             .pool
             .store_relaxed(prefix_node as usize + 1, suffix_node);
 
-        // SAFETY: prefix_node allocated with prefix_zpath_padded bytes, zpath_dst within allocated region, split_pos <= prefix_zpath_padded
-        unsafe {
-            let zpath_dst =
-                (self.inner.pool.data.as_ptr() as *mut u8).add((prefix_node as usize + 2) * 4);
-            for i in 0..split_pos {
-                *zpath_dst.add(i) = zpath_buf[i];
-            }
-            for i in split_pos..prefix_zpath_padded {
-                *zpath_dst.add(i) = 0;
-            }
-        }
+        self.inner
+            .pool
+            .write_bytes_relaxed(prefix_node as usize + 2, &zpath_buf[..split_pos]);
         let valpos = if self.valsize > 0 {
             let vp = self.alloc_val_pos();
             self.inner.pool.store_relaxed(
@@ -1993,11 +1925,10 @@ impl ConcurrentCsppTrie {
 
                 if zpath_len > 0 {
                     let mut zpath_buf = [0u8; 256];
-                    // SAFETY: Reading zpath from curr node, immutable after parent CAS.
-                    unsafe {
-                        let src = self.inner.pool.raw_ptr(curr as usize + skip + n_children);
-                        std::ptr::copy_nonoverlapping(src, zpath_buf.as_mut_ptr(), zpath_len);
-                    }
+                    self.inner.pool.read_bytes_acquire(
+                        curr as usize + skip + n_children,
+                        &mut zpath_buf[..zpath_len],
+                    );
 
                     let remaining_key = key.len() - pos;
                     let match_len = std::cmp::min(zpath_len, remaining_key);

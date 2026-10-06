@@ -175,31 +175,32 @@ pub mod x86_64_optimized {
     /// `u128`. Requires the `cmpxchg16b` CPU feature to be available.
     #[target_feature(enable = "cmpxchg16b")]
     pub unsafe fn cas_weak_u128(ptr: *mut u128, expected: u128, desired: u128) -> bool {
-        let result: u8;
+        let result_u64: u64;
         let expected_lo = expected as u64;
         let expected_hi = (expected >> 64) as u64;
         let desired_lo = desired as u64;
         let desired_hi = (desired >> 64) as u64;
 
         // SAFETY: Caller guarantees `ptr` is non-null, 16-byte aligned, and points to a valid
-        // `u128`, and that the `cmpxchg16b` feature is enabled. LLVM reserves `rbx`, so we swap
-        // `desired_lo` into `rbx` before `lock cmpxchg16b` and restore `rbx` immediately after.
+        // `u128`, and that the `cmpxchg16b` feature is enabled. `rustc` forbids `rbx` as an
+        // explicit inline-asm operand, while LLVM may allocate generic `in(reg)` operands to
+        // `rbx`; pinning `ptr` to `rdi` and `desired_lo` to `rsi` guarantees neither aliases
+        // `rbx` when we swap `desired_lo` into `rbx` for `lock cmpxchg16b` and restore `rbx`.
         unsafe {
             std::arch::asm!(
-                "xchg rbx, {desired_lo:r}",
-                "lock cmpxchg16b [{ptr}]",
-                "sete {result}",
-                "mov rbx, {desired_lo:r}",
-                ptr = in(reg) ptr,
-                result = out(reg_byte) result,
-                desired_lo = inout(reg) desired_lo => _,
-                inout("rax") expected_lo => _,
+                "xchg rbx, rsi",
+                "lock cmpxchg16b [rdi]",
+                "sete al",
+                "mov rbx, rsi",
+                in("rdi") ptr,
+                inout("rsi") desired_lo => _,
+                inout("rax") expected_lo => result_u64,
                 inout("rdx") expected_hi => _,
                 in("rcx") desired_hi,
                 options(nostack),
             );
         }
-        result != 0
+        (result_u64 as u8) != 0
     }
 
     /// Optimized atomic increment using xadd

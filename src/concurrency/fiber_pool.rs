@@ -571,13 +571,14 @@ mod tests {
 
         for _ in 0..3 {
             let done = Arc::clone(&done);
-            let _ = pool
-                .spawn(async move {
+            drop(
+                pool.spawn(async move {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     done.fetch_add(1, Ordering::SeqCst);
                     Ok(())
                 })
-                .unwrap();
+                .unwrap(),
+            );
         }
 
         // Immediately shut down without yielding first: shutdown() must wait for both

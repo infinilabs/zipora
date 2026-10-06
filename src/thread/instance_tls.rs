@@ -204,9 +204,7 @@ where
             let any_box = matrices
                 .entry(type_id)
                 .or_insert_with(|| Box::new(TlsMatrix::<T, ROWS, COLS>::new()));
-            let Some(matrix) = any_box.downcast_mut::<TlsMatrix<T, ROWS, COLS>>() else {
-                return None;
-            };
+            let matrix = any_box.downcast_mut::<TlsMatrix<T, ROWS, COLS>>()?;
 
             // SAFETY: row < ROWS and col < COLS from get_indices, and we hold exclusive
             // mutable access to the current thread's TlsMatrix via TLS_MATRICES RefCell.
@@ -451,8 +449,7 @@ impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop
     fn drop(&mut self) {
         // Eagerly clear the dropping thread's cell so resources held by `T` on the
         // current thread are released immediately rather than lingering until ID reuse.
-        if COLS > 0 {
-            let row = (self.id as usize) / COLS;
+        if let Some(row) = (self.id as usize).checked_div(COLS) {
             let col = (self.id as usize) % COLS;
             let removed = TLS_MATRICES
                 .try_with(|matrices| {

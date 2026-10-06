@@ -589,6 +589,6 @@ impl Default for PipelineBuilder {
 }
 
 #[cfg(test)]
-mod tests;
+mod integration_tests;
 #[cfg(test)]
-mod tests_integration;
+mod tests;

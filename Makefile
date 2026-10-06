@@ -12,7 +12,8 @@
 .PHONY: test test_debug test_release test_simd_base64
 .PHONY: bench bench_all bench_avx512 bench_fsa bench_io bench_serialization
 .PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
-.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_scalar
+.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_scalar
+.PHONY: tsan_cspp tsan_pool tsan_concurrency
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity
 .PHONY: unsafe_audit api_honesty index_audit unwrap_audit
@@ -175,6 +176,21 @@ tsan_pool:
 	$(CARGO) +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
 		--release --lib memory::lockfree
 
+# Thread and concurrency TSAN stress (plan.md C10). Runs src/thread and
+# src/concurrency (atomic_ext, linux_futex, instance_tls, work_stealing,
+# fiber_pool, parallel_trie, pipeline) under the thread sanitizer.
+tsan_concurrency:
+	CARGO_TARGET_DIR=target-tsan \
+	RUSTFLAGS="-Zsanitizer=thread --cfg crossbeam_sanitize" \
+	TSAN_OPTIONS="suppressions=$(CURDIR)/tsan.supp" \
+	$(CARGO) +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+		--release --lib thread::
+	CARGO_TARGET_DIR=target-tsan \
+	RUSTFLAGS="-Zsanitizer=thread --cfg crossbeam_sanitize" \
+	TSAN_OPTIONS="suppressions=$(CURDIR)/tsan.supp" \
+	$(CARGO) +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+		--release --lib concurrency::
+
 # Periodic Miri job (plan.md 6.2). CI is build-only by policy, so this is
 # the manual/weekly equivalent: unsafe-heavy container + hash-map cores
 # under Miri (uint_vec tail reads, hash-map probe/migration, circular queue).
@@ -308,6 +324,13 @@ miri_string:
 miri_io:
 	MIRIFLAGS="-Zmiri-disable-isolation" $(CARGO_MIRI) test --lib io:: -- --test-threads=1
 	MIRIFLAGS="-Zmiri-disable-isolation" $(CARGO_MIRI) test --lib memory::mmap_vec:: -- --test-threads=1
+
+# src/thread under Miri (plan.md C10). Checks atomic_ext (AsAtomic, lock-free
+# RMW helpers), linux_futex (FutexMutex, FutexCondvar, FutexRwLock via Miri's
+# emulated SYS_futex), and instance_tls (InstanceTls, TlsPool, lifecycle/drop
+# cleanup). Inline x86_64 assembly is skipped under cfg(miri).
+miri_thread:
+	$(CARGO_MIRI) test --lib thread:: -- --test-threads=1
 
 # The suites whose #[target_feature] kernels differ between the two builds,
 # rebuilt with no target features (MIRI_SCALAR=1, target/miri-scalar), so the
