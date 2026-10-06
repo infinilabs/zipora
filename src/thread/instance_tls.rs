@@ -90,13 +90,28 @@ impl<T, const ROWS: usize, const COLS: usize> InstanceTls<T, ROWS, COLS>
 where
     T: Send + Sync + Default + Clone + 'static,
 {
-    /// Create a new instance-specific TLS
-    pub fn new() -> Result<Self> {
-        if ROWS * COLS == 0 {
+    /// Validate that `ROWS * COLS` is non-zero, does not overflow `usize`, and fits in `u32`.
+    #[inline]
+    fn validate_dimensions() -> Result<usize> {
+        let total_cells = ROWS
+            .checked_mul(COLS)
+            .ok_or_else(|| ZiporaError::invalid_parameter("Matrix dimensions overflow usize"))?;
+        if total_cells == 0 {
             return Err(ZiporaError::invalid_parameter(
                 "Matrix dimensions cannot be zero",
             ));
         }
+        if total_cells > u32::MAX as usize {
+            return Err(ZiporaError::invalid_parameter(
+                "Matrix dimensions exceed u32::MAX",
+            ));
+        }
+        Ok(total_cells)
+    }
+
+    /// Create a new instance-specific TLS
+    pub fn new() -> Result<Self> {
+        Self::validate_dimensions()?;
 
         let (id, generation) = Self::allocate_id()?;
         let cleanup = Arc::new(CleanupHandle {
@@ -121,19 +136,23 @@ where
     {
         let (row, col) = self.get_indices();
 
-        TLS_MATRICES.with(|matrices| {
+        let (val, evicted) = TLS_MATRICES.with(|matrices| {
             let mut matrices = matrices.borrow_mut();
             let type_id = TypeId::of::<TlsMatrix<T, ROWS, COLS>>();
 
-            let matrix = matrices
+            let any_box = matrices
                 .entry(type_id)
-                .or_insert_with(|| Box::new(TlsMatrix::<T, ROWS, COLS>::new()))
-                .downcast_mut::<TlsMatrix<T, ROWS, COLS>>()
-                .expect("TLS matrix TypeId matches registered matrix type");
+                .or_insert_with(|| Box::new(TlsMatrix::<T, ROWS, COLS>::new()));
+            let Some(matrix) = any_box.downcast_mut::<TlsMatrix<T, ROWS, COLS>>() else {
+                return (T::default(), None);
+            };
 
-            // SAFETY: row and col are valid indices from get_indices (ID % matrix dimensions)
+            // SAFETY: row < ROWS and col < COLS from get_indices, and we hold exclusive
+            // mutable access to the current thread's TlsMatrix via TLS_MATRICES RefCell.
             unsafe { matrix.get_or_create_value(row, col, self.generation) }
-        })
+        });
+        drop(evicted);
+        val
     }
 
     /// Get copy of thread-local instance data if it exists
@@ -178,19 +197,22 @@ where
     pub fn set(&self, value: T) {
         let (row, col) = self.get_indices();
 
-        TLS_MATRICES.with(|matrices| {
+        let evicted = TLS_MATRICES.with(|matrices| {
             let mut matrices = matrices.borrow_mut();
             let type_id = TypeId::of::<TlsMatrix<T, ROWS, COLS>>();
 
-            let matrix = matrices
+            let any_box = matrices
                 .entry(type_id)
-                .or_insert_with(|| Box::new(TlsMatrix::<T, ROWS, COLS>::new()))
-                .downcast_mut::<TlsMatrix<T, ROWS, COLS>>()
-                .expect("TLS matrix TypeId matches registered matrix type");
+                .or_insert_with(|| Box::new(TlsMatrix::<T, ROWS, COLS>::new()));
+            let Some(matrix) = any_box.downcast_mut::<TlsMatrix<T, ROWS, COLS>>() else {
+                return None;
+            };
 
-            // SAFETY: row and col are valid indices from get_indices (ID % matrix dimensions)
+            // SAFETY: row < ROWS and col < COLS from get_indices, and we hold exclusive
+            // mutable access to the current thread's TlsMatrix via TLS_MATRICES RefCell.
             unsafe { matrix.set(row, col, self.generation, value) }
         });
+        drop(evicted);
     }
 
     /// Remove the thread-local value
@@ -222,6 +244,7 @@ where
 
     /// Allocate a unique instance ID and the generation that goes with it
     fn allocate_id() -> Result<(u32, u32)> {
+        let total_cells = Self::validate_dimensions()?;
         let registry = global_registry();
 
         // Try read lock first to see if we already have this type
@@ -250,13 +273,15 @@ where
                     return Ok((id, generation));
                 } else {
                     let id = state.next_id;
-                    if id as usize >= ROWS * COLS {
+                    if id as usize >= total_cells {
                         return Err(ZiporaError::resource_exhausted(format!(
                             "Too many TLS instances: max {}",
-                            ROWS * COLS
+                            total_cells
                         )));
                     }
-                    state.next_id += 1;
+                    state.next_id = state.next_id.checked_add(1).ok_or_else(|| {
+                        ZiporaError::resource_exhausted("TLS instance ID counter exhausted")
+                    })?;
                     return Ok((id, 0));
                 }
             }
@@ -288,13 +313,15 @@ where
             Ok((id, generation))
         } else {
             let id = state.next_id;
-            if id as usize >= ROWS * COLS {
+            if id as usize >= total_cells {
                 return Err(ZiporaError::resource_exhausted(format!(
                     "Too many TLS instances: max {}",
-                    ROWS * COLS
+                    total_cells
                 )));
             }
-            state.next_id += 1;
+            state.next_id = state.next_id.checked_add(1).ok_or_else(|| {
+                ZiporaError::resource_exhausted("TLS instance ID counter exhausted")
+            })?;
             Ok((id, 0))
         }
     }
@@ -322,40 +349,39 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
         }
     }
 
-    /// Get or create value at specified position
-    unsafe fn get_or_create_value(&mut self, row: usize, col: usize, generation: u32) -> T
+    /// Get or create value at specified position, returning any displaced stale `(generation, T)`
+    /// so the caller can drop it outside the thread-local `RefCell` borrow.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `row < ROWS`, `col < COLS`, and that no concurrent reference to the
+    /// cell at `(row, col)` exists on the current thread.
+    unsafe fn get_or_create_value(
+        &mut self,
+        row: usize,
+        col: usize,
+        generation: u32,
+    ) -> (T, Option<(u32, T)>)
     where
         T: Default + Clone,
     {
-        // Ensure row exists
-        if self.rows[row].is_none() {
-            // Create array of UnsafeCell<Option<(u32, T)>>
-            let new_row: Box<TlsRow<T, COLS>> =
-                Box::new(std::array::from_fn(|_| UnsafeCell::new(None)));
-            self.rows[row] = Some(new_row);
-        }
-
         let row_data = self.rows[row]
-            .as_ref()
-            .expect("row was allocated in previous if block");
+            .get_or_insert_with(|| Box::new(std::array::from_fn(|_| UnsafeCell::new(None))));
         let cell = &row_data[col];
-        // SAFETY: UnsafeCell interior mutability, exclusive access within thread-local context
+        // SAFETY: UnsafeCell interior mutability; exclusive access within thread-local context.
         let value_ref = unsafe { &mut *cell.get() };
 
         // A value left by an earlier holder of this id belongs to a dead
         // instance and must read as absent.
-        if value_ref
-            .as_ref()
-            .is_none_or(|(stored, _)| *stored != generation)
-        {
-            *value_ref = Some((generation, T::default()));
+        match value_ref {
+            Some((stored, val)) if *stored == generation => (val.clone(), None),
+            _ => {
+                let default_val = T::default();
+                let cloned = default_val.clone();
+                let evicted = value_ref.replace((generation, default_val));
+                (cloned, evicted)
+            }
         }
-
-        value_ref
-            .as_ref()
-            .expect("value set to default in previous if block")
-            .1
-            .clone()
     }
 
     /// Get value copy if it exists
@@ -363,9 +389,9 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
     where
         T: Clone,
     {
-        let row_data = self.rows[row].as_ref()?;
-        let cell = &row_data[col];
-        // SAFETY: UnsafeCell provides interior mutability, accessing immutably
+        let row_data = self.rows.get(row)?.as_ref()?;
+        let cell = row_data.get(col)?;
+        // SAFETY: UnsafeCell provides interior mutability; shared read within thread-local context.
         unsafe {
             let value_ref = &*cell.get();
             match value_ref {
@@ -376,28 +402,32 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
         }
     }
 
-    /// Set value at specified position
-    unsafe fn set(&mut self, row: usize, col: usize, generation: u32, value: T) {
-        // Ensure row exists
-        if self.rows[row].is_none() {
-            let new_row: Box<TlsRow<T, COLS>> =
-                Box::new(std::array::from_fn(|_| UnsafeCell::new(None)));
-            self.rows[row] = Some(new_row);
-        }
-
+    /// Set value at specified position, returning any previous `(generation, T)` so the caller
+    /// can drop it outside the thread-local `RefCell` borrow.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `row < ROWS`, `col < COLS`, and that no concurrent reference to the
+    /// cell at `(row, col)` exists on the current thread.
+    unsafe fn set(
+        &mut self,
+        row: usize,
+        col: usize,
+        generation: u32,
+        value: T,
+    ) -> Option<(u32, T)> {
         let row_data = self.rows[row]
-            .as_ref()
-            .expect("row was allocated in previous if block");
+            .get_or_insert_with(|| Box::new(std::array::from_fn(|_| UnsafeCell::new(None))));
         let cell = &row_data[col];
-        // SAFETY: UnsafeCell interior mutability, exclusive access within thread-local context
-        unsafe { *cell.get() = Some((generation, value)) };
+        // SAFETY: UnsafeCell interior mutability; exclusive access within thread-local context.
+        unsafe { (*cell.get()).replace((generation, value)) }
     }
 
     /// Remove value at specified position
     fn remove(&mut self, row: usize, col: usize, generation: u32) -> Option<T> {
-        let row_data = self.rows[row].as_ref()?;
-        let cell = &row_data[col];
-        // SAFETY: UnsafeCell interior mutability, exclusive mutable access via &mut self
+        let row_data = self.rows.get_mut(row)?.as_ref()?;
+        let cell = row_data.get(col)?;
+        // SAFETY: UnsafeCell interior mutability; exclusive mutable access via &mut self.
         unsafe {
             let value_ref = &mut *cell.get();
             match value_ref {
@@ -411,28 +441,47 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
     }
 }
 
+// SAFETY: TlsMatrix owns `Option<Box<[UnsafeCell<Option<(u32, T)>>; COLS]>>` and is only
+// accessed from its owning thread; transferring ownership across threads is safe when `T: Send`.
 unsafe impl<T: Send, const ROWS: usize, const COLS: usize> Send for TlsMatrix<T, ROWS, COLS> {}
 
 impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop
     for CleanupHandle<T, ROWS, COLS>
 {
     fn drop(&mut self) {
-        // Return ID to free list - use the same registry as allocation
-        let registry = global_registry();
+        // Eagerly clear the dropping thread's cell so resources held by `T` on the
+        // current thread are released immediately rather than lingering until ID reuse.
+        if COLS > 0 {
+            let row = (self.id as usize) / COLS;
+            let col = (self.id as usize) % COLS;
+            let removed = TLS_MATRICES
+                .try_with(|matrices| {
+                    let mut matrices = matrices.try_borrow_mut().ok()?;
+                    let type_id = TypeId::of::<TlsMatrix<T, ROWS, COLS>>();
+                    matrices
+                        .get_mut(&type_id)?
+                        .downcast_mut::<TlsMatrix<T, ROWS, COLS>>()?
+                        .remove(row, col, self.generation)
+                })
+                .ok()
+                .flatten();
+            drop(removed);
+        }
 
-        // Use read lock to find the state
-        if let Ok(read_guard) = registry.read() {
-            let type_id = TypeId::of::<(T, [(); ROWS], [(); COLS])>();
-            if let Some(state_box) = read_guard.get(&type_id)
-                && let Some(state_mutex) =
-                    state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>()
-                && let Ok(mut state) = state_mutex.lock()
-            {
-                // Bump the generation so values this instance left in other
-                // threads' matrices are invisible to the next holder.
-                state
-                    .free_ids
-                    .push_back((self.id, self.generation.wrapping_add(1)));
+        // Return ID to free list - use the same registry as allocation.
+        // Only recycle the ID if `generation + 1` does not overflow u32::MAX;
+        // otherwise retire the ID permanently to prevent generation wrap-around aliasing.
+        if let Some(next_gen) = self.generation.checked_add(1) {
+            let registry = global_registry();
+            if let Ok(read_guard) = registry.read() {
+                let type_id = TypeId::of::<(T, [(); ROWS], [(); COLS])>();
+                if let Some(state_box) = read_guard.get(&type_id)
+                    && let Some(state_mutex) =
+                        state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>()
+                    && let Ok(mut state) = state_mutex.lock()
+                {
+                    state.free_ids.push_back((self.id, next_gen));
+                }
             }
         }
     }
@@ -475,17 +524,13 @@ where
     pub fn get_or_create(&mut self, owner: &O) -> Result<T> {
         let owner_ptr = owner as *const O;
 
-        if let std::collections::hash_map::Entry::Vacant(e) = self.instances.entry(owner_ptr) {
-            let instance = InstanceTls::new()?;
-            e.insert(instance);
+        match self.instances.entry(owner_ptr) {
+            std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.get().get()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let instance = InstanceTls::new()?;
+                Ok(entry.insert(instance).get())
+            }
         }
-
-        // SAFETY: Either key existed or we just inserted it above, so get() always succeeds
-        Ok(self
-            .instances
-            .get(&owner_ptr)
-            .expect("owner pointer exists in instances map after get_or_insert")
-            .get())
     }
 
     /// Get TLS for owner if it exists
@@ -519,7 +564,7 @@ pub struct TlsPool<T, const POOL_SIZE: usize = 64>
 where
     T: Send + Sync + 'static,
 {
-    pool: [Option<InstanceTls<T>>; POOL_SIZE],
+    pool: Vec<InstanceTls<T>>,
     next_slot: AtomicU32,
 }
 
@@ -529,12 +574,16 @@ where
 {
     /// Create a new TLS pool
     pub fn new() -> Result<Self> {
-        let pool = std::array::from_fn(|_| {
-            Some(
-                InstanceTls::new()
-                    .expect("TLS initialization succeeds with valid matrix dimensions"),
-            )
-        });
+        if POOL_SIZE == 0 {
+            return Err(ZiporaError::invalid_parameter(
+                "TLS pool size cannot be zero",
+            ));
+        }
+
+        let mut pool = Vec::with_capacity(POOL_SIZE);
+        for _ in 0..POOL_SIZE {
+            pool.push(InstanceTls::new()?);
+        }
 
         Ok(Self {
             pool,
@@ -544,20 +593,15 @@ where
 
     /// Get the next available TLS instance (round-robin)
     pub fn get_next(&self) -> T {
+        // ORDERING: Relaxed is sufficient because next_slot is an independent round-robin
+        // counter and does not synchronize any shared state across threads.
         let slot = self.next_slot.fetch_add(1, Ordering::Relaxed) as usize % POOL_SIZE;
-        self.pool[slot]
-            .as_ref()
-            .expect("pool slot initialized by from_fn in constructor")
-            .get()
+        self.pool[slot].get()
     }
 
     /// Get TLS instance by slot index
     pub fn get_slot(&self, slot: usize) -> Option<T> {
-        if slot < POOL_SIZE {
-            Some(self.pool[slot].as_ref()?.get())
-        } else {
-            None
-        }
+        self.pool.get(slot).map(InstanceTls::get)
     }
 
     /// Get number of slots in pool
@@ -566,7 +610,7 @@ where
         POOL_SIZE
     }
 
-    /// Returns `true` if the pool has no slots (always false for a fixed-size pool)
+    /// Returns `true` if the pool has no slots (always false for a valid pool)
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -812,5 +856,53 @@ mod tests {
         };
         tls.set(test_data);
         assert_eq!(tls.get().value, 99);
+    }
+
+    #[test]
+    fn test_c10_f1_drop_clears_current_thread_and_reentrant_set_does_not_panic() {
+        #[derive(Clone, Default)]
+        struct DropTracker(#[allow(dead_code)] Option<Arc<()>>);
+
+        let token = Arc::new(());
+        let tls = InstanceTls::<DropTracker, 2, 2>::new().unwrap();
+        tls.set(DropTracker(Some(Arc::clone(&token))));
+        assert_eq!(Arc::strong_count(&token), 2);
+
+        drop(tls);
+        assert_eq!(
+            Arc::strong_count(&token),
+            1,
+            "dropping InstanceTls must immediately drop the current thread's stored value"
+        );
+
+        // Also verify that overwriting a value whose Drop reads/writes another InstanceTls
+        // does not panic with RefCell BorrowMutError.
+        let inner_tls = Arc::new(InstanceTls::<u32, 2, 2>::new().unwrap());
+        #[derive(Clone, Default)]
+        struct ReentrantDrop(Option<Arc<InstanceTls<u32, 2, 2>>>);
+        impl Drop for ReentrantDrop {
+            fn drop(&mut self) {
+                if let Some(ref tls) = self.0 {
+                    tls.set(77);
+                }
+            }
+        }
+
+        let outer_tls = InstanceTls::<ReentrantDrop, 2, 2>::new().unwrap();
+        outer_tls.set(ReentrantDrop(Some(Arc::clone(&inner_tls))));
+        outer_tls.set(ReentrantDrop(None));
+        assert_eq!(inner_tls.get(), 77);
+    }
+
+    #[test]
+    fn test_c10_f2_zero_pool_and_overflow_dimensions_return_err() {
+        assert!(
+            TlsPool::<TestData, 0>::new().is_err(),
+            "TlsPool with POOL_SIZE == 0 must return Err"
+        );
+        assert!(
+            InstanceTls::<TestData, 65536, 65536>::new().is_err(),
+            "InstanceTls with ROWS * COLS > u32::MAX must return Err"
+        );
     }
 }

@@ -34,19 +34,29 @@ pub trait AtomicExt<T> {
         F: Fn(T) -> bool;
 }
 
+#[inline]
+const fn load_ordering(order: Ordering) -> Ordering {
+    match order {
+        Ordering::Release => Ordering::Relaxed,
+        Ordering::AcqRel => Ordering::Acquire,
+        other => other,
+    }
+}
+
 macro_rules! impl_atomic_ext {
     ($atomic_type:ty, $value_type:ty) => {
         impl AtomicExt<$value_type> for $atomic_type {
             #[inline]
             fn atomic_maximize(&self, val: $value_type, order: Ordering) -> $value_type {
-                let mut current = self.load(order);
+                let fail_order = load_ordering(order);
+                let mut current = self.load(fail_order);
                 loop {
                     let new_val = current.max(val);
                     if new_val == current {
                         return current; // No change needed
                     }
 
-                    match self.compare_exchange_weak(current, new_val, order, order) {
+                    match self.compare_exchange_weak(current, new_val, order, fail_order) {
                         Ok(_) => return new_val,
                         Err(actual) => current = actual,
                     }
@@ -55,14 +65,15 @@ macro_rules! impl_atomic_ext {
 
             #[inline]
             fn atomic_minimize(&self, val: $value_type, order: Ordering) -> $value_type {
-                let mut current = self.load(order);
+                let fail_order = load_ordering(order);
+                let mut current = self.load(fail_order);
                 loop {
                     let new_val = current.min(val);
                     if new_val == current {
                         return current; // No change needed
                     }
 
-                    match self.compare_exchange_weak(current, new_val, order, order) {
+                    match self.compare_exchange_weak(current, new_val, order, fail_order) {
                         Ok(_) => return new_val,
                         Err(actual) => current = actual,
                     }
@@ -102,13 +113,15 @@ macro_rules! impl_atomic_ext {
             where
                 F: Fn($value_type) -> bool,
             {
-                let current = self.load(order);
-                if condition(current) {
-                    self.compare_exchange_weak(current, new_val, order, order)
-                        .is_ok()
-                } else {
-                    false
+                let fail_order = load_ordering(order);
+                let mut current = self.load(fail_order);
+                while condition(current) {
+                    match self.compare_exchange_weak(current, new_val, order, fail_order) {
+                        Ok(_) => return true,
+                        Err(actual) => current = actual,
+                    }
                 }
+                false
             }
         }
     };
@@ -129,10 +142,6 @@ impl_atomic_ext!(AtomicIsize, isize);
 /// Platform-specific atomic optimizations
 #[cfg(target_arch = "x86_64")]
 pub mod x86_64_optimized {
-    // x86_64 optimizations (currently unused but available for future implementations)
-    // use super::*;
-    // use std::arch::x86_64::*;
-
     /// x86_64-specific optimized CAS for u64
     ///
     /// # Safety
@@ -141,16 +150,19 @@ pub mod x86_64_optimized {
     #[inline]
     pub unsafe fn cas_weak_u64_asm(ptr: *mut u64, expected: u64, desired: u64) -> bool {
         let result: u8;
-        // SAFETY: asm: atomic compare-exchange u64, rax/result clobbered, ptr must be aligned and valid u64
+        // SAFETY: Caller guarantees `ptr` is non-null, 8-byte aligned, and points to a valid
+        // `u64` not concurrently accessed via non-atomic references. `lock cmpxchg` atomically
+        // compares `[ptr]` with `rax` (`expected`), stores `desired` on match or loads `[ptr]`
+        // into `rax` on mismatch, and sets `ZF` (captured by `sete`).
         unsafe {
             std::arch::asm!(
-                "lock cmpxchg {desired:r}, ({ptr})",
+                "lock cmpxchg [{ptr}], {desired:r}",
                 "sete {result}",
                 ptr = in(reg) ptr,
                 desired = in(reg) desired,
                 result = out(reg_byte) result,
-                in("rax") expected,
-                options(nostack, preserves_flags)
+                inout("rax") expected => _,
+                options(nostack),
             );
         }
         result != 0
@@ -169,19 +181,22 @@ pub mod x86_64_optimized {
         let desired_lo = desired as u64;
         let desired_hi = (desired >> 64) as u64;
 
-        // SAFETY: asm: 128-bit atomic compare-exchange, rax/rbx/rcx/rdx/result clobbered, ptr must be 16-byte aligned and valid u128
+        // SAFETY: Caller guarantees `ptr` is non-null, 16-byte aligned, and points to a valid
+        // `u128`, and that the `cmpxchg16b` feature is enabled. LLVM reserves `rbx`, so we swap
+        // `desired_lo` into `rbx` before `lock cmpxchg16b` and restore `rbx` immediately after.
         unsafe {
             std::arch::asm!(
-                "mov {desired_lo}, %rbx",
-                "lock cmpxchg16b ({ptr})",
+                "xchg rbx, {desired_lo:r}",
+                "lock cmpxchg16b [{ptr}]",
                 "sete {result}",
+                "mov rbx, {desired_lo:r}",
                 ptr = in(reg) ptr,
                 result = out(reg_byte) result,
-                desired_lo = in(reg) desired_lo,
-                in("rax") expected_lo,
-                in("rdx") expected_hi,
+                desired_lo = inout(reg) desired_lo => _,
+                inout("rax") expected_lo => _,
+                inout("rdx") expected_hi => _,
                 in("rcx") desired_hi,
-                options(nostack, preserves_flags, att_syntax)
+                options(nostack),
             );
         }
         result != 0
@@ -194,15 +209,16 @@ pub mod x86_64_optimized {
     /// `u64` that is not concurrently accessed through a non-atomic reference.
     #[inline]
     pub unsafe fn atomic_increment_u64(ptr: *mut u64) -> u64 {
-        let result: u64;
-        // SAFETY: asm: atomic fetch-add u64, result clobbered, ptr must be aligned and valid u64
+        let mut result: u64 = 1;
+        // SAFETY: Caller guarantees `ptr` is non-null, 8-byte aligned, and points to a valid
+        // `u64` not concurrently accessed via non-atomic references. `lock xadd` atomically adds
+        // `1` to `[ptr]` and writes the previous value into `result`.
         unsafe {
             std::arch::asm!(
-                "mov {result:r}, 1",
-                "lock xadd ({ptr}), {result:r}",
+                "lock xadd [{ptr}], {result:r}",
                 ptr = in(reg) ptr,
-                result = out(reg) result,
-                options(nostack, preserves_flags)
+                result = inout(reg) result,
+                options(nostack),
             );
         }
         result
@@ -216,13 +232,15 @@ pub mod x86_64_optimized {
     #[inline]
     pub unsafe fn atomic_exchange_u64(ptr: *mut u64, val: u64) -> u64 {
         let result: u64;
-        // SAFETY: asm: atomic exchange u64, result clobbered, ptr must be aligned and valid u64
+        // SAFETY: Caller guarantees `ptr` is non-null, 8-byte aligned, and points to a valid
+        // `u64` not concurrently accessed via non-atomic references. `xchg` with a memory
+        // operand has an implicit `LOCK` prefix on x86_64 and atomically swaps `[ptr]` and `val`.
         unsafe {
             std::arch::asm!(
-                "xchg ({ptr}), {val:r}",
+                "xchg [{ptr}], {val:r}",
                 ptr = in(reg) ptr,
                 val = inout(reg) val => result,
-                options(nostack, preserves_flags)
+                options(nostack, preserves_flags),
             );
         }
         result
@@ -305,14 +323,27 @@ pub mod aarch64_optimized {
     }
 }
 
-/// Safe atomic reinterpret casting
+/// Safe atomic view over a uniquely borrowed primitive or raw pointer (`&mut T`).
+///
+/// Requires `&mut self` (via `Atomic*::from_mut`) because constructing an `&Atomic*`
+/// from a shared `&T` without `UnsafeCell` violates Rust's aliasing rules when
+/// atomic stores or read-modify-write operations are performed.
+///
+/// ```compile_fail
+/// use std::sync::atomic::Ordering;
+/// use zipora::thread::AsAtomic;
+///
+/// let value: u32 = 10;
+/// // Immutable `value` cannot be viewed as `&AtomicU32`:
+/// value.as_atomic().store(20, Ordering::Relaxed);
+/// ```
 pub trait AsAtomic<T> {
     type Atomic;
 
-    /// Get atomic reference to the value
-    fn as_atomic(&self) -> &Self::Atomic;
+    /// Get shared atomic reference from an exclusive reference to the value
+    fn as_atomic(&mut self) -> &Self::Atomic;
 
-    /// Get mutable atomic reference to the value
+    /// Get mutable atomic reference from an exclusive reference to the value
     fn as_atomic_mut(&mut self) -> &mut Self::Atomic;
 }
 
@@ -322,14 +353,17 @@ macro_rules! impl_as_atomic {
             type Atomic = $atomic;
 
             #[inline]
-            fn as_atomic(&self) -> &Self::Atomic {
-                // SAFETY: atomic types have identical representation to their primitive types, pointer is properly aligned and valid
-                unsafe { &*(self as *const $type as *const $atomic) }
+            fn as_atomic(&mut self) -> &Self::Atomic {
+                // SAFETY: `self` is a valid, aligned, exclusively-borrowed reference (`&mut`),
+                // so `from_ptr` receives a mutable pointer with write provenance and identical
+                // size/alignment to `$atomic`.
+                unsafe { <$atomic>::from_ptr(self) }
             }
 
             #[inline]
             fn as_atomic_mut(&mut self) -> &mut Self::Atomic {
-                // SAFETY: atomic types have identical representation to their primitive types, pointer is properly aligned and valid
+                // SAFETY: `self` is a valid, aligned, exclusively-borrowed reference (`&mut`),
+                // and `$type` and `$atomic` have identical size, alignment, and bit validity.
                 unsafe { &mut *(self as *mut $type as *mut $atomic) }
             }
         }
@@ -353,14 +387,17 @@ impl<T> AsAtomic<*mut T> for *mut T {
     type Atomic = AtomicPtr<T>;
 
     #[inline]
-    fn as_atomic(&self) -> &Self::Atomic {
-        // SAFETY: AtomicPtr<T> has identical representation to *mut T, pointer is properly aligned and valid
-        unsafe { &*(self as *const *mut T as *const AtomicPtr<T>) }
+    fn as_atomic(&mut self) -> &Self::Atomic {
+        // SAFETY: `self` is a valid, aligned, exclusively-borrowed reference (`&mut *mut T`),
+        // so `from_ptr` receives a mutable pointer with write provenance and identical
+        // size/alignment to `AtomicPtr<T>`.
+        unsafe { AtomicPtr::from_ptr(self) }
     }
 
     #[inline]
     fn as_atomic_mut(&mut self) -> &mut Self::Atomic {
-        // SAFETY: AtomicPtr<T> has identical representation to *mut T, pointer is properly aligned and valid
+        // SAFETY: `self` is a valid, aligned, exclusively-borrowed reference (`&mut *mut T`),
+        // and `*mut T` and `AtomicPtr<T>` have identical size, alignment, and bit validity.
         unsafe { &mut *(self as *mut *mut T as *mut AtomicPtr<T>) }
     }
 }
@@ -390,7 +427,7 @@ macro_rules! impl_atomic_bit_ops {
                 if bit >= $bits {
                     return false;
                 }
-                let mask = 1 << bit;
+                let mask = (1 as $value_type) << bit;
                 let old = self.fetch_or(mask, Ordering::AcqRel);
                 (old & mask) != 0
             }
@@ -399,7 +436,7 @@ macro_rules! impl_atomic_bit_ops {
                 if bit >= $bits {
                     return false;
                 }
-                let mask = 1 << bit;
+                let mask = (1 as $value_type) << bit;
                 let old = self.fetch_and(!mask, Ordering::AcqRel);
                 (old & mask) != 0
             }
@@ -408,7 +445,7 @@ macro_rules! impl_atomic_bit_ops {
                 if bit >= $bits {
                     return false;
                 }
-                let mask = 1 << bit;
+                let mask = (1 as $value_type) << bit;
                 let old = self.fetch_xor(mask, Ordering::AcqRel);
                 (old & mask) != 0
             }
@@ -417,7 +454,7 @@ macro_rules! impl_atomic_bit_ops {
                 if bit >= $bits {
                     return false;
                 }
-                let mask = 1 << bit;
+                let mask = (1 as $value_type) << bit;
                 (self.load(Ordering::Acquire) & mask) != 0
             }
 
@@ -442,13 +479,13 @@ impl_atomic_bit_ops!(AtomicUsize, usize, std::mem::size_of::<usize>() * 8);
 /// Optimized spin loop with platform-specific hints
 #[inline]
 pub fn spin_loop_hint() {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
     x86_64_optimized::pause();
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     aarch64_optimized::yield_now();
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     std::hint::spin_loop();
 }
 
@@ -459,39 +496,39 @@ pub mod memory_ordering {
     /// Full memory barrier
     #[inline]
     pub fn full_barrier() {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         x86_64_optimized::mfence();
 
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", not(miri)))]
         aarch64_optimized::dmb();
 
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
         std::sync::atomic::fence(Ordering::SeqCst);
     }
 
     /// Load barrier
     #[inline]
     pub fn load_barrier() {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         x86_64_optimized::lfence();
 
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", not(miri)))]
         aarch64_optimized::dmb();
 
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
         std::sync::atomic::fence(Ordering::Acquire);
     }
 
     /// Store barrier
     #[inline]
     pub fn store_barrier() {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         x86_64_optimized::sfence();
 
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", not(miri)))]
         aarch64_optimized::dmb();
 
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        #[cfg(any(miri, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
         std::sync::atomic::fence(Ordering::Release);
     }
 }
@@ -499,8 +536,6 @@ pub mod memory_ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    
 
     #[test]
     fn test_atomic_maximize() {
@@ -575,5 +610,71 @@ mod tests {
         // Don't update if odd
         assert!(!atomic.update_if(|x| x % 2 == 1, 30, Ordering::Relaxed));
         assert_eq!(atomic.load(Ordering::Relaxed), 20);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[cfg_attr(miri, ignore = "inline x86_64 assembly is not supported by Miri")]
+    #[test]
+    fn test_c10_a_x86_64_asm_exchange_increment_and_cas_modify_memory() {
+        let mut val: u64 = 0x1122_3344_5566_7788;
+        let prev =
+            unsafe { x86_64_optimized::atomic_exchange_u64(&raw mut val, 0xDEAD_BEEF_CAFE_BABE) };
+        assert_eq!(prev, 0x1122_3344_5566_7788);
+        assert_eq!(val, 0xDEAD_BEEF_CAFE_BABE);
+
+        let before_inc = unsafe { x86_64_optimized::atomic_increment_u64(&raw mut val) };
+        assert_eq!(before_inc, 0xDEAD_BEEF_CAFE_BABE);
+        assert_eq!(val, 0xDEAD_BEEF_CAFE_BABF);
+
+        let swapped =
+            unsafe { x86_64_optimized::cas_weak_u64_asm(&raw mut val, 0xDEAD_BEEF_CAFE_BABF, 42) };
+        assert!(swapped);
+        assert_eq!(val, 42);
+        let not_swapped = unsafe { x86_64_optimized::cas_weak_u64_asm(&raw mut val, 99, 100) };
+        assert!(!not_swapped);
+        assert_eq!(val, 42);
+
+        if std::arch::is_x86_feature_detected!("cmpxchg16b") {
+            #[repr(align(16))]
+            struct AlignedU128(u128);
+            let mut v128 = AlignedU128((1u128 << 96) | 7u128);
+            let ok128 = unsafe {
+                x86_64_optimized::cas_weak_u128(
+                    &raw mut v128.0,
+                    (1u128 << 96) | 7u128,
+                    (9u128 << 80) | 13u128,
+                )
+            };
+            assert!(ok128);
+            assert_eq!(v128.0, (9u128 << 80) | 13u128);
+        }
+    }
+
+    #[test]
+    fn test_c10_b_atomic_maximize_minimize_update_if_accept_release_and_acqrel() {
+        let atomic = AtomicU64::new(10);
+        assert_eq!(atomic.atomic_maximize(25, Ordering::Release), 25);
+        assert_eq!(atomic.atomic_maximize(40, Ordering::AcqRel), 40);
+        assert_eq!(atomic.atomic_minimize(15, Ordering::Release), 15);
+        assert_eq!(atomic.atomic_minimize(5, Ordering::AcqRel), 5);
+        assert!(atomic.update_if(|v| v == 5, 50, Ordering::Release));
+        assert_eq!(atomic.load(Ordering::Acquire), 50);
+        assert!(atomic.update_if(|v| v == 50, 60, Ordering::AcqRel));
+        assert_eq!(atomic.load(Ordering::Acquire), 60);
+    }
+
+    #[test]
+    fn test_c10_c_as_atomic_from_mut_is_miri_clean() {
+        let mut x: u64 = 10;
+        x.as_atomic().store(25, Ordering::Release);
+        let prev = x.as_atomic().fetch_add(17, Ordering::AcqRel);
+        assert_eq!(prev, 25);
+        assert_eq!(x, 42);
+
+        let mut target: u32 = 7;
+        let mut ptr: *mut u32 = &raw mut target;
+        let mut other: u32 = 9;
+        ptr.as_atomic().store(&raw mut other, Ordering::Release);
+        assert_eq!(unsafe { *ptr }, 9);
     }
 }
