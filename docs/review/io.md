@@ -4,7 +4,7 @@ Rules for this ledger:
 
 - **Citation format (`S21-R3`)**: Every statement about source code cites `commit:path:line` (or `commit:path:start-end`), verified against `git show <commit>:<path>`. Line numbers inside fenced `cargo test` / Miri / AddressSanitizer panic tracebacks are verbatim output of the command shown above them; when a RED run spliced a fix commit's test module onto a parent commit's production file, the splice line offset between the spliced file and the fix commit is stated in §2.3 and above the pasted output.
 - **Elision format (`S21-R3`)**: Every elided block in pasted command output uses the standard bracketed line-count marker with the exact line count removed.
-- **Scope**: `db3c514..cfefd93` (36 initial C9 code/build commits on `main`, `73a25d0` initial ledger commit, `0e8c6ba..125b80a` + `5d35a51` `S22` re-review remediation commits in §10, and `b84f34b..cfefd93` `S23` re-review round 2 remediation commits in §11):
+- **Scope**: `db3c514..b8e7f8b` (36 initial C9 code/build commits on `main`, `73a25d0` initial ledger commit, `0e8c6ba..125b80a` + `5d35a51` `S22` re-review remediation commits in §10, `b84f34b..cfefd93` + `a8d8b39` `S23` re-review round 2 remediation commits in §11, and `b8e7f8b` `S24` remediation commit in §12):
   - **S21 carry-overs (`be12f99..b088f15`, 4 commits)**: `S21-R2` Miri scaling for `test_sse42_strstr_window_skip_matches_a_reference_search` (`be12f99`), committing `Cargo.lock` and wiring `--locked` into `make sanity` and CI (`ba31803`), `S21-R1` `AdvancedRadixSort` parallel reporting (`adf8204`), and `S21-R4` `Makefile` haswell + scalar Miri targets (`b088f15`).
   - **Phase D audit script fix (`d611d4b`, 1 commit)**: `scripts/audit_common.py` now recognizes `#[cfg(all(test, ...))]` items as test code.
   - **C9.1 `src/error.rs` + `src/memory/mmap_vec.rs` (`aae0586..7bac7ba`, 7 commits)**: `ZiporaError::Misaligned`, Miri test gating, `F1`–`F9`, runtime alignment and mapping-length checks before `from_raw_parts`, `SIGBUS` `Limitation:` documentation, and `MAP_SHARED` + `madvise` persistence tests.
@@ -12,9 +12,10 @@ Rules for this ledger:
   - **C9 `src/io/simd_memory/` + `src/io/simd_validation/` + `src/io/endian.rs` (`83f4848..ac7a59b`, 5 commits)**: `S1`–`S6` (SSE4.2 `strstr` page-boundary overread fix, `find_any_of` >16-byte set fix, window-skip `strstr`, honest tier reporting), `C1`/`C3`/`C4` (`aarch64` CRC32C intrinsics, Miri SSE4.2 test, `crc32c_update` doctest), and `E1`–`E5` (`EndianConvert: bytemuck::Pod` soundness bound + `compile_fail` doctest, SIMD direction fix, SSE2 `u32` byte-swap, `write_endianness_magic(Big)` fix).
   - **C9 `src/io/` readers, writers, serialization, versioning, range streams, varint, stream buffer (`376ad6b..a807faf`, 13 commits)**: `DI-1`–`DI-3`, `CT-1`–`CT-5`, `SP-1`–`SP-6`, `DO-1`, `VS-1`–`VS-5`, `RS-1`–`RS-5`, `VV-1`–`VV-6`, `SB-1`–`SB-9`, and `tests/io_untrusted_lengths.rs`.
   - **S22 Stage 10 re-review remediation (`0e8c6ba..125b80a`, 5 commits, §10)**: `S22-R1` (2 MiB debug stack `max_depth` sizing), `S22-R2` (wire-format and API break disclosures), `S22-R3` (cached validated `data` pointer and `#[inline]` hot accessors in `MmapVec`), `S22-R4` (64 MiB known-input preallocation cap in `DataInput::read_vec` / `prealloc_capacity`), `S22-R5` (`MappingKind::ReadOnly(Mmap)` `PROT_READ` mapping for read-only `MmapVec`), `S22-R7` (SSE2 `PCMPEQB` + `PMOVMSKB` for `sse42_strchr_impl`, Miri test scaling, and `make miri_io`), and `S22-R8` (`checked_u32_len`, `StreamBufferConfig::growth_factor.is_finite() && <= 1024.0`, and `ZeroCopyReader`/`ZeroCopyWriter`/`VectoredIO` over-reported byte checks).
-  - **S23 Stage 10 re-review round 2 remediation (`b84f34b..cfefd93`, 2 commits, §11)**: `S22-R4` + `S23-R1` (flat thread-local `SER_DEPTH`/`DE_DEPTH` `Cell` guards `enter_ser_depth`/`enter_de_depth` + dense sequential object table `dense_objects` in `DeserializationContext`, restoring `Vec<u64>` and `Vec<Vec<u32>>` decode speed and accelerating `Vec<Rc<u64>>` beyond pre-C9), `S23-R2` (ledger accuracy and citation/identifier audit), `S23-R3` (`MmapVecConfig::validate` for `growth_factor`), `S23-R4` (`StreamBufferedReader`/`StreamBufferedWriter` over-reporting `Read`/`Write` checks), and `S23-R5` (`SmartPtrConfig::robust().max_depth` = `256` for large-frame types at `opt-level=0`, narrowed docs, and RED-verified tests).
+  - **S23 Stage 10 re-review round 2 remediation (`b84f34b..a8d8b39`, 3 commits, §11)**: `S22-R4` + `S23-R1` (flat thread-local `SER_DEPTH`/`DE_DEPTH` `Cell` guards `enter_ser_depth`/`enter_de_depth` + dense sequential object table `dense_objects` in `DeserializationContext`, restoring `Vec<u64>` and `Vec<Vec<u32>>` decode speed and accelerating `Vec<Rc<u64>>` beyond pre-C9), `S23-R2` (ledger accuracy and citation/identifier audit), `S23-R3` (`MmapVecConfig::validate` for `growth_factor`), `S23-R4` (`StreamBufferedReader`/`StreamBufferedWriter` over-reporting `Read`/`Write` checks), and `S23-R5` (`SmartPtrConfig::robust().max_depth` = `256` for large-frame types at `opt-level=0`, narrowed docs, and RED-verified tests).
+  - **S24 carry-over remediation (`b8e7f8b`, 1 commit, §12)**: `S24-R1` (restrict `dense_objects` to strictly sequential 1-based IDs without `Option<T>` padding so strided/gapped IDs cannot amplify heap usage), `S24-R2` (ledger identifier, citation, and prose accuracy + `scripts/audit_ledger.py`), `S24-R3` (pack `SER_DEPTH`/`DE_DEPTH` into `Cell<u64>` with zero-sized guards and `#[inline]` `SliceDataInput`/`prealloc_capacity` to recover small-container throughput), and `S24-R4` (test assertion tightening in `smart_ptr.rs` and `mmap_vec.rs`).
 
-## 1. Commits (`db3c514..cfefd93`)
+## 1. Commits (`db3c514..b8e7f8b`)
 
 | # | Commit | Parent | Date | Subject | Files | +/− |
 |---|---|---|---|---|---|---|
@@ -60,9 +61,11 @@ Rules for this ledger:
 | 40 | `4790f48` | `d28462f` | 2026-10-05 | fix(mmap_vec): map read-only vectors with PROT_READ and inline validated slice access (S22-R3, S22-R5, S22-R7, S22-R8) | 1 | +236 / −89 |
 | 41 | `5b33f98` | `4790f48` | 2026-10-05 | fix(io): disclose wire-format/API changes and guard zero_copy/stream_buffer bounds (S22-R2, S22-R8) | 6 | +168 / −19 |
 | 42 | `125b80a` | `5b33f98` | 2026-10-05 | perf(io): use SSE2 PCMPEQB for strchr and add make miri_io target (S22-R7) | 9 | +137 / −67 |
-| 43 | `5d35a51` | `125b80a` | 2026-10-05 | docs(review): update Stage 10 io.md ledger and baselines for S22 | 4 | +306 / −465 |
+| 43 | `5d35a51` | `125b80a` | 2026-10-05 | docs(review): audit and update io.md for S22-R1..R8 and S21-R3 | 4 | +306 / −465 |
 | 44 | `b84f34b` | `5d35a51` | 2026-10-06 | fix(io): flat thread-local depth guards and dense object table for smart_ptr and complex_types (S22-R4, S23-R1, S23-R5) | 5 | +840 / −439 |
 | 45 | `cfefd93` | `b84f34b` | 2026-10-06 | fix(io,memory): validate MmapVecConfig::growth_factor and reject over-reporting Read/Write in StreamBuffer (S23-R3, S23-R4, S23-R5) | 2 | +184 / −17 |
+| 46 | `a8d8b39` | `cfefd93` | 2026-10-06 | docs(review): fix Stage 10 io.md ledger identifiers, citations, and S23 verification (S23-R2) | 2 | +610 / −134 |
+| 47 | `b8e7f8b` | `a8d8b39` | 2026-10-06 | fix(io,memory): restrict dense object table to sequential IDs, pack depth state into u64, and tighten S23 tests (S24-R1, S24-R3, S24-R4) | 3 | +380 / −188 |
 
 ## 2. Verification Boundary and Method
 
@@ -2873,7 +2876,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3006 filtered out; f
      data.
    - In addition, `fd455f5:src/io/endian.rs:323` carries the honesty marker
      `/// SIMD-accelerated endian conversion for arrays (currently unused but available for optimization)`,
-     and `fd455f5:src/io/endian.rs:339, 374` collect `chunks_Exact_mut`
+     and `fd455f5:src/io/endian.rs:339, 374` collect `chunks_exact_mut`
      into a temporary heap-allocated `Vec<_>` before iterating.
 
 3. **C9 E3 (MEDIUM — Soundness / UB: SSSE3 `_mm_shuffle_epi8` called inside an `#[cfg(target_feature = "sse2")]` block without SSSE3 guard)**:
@@ -2900,11 +2903,10 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3006 filtered out; f
    - In `fd455f5:src/io/endian.rs:402-453`, `EndianConfig` stores private
      fields `default_endianness`, `auto_detect`, and `simd_acceleration`
      with builder setters (`with_default_endianness`, `with_auto_detect`,
-     `with_simd`) but no getters and no consumer anywhere in the crate.
+     `with_simd_acceleration`) but no getters and no consumer anywhere in the crate.
    - Module docs (`fd455f5:src/io/endian.rs:3-5`) and builder docs
      (`fd455f5:src/io/endian.rs:424, 430`) claim automatic endianness
-     detection and SIMD acceleration that are not wired to `EndianIO`,
-     `EndianReader`, or `EndianWriter`.
+     detection and SIMD acceleration that are not wired to `EndianIO`.
 
 ### Root Cause & Fix
 
@@ -2927,19 +2929,19 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3006 filtered out; f
     `Pod` newtype (`struct Id(u32)`).
 - **E2 & E3 (`ac7a59b:src/io/endian.rs:373-460`)**:
   - Fix the early-return condition in `simd::convert_u16_slice_simd`
-    (`ac7a59b:src/io/endian.rs:385`) and `simd::convert_u32_slice_simd`
-    (`ac7a59b:src/io/endian.rs:421`) to
+    (`ac7a59b:src/io/endian.rs:386`) and `simd::convert_u32_slice_simd`
+    (`ac7a59b:src/io/endian.rs:422`) to
     `if from_little == cfg!(target_endian = "little") { return; }`.
   - Iterate `chunks.by_ref()` and `chunks.into_remainder()` directly
     without allocating a temporary `Vec`.
   - Replace the SSSE3 `_mm_shuffle_epi8` in `convert_u32_slice_simd`
-    (`ac7a59b:src/io/endian.rs:440-448`) with a pure-SSE2 32-bit byte swap: swap
-    adjacent bytes within each 16-bit lane via `_mm_or_si128(_mm_slli_epi16(v, 8), _mm_srli_epi16(v, 8))`
+    (`ac7a59b:src/io/endian.rs:437-450`) with a pure-SSE2 32-bit byte swap: swap
+    adjacent bytes within each 16-bit lane via `_mm_or_si128(_mm_slli_epi16(data, 8), _mm_srli_epi16(data, 8))`
     and then swap the 16-bit halves within each 32-bit lane via
-    `_mm_or_si128(_mm_slli_epi32( swapped_16, 16), _mm_srli_epi32(swapped_16, 16))`.
-  - Document `/// # Safety` on both `unsafe` blocks (`ac7a59b:src/io/endian.rs:394-400, 430-437`)
+    `_mm_or_si128(_mm_slli_epi32(halves_swapped, 16), _mm_srli_epi32(halves_swapped, 16))`.
+  - Document `// SAFETY:` comments on both `unsafe` blocks (`ac7a59b:src/io/endian.rs:398-409, 433-451`)
     and replace the `(currently unused...)` honesty marker with honest
-    `pub mod simd` documentation (`ac7a59b:src/io/endian.rs:373-381`).
+    `pub mod simd` documentation (`ac7a59b:src/io/endian.rs:374-382`).
 - **E4 (`ac7a59b:src/io/endian.rs:569-581`)**:
   - Match `Endianness::Little => ENDIAN_MAGIC_LITTLE`,
     `Endianness::Big => ENDIAN_MAGIC_BIG`, and resolve `Endianness::Native`
@@ -2951,7 +2953,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3006 filtered out; f
     `EndianConfig` (`ac7a59b:src/io/endian.rs:506-518`).
   - Narrow module and `EndianConfig` docs with explicit `Limitation:`
     disclosures explaining that `EndianConfig` is a standalone preference
-    container and how callers invoke `utils::detect_endianness_from_magic`
+    container and how callers invoke `detect_endianness_from_magic`
     and `simd::convert_u16_slice_simd` / `simd::convert_u32_slice_simd`.
 
 ### RED Outputs (on parent `fd455f5`)
@@ -3778,13 +3780,13 @@ Root causes (in `48f8ab3:src/io/smart_ptr.rs`):
 - SP-2 (`48f8ab3:src/io/smart_ptr.rs:344-347, 357-361` for `RcWeak<T>`, and `48f8ab3:src/io/smart_ptr.rs:385-388, 398-402` for `ArcWeak<T>`): `serialize_with_context` encoded a dangling weak pointer (`self.upgrade()` is `None`) by writing only `output.write_u8(0)?`, whereas `deserialize_with_context` on marker `0` called `let _ = T::deserialize(input)?;` before returning `Ok(RcWeak::new())` / `Ok(ArcWeak::new())`. Decoding a dangling weak pointer therefore failed with `Unexpected end of data` (or consumed subsequent bytes in the stream as a dummy `T`).
 - SP-3 (`48f8ab3:src/io/smart_ptr.rs:86-113, 217-219, 362-367, 403-408`): `DeserializationContext<T>` was generic over a single concrete type `T`, so `Option<Box<T>>::deserialize_with_context` (`48f8ab3:src/io/smart_ptr.rs:217-219`) and `RcWeak<T>` / `ArcWeak<T>::deserialize_with_context` (`48f8ab3:src/io/smart_ptr.rs:364, 405`) could not pass their `DeserializationContext<Self>` to `Box::<T>::deserialize_with_context`, `Rc::<T>::deserialize_with_context`, or `Arc::<T>::deserialize_with_context`, and instead allocated a fresh `&mut DeserializationContext::new()`. For marker `1` on `RcWeak<T>` / `ArcWeak<T>`, the decoded `rc` / `arc` lived only in that temporary inner context and local variable, which were both dropped before returning `Ok(Rc::downgrade(&rc))` / `Ok(Arc::downgrade(&arc))`, so every decoded weak pointer immediately expired (`upgrade() == None`).
 - SP-4 (`48f8ab3:src/io/smart_ptr.rs:46-59`): `SerializationContext::get_or_assign_id` keyed `object_ids: HashMap<usize, u32>` by `ptr as *const T as usize` without keeping a strong `Rc<T>` / `Arc<T>` alive for the lifetime of the `SerializationContext`. Temporary `Rc` / `Arc` allocations dropped between `serialize_with_context` calls on the same `SerializationContext` had their heap addresses reused by the allocator, causing later distinct `Rc` / `Arc` values to collide in `object_ids` and be serialized as marker `2` back-references to the earlier object ID.
-- SP-5 (`48f8ab3:src/io/smart_ptr.rs:139-151, 245, 261, 298, 314, 545-571, 610-632`): `SmartPtrSerialize::{serialize, deserialize}` always constructed a fresh `SerializationContext::new()` / `DeserializationContext::new()`, and `Rc<T>`, `Arc<T>`, `Vec<T>`, and `Option<T>` called `SerializableType::{serialize, deserialize}` without propagating the active context. Consequently, containers (`Vec<Rc<T>>`) never shared deduplication state across elements, and cyclic graphs (`Rc<RefCell<Option<Rc<Node>>>>`) created a fresh `SerializationContext` at each nested `Rc` hop and recursed until stack overflow.
+- SP-5 (`48f8ab3:src/io/smart_ptr.rs:139-151, 245, 261, 298, 314, 547-570, 573-603`): `SmartPtrSerialize::{serialize, deserialize}` always constructed a fresh `SerializationContext::new()` / `DeserializationContext::new()`, and `Rc<T>`, `Arc<T>`, `Box<T>`, and `Vec<T>` called `SerializableType::{serialize, deserialize}` without propagating the active context. Consequently, containers (`Vec<Rc<T>>`) never shared deduplication state across elements, and cyclic graphs (`Rc<RefCell<Option<Rc<Node>>>>`) created a fresh `SerializationContext` at each nested `Rc` hop and recursed until stack overflow.
 
 Fixes (in `3a9ca6f:src/io/smart_ptr.rs`):
 - SP-2 (`3a9ca6f:src/io/smart_ptr.rs:506-507, 541-542`): on marker `0`, `RcWeak<T>::deserialize_with_context` (`3a9ca6f:src/io/smart_ptr.rs:501-514`) and `ArcWeak<T>::deserialize_with_context` (`3a9ca6f:src/io/smart_ptr.rs:536-549`) return `Ok(RcWeak::new())` / `Ok(ArcWeak::new())` immediately without calling `T::deserialize(input)`.
 - SP-3 (`3a9ca6f:src/io/smart_ptr.rs:144-205, 365-368, 508-511, 543-546`): make `DeserializationContext` non-generic by storing `objects: HashMap<u32, Box<dyn Any>>` (`3a9ca6f:src/io/smart_ptr.rs:146`) with typed `store_object<T: 'static>(&mut self, id: u32, object: T)` (`3a9ca6f:src/io/smart_ptr.rs:163-165`) and `get_object<T: 'static>(&self, id: u32) -> Option<&T>` (`3a9ca6f:src/io/smart_ptr.rs:168-170`). `Option<Box<T>>`, `RcWeak<T>`, and `ArcWeak<T>` pass the caller's `context: &mut DeserializationContext` directly to `Box::<T>::deserialize_with_context`, `Rc::<T>::deserialize_with_context`, and `Arc::<T>::deserialize_with_context`, so the strong `Rc<T>` / `Arc<T>` stored in `context.objects` keeps the referent alive for the duration of the `DeserializationContext` and `weak.upgrade()` succeeds.
 - SP-4 (`3a9ca6f:src/io/smart_ptr.rs:32, 81-85, 391, 445`): add `retained_objects: Vec<Box<dyn Any>>` to `SerializationContext` and call `context.retain_object(self.clone())` when first serializing an `Rc<T>` (`3a9ca6f:src/io/smart_ptr.rs:391`) or `Arc<T>` (`3a9ca6f:src/io/smart_ptr.rs:445`), keeping a strong reference alive until `SerializationContext::clear` (`3a9ca6f:src/io/smart_ptr.rs:129-135`) or drop so the allocator cannot reuse the referent's address during the session.
-- SP-5 (`3a9ca6f:src/io/smart_ptr.rs:18-21, 105-126, 179-200, 214-299, 394, 410, 448, 464, 689-717, 750-772`): add thread-local `ACTIVE_SER_CTX` / `ACTIVE_DE_CTX` pointers (`3a9ca6f:src/io/smart_ptr.rs:18-21`) installed by `SerializationContext::run_nested` (`3a9ca6f:src/io/smart_ptr.rs:105-126`) and `DeserializationContext::run_nested` (`3a9ca6f:src/io/smart_ptr.rs:179-200`) with an RAII `Guard`, and route `SmartPtrSerialize::{serialize, deserialize}` (`3a9ca6f:src/io/smart_ptr.rs:289-299`), `Vec<T>` (`3a9ca6f:src/io/smart_ptr.rs:689-717`), and `Option<T>` (`3a9ca6f:src/io/smart_ptr.rs:750-772`) through `with_active_ser_ctx` / `with_active_de_ctx` (`3a9ca6f:src/io/smart_ptr.rs:214-269`). Note: in `3a9ca6f`, a plain user-defined struct whose `SerializableType` impl serialized multiple `Rc<T>` fields directly without an enclosing `Box`/`Rc`/`Arc`/`Vec`/`Option` still created one context per top-level field unless `SmartPtrSerialize::serialize_with_context` was used; `0e8c6ba` (`S22-R8`, `0e8c6ba:src/io/smart_ptr.rs:484-504`, `0e8c6ba:src/io/complex_types.rs:746-757`) documented this `# Limitations` contract on `SerializableType` and `impl_complex_serialize!`.
+- SP-5 (`3a9ca6f:src/io/smart_ptr.rs:18-21, 105-126, 179-200, 214-299, 394, 410, 448, 464, 687-718, 721-773`): add thread-local `ACTIVE_SER_CTX` / `ACTIVE_DE_CTX` pointers (`3a9ca6f:src/io/smart_ptr.rs:18-21`) installed by `SerializationContext::run_nested` (`3a9ca6f:src/io/smart_ptr.rs:105-126`) and `DeserializationContext::run_nested` (`3a9ca6f:src/io/smart_ptr.rs:179-200`) with an RAII `Guard`, route `SmartPtrSerialize::{serialize, deserialize}` (`3a9ca6f:src/io/smart_ptr.rs:289-299`) and `Vec<T>` (`3a9ca6f:src/io/smart_ptr.rs:687-718`) through `with_active_ser_ctx` / `with_active_de_ctx` (`3a9ca6f:src/io/smart_ptr.rs:214-269`), and add `SerializableType` bridge implementations for `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`, and `Box<T>` (`3a9ca6f:src/io/smart_ptr.rs:721-773`). Note: in `3a9ca6f`, a plain user-defined struct whose `SerializableType` impl serialized multiple `Rc<T>` fields directly without an enclosing `Box`/`Rc`/`Arc`/`Vec` still created one context per top-level field unless `SmartPtrSerialize::serialize_with_context` was used; `0e8c6ba` (`S22-R8`, `0e8c6ba:src/io/smart_ptr.rs:484-504`, `0e8c6ba:src/io/complex_types.rs:746-757`) documented this `# Limitations` contract on `SerializableType` and `impl_complex_serialize!`.
 
 Tests added (in `3a9ca6f:src/io/smart_ptr.rs`):
 - `3a9ca6f:src/io/smart_ptr.rs:1082` `test_c9_sp2_dangling_weak_round_trips`
@@ -4119,10 +4121,10 @@ test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 3043 filtered out; 
 
 #### `1423bc3` — fix(io): position range streams on construction and validate seeks and multi-range reads (C9 RS-1 RS-2 RS-3 RS-4 RS-5)
 
-*Commit-message accuracy note (`S22-R6`):* the git commit message of `1423bc3` inaccurately stated that `RangeReader::new` / `RangeWriter::new` seek at construction time and before every `read`/`write`, and mentioned `io::copy(&mut (&mut inner).take(start), &mut io::sink())` and `checked_add_signed`. In fact, `RangeReader::new` (`1423bc3:src/io/range_stream.rs:68-78`) and `RangeWriter::new` (`1423bc3:src/io/range_stream.rs:255-265`) remain infallible constructors that set `needs_initial_seek: start > 0`, and perform a single lazy `inner.seek(SeekFrom::Start(self.current_pos))` on the first `read` or `write` (unless `new_and_seek` or `Seek::seek` has already positioned `inner`). The exact changes in `1423bc3` are detailed below.
+*Commit-message accuracy note (`S22-R6`):* the git commit message of `1423bc3` inaccurately stated that `RangeReader::new` / `RangeWriter::new` seek at construction time and before every `read`/`write`, and mentioned `io::copy(&mut (&mut inner).take(start), &mut io::sink())` and `checked_add_signed`. In fact, `RangeReader::new` (`1423bc3:src/io/range_stream.rs:40-49`) and `RangeWriter::new` (`1423bc3:src/io/range_stream.rs:255-264`) remain infallible constructors that set `needs_initial_seek: true` unconditionally, and perform a single lazy `inner.seek(SeekFrom::Start(self.current_pos))` on the first `read` or `write` (unless `new_and_seek`, `reset`, `seek_in_range`, or `Seek::seek` has already positioned `inner`). The exact changes in `1423bc3` are detailed below.
 
 Fixes (in `1423bc3:src/io/range_stream.rs`):
-- RS-1 (HIGH): `RangeReader::new` (`4f08691:src/io/range_stream.rs:67-76`) and `RangeWriter::new` (`4f08691:src/io/range_stream.rs:236-245`) initialized `current_pos = start` without ever seeking `inner`, so reading or writing with `start > 0` accessed offset `0` of `inner` unless `new_and_seek` was used. Add `needs_initial_seek: bool` to `RangeReader` (`1423bc3:src/io/range_stream.rs:64, 76`) and `RangeWriter` (`1423bc3:src/io/range_stream.rs:250, 263`), set to `start > 0` in `new` and cleared to `false` in `new_and_seek` (`1423bc3:src/io/range_stream.rs:146, 337`) and `Seek::seek` (`1423bc3:src/io/range_stream.rs:237, 375`). On the first `RangeReader::read` (`1423bc3:src/io/range_stream.rs:183-186`) or `RangeWriter::write` (`1423bc3:src/io/range_stream.rs:348-351`) when `needs_initial_seek` is `true`, seek `inner` to `SeekFrom::Start(self.current_pos)` and clear `needs_initial_seek`.
+- RS-1 (HIGH): `RangeReader::new` (`4f08691:src/io/range_stream.rs:39-47`) and `RangeWriter::new` (`4f08691:src/io/range_stream.rs:227-235`) initialized `current_pos = start` without ever seeking `inner`, so reading or writing with `start > 0` accessed offset `0` of `inner` unless `new_and_seek` was used. Add `needs_initial_seek: bool` to `RangeReader` (`1423bc3:src/io/range_stream.rs:20, 47, 64`) and `RangeWriter` (`1423bc3:src/io/range_stream.rs:250, 262, 274`), set to `true` in `new` / `with_range` and cleared to `false` in `new_and_seek` (`1423bc3:src/io/range_stream.rs:142, 337`), `reset` (`1423bc3:src/io/range_stream.rs:154`), `seek_in_range` (`1423bc3:src/io/range_stream.rs:172`), and `Seek::seek` (`1423bc3:src/io/range_stream.rs:237, 374`). On the first `RangeReader::read` (`1423bc3:src/io/range_stream.rs:183-186`) or `RangeWriter::write` (`1423bc3:src/io/range_stream.rs:348-351`) when `needs_initial_seek` is `true`, seek `inner` to `SeekFrom::Start(self.current_pos)` and clear `needs_initial_seek`.
 - **API compatibility disclosure (`S22-R2`, documented in `5b33f98:src/io/range_stream.rs:13-18, 248-253`):** `Read for RangeReader<R>` (`1423bc3:src/io/range_stream.rs:177`), `DataInput for RangeReader<R>` (`1423bc3:src/io/range_stream.rs:381`), and `Write for RangeWriter<W>` (`1423bc3:src/io/range_stream.rs:342`) now require `R: Read + Seek` and `W: Write + Seek` so non-zero `start` offsets can position the underlying stream on first I/O.
 - RS-2 (MEDIUM): `MultiRangeReader::read` (`4f08691:src/io/range_stream.rs:492-527`) recursed via `self.read(buf)` whenever a range was exhausted (causing stack overflow on 200,000 empty ranges) and returned `Ok(0)` when an inner range lay past the underlying stream's EOF, silently truncating subsequent valid ranges. Advance across empty or exhausted ranges iteratively in a `loop` (`1423bc3:src/io/range_stream.rs:522-538`) and return `Err(io::Error::new(io::ErrorKind::UnexpectedEof, ...))` (`1423bc3:src/io/range_stream.rs:548-556`) when `self.inner.read` returns `0` while `absolute_pos < end`.
 - RS-3 (LOW): `RangeReader::seek` (`4f08691:src/io/range_stream.rs:184-216`) and `RangeWriter::seek` (`4f08691:src/io/range_stream.rs:331-361`) computed `(-offset) as u64` (panicking in debug on `i64::MIN`) and silently clamped out-of-bounds seeks to `[start_pos, end_pos]`. Extract `resolve_range_seek` (`1423bc3:src/io/range_stream.rs:198-229`) using `checked_add(offset as u64)` for `offset >= 0` and `checked_sub(offset.unsigned_abs())` for `offset < 0`, and return `Err(io::ErrorKind::InvalidInput)` whenever the target overflows or falls outside `start_pos..=end_pos` (`1423bc3:src/io/range_stream.rs:222-228`).
@@ -4262,7 +4264,7 @@ warning: 7 warnings emitted
 
 Fixes:
 - VV-1 (HIGH): `VarIntEncoder::encode_group_varint_u64` / `decode_group_varint_u64` (`1423bc3:src/io/var_int_variants.rs:607-688`) packed 2-bit width selectors (`1..=4` bytes) into a single `u8`, corrupting any `u64 >= 2^32` (widths `5..=8` spilled into adjacent selectors and truncated on decode), and `encode_i64` / `encode_i64_sequence` (`1423bc3:src/io/var_int_variants.rs:106, 1423bc3:src/io/var_int_variants.rs:134-137`) cast `i64 as u64` without zigzag encoding. In `6c8fab3:src/io/var_int_variants.rs:666-749`, use a 2-byte `u16` little-endian selector header with 3 bits per lane (`1..=8` bytes, rejecting unused top bits `selector & !0x0FFF != 0` at `6c8fab3:src/io/var_int_variants.rs:722-726`) and zigzag-encode signed integers for `GroupVarint` (`6c8fab3:src/io/var_int_variants.rs:112, 147-153, 187-190, 216-222`).
-- VV-2 (MEDIUM): `encode_delta_sequence_u64` (`1423bc3:src/io/var_int_variants.rs:454-458`) shifted `(values[i] - values[i - 1]) << 1` in `u64`, discarding bit 63 whenever the magnitude reached `2^63` (e.g. `[0, u64::MAX]`). In `6c8fab3:src/io/var_int_variants.rs:497-588`, widen the signed-magnitude delta (`(mag as u128) << 1 | sign`) to 65 bits and encode/decode it with `encode_leb128_u128` (`6c8fab3:src/io/var_int_variants.rs:246-256`) and `decode_leb128_u128_65` (`6c8fab3:src/io/var_int_variants.rs:325-351`).
+- VV-2 (MEDIUM): `encode_delta_sequence_u64` (`1423bc3:src/io/var_int_variants.rs:454-458`) shifted `(values[i] - values[i - 1]) << 1` in `u64`, discarding bit 63 whenever the magnitude reached `2^63` (e.g. `[0, u64::MAX]`). In `6c8fab3:src/io/var_int_variants.rs:497-626`, widen the signed-magnitude delta (`(mag as u128) << 1 | sign`) to 65 bits and encode/decode it with `encode_leb128_u128` (`6c8fab3:src/io/var_int_variants.rs:323-338`) and `decode_leb128_u128_65` (`6c8fab3:src/io/var_int_variants.rs:340-361`).
 - **Wire-format compatibility disclosure (`S22-R2` + `S23-R5`, documented in `5b33f98:src/io/var_int_variants.rs:23-38, 80-81` and `b84f34b:src/io/var_int_variants.rs:23-42`):**
   1. `VarIntStrategy::GroupVarint` now uses a 2-byte little-endian `u16` selector header per group of up to 4 values (3 bits per lane encoding byte widths `1..=8`, top 4 bits `0`) instead of the broken 1-byte 2-bit-per-lane header, and `encode_i64` / `encode_i64_sequence` now zigzag-encode signed integers under `GroupVarint` (feeding pre-C9 1-byte-header `GroupVarint` streams into the 2-byte-header decoder consumes the first payload byte as the high selector byte and can silently decode wrong values whenever the top 4 bits of that byte are `0` and the remaining bytes satisfy the resulting lane widths).
   2. `VarIntStrategy::Delta` on `u64` sequences now encodes each signed-magnitude delta as a 65-bit unsigned LEB128 integer (up to 10 bytes, `decode_leb128_u128_65`) so full-range `u64` deltas (`>= 2^63`) do not overflow.
@@ -5570,11 +5572,11 @@ Test count drift check: PASS
 ### 11.1 `b84f34b` — fix(io): flat thread-local depth guards and dense object table for smart_ptr and complex_types (S22-R4, S23-R1, S23-R5)
 
 - **`S22-R4` and `S23-R1` (Eliminate per-container and per-pointer `with_active_de_ctx` + `run_nested` closure and `HashMap` overhead)**:
-  - **Root cause**: In `3a9ca6f..125b80a`, `SerializableType for Vec<T>` (`0e8c6ba:src/io/smart_ptr.rs:890-933`), `SerializableType for Option<T>` (`0e8c6ba:src/io/smart_ptr.rs:953-975`), `ComplexSerialize` for `HashMap`/`HashSet`/`BTreeMap`/`BTreeSet` (`0e8c6ba:src/io/complex_types.rs:256-441`), `NestedSerialize` (`0e8c6ba:src/io/complex_types.rs:732-744`), and every `SmartPtrSerialize` implementation (`Box<T>`, `Option<Box<T>>`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`) wrapped every serialize/deserialize call in `with_active_ser_ctx` / `with_active_de_ctx` + `context.run_nested`. Even when no `Rc`/`Arc` was present (`Vec<u64>`, `Vec<Vec<u32>>`), every call allocated or borrowed a thread-local `DeserializationContext` (with a `HashMap<u32, Box<dyn Any>>`), swapped a thread-local pointer twice, and ran a non-inlined closure; for `Vec<Rc<u64>>`, each element also allocated a `Box<dyn Any>` and inserted into `HashMap<u32, Box<dyn Any>>`.
+  - **Root cause**: In `3a9ca6f..125b80a`, `SerializableType for Vec<T>` (`0e8c6ba:src/io/smart_ptr.rs:890-927`), `ComplexSerialize` for `HashMap`/`HashSet`/`BTreeMap`/`BTreeSet` (`0e8c6ba:src/io/complex_types.rs:256-441`), `NestedSerialize` (`0e8c6ba:src/io/complex_types.rs:732-744`), and every `SmartPtrSerialize` implementation (`Box<T>`, `Option<Box<T>>`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`, bridged via `SerializableType` at `0e8c6ba:src/io/smart_ptr.rs:930-984`) wrapped every serialize/deserialize call in `with_active_ser_ctx` / `with_active_de_ctx` + `context.run_nested`. Even when no `Rc`/`Arc` was present (`Vec<u64>`, `Vec<Vec<u32>>`), every call allocated or borrowed a thread-local `DeserializationContext` (with a `HashMap<u32, Box<dyn Any>>`), swapped a thread-local pointer twice, and ran a non-inlined closure; for `Vec<Rc<u64>>`, each element also allocated a `Box<dyn Any>` and inserted into `HashMap<u32, Box<dyn Any>>`.
   - **Fix in `b84f34b:src/io/smart_ptr.rs:17-224` and `b84f34b:src/io/complex_types.rs:256-416`**:
     1. Added `Copy` thread-local state cells `SER_DEPTH: Cell<SerDepthState>` and `DE_DEPTH: Cell<DeDepthState>` (`b84f34b:src/io/smart_ptr.rs:28-76`) with inline RAII guards `SerDepthGuard` / `DeDepthGuard` and `enter_ser_depth()` / `enter_de_depth()` (`b84f34b:src/io/smart_ptr.rs:93-171`) plus `enter_nested_ser_depth` / `enter_nested_de_depth` (`b84f34b:src/io/smart_ptr.rs:174-224`). On the common path where no shared `Rc`/`Arc` table has been touched (`dirty_ctx == false`), entering and leaving a container or `Box<T>` is a single thread-local integer increment/decrement with no `DeserializationContext` or `HashMap` construction; when the top-level guard (`!self.prev.active`) exits after a shared pointer populated `ACTIVE_SER_CTX` / `ACTIVE_DE_CTX`, it calls the outlined `#[cold] #[inline(never)]` `clear_active_ser_ctx()` / `clear_active_de_ctx()` (`b84f34b:src/io/smart_ptr.rs:82-91`).
     2. Added a dense sequential 1-based object table `dense_objects: Option<Box<dyn Any>>` (`Box<Vec<Option<T>>>`) to `DeserializationContext` (`b84f34b:src/io/smart_ptr.rs:345, 370-425`) alongside the fallback `objects: HashMap<u32, Box<dyn Any>>` for non-sequential or heterogeneous IDs, and added direct helpers `write_active_ser_id`, `read_active_de_id`, `store_active_de_object`, `get_active_de_object`, and `register_active_ser_ptr` (`b84f34b:src/io/smart_ptr.rs:593-664`).
-    3. Routed `Box<T>`, `Option<Box<T>>`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>` (`b84f34b:src/io/smart_ptr.rs:724-1033`), `Vec<T>` (`b84f34b:src/io/smart_ptr.rs:1167-1208`), `Option<T>` (`b84f34b:src/io/smart_ptr.rs:1229-1245`), `HashMap`, `HashSet`, `BTreeMap`, `BTreeSet` (`b84f34b:src/io/complex_types.rs:256-416`), and `NestedSerialize` (`b84f34b:src/io/complex_types.rs:708-720`) through `enter_ser_depth` / `enter_de_depth` / `enter_nested_ser_depth` / `enter_nested_de_depth`.
+    3. Routed `Box<T>`, `Option<Box<T>>`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>` (`b84f34b:src/io/smart_ptr.rs:724-1033`, bridged via `SerializableType` at `b84f34b:src/io/smart_ptr.rs:1201-1253`), `Vec<T>` (`b84f34b:src/io/smart_ptr.rs:1167-1198`), `HashMap`, `HashSet`, `BTreeMap`, `BTreeSet` (`b84f34b:src/io/complex_types.rs:256-416`), and `NestedSerialize` (`b84f34b:src/io/complex_types.rs:708-720`) through `enter_ser_depth` / `enter_de_depth` / `enter_nested_ser_depth` / `enter_nested_de_depth`.
   - **Measured release throughput (21-run median on AMD EPYC 7B13)**:
 
 | Workload | `db3c514` (pre-C9) | `5d35a51` (`S22`) | `cfefd93` (`S23`) | vs `db3c514` |
@@ -5584,7 +5586,7 @@ Test count drift check: PASS
 | `Vec<Vec<u32>>::deserialize` (1,000 × 100 elems from `SliceDataInput`) | `115.0 ns/inner Vec` (`115.0 µs`) | `217.0 ns/inner Vec` (`217.0 µs`, `+88.7%`) | **`120.9 ns/inner Vec` (`120.9 µs`)** | `+5.1%` (vs `+88.7%`) |
 
 - **`S23-R5` (`SmartPtrConfig::robust()` stack budget at `opt-level=0`, narrowed docs, and RED-verified tests)**:
-  - Lowered `SmartPtrConfig::robust().max_depth` from `384` to `DEFAULT_MAX_DEPTH` (`256`, `b84f34b:src/io/smart_ptr.rs:1070-1076`) and narrowed the doc comments on `DEFAULT_MAX_DEPTH` (`b84f34b:src/io/smart_ptr.rs:17-20`) and `SmartPtrConfig::robust` (`b84f34b:src/io/smart_ptr.rs:1066-1069`) to state that `256` is sized for pointer and typical struct frames on a 2 MiB thread stack and that types with multi-kilobyte stack frames should configure a smaller `max_depth`.
+  - Lowered `SmartPtrConfig::robust().max_depth` from `384` to `DEFAULT_MAX_DEPTH` (`256`, `b84f34b:src/io/smart_ptr.rs:1070-1076`) and narrowed the doc comments on `DEFAULT_MAX_DEPTH` (`b84f34b:src/io/smart_ptr.rs:18-25`) and `SmartPtrConfig::robust` (`b84f34b:src/io/smart_ptr.rs:1067-1076`) to state that `256` is sized so pointer and typical struct nodes stay within a 2 MiB thread stack in both debug (`opt-level=0`) and release builds, while types with very large inline stack payloads consume additional stack proportional to `size_of::<T>()` per frame in unoptimized builds.
   - Expanded the `# Wire-format compatibility (C9 / 0.1.x pre-1.0)` notes in `b84f34b:src/io/var_int_variants.rs:23-42` and `b84f34b:src/io/versioning.rs:12-27` to state that feeding pre-C9 bytes into the updated decoders can silently produce wrong values without returning `Err` when the leading payload bytes happen to satisfy header validation.
   - Strengthened `test_s22_r1_nested_containers_rejected_on_2mib_stack` (`b84f34b:src/io/complex_types.rs:1273-1350`) and `test_s22_r4_vec_u64_known_remaining_preallocates_full_count` (`b84f34b:src/io/data_input.rs:938-956`) so both fail on `73a25d0` (RED outputs shown in §10.1 and §10.2 above), and added `test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack` (`b84f34b:src/io/smart_ptr.rs:1900-2015`), which tests `Vec<u64>`, `Vec<Rc<u64>>` (with shared back-references), `Vec<Vec<u32>>`, and a 300-deep `BigChain` (`Rc<BigChain>` with a `[u8; 512]` payload) under `SmartPtrConfig::robust()` on a 2 MiB thread stack.
 
@@ -5628,8 +5630,8 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3127 filtered out; f
   - Removed the stale `data_ptr()` mention in `MmapVec` doc comments (`cfefd93:src/memory/mmap_vec.rs:485-487`, `S23-R5`).
   - Regression test: `test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor` (`cfefd93:src/memory/mmap_vec.rs:3651-3703`).
 - **`S23-R4` (`StreamBufferedReader` and `StreamBufferedWriter` over-reporting `Read`/`Write` checks)**:
-  - In `StreamBufferedReader::read_inner_retry_interrupted` (`cfefd93:src/io/stream_buffer.rs:277-294`), reject `Ok(n) if n > buf.len()` with `io::Error::new(io::ErrorKind::InvalidData, ...)` ("Inner reader reported more bytes than fit in destination buffer").
-  - In `StreamBufferedWriter::flush_raw` (`cfefd93:src/io/stream_buffer.rs:653-690`) and `Write::write` (`cfefd93:src/io/stream_buffer.rs:801-834`), reject `Ok(n) if n > remaining.len()` / `Ok(n) if n > buf.len()` with `io::Error::new(io::ErrorKind::InvalidData, ...)` ("Inner writer reported more bytes than present in source buffer") before advancing `written` or indexing `self.buffer`.
+  - In `StreamBufferedReader::read_inner_retry_interrupted` (`cfefd93:src/io/stream_buffer.rs:280-289`), reject `Ok(n) if n > buf.len()` with `io::Error::new(io::ErrorKind::InvalidData, format!("inner reader reported {} bytes read into a {}-byte buffer", n, buf.len()))`.
+  - In `StreamBufferedWriter::flush_raw` (`cfefd93:src/io/stream_buffer.rs:673-683`) and `Write::write` (`cfefd93:src/io/stream_buffer.rs:818-827`), reject `Ok(n) if n > remaining.len()` / `Ok(written) if written > buf.len()` with `io::Error::new(io::ErrorKind::InvalidData, format!("inner writer reported {} bytes written from a {}-byte slice", n, remaining.len()))` / `format!("inner writer reported {} bytes written from a {}-byte buffer", written, buf.len())` before advancing `written` or `self.total_written`.
   - Regression test: `test_s23_r4_stream_buffer_rejects_over_reporting_read_and_write` (`cfefd93:src/io/stream_buffer.rs:1671-1721`).
 
 RED output (`test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor` spliced onto parent `5d35a51:src/memory/mmap_vec.rs` at line `3620`):
@@ -5884,3 +5886,69 @@ all_targets     3812       3812       OK
 Test count drift check: PASS
 === Sanity: PASS ===
 ```
+
+## 12. Stage 10 Carry-Over Remediation (`S24`: `b8e7f8b`)
+
+### 12.1 `b8e7f8b` — fix(io,memory): restrict dense object table to sequential IDs, pack depth state into u64, and tighten S23 tests (S24-R1, S24-R3, S24-R4)
+
+- **`S24-R1` (MEDIUM — Restrict `DeserializationContext::dense_objects` to strictly sequential 1-based IDs without `Option<T>` gap padding)**:
+  - **Root cause**: In `b84f34b:src/io/smart_ptr.rs:373-398`, `DeserializationContext::store_object` stored `Box<Vec<Option<T>>>` in `dense_objects` and accepted any `idx <= vec.len().saturating_add(64)`, calling `vec.resize_with(idx, || None)` before pushing `Some(object)`. A wire payload with strided object IDs (`1, 66, 131, ..., 1 + 65*(N-1)`) satisfied `idx <= vec.len() + 64` at every step, growing `dense_objects` to `65*N` `Option<T>` slots (`649,936` elements / `1,064,960` capacity for `10,000` `Rc<u64>` entries).
+  - **Fix in `b8e7f8b:src/io/smart_ptr.rs:390-430`**:
+    1. `dense_objects` now stores `Box<Vec<T>>` without `Option` wrapping (`b8e7f8b:src/io/smart_ptr.rs:395, 403, 424`).
+    2. `store_object` initializes `dense_objects` only when `self.dense_objects.is_none() && idx == 0` (`id == 1`, `b8e7f8b:src/io/smart_ptr.rs:394-399`) and appends to `dense_objects` only when `idx == vec.len()` (or overwrites in place when `idx < vec.len()`, `b8e7f8b:src/io/smart_ptr.rs:405-411`). Any gapped or non-sequential ID (`idx > vec.len()`) immediately falls back to `self.objects.insert(id, Box::new(object))` (`b8e7f8b:src/io/smart_ptr.rs:414`) with zero gap padding.
+  - **Regression test**: `test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory` (`b8e7f8b:src/io/smart_ptr.rs:2044-2104`).
+
+RED output (`test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory` spliced onto parent `a8d8b39:src/io/smart_ptr.rs` at line `2017`):
+```text
+$ cargo test --locked --lib io::smart_ptr::tests::test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory
+   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/workspace/infini/zipora)
+    Finished `test` profile [optimized + debuginfo] target(s) in 33.76s
+     Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
+
+running 1 test
+test io::smart_ptr::tests::test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory ... FAILED
+
+failures:
+
+---- io::smart_ptr::tests::test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory stdout ----
+
+thread 'io::smart_ptr::tests::test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory' (2559815) panicked at src/io/smart_ptr.rs:2044:9:
+assertion `left == right` failed: stride-65 object IDs must not grow dense_objects beyond id == 1 (got Some((649936, 1064960)))
+  left: Some(649936)
+ right: Some(1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    io::smart_ptr::tests::test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3151 filtered out; finished in 0.01s
+```
+
+GREEN output (`b8e7f8b`):
+```text
+$ cargo test --locked --lib io::smart_ptr::tests::test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.14s
+     Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
+
+running 1 test
+test io::smart_ptr::tests::test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3152 filtered out; finished in 0.01s
+```
+
+- **`S24-R3` (LOW — Pack `SER_DEPTH`/`DE_DEPTH` into `Cell<u64>` with zero-sized guards and `#[inline]` `SliceDataInput`/`prealloc_capacity`)**:
+  - Packed `(depth: u32, max_depth: u28, flags: u4)` into a single `Cell<u64>` in `SER_DEPTH` and `DE_DEPTH` (`b8e7f8b:src/io/smart_ptr.rs:27-41`) with zero-sized `SerDepthGuard` / `DeDepthGuard` (`b8e7f8b:src/io/smart_ptr.rs:83-139`) and outlined `#[cold] #[inline(never)]` `max_depth_exceeded_err`, `finish_outer_ser_depth`, and `finish_outer_de_depth` (`b8e7f8b:src/io/smart_ptr.rs:43-81`). Entering a container or `Box<T>` now increments the packed `u64` by `1`, and `Drop` decrements by `1` and checks `(next as u32) == 0 && next != INITIAL_*_STATE`.
+  - Marked `prealloc_capacity` (`b8e7f8b:src/io/data_input.rs:59-70`) and `SliceDataInput` methods (`b8e7f8b:src/io/data_input.rs:183-254`) `#[inline]`.
+  - Added reproducible benchmark harness `bench_s24_r3_io_deserialize_timings` (`b8e7f8b:src/io/smart_ptr.rs:2106-2185`):
+    ```text
+    $ cargo test --locked --release --lib io::smart_ptr::tests::bench_s24_r3_io_deserialize_timings -- --ignored --nocapture
+    running 1 test
+    S24-R3 timings: Vec<u64>=1.095 ns/elem | Vec<Rc<u64>>=32.17 ns/elem | Vec<Vec<u32>>=120.9 ns/inner | Vec<Vec<u8>>(100kx3)=19.78 ns/inner | Vec<Box<u64>>=15.57 ns/elem
+    test io::smart_ptr::tests::bench_s24_r3_io_deserialize_timings ... ok
+    ```
+
+- **`S24-R4` (LOW — Tighten `test_s23_r1` comment and `test_s23_r3` `InvalidParameter` assertions)**:
+  - Updated the comment in `test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack` (`b8e7f8b:src/io/smart_ptr.rs:2008`) from `"// Timing check..."` to `"// Round-trip correctness check..."`.
+  - Tightened `test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor` (`b8e7f8b:src/memory/mmap_vec.rs:3695-3708`) to assert `matches!(cfg.validate(), Err(ZiporaError::InvalidParameter { .. }))` and `matches!(MmapVec::<u64>::create("/nonexistent/s23_r3_never_opened.mmap", cfg), Err(ZiporaError::InvalidParameter { .. }))`.
+
