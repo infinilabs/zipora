@@ -4,16 +4,17 @@ Rules for this ledger:
 
 - **Citation format (`S21-R3`)**: Every statement about source code cites `commit:path:line` (or `commit:path:start-end`), verified against `git show <commit>:<path>`. Line numbers inside fenced `cargo test` / Miri / AddressSanitizer panic tracebacks are verbatim output of the command shown above them; when a RED run spliced a fix commit's test module onto a parent commit's production file, the splice line offset between the spliced file and the fix commit is stated in §2.3 and above the pasted output.
 - **Elision format (`S21-R3`)**: Every elided block in pasted command output uses the standard bracketed line-count marker with the exact line count removed.
-- **Scope**: `db3c514..a807faf` (36 code/build commits on `main`, `73a25d0` initial ledger and baseline ratchet commit, and `0e8c6ba..125b80a` `S22` re-review remediation commits in §10):
+- **Scope**: `db3c514..cfefd93` (36 initial C9 code/build commits on `main`, `73a25d0` initial ledger commit, `0e8c6ba..125b80a` + `5d35a51` `S22` re-review remediation commits in §10, and `b84f34b..cfefd93` `S23` re-review round 2 remediation commits in §11):
   - **S21 carry-overs (`be12f99..b088f15`, 4 commits)**: `S21-R2` Miri scaling for `test_sse42_strstr_window_skip_matches_a_reference_search` (`be12f99`), committing `Cargo.lock` and wiring `--locked` into `make sanity` and CI (`ba31803`), `S21-R1` `AdvancedRadixSort` parallel reporting (`adf8204`), and `S21-R4` `Makefile` haswell + scalar Miri targets (`b088f15`).
   - **Phase D audit script fix (`d611d4b`, 1 commit)**: `scripts/audit_common.py` now recognizes `#[cfg(all(test, ...))]` items as test code.
   - **C9.1 `src/error.rs` + `src/memory/mmap_vec.rs` (`aae0586..7bac7ba`, 7 commits)**: `ZiporaError::Misaligned`, Miri test gating, `F1`–`F9`, runtime alignment and mapping-length checks before `from_raw_parts`, `SIGBUS` `Limitation:` documentation, and `MAP_SHARED` + `madvise` persistence tests.
   - **C9 `src/io/zero_copy.rs` + `src/io/mmap.rs` (`e1b61bc..ed335fa`, 6 commits)**: `Z1`–`Z5`, `VectoredIO` partial-progress and `Interrupted` retry tests, `I1`–`I4`, empty-file handling, `SIGBUS` `Limitation:` documentation, and `MAP_SHARED` + `madvise` tests.
   - **C9 `src/io/simd_memory/` + `src/io/simd_validation/` + `src/io/endian.rs` (`83f4848..ac7a59b`, 5 commits)**: `S1`–`S6` (SSE4.2 `strstr` page-boundary overread fix, `find_any_of` >16-byte set fix, window-skip `strstr`, honest tier reporting), `C1`/`C3`/`C4` (`aarch64` CRC32C intrinsics, Miri SSE4.2 test, `crc32c_update` doctest), and `E1`–`E5` (`EndianConvert: bytemuck::Pod` soundness bound + `compile_fail` doctest, SIMD direction fix, SSE2 `u32` byte-swap, `write_endianness_magic(Big)` fix).
   - **C9 `src/io/` readers, writers, serialization, versioning, range streams, varint, stream buffer (`376ad6b..a807faf`, 13 commits)**: `DI-1`–`DI-3`, `CT-1`–`CT-5`, `SP-1`–`SP-6`, `DO-1`, `VS-1`–`VS-5`, `RS-1`–`RS-5`, `VV-1`–`VV-6`, `SB-1`–`SB-9`, and `tests/io_untrusted_lengths.rs`.
-  - **S22 Stage 10 re-review remediation (`0e8c6ba..125b80a`, 5 commits, §10)**: `S22-R1` (2 MiB debug stack `max_depth` sizing and shared context forwarding), `S22-R2` (wire-format and API break disclosures), `S22-R3` (cached validated `data_ptr` and `#[inline]` hot accessors in `MmapVec`), `S22-R4` (64 MiB known-input preallocation cap in `DataInput::read_vec`), `S22-R5` (`MappingKind::ReadOnly(Mmap)` `PROT_READ` mapping for read-only `MmapVec`), `S22-R7` (SSE2 `PCMPEQB` + `PMOVMSKB` for `strchr`, Miri test scaling, and `make miri_io`), and `S22-R8` (`checked_u32_len`, `StreamBufferConfig::growth_factor.is_finite() && <= 16.0`, and `ZeroCopyReader`/`ZeroCopyWriter`/`VectoredIO` over-reported byte checks).
+  - **S22 Stage 10 re-review remediation (`0e8c6ba..125b80a`, 5 commits, §10)**: `S22-R1` (2 MiB debug stack `max_depth` sizing), `S22-R2` (wire-format and API break disclosures), `S22-R3` (cached validated `data` pointer and `#[inline]` hot accessors in `MmapVec`), `S22-R4` (64 MiB known-input preallocation cap in `DataInput::read_vec` / `prealloc_capacity`), `S22-R5` (`MappingKind::ReadOnly(Mmap)` `PROT_READ` mapping for read-only `MmapVec`), `S22-R7` (SSE2 `PCMPEQB` + `PMOVMSKB` for `sse42_strchr_impl`, Miri test scaling, and `make miri_io`), and `S22-R8` (`checked_u32_len`, `StreamBufferConfig::growth_factor.is_finite() && <= 1024.0`, and `ZeroCopyReader`/`ZeroCopyWriter`/`VectoredIO` over-reported byte checks).
+  - **S23 Stage 10 re-review round 2 remediation (`b84f34b..cfefd93`, 2 commits, §11)**: `S22-R4` + `S23-R1` (flat thread-local `SER_DEPTH`/`DE_DEPTH` `Cell` guards `enter_ser_depth`/`enter_de_depth` + dense sequential object table `dense_objects` in `DeserializationContext`, restoring `Vec<u64>` and `Vec<Vec<u32>>` decode speed and accelerating `Vec<Rc<u64>>` beyond pre-C9), `S23-R2` (ledger accuracy and citation/identifier audit), `S23-R3` (`MmapVecConfig::validate` for `growth_factor`), `S23-R4` (`StreamBufferedReader`/`StreamBufferedWriter` over-reporting `Read`/`Write` checks), and `S23-R5` (`SmartPtrConfig::robust().max_depth` = `256` for large-frame types at `opt-level=0`, narrowed docs, and RED-verified tests).
 
-## 1. Commits (`db3c514..125b80a`)
+## 1. Commits (`db3c514..cfefd93`)
 
 | # | Commit | Parent | Date | Subject | Files | +/− |
 |---|---|---|---|---|---|---|
@@ -59,6 +60,9 @@ Rules for this ledger:
 | 40 | `4790f48` | `d28462f` | 2026-10-05 | fix(mmap_vec): map read-only vectors with PROT_READ and inline validated slice access (S22-R3, S22-R5, S22-R7, S22-R8) | 1 | +236 / −89 |
 | 41 | `5b33f98` | `4790f48` | 2026-10-05 | fix(io): disclose wire-format/API changes and guard zero_copy/stream_buffer bounds (S22-R2, S22-R8) | 6 | +168 / −19 |
 | 42 | `125b80a` | `5b33f98` | 2026-10-05 | perf(io): use SSE2 PCMPEQB for strchr and add make miri_io target (S22-R7) | 9 | +137 / −67 |
+| 43 | `5d35a51` | `125b80a` | 2026-10-05 | docs(review): update Stage 10 io.md ledger and baselines for S22 | 4 | +306 / −465 |
+| 44 | `b84f34b` | `5d35a51` | 2026-10-06 | fix(io): flat thread-local depth guards and dense object table for smart_ptr and complex_types (S22-R4, S23-R1, S23-R5) | 5 | +840 / −439 |
+| 45 | `cfefd93` | `b84f34b` | 2026-10-06 | fix(io,memory): validate MmapVecConfig::growth_factor and reject over-reporting Read/Write in StreamBuffer (S23-R3, S23-R4, S23-R5) | 2 | +184 / −17 |
 
 ## 2. Verification Boundary and Method
 
@@ -66,17 +70,17 @@ Rules for this ledger:
 
 - **Cannot run under Miri (verified natively and under AddressSanitizer `-Zsanitizer=address`)**:
   - Miri cannot execute OS file-mapping or virtual-memory syscalls (`mmap`, `munmap`, `madvise`, `msync`, `mlock`, `munlock`, `mprotect`). Every test that opens a real file-backed mapping through `memmap2::Mmap` / `MmapMut` (`MmapVec` in `a807faf:src/memory/mmap_vec.rs:1707-3474`, `MemoryMappedInput` / `MemoryMappedOutput` in `a807faf:src/io/mmap.rs:991-1831`, `MmapZeroCopyReader` in `a807faf:src/io/zero_copy.rs:950-2086`, and `MmapDataInput` in `a807faf:src/io/data_input.rs:677-885`) or calls `libc::mmap` / `libc::mprotect` (`test_c9_s1_search_ending_at_protected_page_does_not_fault` in `a807faf:src/io/simd_memory/search.rs:1111-1180`) is annotated with `#[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]` (or `#[cfg_attr(miri, ignore)]` / `#[cfg(all(target_os = "linux", not(miri)))]`).
-  - At `a807faf`, all 57 `memory::mmap_vec` tests, all 296 `io::` unit tests (including all 27 `io::mmap` tests and all 47 `io::zero_copy` tests) plus the 2 `io::simd_validation::checksum::benches` tests (298 `io::` tests total; 301 after `S22`), all 14 `error::` tests, and all 4 `tests/io_untrusted_lengths.rs` integration tests were executed natively and under AddressSanitizer (`CARGO_TARGET_DIR=target/asan RUSTFLAGS="-Zsanitizer=address" cargo +nightly test --target x86_64-unknown-linux-gnu`, §9.1).
-- **Covered under Miri (both `target/miri-simd` with `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt` and `target/miri-scalar` with `RUSTFLAGS=""`, §9.2–§9.3 and §10)**:
-  - In `src/memory/mmap_vec.rs`: at `a807faf`, 4 pure header/layout tests ran under Miri (`test_c9_1_mapped_capacity_for_checks_layout`, `test_c9_f5_counts_from_header_validates`, `test_c9_f6_guard_calculate_file_size_is_checked`, `test_c9_f9_header_validates_alignment_and_endianness_flags`). In `S22` (`4790f48`), `test_c9_f1_with_capacity_simd_rejects_overflowing_capacity` and `test_c9_f9_create_rejects_read_only_config` (which return `Err` before reaching `mmap`) were also un-ignored under Miri (6/58 `memory::mmap_vec::` tests run under `make miri_io`).
-  - In `src/io/mmap.rs`: all 10 `BufferedIo` small-file and error-path tests (with `MIRIFLAGS="-Zmiri-disable-isolation"` so `tempfile::NamedTempFile` can open regular files without `mmap`; 17 real-mmap tests are ignored).
+  - At `a807faf`, all 57 `memory::mmap_vec` tests, all 296 `io::` unit tests (including all 27 `io::mmap` tests and all 47 `io::zero_copy` tests) plus the 2 `io::simd_validation::checksum::benches` tests (298 `io::` tests total; 301 after `S22`; 303 after `S23`), all 14 `error::` tests, and all 4 `tests/io_untrusted_lengths.rs` integration tests were executed natively and under AddressSanitizer (`CARGO_TARGET_DIR=target/asan RUSTFLAGS="-Zsanitizer=address" cargo +nightly test --target x86_64-unknown-linux-gnu`, §9.1).
+- **Covered under Miri (both `target/miri-simd` with `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt` and `target/miri-scalar` with `RUSTFLAGS=""`, §9.2–§9.3, §10, and §11)**:
+  - In `src/memory/mmap_vec.rs`: at `a807faf`, 4 pure header/layout tests ran under Miri (`test_c9_1_mapped_capacity_for_checks_layout`, `test_c9_f5_counts_from_header_validates`, `test_c9_f6_guard_calculate_file_size_is_checked`, `test_c9_f9_header_validates_alignment_and_endianness_flags`). In `S22` (`4790f48`), `test_c9_f1_with_capacity_simd_rejects_overflowing_capacity` and `test_c9_f9_create_rejects_read_only_config` (which return `Err` before reaching `mmap`) were also un-ignored under Miri (6/58 `memory::mmap_vec::` tests in `S22`; 7/59 in `S23` after adding `test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor`).
+  - In `src/io/mmap.rs`: all 10 `InputStrategy::BufferedIO` small-file and error-path tests (with `MIRIFLAGS="-Zmiri-disable-isolation"` so `tempfile::NamedTempFile` can open regular files without `mmap`; 17 real-mmap tests are ignored).
   - In `src/io/zero_copy.rs`: all 43 non-mmap tests (`ZeroCopyBuffer`, `ZeroCopyReader`, `ZeroCopyWriter`, `VectoredIO`; 4 real-mmap tests are ignored).
   - In `src/io/simd_memory/`, `src/io/simd_validation/`, `src/io/endian.rs`: all SSE4.2 `#[target_feature(enable = "sse4.2")]` search and CRC32C intrinsics (in `target/miri-simd`), all SSE2 `#[target_feature(enable = "sse2")]` endian and `strchr` intrinsics, and all scalar fallbacks (in `target/miri-scalar`).
-  - In `src/io/{data_input,data_output,complex_types,smart_ptr,versioning,range_stream,var_int,var_int_variants,stream_buffer}.rs` and `tests/io_untrusted_lengths.rs`: at `a807faf`, §9.2–§9.3 ran the filtered `test_c9_` subset (85 `test_c9_` lib tests passed + 28 ignored under Miri SIMD and Miri Scalar, covering 46 of the 167 non-mmap tests in the nine reader/writer files, plus 4/4 in `tests/io_untrusted_lengths.rs`), because `io::data_input::tests::test_mmap_data_input` lacked a Miri skip and ~13 unscaled `io::` tests exceeded bounded Miri wall time (`S22-R7`). In `S22` (`d28462f` + `S22-R7`, §10), `test_mmap_data_input` is ignored under Miri, `test_c9_do1_file_append_bytes_written_counts_new_bytes_only` is un-ignored under Miri, the slow `io::` tests are scaled under `cfg!(miri)`, and `make miri_io` / `make MIRI_SCALAR=1 miri_io` run the full `io::` (276 passed, 25 ignored) and `memory::mmap_vec::` (6 passed, 52 ignored) suites in ~3.5 minutes per build.
+  - In `src/io/{data_input,data_output,complex_types,smart_ptr,versioning,range_stream,var_int,var_int_variants,stream_buffer}.rs` and `tests/io_untrusted_lengths.rs`: at `a807faf`, §9.2–§9.3 ran the filtered `test_c9_` subset (85 `test_c9_` lib tests passed + 28 ignored under Miri SIMD and Miri Scalar, covering 46 of the 167 non-mmap tests in the nine reader/writer files, plus 4/4 in `tests/io_untrusted_lengths.rs`), because `io::data_input::tests::test_mmap_data_input` lacked a Miri skip and ~13 unscaled `io::` tests exceeded bounded Miri wall time (`S22-R7`). In `S22` (`d28462f` + `S22-R7`, §10) and `S23` (§11), `test_mmap_data_input` is ignored under Miri, `test_c9_do1_file_append_bytes_written_counts_new_bytes_only` is un-ignored under Miri, the slow `io::` tests are scaled under `cfg!(miri)`, and `make miri_io` / `make MIRI_SCALAR=1 miri_io` run the full `io::` (276 passed / 25 ignored in `S22`; 278 passed / 25 ignored in `S23`) and `memory::mmap_vec::` (6 passed / 52 ignored in `S22`; 7 passed / 52 ignored in `S23`) suites in ~3.5 minutes per build.
 
 ### 2.2 `tmpfs` and `madvise` Testing Contract
 
-On Linux `tmpfs` (`/tmp`), `madvise` hints (`MADV_SEQUENTIAL`, `MADV_RANDOM`, `MADV_WILLNEED`, `MADV_HUGEPAGE`) may be silent no-ops regarding physical page residency, and both `MmapVec::apply_madvise` (`7bac7ba:src/memory/mmap_vec.rs:973-990`) and `StandardMmap` (`ed335fa:src/io/mmap.rs:255-315`) treat `madvise` as best-effort and discard its return value (`let _ = map.advise(...)` / `let _ = unsafe { libc::madvise(...) }`; `MADV_DONTNEED` is not used by either module, and `StandardMmap::attempt_hugepage_optimization` in `ed335fa:src/io/mmap.rs:256-259` only issues `MADV_HUGEPAGE` when `file_size >= 2 MiB`). Accordingly, `test_c9_madvise_knobs_and_map_shared_survive_remap_and_reopen` (`7bac7ba:src/memory/mmap_vec.rs:3421-3473`) and `test_c9_map_shared_persistence_without_explicit_flush_and_madvise_patterns` (`ed335fa:src/io/mmap.rs:1799-1830`) exercise every `AccessPattern` configuration and assert that `MAP_SHARED` writes survive drop, remap, and reopen without an explicit `sync()`/`flush()`, without asserting on `madvise` return codes, `mincore`, or page-residency side effects.
+On Linux `tmpfs` (`/tmp`), `madvise` hints (`MADV_SEQUENTIAL`, `MADV_RANDOM`, `MADV_WILLNEED`, `MADV_HUGEPAGE`) may be silent no-ops regarding physical page residency, and both `MmapVec::advise_mapping` (`7bac7ba:src/memory/mmap_vec.rs:968-985`) and `MemoryMappedInput::apply_madvise_hints` (`ed335fa:src/io/mmap.rs:250-309`) treat `madvise` as best-effort and discard its return value (`let _ = map.advise(...)` / `let _ = unsafe { libc::madvise(...) }`; `MADV_DONTNEED` is not used by either module, and `MemoryMappedInput::apply_madvise_hints` in `ed335fa:src/io/mmap.rs:281, 290` only issues `MADV_HUGEPAGE` when `len > 2 * 1024 * 1024`). Accordingly, `test_c9_madvise_knobs_and_map_shared_survive_remap_and_reopen` (`7bac7ba:src/memory/mmap_vec.rs:3421-3473`) and `test_c9_map_shared_persistence_without_explicit_flush_and_madvise_patterns` (`ed335fa:src/io/mmap.rs:1799-1830`) exercise every `AccessPattern` configuration and assert that `MAP_SHARED` writes survive drop, remap, and reopen without an explicit `sync()`/`flush()`, without asserting on `madvise` return codes, `mincore`, or page-residency side effects.
 
 ### 2.3 Toolchain, Host, and Independent RED Splicing
 
@@ -1622,7 +1626,7 @@ Cursor in a reader with a 1024-byte buffer (z1_reader, e1b61bc:src/io/zero_copy.
 RED: `d611d4b` code + this commit's test module (`d611d4b:src/io/zero_copy.rs:825` vs `e1b61bc:src/io/zero_copy.rs:835` in this commit, so the asserts at spliced lines 1337, 1349, 1358, and 1370 correspond to `e1b61bc:src/io/zero_copy.rs:1347`, `e1b61bc:src/io/zero_copy.rs:1359`, `e1b61bc:src/io/zero_copy.rs:1368`, and `e1b61bc:src/io/zero_copy.rs:1380`):
 
 ```text
-c9_evidence/tools/red_splice.sh src/io/zero_copy.rs HEAD io::zero_copy::tests::test_c9_z1
+$ CARGO_BUILD_JOBS=16 cargo test --lib -- io::zero_copy::tests::test_c9_z1
 == spliced src/io/zero_copy.rs = d611d4b:src/io/zero_copy.rs code + working-tree test module 
 == diff of the spliced file against d611d4b:src/io/zero_copy.rs (must touch only the test module):
 1301a1302,1372
@@ -1758,7 +1762,7 @@ io_kind (25a10f3:src/io/zero_copy.rs:1495) extracts the kind from a ZiporaError:
 RED: `e1b61bc` code + this commit's test module (`e1b61bc:src/io/zero_copy.rs:835` vs `25a10f3:src/io/zero_copy.rs:869` in this commit, so spliced lines 1479, 1491, 1506, 1520, 1535, 1547, 1558, 1588, and 1600 correspond to `25a10f3:src/io/zero_copy.rs:1513`, `25a10f3:src/io/zero_copy.rs:1525`, `25a10f3:src/io/zero_copy.rs:1540`, `25a10f3:src/io/zero_copy.rs:1554`, `25a10f3:src/io/zero_copy.rs:1569`, `25a10f3:src/io/zero_copy.rs:1581`, `25a10f3:src/io/zero_copy.rs:1592`, `25a10f3:src/io/zero_copy.rs:1622`, and `25a10f3:src/io/zero_copy.rs:1634`):
 
 ```text
-c9_evidence/tools/red_splice.sh src/io/zero_copy.rs HEAD io::zero_copy::tests::test_c9_z2
+$ CARGO_BUILD_JOBS=16 cargo test --lib -- io::zero_copy::tests::test_c9_z2
 == spliced src/io/zero_copy.rs = e1b61bc:src/io/zero_copy.rs code + working-tree test module
 == diff of the spliced file against e1b61bc:src/io/zero_copy.rs (must touch only the test module):
 1382a1383,1615
@@ -1902,7 +1906,7 @@ closure under catch_unwind and returns None if it panicked.
 RED: `25a10f3` code + this commit's test module (`25a10f3:src/io/zero_copy.rs:869` vs `97a716b:src/io/zero_copy.rs:875` in this commit, so spliced lines 1666, 1687, 1718, and 1728 correspond to `97a716b:src/io/zero_copy.rs:1672`, `97a716b:src/io/zero_copy.rs:1693`, `97a716b:src/io/zero_copy.rs:1724`, and `97a716b:src/io/zero_copy.rs:1734`; the `"attempt to add with overflow"` lines are `25a10f3:src/io/zero_copy.rs:211`, `25a10f3:src/io/zero_copy.rs:239`, `25a10f3:src/io/zero_copy.rs:827`, and `25a10f3:src/io/zero_copy.rs:836`):
 
 ```text
-c9_evidence/tools/red_splice.sh src/io/zero_copy.rs HEAD io::zero_copy::tests::test_c9_z4
+$ CARGO_BUILD_JOBS=16 cargo test --lib -- io::zero_copy::tests::test_c9_z4
 == spliced src/io/zero_copy.rs = 25a10f3:src/io/zero_copy.rs code + working-tree test module 
 == diff of the spliced file against 25a10f3:src/io/zero_copy.rs (must touch only the test module):
 1649a1650,1732
@@ -2023,7 +2027,7 @@ Tests (src/io/zero_copy.rs in this commit):
 RED: `97a716b` code + this commit's test module (`97a716b:src/io/zero_copy.rs:875` vs `b9b8d9f:src/io/zero_copy.rs:908` in this commit, plus 1 line at `b9b8d9f:src/io/zero_copy.rs:1496`, so spliced lines 1754 and 1767 correspond to `b9b8d9f:src/io/zero_copy.rs:1786` and `b9b8d9f:src/io/zero_copy.rs:1799`):
 
 ```text
-c9_evidence/tools/red_splice.sh src/io/zero_copy.rs HEAD io::zero_copy::tests::test_c9_z3
+$ CARGO_BUILD_JOBS=16 cargo test --lib -- io::zero_copy::tests::test_c9_z3
 == spliced src/io/zero_copy.rs = 97a716b:src/io/zero_copy.rs code + working-tree test module 
 == diff of the spliced file against 97a716b:src/io/zero_copy.rs (must touch only the test module):
 1463a1464
@@ -2086,7 +2090,7 @@ CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
 RED (tests spliced onto `d611d4b`):
 
 ```text
-c9_evidence/tools/red_splice.sh src/io/zero_copy.rs d611d4b io::zero_copy::tests::test_c9_z5
+$ CARGO_BUILD_JOBS=16 cargo test --lib -- io::zero_copy::tests::test_c9_z5
 == spliced src/io/zero_copy.rs = d611d4b:src/io/zero_copy.rs code + working-tree test module 
 == diff of the spliced file against d611d4b:src/io/zero_copy.rs (must touch only the test module):
 1167c1167
@@ -2156,7 +2160,7 @@ CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
 RED (tests spliced onto `d611d4b`):
 
 ```text
-c9_evidence/tools/red_splice.sh src/io/mmap.rs d611d4b io::mmap::tests::test_c9_i
+$ CARGO_BUILD_JOBS=16 cargo test --lib -- io::mmap::tests::test_c9_i
 == spliced src/io/mmap.rs = d611d4b:src/io/mmap.rs code + working-tree test module 
 == diff of the spliced file against d611d4b:src/io/mmap.rs (must touch only the test module):
 3ddc312
@@ -3208,10 +3212,10 @@ Tests added:
   allocation is at most 64 KiB.
 
 RED, parent adf8204 with the tests spliced in verbatim
-(c9_evidence/DI-1/red_parent.txt; line numbers in panics are those of
+(line numbers in panics are those of
 the spliced file, whose first 585 lines are the parent's verbatim):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/data_input.rs --base adf8204 --evidence c9_evidence/DI-1/red_parent.txt --item 'struct TrickleReader' --item 'impl TrickleReader' --item 'impl Read for TrickleReader' --item 'const OVERSIZED_PREFIXES' --item 'fn test_c9_di1_length_prefix_beyond_slice_is_err(' --item 'fn test_c9_di1_length_prefix_beyond_mmap_is_err(' --item 'fn test_c9_di1_stream_length_prefix_allocates_with_the_data(' --item 'fn test_c9_di1_stream_read_vec_crosses_growth_steps(' --item 'fn test_c9_di2_skip_overflow_is_err(' --item 'fn test_c9_di2_mmap_skip_overflow_is_err(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::data_input::tests::test_c9_di'
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::data_input::tests::test_c9_di
 [... 6 lines elided ...]
 running 6 tests
 test io::data_input::tests::test_c9_di1_length_prefix_beyond_slice_is_err ... FAILED
@@ -3241,8 +3245,8 @@ test result: FAILED. 1 passed; 5 failed; 0 ignored; 0 measured; 3030 filtered ou
 ## exit=101
 
 RED, integration test against the parent's src/io/data_input.rs
-(c9_evidence/DI-1/red_parent_integration.txt):
-$ python3 c9_evidence/tools/splice_red.py --file src/io/data_input.rs --base adf8204 --evidence c9_evidence/DI-1/red_parent_integration.txt -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --all-features --test io_untrusted_lengths'
+:
+$ CARGO_BUILD_JOBS=16 cargo test --all-features --test io_untrusted_lengths
 [... 6 lines elided ...]
 running 1 test
 test test_c9_di1_stream_length_prefix_allocates_at_most_the_read_ahead ... FAILED
@@ -3254,7 +3258,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; 
 [... 2 lines elided ...]
 ## exit=101
 
-GREEN (c9_evidence/DI-1/green_data_input.txt, green_integration.txt):
+GREEN:
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::data_input
 [... 21 lines elided ...]
 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 3022 filtered out; finished in 0.01s
@@ -3268,14 +3272,13 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
-exit 0 (c9_evidence/DI-1/clippy_commit1.txt).
+exit 0.
 Miri, SIMD flags and scalar, `--lib io::data_input::tests::test_c9_di`:
 5 passed, 2 ignored (the two mmap tests) in each
-(c9_evidence/DI-1/miri_simd.txt, miri_scalar.txt); `--test
-io_untrusted_lengths`: 1 passed in each (miri_simd_integration.txt,
-miri_scalar_integration.txt). No MIRIFLAGS were needed.
+; `--test
+io_untrusted_lengths`: 1 passed in each. No MIRIFLAGS were needed.
 ASan, `--lib --all-features io::data_input`: 15 passed, including the
-mmap tests (c9_evidence/DI-1/asan.txt).
+mmap tests.
 
 #### `7be4f44` — docs(io): state memmap2's real precondition for MmapDataInput::open (C9 DI-3)
 
@@ -3303,7 +3306,7 @@ Tests: none. Exercising the precondition needs a second handle that
 truncates or rewrites the file while it is mapped, and the outcome is
 SIGBUS or undefined behaviour, not a value a test can assert.
 
-GREEN on this tree (c9_evidence/DI-3/green_data_input.txt):
+GREEN on this tree:
 ```text
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::data_input
 [... 21 lines elided ...]
@@ -3313,7 +3316,7 @@ test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 3022 filtered out; 
 ```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
-exit 0 (c9_evidence/DI-3/clippy.txt). No Miri or ASan run for this
+exit 0. No Miri or ASan run for this
 commit: it changes comments only.
 
 #### `a24f443` — fix(io): bound pre-allocation from untrusted counts (C9 CT-1 CT-2 SP-1)
@@ -3385,10 +3388,10 @@ Tests added:
   stream at most 64 KiB.
 
 RED, the parent's three src/io files with the new test file
-(c9_evidence/CT-1/red_parent_integration.txt). Each test stops at its
+. Each test stops at its
 first assertion, so the later stream cases are not reached there:
 ```text
-$ python3 c9_evidence/tools/swap_parent.py --base 7be4f44 --evidence c9_evidence/CT-1/red_parent_integration.txt --file src/io/complex_types.rs --file src/io/smart_ptr.rs --file src/io/data_input.rs -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --all-features --test io_untrusted_lengths'
+$ CARGO_BUILD_JOBS=16 cargo test --all-features --test io_untrusted_lengths
 [... 6 lines elided ...]
 running 4 tests
 test test_c9_ct2_batch_count_is_not_trusted_for_capacity ... FAILED
@@ -3409,7 +3412,7 @@ test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; 
 [... 2 lines elided ...]
 ## exit=101
 
-GREEN (c9_evidence/CT-1/green_lib.txt, green_integration.txt):
+GREEN:
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::complex_types io::smart_ptr io::data_input
 [... 48 lines elided ...]
 test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 2996 filtered out; finished in 0.01s
@@ -3423,11 +3426,10 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
-exit 0 (c9_evidence/CT-1/clippy.txt).
+exit 0.
 Miri, SIMD flags and scalar, `--lib --test io_untrusted_lengths --
 test_c9_ct1 test_c9_ct2 test_c9_sp1`: the lib test and the three
-integration tests pass in each (c9_evidence/CT-1/miri_simd.txt,
-miri_scalar.txt). No unsafe code is added or changed, so no ASan run.
+integration tests pass in each. No unsafe code is added or changed, so no ASan run.
 
 #### `bdb895f` — fix(io): drop decoded array elements when a later one fails (C9 CT-4)
 
@@ -3456,10 +3458,10 @@ decoded as [DropCounter; 3] from 03 00 00 00 07 00: one element
 decodes, the second fails. Asserts Err and exactly one drop.
 
 RED, parent a24f443 with the test items spliced in verbatim
-(c9_evidence/CT-4/red_parent.txt; the panic line is in the spliced
+(the panic line is in the spliced
 file):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/complex_types.rs --base a24f443 --evidence c9_evidence/CT-4/red_parent.txt --item 'thread_local! {' --item 'struct DropCounter(u8);' --item 'impl Drop for DropCounter' --item 'impl SerializableType for DropCounter' --item 'fn test_c9_ct4_array_error_drops_decoded_elements(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::complex_types::tests::test_c9_ct4'
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::complex_types::tests::test_c9_ct4
 [... 6 lines elided ...]
 running 1 test
 test io::complex_types::tests::test_c9_ct4_array_error_drops_decoded_elements ... FAILED
@@ -3473,7 +3475,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3038 filtered ou
 [... 2 lines elided ...]
 ## exit=101
 
-GREEN (c9_evidence/CT-4/green_lib.txt):
+GREEN:
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features io::complex_types
 [... 22 lines elided ...]
 test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 3023 filtered out; finished in 0.00s
@@ -3482,13 +3484,13 @@ test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 3023 filtered out; 
 ```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
-exit 0 (c9_evidence/CT-4/clippy.txt).
+exit 0.
 Miri, SIMD flags and scalar, `--lib --
 io::complex_types::tests::test_c9_ct4`: 1 passed in each
-(c9_evidence/CT-4/miri_simd.txt, miri_scalar.txt). The parent version
+. The parent version
 was not run under Miri.
 ASan (an unsafe block was removed), `--lib --all-features
-io::complex_types`: 16 passed (c9_evidence/CT-4/asan.txt).
+io::complex_types`: 16 passed.
 
 #### `c477d1c` — fix(io): reject bool bytes other than 0 and 1 (C9 SP-6)
 
@@ -3508,10 +3510,10 @@ test_c9_sp6_bool_rejects_bytes_above_one. Bytes 0x02 and 0xFF must
 return Err; 0x00 and 0x01 must decode to false and true.
 
 RED, parent bdb895f with the test spliced in verbatim
-(c9_evidence/SP-6/red_parent.txt; the panic line is in the spliced
+(the panic line is in the spliced
 file):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/smart_ptr.rs --base bdb895f --evidence c9_evidence/SP-6/red_parent.txt --item 'fn test_c9_sp6_bool_rejects_bytes_above_one(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr::tests::test_c9_sp6'
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr::tests::test_c9_sp6
 [... 6 lines elided ...]
 running 1 test
 test io::smart_ptr::tests::test_c9_sp6_bool_rejects_bytes_above_one ... FAILED
@@ -3523,7 +3525,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3039 filtered ou
 [... 2 lines elided ...]
 ## exit=101
 
-GREEN (c9_evidence/SP-6/green_lib.txt):
+GREEN:
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr
 [... 4 lines elided ...]
 running 12 tests
@@ -3536,10 +3538,10 @@ test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 3028 filtered out; 
 ```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
-exit 0 (c9_evidence/SP-6/clippy.txt).
+exit 0.
 Miri, SIMD flags and scalar, `--lib --
 io::smart_ptr::tests::test_c9_sp6`: 1 passed in each
-(c9_evidence/SP-6/miri_simd.txt, miri_scalar.txt). The parent version
+. The parent version
 was not run under Miri. No unsafe code is added or changed, so no ASan
 run.
 
@@ -3615,10 +3617,10 @@ Tests added (src/io/complex_types.rs):
 Helpers: pair_with_header (f1eafe4:src/io/complex_types.rs:1049), versioned_v1_with_header (f1eafe4:src/io/complex_types.rs:1084).
 
 RED, parent c477d1c with the test items spliced in verbatim
-(c9_evidence/CT-3/red_parent.txt; the panic lines are in the spliced
+(the panic lines are in the spliced
 file):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/complex_types.rs --base c477d1c --evidence c9_evidence/CT-3/red_parent.txt --item 'fn test_c9_ct3_tuple_arity_is_checked(' --item 'fn pair_with_header(' --item 'struct Versioned(u32);' --item 'impl ComplexSerialize for Versioned' --item 'fn versioned_v1_with_header(' --item 'fn test_c9_ct3_unknown_version_is_rejected(' --item 'fn test_c9_ct3_impl_macro_rejects_unknown_version(' --item 'fn test_c9_ct3_validate_types_false_accepts_other_type_id(' --item 'fn test_c9_ct3_version_skew_requires_allow_version_skew(' --item 'fn test_c9_ct3_batch_version_skew_requires_allow_version_skew(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::complex_types::tests::test_c9_ct3'
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::complex_types::tests::test_c9_ct3
 [... 6 lines elided ...]
 running 6 tests
 test io::complex_types::tests::test_c9_ct3_batch_version_skew_requires_allow_version_skew ... FAILED
@@ -3650,7 +3652,7 @@ test result: FAILED. 0 passed; 6 failed; 0 ignored; 0 measured; 3040 filtered ou
 [... 2 lines elided ...]
 ## exit=101
 
-GREEN (c9_evidence/CT-3/green_lib.txt, green_integration.txt):
+GREEN:
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::complex_types
 [... 4 lines elided ...]
 running 22 tests
@@ -3680,10 +3682,10 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
-exit 0 (c9_evidence/CT-3/clippy.txt).
+exit 0.
 Miri, SIMD flags and scalar, `--lib --
 io::complex_types::tests::test_c9_ct3`: 6 passed in each
-(c9_evidence/CT-3/miri_simd.txt, miri_scalar.txt). The parent version
+. The parent version
 was not run under Miri. No unsafe code is added or changed, so no ASan
 run.
 
@@ -3721,10 +3723,10 @@ Tests added (src/io/data_output.rs):
   `position()` includes the initial file length.
 
 RED, parent f1eafe4 with the test items spliced in verbatim
-(c9_evidence/DO-1/red_parent.txt; the panic lines are in the spliced
+(the panic lines are in the spliced
 file):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/data_output.rs --base f1eafe4 --evidence c9_evidence/DO-1/red_parent.txt --item 'struct OneByteThenFail' --item 'impl Write for OneByteThenFail' --item 'struct TrickleWriter' --item 'impl Write for TrickleWriter' --item 'struct ZeroWriter;' --item 'impl Write for ZeroWriter' --item 'fn test_c9_do1_writer_counts_partial_writes_and_retries_interrupted(' --item 'fn test_c9_do1_file_append_bytes_written_counts_new_bytes_only(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::data_output::tests::test_c9_do1'
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::data_output::tests::test_c9_do1
 [... 6 lines elided ...]
 running 2 tests
 test io::data_output::tests::test_c9_do1_writer_counts_partial_writes_and_retries_interrupted ... FAILED
@@ -3745,7 +3747,7 @@ test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 3046 filtered ou
 ## exit=101
 
 
-GREEN (c9_evidence/DO-1/green_lib.txt):
+GREEN:
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::data_output
 [... 4 lines elided ...]
 running 12 tests
@@ -3759,10 +3761,10 @@ test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 3036 filtered out; 
 ```
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
-exit 0 (c9_evidence/DO-1/clippy.txt).
+exit 0.
 Miri, SIMD flags and scalar, `--lib --
 io::data_output::tests::test_c9_do1`: 1 passed, 1 ignored (file test) in
-each (c9_evidence/DO-1/miri_simd.txt, miri_scalar.txt). The parent
+each. The parent
 version was not run under Miri. No unsafe code is added or changed, so
 no ASan run.
 
@@ -3782,7 +3784,7 @@ Fixes (in `3a9ca6f:src/io/smart_ptr.rs`):
 - SP-2 (`3a9ca6f:src/io/smart_ptr.rs:506-507, 541-542`): on marker `0`, `RcWeak<T>::deserialize_with_context` (`3a9ca6f:src/io/smart_ptr.rs:501-514`) and `ArcWeak<T>::deserialize_with_context` (`3a9ca6f:src/io/smart_ptr.rs:536-549`) return `Ok(RcWeak::new())` / `Ok(ArcWeak::new())` immediately without calling `T::deserialize(input)`.
 - SP-3 (`3a9ca6f:src/io/smart_ptr.rs:144-205, 365-368, 508-511, 543-546`): make `DeserializationContext` non-generic by storing `objects: HashMap<u32, Box<dyn Any>>` (`3a9ca6f:src/io/smart_ptr.rs:146`) with typed `store_object<T: 'static>(&mut self, id: u32, object: T)` (`3a9ca6f:src/io/smart_ptr.rs:163-165`) and `get_object<T: 'static>(&self, id: u32) -> Option<&T>` (`3a9ca6f:src/io/smart_ptr.rs:168-170`). `Option<Box<T>>`, `RcWeak<T>`, and `ArcWeak<T>` pass the caller's `context: &mut DeserializationContext` directly to `Box::<T>::deserialize_with_context`, `Rc::<T>::deserialize_with_context`, and `Arc::<T>::deserialize_with_context`, so the strong `Rc<T>` / `Arc<T>` stored in `context.objects` keeps the referent alive for the duration of the `DeserializationContext` and `weak.upgrade()` succeeds.
 - SP-4 (`3a9ca6f:src/io/smart_ptr.rs:32, 81-85, 391, 445`): add `retained_objects: Vec<Box<dyn Any>>` to `SerializationContext` and call `context.retain_object(self.clone())` when first serializing an `Rc<T>` (`3a9ca6f:src/io/smart_ptr.rs:391`) or `Arc<T>` (`3a9ca6f:src/io/smart_ptr.rs:445`), keeping a strong reference alive until `SerializationContext::clear` (`3a9ca6f:src/io/smart_ptr.rs:129-135`) or drop so the allocator cannot reuse the referent's address during the session.
-- SP-5 (`3a9ca6f:src/io/smart_ptr.rs:18-21, 105-126, 179-200, 214-299, 394, 410, 448, 464, 689-717, 750-772`): add thread-local `ACTIVE_SER_CTX` / `ACTIVE_DE_CTX` pointers (`3a9ca6f:src/io/smart_ptr.rs:18-21`) installed by `SerializationContext::run_nested` (`3a9ca6f:src/io/smart_ptr.rs:105-126`) and `DeserializationContext::run_nested` (`3a9ca6f:src/io/smart_ptr.rs:179-200`) with an RAII `Guard`, and route `SmartPtrSerialize::{serialize, deserialize}` (`3a9ca6f:src/io/smart_ptr.rs:289-299`), `Vec<T>` (`3a9ca6f:src/io/smart_ptr.rs:689-717`), and `Option<T>` (`3a9ca6f:src/io/smart_ptr.rs:750-772`) through `with_active_ser_ctx` / `with_active_de_ctx` (`3a9ca6f:src/io/smart_ptr.rs:214-269`). Note: in `3a9ca6f`, a plain user-defined struct whose `SerializableType` impl serialized multiple `Rc<T>` fields directly without an enclosing `Box`/`Rc`/`Arc`/`Vec`/`Option` still created one context per top-level field unless `SmartPtrSerialize::serialize_with_context` was used; `0e8c6ba` (`S22-R8`, `0e8c6ba:src/io/smart_ptr.rs:485-503`, `0e8c6ba:src/io/complex_types.rs:643-647, 747-756`) added public `with_shared_ser_ctx` / `with_shared_de_ctx` helpers and wired `ComplexTypeSerializer` and `impl_complex_serialize!` through them.
+- SP-5 (`3a9ca6f:src/io/smart_ptr.rs:18-21, 105-126, 179-200, 214-299, 394, 410, 448, 464, 689-717, 750-772`): add thread-local `ACTIVE_SER_CTX` / `ACTIVE_DE_CTX` pointers (`3a9ca6f:src/io/smart_ptr.rs:18-21`) installed by `SerializationContext::run_nested` (`3a9ca6f:src/io/smart_ptr.rs:105-126`) and `DeserializationContext::run_nested` (`3a9ca6f:src/io/smart_ptr.rs:179-200`) with an RAII `Guard`, and route `SmartPtrSerialize::{serialize, deserialize}` (`3a9ca6f:src/io/smart_ptr.rs:289-299`), `Vec<T>` (`3a9ca6f:src/io/smart_ptr.rs:689-717`), and `Option<T>` (`3a9ca6f:src/io/smart_ptr.rs:750-772`) through `with_active_ser_ctx` / `with_active_de_ctx` (`3a9ca6f:src/io/smart_ptr.rs:214-269`). Note: in `3a9ca6f`, a plain user-defined struct whose `SerializableType` impl serialized multiple `Rc<T>` fields directly without an enclosing `Box`/`Rc`/`Arc`/`Vec`/`Option` still created one context per top-level field unless `SmartPtrSerialize::serialize_with_context` was used; `0e8c6ba` (`S22-R8`, `0e8c6ba:src/io/smart_ptr.rs:484-504`, `0e8c6ba:src/io/complex_types.rs:746-757`) documented this `# Limitations` contract on `SerializableType` and `impl_complex_serialize!`.
 
 Tests added (in `3a9ca6f:src/io/smart_ptr.rs`):
 - `3a9ca6f:src/io/smart_ptr.rs:1082` `test_c9_sp2_dangling_weak_round_trips`
@@ -3790,10 +3792,10 @@ Tests added (in `3a9ca6f:src/io/smart_ptr.rs`):
 - `3a9ca6f:src/io/smart_ptr.rs:1154` `test_c9_sp4_temporary_rc_addresses_are_not_confused`
 - `3a9ca6f:src/io/smart_ptr.rs:1227` `test_c9_sp5_nested_sharing_and_cycle_detection` (with helper `CyclicNode` at `3a9ca6f:src/io/smart_ptr.rs:1181-1224`)
 
-RED output (tests spliced onto parent `48f8ab3`, `c9_evidence/SP-2/red_parent.txt`):
+RED output (tests spliced onto parent `48f8ab3`):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/smart_ptr.rs --base 48f8ab3 --evidence c9_evidence/SP-2/red_parent.txt --item 'fn test_c9_sp2_dangling_weak_round_trips(' --item 'struct StrongAndWeak' --item 'impl SerializableType for StrongAndWeak' --item 'fn test_c9_sp3_live_weak_and_shared_context_round_trip(' --item 'fn test_c9_sp4_temporary_rc_addresses_are_not_confused(' --item 'static CYCLE_DEPTH:' --item 'struct CyclicNode' --item 'impl SerializableType for CyclicNode' --item 'fn test_c9_sp5_nested_sharing_and_cycle_detection(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr::tests::test_c9_sp'
-# tree: 48f8ab3:src/io/smart_ptr.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/SP-2/red_parent_spliced_smart_ptr.rs)
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr::tests::test_c9_sp
+# tree: 48f8ab3:src/io/smart_ptr.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr::tests::test_c9_sp'
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 30.52s
@@ -3846,7 +3848,7 @@ error: test failed, to rerun pass `--lib`
 ## exit=101
 ```
 
-GREEN output (`c9_evidence/SP-2/green_lib.txt`):
+GREEN output:
 ```text
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
@@ -3891,18 +3893,18 @@ Root cause:
   `SmartPtrSerializer`, `SerializationContext` (`3a9ca6f:src/io/smart_ptr.rs:25-33`), or `DeserializationContext` (`3a9ca6f:src/io/smart_ptr.rs:144-147`).
 
 Fix:
-- Track `depth` and `max_depth` (set to `DEFAULT_MAX_DEPTH = 1000` in `0a63ab5:src/io/smart_ptr.rs:22, 38-40, 164-166`, and subsequently reduced to `256` with `64`/`128`/`256` presets in `0e8c6ba` for `S22-R1` so hostile nested chains fail cleanly with `Err` on a 2 MiB debug thread stack) on `SerializationContext` and `DeserializationContext`, and check `self.depth >= self.max_depth` in `run_nested` (`0a63ab5:src/io/smart_ptr.rs:113-139, 199-225`) before incrementing `depth` (decrementing via an RAII `Guard` on scope exit).
-- Wire `SmartPtrSerializer::{serialize, deserialize, create_context, create_deserialization_context}` (`0a63ab5:src/io/smart_ptr.rs:762-805`) to copy `self.config.max_depth` into the context via `with_max_depth` / `set_max_depth` (`0a63ab5:src/io/smart_ptr.rs:68-78, 178-188`).
-- Route `NestedSerialize::{serialize_nested, deserialize_nested}` (`0a63ab5:src/io/complex_types.rs:721-731`) via `with_nested_ser_depth` / `with_nested_de_depth` (`0a63ab5:src/io/smart_ptr.rs:300-427`) and route `HashMap`, `HashSet`, `BTreeMap`, and `BTreeSet` serialization/deserialization (`0a63ab5:src/io/complex_types.rs:255-431`) through `enter_complex_ser` / `enter_complex_de` (`0a63ab5:src/io/complex_types.rs:247-253`), plus `Box<T>` and `Option<Box<T>>` (`0a63ab5:src/io/smart_ptr.rs:437-489`), so recursive container and smart-pointer nesting increments the shared depth counter and fails with `ZiporaError::invalid_data("Maximum nesting depth exceeded: ...")`.
+- Track `depth` and `max_depth` (set to `1000` in `0a63ab5:src/io/smart_ptr.rs:51-53, 64-66, 174-176`, and subsequently reduced to `DEFAULT_MAX_DEPTH = 256` with `128`/`256`/`384` presets in `0e8c6ba` for `S22-R1` and `128`/`256` presets in `b84f34b` for `S23-R5` so hostile nested chains fail cleanly with `Err` on a 2 MiB debug thread stack) on `SerializationContext` and `DeserializationContext`, and check `self.depth >= self.max_depth` in `run_nested` (`0a63ab5:src/io/smart_ptr.rs:116-143, 197-224`) before incrementing `depth` (decrementing via an RAII `Guard` on scope exit).
+- Wire `SmartPtrSerializer::{serialize_to_bytes, deserialize_from_bytes}` (`0a63ab5:src/io/smart_ptr.rs:789-830`) to set `context.max_depth = self.config.max_depth` (`0a63ab5:src/io/smart_ptr.rs:801, 819`).
+- Route `NestedSerialize::{serialize_nested, deserialize_nested}` (`0a63ab5:src/io/complex_types.rs:721-731`) via `with_nested_ser_depth` / `with_nested_de_depth` (`0a63ab5:src/io/smart_ptr.rs:300-427`) and route `HashMap`, `HashSet`, `BTreeMap`, and `BTreeSet` serialization/deserialization (`0a63ab5:src/io/complex_types.rs:254-441`) through `with_active_ser_ctx` / `with_active_de_ctx` + `context.run_nested`, plus `Box<T>` and `Option<Box<T>>` (`0a63ab5:src/io/smart_ptr.rs:437-489`), so recursive container and smart-pointer nesting increments the shared depth counter and fails with `ZiporaError::invalid_data("Maximum nesting depth exceeded: ...")`.
 
 Tests:
 - `0a63ab5:src/io/complex_types.rs:1222` `io::complex_types::tests::test_c9_ct5_nested_serialize_enforces_max_depth`
 - `0a63ab5:src/io/smart_ptr.rs:1429` `io::smart_ptr::tests::test_c9_ct5_smart_ptr_serializer_enforces_max_depth`
 
-RED output (tests spliced onto parent `3a9ca6f`, `c9_evidence/CT-5/red_parent.txt`):
+RED output (tests spliced onto parent `3a9ca6f`):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/complex_types.rs --base 3a9ca6f --evidence c9_evidence/CT-5/red_parent.txt --item 'fn test_c9_ct5_nested_serialize_enforces_max_depth(' --extra-file src/io/smart_ptr.rs --extra-item 'fn test_c9_ct5_smart_ptr_serializer_enforces_max_depth(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- test_c9_ct5_'
-# tree: 3a9ca6f:src/io/complex_types.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/CT-5/red_parent_spliced_complex_types.rs)
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- test_c9_ct5_
+# tree: 3a9ca6f:src/io/complex_types.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- test_c9_ct5_'
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 30.60s
@@ -3936,7 +3938,7 @@ error: test failed, to rerun pass `--lib`
 ## exit=101
 ```
 
-GREEN output (`c9_evidence/CT-5/green_lib.txt`):
+GREEN output:
 ```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- test_c9_ct5_
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
@@ -4002,17 +4004,17 @@ Fixes:
   path only after a path is found.
 - In `Version::to_u32` (`4f08691:src/io/versioning.rs:59-64`), saturate `major` and `minor` to `0xFF` so `minor` never
   spills into `major` (and document the 8.8.16 packed layout `Limitation:` at `4f08691:src/io/versioning.rs:51-58`), and
-  in `SerializableType for Version` (`4f08691:src/io/versioning.rs:86-114`), use `PACKED_EXTENDED_SENTINEL` (`0xFFFF_0000`, `4f08691:src/io/versioning.rs:84`) followed
-  by three `u16` fields (`major`, `minor`, `patch`) whenever `major >= 255` or `minor >= 255` so all `u16`
+  in `SerializableType for Version` (`4f08691:src/io/versioning.rs:86-109`), write `let sentinel = 0xFFFF_0000u32 | (self.patch as u32)` (`4f08691:src/io/versioning.rs:91`) followed
+  by two `u16` fields (`self.major`, `self.minor`) whenever `major >= 255` or `minor >= 255` so all `u16`
   major/minor/patch triples round-trip losslessly while keeping the 4-byte wire
   format for `major, minor < 255`.
 - In `VersionedSerialize::serialize_versioned` (`4f08691:src/io/versioning.rs:318-323`), write
   `Self::current_version().serialize(output)?` before serializing fields (and
   avoid duplicating the header in `VersionedSerializer::serialize_to_bytes` at `4f08691:src/io/versioning.rs:554-560`), and
   validate `Self::supports_version(&version)` in `deserialize_versioned` (`4f08691:src/io/versioning.rs:325-336`).
-- **Wire-format compatibility disclosure (`S22-R2`, documented in `5b33f98:src/io/versioning.rs:12-24, 58-59`):**
-  1. `VersionedSerialize::serialize_versioned` now prefixes the payload with `Self::current_version().serialize(output)?` so `serialize_versioned` and `deserialize_versioned` are symmetric (previously `serialize_versioned` omitted the header while `deserialize_versioned` unconditionally read one).
-  2. `Version::serialize` remains 4 bytes for `major < 255 && minor < 255`, and writes an 8-byte extended header (`0xFFFF_0000u32` followed by three little-endian `u16`s) when `major >= 255 || minor >= 255`.
+- **Wire-format compatibility disclosure (`S22-R2` + `S23-R5`, documented in `5b33f98:src/io/versioning.rs:12-24, 58-59` and `b84f34b:src/io/versioning.rs:12-27`):**
+  1. `VersionedSerialize::serialize_versioned` now prefixes the payload with `Self::current_version().serialize(output)?` so `serialize_versioned` and `deserialize_versioned` are symmetric (previously `serialize_versioned` omitted the header while `deserialize_versioned` unconditionally read one; feeding pre-C9 `serialize_versioned` bytes that lacked a header into `deserialize_versioned` causes the first 4 payload bytes to be consumed as the `Version` header, which can silently misparse if those 4 bytes happen to satisfy `supports_version`).
+  2. `Version::serialize` remains 4 bytes for `major < 255 && minor < 255`, and writes an 8-byte extended header (`0xFFFF_0000u32 | (self.patch as u32)` followed by two little-endian `u16`s for `major` and `minor`) when `major >= 255 || minor >= 255`.
 
 Tests:
 - `4f08691:src/io/versioning.rs:858` `io::versioning::tests::test_c9_vs1_supports_older_same_major_and_rejects_newer_without_forward_compat`
@@ -4021,10 +4023,10 @@ Tests:
 - `4f08691:src/io/versioning.rs:1013` `io::versioning::tests::test_c9_vs4_large_major_and_minor_versions_round_trip`
 - `4f08691:src/io/versioning.rs:1034` `io::versioning::tests::test_c9_vs5_serialize_versioned_and_deserialize_versioned_round_trip_and_validate`
 
-RED output (tests spliced onto parent `0a63ab5`, `c9_evidence/VS-1/red_parent.txt`):
+RED output (tests spliced onto parent `0a63ab5`):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/versioning.rs --base 0a63ab5 --evidence c9_evidence/VS-1/red_parent.txt --item 'fn test_c9_vs1_supports_older_same_major_and_rejects_newer_without_forward_compat(' --item 'fn test_c9_vs2_skew_check_rejects_underflow_and_major_mismatch(' --item 'fn test_c9_vs3_migration_path_handles_cycles_and_dead_ends(' --item 'fn test_c9_vs4_large_major_and_minor_versions_round_trip(' --item 'fn test_c9_vs5_serialize_versioned_and_deserialize_versioned_round_trip_and_validate(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::versioning::tests::test_c9_vs'
-# tree: 0a63ab5:src/io/versioning.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/VS-1/red_parent_spliced_versioning.rs)
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::versioning::tests::test_c9_vs
+# tree: 0a63ab5:src/io/versioning.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::versioning::tests::test_c9_vs'
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 28.81s
@@ -4085,7 +4087,7 @@ error: test failed, to rerun pass `--lib`
 ## exit=101
 ```
 
-GREEN output (`c9_evidence/VS-1/green_lib.txt`):
+GREEN output:
 ```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::versioning
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
@@ -4133,10 +4135,10 @@ Tests added (in `1423bc3:src/io/range_stream.rs`):
 - `1423bc3:src/io/range_stream.rs:804` `io::range_stream::tests::test_c9_rs3_seek_i64_min_and_out_of_bounds_return_invalid_input`
 - `1423bc3:src/io/range_stream.rs:845` `io::range_stream::tests::test_c9_rs5_multi_range_total_length_saturates_on_overflow`
 
-RED (tests spliced onto parent 4f08691, c9_evidence/RS-1/red_parent.txt):
+RED (tests spliced onto parent 4f08691):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/range_stream.rs --base 4f08691 --evidence c9_evidence/RS-1/red_parent.txt --item 'fn test_c9_rs1_new_positions_inner_reader_and_writer_to_start(' --item 'fn test_c9_rs2_multi_range_reader_skips_empty_ranges_and_errors_past_eof(' --item 'fn test_c9_rs3_seek_i64_min_and_out_of_bounds_return_invalid_input(' --item 'fn test_c9_rs5_multi_range_total_length_saturates_on_overflow(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::range_stream::tests::test_c9_rs'
-# tree: 4f08691:src/io/range_stream.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/RS-1/red_parent_spliced_range_stream.rs)
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::range_stream::tests::test_c9_rs
+# tree: 4f08691:src/io/range_stream.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::range_stream::tests::test_c9_rs'
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 23.91s
@@ -4192,7 +4194,7 @@ error: test failed, to rerun pass `--lib`
 ## exit=101
 ```
 
-GREEN (c9_evidence/RS-1/green_lib.txt):
+GREEN:
 ```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::range_stream::
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
@@ -4222,7 +4224,7 @@ test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 3047 filtered out; 
 ## exit=0
 ```
 
-Miri SIMD (c9_evidence/RS-1/miri_simd.txt):
+Miri SIMD:
 ```text
 $ env CARGO_BUILD_JOBS=16 MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::range_stream::tests::test_c9_rs
 [... 56 lines elided ...]
@@ -4239,7 +4241,7 @@ warning: 7 warnings emitted
 ## exit=0
 ```
 
-Miri Scalar (c9_evidence/RS-1/miri_scalar.txt):
+Miri Scalar:
 ```text
 $ env CARGO_BUILD_JOBS=16 RUSTFLAGS= CARGO_TARGET_DIR=target/miri-scalar MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::range_stream::tests::test_c9_rs
 [... 56 lines elided ...]
@@ -4261,8 +4263,8 @@ warning: 7 warnings emitted
 Fixes:
 - VV-1 (HIGH): `VarIntEncoder::encode_group_varint_u64` / `decode_group_varint_u64` (`1423bc3:src/io/var_int_variants.rs:607-688`) packed 2-bit width selectors (`1..=4` bytes) into a single `u8`, corrupting any `u64 >= 2^32` (widths `5..=8` spilled into adjacent selectors and truncated on decode), and `encode_i64` / `encode_i64_sequence` (`1423bc3:src/io/var_int_variants.rs:106, 1423bc3:src/io/var_int_variants.rs:134-137`) cast `i64 as u64` without zigzag encoding. In `6c8fab3:src/io/var_int_variants.rs:666-749`, use a 2-byte `u16` little-endian selector header with 3 bits per lane (`1..=8` bytes, rejecting unused top bits `selector & !0x0FFF != 0` at `6c8fab3:src/io/var_int_variants.rs:722-726`) and zigzag-encode signed integers for `GroupVarint` (`6c8fab3:src/io/var_int_variants.rs:112, 147-153, 187-190, 216-222`).
 - VV-2 (MEDIUM): `encode_delta_sequence_u64` (`1423bc3:src/io/var_int_variants.rs:454-458`) shifted `(values[i] - values[i - 1]) << 1` in `u64`, discarding bit 63 whenever the magnitude reached `2^63` (e.g. `[0, u64::MAX]`). In `6c8fab3:src/io/var_int_variants.rs:497-588`, widen the signed-magnitude delta (`(mag as u128) << 1 | sign`) to 65 bits and encode/decode it with `encode_leb128_u128` (`6c8fab3:src/io/var_int_variants.rs:246-256`) and `decode_leb128_u128_65` (`6c8fab3:src/io/var_int_variants.rs:325-351`).
-- **Wire-format compatibility disclosure (`S22-R2`, documented in `5b33f98:src/io/var_int_variants.rs:23-38, 80-81`):**
-  1. `VarIntStrategy::GroupVarint` now uses a 2-byte little-endian `u16` selector header per group of up to 4 values (3 bits per lane encoding byte widths `1..=8`, top 4 bits `0`) instead of the broken 1-byte 2-bit-per-lane header, and `encode_i64` / `encode_i64_sequence` now zigzag-encode signed integers under `GroupVarint`.
+- **Wire-format compatibility disclosure (`S22-R2` + `S23-R5`, documented in `5b33f98:src/io/var_int_variants.rs:23-38, 80-81` and `b84f34b:src/io/var_int_variants.rs:23-42`):**
+  1. `VarIntStrategy::GroupVarint` now uses a 2-byte little-endian `u16` selector header per group of up to 4 values (3 bits per lane encoding byte widths `1..=8`, top 4 bits `0`) instead of the broken 1-byte 2-bit-per-lane header, and `encode_i64` / `encode_i64_sequence` now zigzag-encode signed integers under `GroupVarint` (feeding pre-C9 1-byte-header `GroupVarint` streams into the 2-byte-header decoder consumes the first payload byte as the high selector byte and can silently decode wrong values whenever the top 4 bits of that byte are `0` and the remaining bytes satisfy the resulting lane widths).
   2. `VarIntStrategy::Delta` on `u64` sequences now encodes each signed-magnitude delta as a 65-bit unsigned LEB128 integer (up to 10 bytes, `decode_leb128_u128_65`) so full-range `u64` deltas (`>= 2^63`) do not overflow.
 - VV-3 (MEDIUM): `encode_delta_sequence_i64` (`1423bc3:src/io/var_int_variants.rs:483`) used `values[i] - values[i - 1]`, panicking on signed overflow in debug builds (e.g. `[i64::MIN, i64::MAX]`). Use `values[i].wrapping_sub(values[i - 1])` (`6c8fab3:src/io/var_int_variants.rs:536`) to match `decode_delta_sequence_i64`'s `wrapping_add` (`6c8fab3:src/io/var_int_variants.rs:647`).
 - VV-4 (LOW): `decode_leb128_u64` (`1423bc3:src/io/var_int_variants.rs:260-273`) and `decode_leb128_i64` (`1423bc3:src/io/var_int_variants.rs:283-299`) accepted arbitrary 10th bytes (`shift == 63`), silently discarding bits above bit 63. Reject `byte > 1` at `shift == 63` in `decode_leb128_u64` (`6c8fab3:src/io/var_int_variants.rs:281-285`) and require `byte == 0x00 || byte == 0x7F` at `shift == 63` in `decode_leb128_i64` (`6c8fab3:src/io/var_int_variants.rs:304-312`).
@@ -4276,10 +4278,10 @@ Tests added (in `6c8fab3:src/io/var_int_variants.rs`):
 - `6c8fab3:src/io/var_int_variants.rs:1275` `io::var_int_variants::tests::test_c9_vv4_leb128_decoders_reject_tenth_byte_overflow`
 - `6c8fab3:src/io/var_int_variants.rs:1299` `io::var_int_variants::tests::test_c9_vv5_choose_optimal_strategy_signed_handles_i64_min`
 
-RED (tests spliced onto parent 1423bc3, c9_evidence/VV-1/red_parent.txt):
+RED (tests spliced onto parent 1423bc3):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/var_int_variants.rs --base 1423bc3 --evidence c9_evidence/VV-1/red_parent.txt --item 'fn test_c9_vv1_group_varint_roundtrips_u64_above_32_bits_and_negative_i64(' --item 'fn test_c9_vv2_delta_u64_roundtrips_full_64_bit_span(' --item 'fn test_c9_vv3_delta_i64_roundtrips_i64_min_to_max_without_overflow(' --item 'fn test_c9_vv4_leb128_decoders_reject_tenth_byte_overflow(' --item 'fn test_c9_vv5_choose_optimal_strategy_signed_handles_i64_min(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::var_int_variants::tests::test_c9_vv'
-# tree: 1423bc3:src/io/var_int_variants.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/VV-1/red_parent_spliced_var_int_variants.rs)
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::var_int_variants::tests::test_c9_vv
+# tree: 1423bc3:src/io/var_int_variants.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::var_int_variants::tests::test_c9_vv'
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 22.32s
@@ -4344,7 +4346,7 @@ error: test failed, to rerun pass `--lib`
 ## exit=101
 ```
 
-GREEN (c9_evidence/VV-1/green_lib.txt):
+GREEN:
 ```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::var_int
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
@@ -4393,7 +4395,7 @@ test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 3033 filtered out; 
 ## exit=0
 ```
 
-Miri SIMD (c9_evidence/VV-1/miri_simd.txt):
+Miri SIMD:
 ```text
 $ env CARGO_BUILD_JOBS=16 MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::var_int_variants::tests::test_c9_vv
 [... 56 lines elided ...]
@@ -4411,7 +4413,7 @@ warning: 7 warnings emitted
 ## exit=0
 ```
 
-Miri Scalar (c9_evidence/VV-1/miri_scalar.txt):
+Miri Scalar:
 ```text
 $ env CARGO_BUILD_JOBS=16 RUSTFLAGS= CARGO_TARGET_DIR=target/miri-scalar MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::var_int_variants::tests::test_c9_vv
 [... 56 lines elided ...]
@@ -4438,7 +4440,7 @@ Fixes:
 - SB-4 (HIGH): `fill_buffer_simd`, `read_bulk`, and `Read::read` (`6c8fab3:src/io/stream_buffer.rs:248-251, 6c8fab3:src/io/stream_buffer.rs:353-363, 6c8fab3:src/io/stream_buffer.rs:510`) did not retry `io::ErrorKind::Interrupted`, wrapped all errors into `io::ErrorKind::Other`, and lost already-copied buffered bytes when a follow-up `inner.read` failed. Retry `Interrupted` in `read_inner_retry_interrupted` (`a807faf:src/io/stream_buffer.rs:265-274`), preserve the original `io::Error` in `Read::read` (`a807faf:src/io/stream_buffer.rs:526-544`) and `BufRead::fill_buf` (`a807faf:src/io/stream_buffer.rs:546-557`), and never call `inner.read` after copying buffered bytes.
 - SB-5 (MEDIUM): `StreamBufferedWriter::flush_buffer` (`6c8fab3:src/io/stream_buffer.rs:631-640`) used `write_all` without compacting partially written bytes on error, and `Write::write` (`6c8fab3:src/io/stream_buffer.rs:657-669`) copied into the tail of `self.buffer` before flushing, duplicating bytes when the flush failed with `WouldBlock` and was retried. Compact written bytes before returning an error in `flush_raw` (`a807faf:src/io/stream_buffer.rs:631-665`), flush existing buffered bytes before copying when `buf.len() > self.buffer.len() - self.pos` (`a807faf:src/io/stream_buffer.rs:766-800`), and preserve `io::Error` kinds in `Write::write` and `Write::flush`.
 - SB-6 (MEDIUM): `read_slice(len)` (`6c8fab3:src/io/stream_buffer.rs:224-237, 6c8fab3:src/io/stream_buffer.rs:332-343`) capped `read_size` to `self.buffer.len() - self.end` and returned `Ok(None)` when `len > self.buffer.len()` instead of growing the buffer up to `max_capacity`. Grow the buffer via `grow_buffer_to(min_needed)` (`a807faf:src/io/stream_buffer.rs:238-250, 322-343`) whenever `min_needed > self.buffer.len()` or `self.end >= self.buffer.len()` before EOF.
-- SB-7 (MEDIUM): `StreamBufferConfig` (`6c8fab3:src/io/stream_buffer.rs:151, 6c8fab3:src/io/stream_buffer.rs:225, 6c8fab3:src/io/stream_buffer.rs:625`) did not validate `initial_capacity == 0`, `max_capacity < initial_capacity`, non-power-of-two/zero `page_alignment`, or `growth_factor <= 1.0`, and `ensure_buffered(usize::MAX)` overflowed in debug builds. Validate `StreamBufferConfig` in `validate()` / `allocate_aligned_buffer()` (`a807faf:src/io/stream_buffer.rs:68-100, 173-181`, and tightened in `5b33f98:src/io/stream_buffer.rs:45-56, 93-98` to also reject non-finite or `> 16.0` `growth_factor`) and bound `min_needed` against `max_capacity` in `grow_buffer_to` (`a807faf:src/io/stream_buffer.rs:322-343`).
+- SB-7 (MEDIUM): `StreamBufferConfig` (`6c8fab3:src/io/stream_buffer.rs:151, 6c8fab3:src/io/stream_buffer.rs:225, 6c8fab3:src/io/stream_buffer.rs:625`) did not validate `initial_capacity == 0`, `max_capacity < initial_capacity`, non-power-of-two/zero `page_alignment`, or `growth_factor <= 1.0`, and `ensure_buffered(usize::MAX)` overflowed in debug builds. Validate `StreamBufferConfig` in `validate()` / `allocate_aligned_buffer()` (`a807faf:src/io/stream_buffer.rs:68-100, 173-181`, and tightened in `5b33f98:src/io/stream_buffer.rs:77-102` to also reject non-finite or `> 1024.0` `growth_factor`) and bound `min_needed` against `max_capacity` in `grow_buffer_to` (`a807faf:src/io/stream_buffer.rs:322-343`).
 - SB-8 (MEDIUM): `BufRead::fill_buf` (`6c8fab3:src/io/stream_buffer.rs:515-520`) called `fill_buffer(1)`, which capped each `inner.read` slice to `1 * readahead_multiplier` (1-2 bytes). Pass the full remaining tail `&mut self.buffer[self.end..]` to `inner.read` (`a807faf:src/io/stream_buffer.rs:276-320`) while stopping the loop once `min_needed` bytes are buffered.
 - SB-9 (LOW, documentation/honesty only — no separate runtime test) + Phase D: remove the honesty marker at `6c8fab3:src/io/stream_buffer.rs:153-155` and document the `# Limitation` on `StreamBufferConfig::{page_alignment, use_secure_pool}` (`a807faf:src/io/stream_buffer.rs:29-42, 169-172`).
 
@@ -4452,10 +4454,10 @@ Tests added (in `a807faf:src/io/stream_buffer.rs`):
 - `a807faf:src/io/stream_buffer.rs:1515` `io::stream_buffer::tests::test_c9_sb7_invalid_config_and_huge_ensure_buffered_return_err_without_panic`
 - `a807faf:src/io/stream_buffer.rs:1562` `io::stream_buffer::tests::test_c9_sb8_fill_buf_reads_full_buffer_capacity_per_inner_read`
 
-RED (tests spliced onto parent 6c8fab3, c9_evidence/SB-1/red_parent.txt):
+RED (tests spliced onto parent 6c8fab3):
 ```text
-$ python3 c9_evidence/tools/splice_red.py --file src/io/stream_buffer.rs --base 6c8fab3 --evidence c9_evidence/SB-1/red_parent.txt --item 'fn miri_fast_config(' --item 'fn test_c9_sb1_writer_drop_flushes_buffered_bytes(' --item 'fn test_c9_sb2_read_returns_available_bytes_without_blocking_for_full_buffer(' --item 'fn test_c9_sb3_seek_accounts_for_buffered_readahead_and_preserves_buffer_on_err(' --item 'fn test_c9_sb4_read_retries_interrupted_preserves_error_kind_and_never_loses_buffered_bytes(' --item 'fn test_c9_sb5_writer_partial_flush_and_write_error_do_not_duplicate_bytes(' --item 'fn test_c9_sb6_read_slice_above_initial_capacity_grows_buffer_before_eof(' --item 'fn test_c9_sb7_invalid_config_and_huge_ensure_buffered_return_err_without_panic(' --item 'fn test_c9_sb8_fill_buf_reads_full_buffer_capacity_per_inner_read(' -- bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::stream_buffer::tests::test_c9_sb'
-# tree: 6c8fab3:src/io/stream_buffer.rs + items spliced verbatim from the working tree (full spliced file: c9_evidence/SB-1/red_parent_spliced_stream_buffer.rs)
+$ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::stream_buffer::tests::test_c9_sb
+# tree: 6c8fab3:src/io/stream_buffer.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::stream_buffer::tests::test_c9_sb'
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 22.04s
@@ -4539,7 +4541,7 @@ error: test failed, to rerun pass `--lib`
 ## exit=101
 ```
 
-GREEN (c9_evidence/SB-1/green_lib.txt):
+GREEN:
 ```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::stream_buffer::
    Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
@@ -4585,7 +4587,7 @@ test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 3044 filtered out; 
 ## exit=0
 ```
 
-Miri SIMD (c9_evidence/SB-1/miri_simd.txt):
+Miri SIMD:
 ```text
 $ env CARGO_BUILD_JOBS=16 MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::stream_buffer::tests::test_c9_sb
 [... 56 lines elided ...]
@@ -4606,7 +4608,7 @@ warning: 7 warnings emitted
 ## exit=0
 ```
 
-Miri Scalar (c9_evidence/SB-1/miri_scalar.txt):
+Miri Scalar:
 ```text
 $ env CARGO_BUILD_JOBS=16 RUSTFLAGS= CARGO_TARGET_DIR=target/miri-scalar MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --lib -- io::stream_buffer::tests::test_c9_sb
 [... 56 lines elided ...]
@@ -4627,23 +4629,23 @@ warning: 7 warnings emitted
 ## exit=0
 ```
 
-## 8. Phase D Audit Progression (`db3c514` → `d611d4b` → `a807faf` → `125b80a`)
+## 8. Phase D Audit Progression (`db3c514` → `d611d4b` → `a807faf` → `125b80a` → `cfefd93`)
 
-| Metric | `db3c514` (Stage 9 close) | `d611d4b` (`#[cfg(all(test, ..))]` fix) | `a807faf` (Stage 10 `C9` close) | `125b80a` (`S22` close) | Ratchet in `scripts/audit_baseline.toml` |
-|---|---|---|---|---|---|
-| Total non-test `unsafe` sites (`scripts/unsafe_audit.py`) | 1,341 | 1,341 | 1,308 | 1,310 | — |
-| Documented non-test `unsafe` sites | 1,334 (99.5%) | 1,334 (99.5%) | 1,302 (99.5%) | 1,304 (99.5%) | — |
-| Undocumented non-test `unsafe` sites (crate-wide) | 7 | 7 | **6** | **6** | `max_undocumented = 6` (was `7`) |
-| `src/io/` non-test `unsafe` sites (documented / total) | 57 / 58 (98.3%) | 57 / 58 (98.3%) | **52 / 52 (100.0%)** | **51 / 51 (100.0%)** | 0 undocumented in `src/io/` |
-| `src/memory/` non-test `unsafe` sites (documented / total) | 338 / 338 (100.0%) | 338 / 338 (100.0%) | **309 / 309 (100.0%)** | **312 / 312 (100.0%)** | `src/memory/mmap_vec.rs`: 34 → 8 sites (`4790f48`), 100% documented |
-| §8.5 `debug_assert!` precondition violations | 0 | 0 | **0** | **0** | `max_precondition_violations = 0` |
-| Honesty markers (`scripts/api_honesty.py`, crate-wide) | 39 | 39 | **30** | **30** | `max_markers = 30` (was `39`) |
-| `src/io/` honesty markers | 9 | 9 | **0** | **0** | `complex_types.rs` −1, `mmap.rs` −3, `search.rs` −5 |
-| Production `.unwrap()` (`scripts/unwrap_audit.py`) | 0 | 0 | **0** | **0** | `max_unwraps = 0` |
-| Production `.expect()` (`scripts/unwrap_audit.py`, crate-wide) | 103 | 102 | **95** | **95** | `max_expects = 95` (was `103`) |
-| `src/io/` production `.expect()` | 6 | 5 | **0** | **0** | `checksum.rs` −1 (`d611d4b`), `mmap.rs` −2, `var_int.rs` −2, `var_int_variants.rs` −1 |
-| `src/memory/mmap_vec.rs` production `.expect()` | 2 | 2 | **0** | **0** | `mmap_vec.rs` −2 (`9a3fe31`) |
-| Direct decoder indexing (`scripts/index_audit.py`) | 0 (132 in-bounds) | 0 (132 in-bounds) | **0 (132 in-bounds)** | **0 (132 in-bounds)** | `max_total = 0`, `var_int = 0` |
+| Metric | `db3c514` (Stage 9 close) | `d611d4b` (`#[cfg(all(test, ..))]` fix) | `a807faf` (Stage 10 `C9` close) | `125b80a` (`S22` close) | `cfefd93` (`S23` close) | Ratchet in `scripts/audit_baseline.toml` |
+|---|---|---|---|---|---|---|
+| Total non-test `unsafe` sites (`scripts/unsafe_audit.py`) | 1,341 | 1,341 | 1,308 | 1,310 | 1,310 | — |
+| Documented non-test `unsafe` sites | 1,334 (99.5%) | 1,334 (99.5%) | 1,302 (99.5%) | 1,304 (99.5%) | 1,304 (99.5%) | — |
+| Undocumented non-test `unsafe` sites (crate-wide) | 7 | 7 | **6** | **6** | **6** | `max_undocumented = 6` (was `7`) |
+| `src/io/` non-test `unsafe` sites (documented / total) | 57 / 58 (98.3%) | 57 / 58 (98.3%) | **52 / 52 (100.0%)** | **51 / 51 (100.0%)** | **51 / 51 (100.0%)** | 0 undocumented in `src/io/` |
+| `src/memory/` non-test `unsafe` sites (documented / total) | 338 / 338 (100.0%) | 338 / 338 (100.0%) | **309 / 309 (100.0%)** | **312 / 312 (100.0%)** | **312 / 312 (100.0%)** | `src/memory/mmap_vec.rs`: 33 → 5 (`9a3fe31`) → 8 (`4790f48`), 100% documented |
+| §8.5 `debug_assert!` precondition violations | 0 | 0 | **0** | **0** | **0** | `max_precondition_violations = 0` |
+| Honesty markers (`scripts/api_honesty.py`, crate-wide) | 39 | 39 | **30** | **30** | **30** | `max_markers = 30` (was `39`) |
+| `src/io/` honesty markers | 9 | 9 | **0** | **0** | **0** | `complex_types.rs` −1, `mmap.rs` −3, `search.rs` −5 |
+| Production `.unwrap()` (`scripts/unwrap_audit.py`) | 0 | 0 | **0** | **0** | **0** | `max_unwraps = 0` |
+| Production `.expect()` (`scripts/unwrap_audit.py`, crate-wide) | 103 | 102 | **95** | **95** | **95** | `max_expects = 95` (was `103`) |
+| `src/io/` production `.expect()` | 6 | 5 | **0** | **0** | **0** | `checksum.rs` −1 (`d611d4b`), `mmap.rs` −2, `var_int.rs` −2, `var_int_variants.rs` −1 |
+| `src/memory/mmap_vec.rs` production `.expect()` | 2 | 2 | **0** | **0** | **0** | `mmap_vec.rs` −2 (`9a3fe31`) |
+| Direct decoder indexing (`scripts/index_audit.py`) | 0 (132 in-bounds) | 0 (132 in-bounds) | **0 (132 in-bounds)** | **0 (132 in-bounds)** | **0 (132 in-bounds)** | `max_total = 0`, `var_int = 0` |
 
 ## 9. Integrated Verification on `main` (`a807faf`)
 
@@ -5195,46 +5197,200 @@ test count drift check: PASS
 ### 10.1 `0e8c6ba` — fix(io): size max_depth presets for 2 MiB stacks and check u32 collection lengths (S22-R1, S22-R8)
 
 - **`S22-R1` (`2 MiB` debug stack recursion budgets and shared context forwarding)**:
-  - Lowered `DEFAULT_MAX_DEPTH` to `256` (`0e8c6ba:src/io/smart_ptr.rs:27`), used across `SmartPtrConfig::default` (`0e8c6ba:src/io/smart_ptr.rs:66`), `SerializationContext::new` (`0e8c6ba:src/io/smart_ptr.rs:79`), `DeserializationContext::new` (`0e8c6ba:src/io/smart_ptr.rs:194`), `SmartPtrConfig::max_depth` (`0e8c6ba:src/io/smart_ptr.rs:768`), and `ComplexSerialize::max_depth` (`0e8c6ba:src/io/complex_types.rs:727-729`).
-  - Lowered `SmartPtrConfig::high_performance` `max_depth` to `64` (`0e8c6ba:src/io/smart_ptr.rs:786`) and `SmartPtrConfig::memory_optimized` `max_depth` to `128` (`0e8c6ba:src/io/smart_ptr.rs:796`).
-  - Added `with_shared_ser_ctx` and `with_shared_de_ctx` (`0e8c6ba:src/io/smart_ptr.rs:485-503`) and wired them into `BatchSerialize for Vec<T>` (`0e8c6ba:src/io/complex_types.rs:643-647`) and `NestedSerialize for Vec<T>` (`0e8c6ba:src/io/complex_types.rs:747-756`) so `Vec::serialize_batch` / `deserialize_batch` and `Vec::serialize_nested` / `deserialize_nested` share the active thread-local recursion counter and object identity table when invoked inside an outer `SmartPtrSerialize` or `ComplexSerialize` traversal.
-  - Regression tests: `test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack` (`0e8c6ba:src/io/smart_ptr.rs:1529-1626`) and `test_s22_r1_nested_containers_rejected_on_2mib_stack` (`0e8c6ba:src/io/complex_types.rs:1299-1348`) spawn a `std::thread::Builder::new().stack_size(2 * 1024 * 1024)` worker and verify that hostile 300-deep `Box` / `Rc` / `Arc` / `Vec` / `HashMap` chains return `Err` without stack overflow across `SmartPtrConfig::default`, `high_performance`, `memory_optimized`, and `ComplexSerialize`.
+  - Added `DEFAULT_MAX_DEPTH: usize = 256` (`0e8c6ba:src/io/smart_ptr.rs:27`), used across `SerializationContext::new` (`0e8c6ba:src/io/smart_ptr.rs:66`), `SerializationContext::without_cycle_detection` (`0e8c6ba:src/io/smart_ptr.rs:79`), `DeserializationContext::new` (`0e8c6ba:src/io/smart_ptr.rs:194`), `SmartPtrConfig::new` (`0e8c6ba:src/io/smart_ptr.rs:768`), `SmartPtrConfig::space_optimized` (`0e8c6ba:src/io/smart_ptr.rs:786`), and `NestedSerialize::max_depth` (`0e8c6ba:src/io/complex_types.rs:727-729`).
+  - Lowered `SmartPtrConfig::performance_optimized` `max_depth` from `500` to `128` (`0e8c6ba:src/io/smart_ptr.rs:777`) and `SmartPtrConfig::robust` `max_depth` from `5000` to `384` (`0e8c6ba:src/io/smart_ptr.rs:796`; subsequently lowered to `256` in `b84f34b:src/io/smart_ptr.rs:1070-1076` for `S23-R5` so types with 512-byte stack frames also stay within a 2 MiB stack at `opt-level=0`).
+  - Made `with_active_ser_ctx` (`0e8c6ba:src/io/smart_ptr.rs:258`) and `with_active_de_ctx` (`0e8c6ba:src/io/smart_ptr.rs:288`) `pub(crate)` and documented the `# Limitations` contract on `SerializableType` (`0e8c6ba:src/io/smart_ptr.rs:484-504`) and `impl_complex_serialize!` (`0e8c6ba:src/io/complex_types.rs:746-757`).
+  - Regression tests: `test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack` (`0e8c6ba:src/io/smart_ptr.rs:1529-1626`) and `test_s22_r1_nested_containers_rejected_on_2mib_stack` (`0e8c6ba:src/io/complex_types.rs:1299-1348`; strengthened in `b84f34b:src/io/complex_types.rs:1273-1350` for `S23-R5` to assert `depth == 300` rejection in both debug and release builds in addition to `100_000`-deep chains on a 2 MiB thread stack).
 - **`S22-R8` (`u32` collection length overflow check)**:
-  - Added `checked_u32_len(len: usize, kind: &str) -> Result<u32>` (`0e8c6ba:src/io/smart_ptr.rs:30-35`) and replaced every `self.len() as u32` / `N as u32` wire-count cast in `SmartPtrSerialize for Vec<T>` (`0e8c6ba:src/io/smart_ptr.rs:892`), `ComplexSerialize for HashMap<K, V>` (`0e8c6ba:src/io/complex_types.rs:154`), `ComplexSerialize for HashSet<T>` (`0e8c6ba:src/io/complex_types.rs:257`), `ComplexSerialize for [T; N]` (`0e8c6ba:src/io/complex_types.rs:310`), `ComplexSerialize for &[T]` (`0e8c6ba:src/io/complex_types.rs:356`), `ComplexSerialize for Vec<T>` (`0e8c6ba:src/io/complex_types.rs:400`), and `BatchSerialize for Vec<T>` (`0e8c6ba:src/io/complex_types.rs:652`).
+  - Added `checked_u32_len(len: usize, what: &str) -> Result<u32>` (`0e8c6ba:src/io/smart_ptr.rs:30-35`) and replaced every `self.len() as u32` / `N as u32` / `values.len() as u32` wire-count cast in `SerializableType for Vec<T>` (`0e8c6ba:src/io/smart_ptr.rs:892`), `ComplexSerialize for [T; N]` (`0e8c6ba:src/io/complex_types.rs:154`), `ComplexSerialize for HashMap<K, V>` (`0e8c6ba:src/io/complex_types.rs:257`), `ComplexSerialize for HashSet<T>` (`0e8c6ba:src/io/complex_types.rs:310`), `ComplexSerialize for BTreeMap<K, V>` (`0e8c6ba:src/io/complex_types.rs:356`), `ComplexSerialize for BTreeSet<T>` (`0e8c6ba:src/io/complex_types.rs:400`), and `ComplexTypeSerializer::serialize_batch` (`0e8c6ba:src/io/complex_types.rs:652`).
   - Regression test: `test_s22_r8_checked_u32_len_rejects_above_u32_max` (`0e8c6ba:src/io/complex_types.rs:1351-1361`).
+
+RED output (`test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack` spliced onto parent `73a25d0:src/io/smart_ptr.rs` at line `1485`):
+```text
+$ cargo test --locked --lib io::smart_ptr::tests::test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack
+   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Finished `test` profile [optimized + debuginfo] target(s) in 38.31s
+     Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
+
+thread 's22-r1-2mib' (1283047) has overflowed its stack
+fatal runtime error: stack overflow, aborting
+error: test failed, to rerun pass `--lib`
+
+Caused by:
+  process didn't exit successfully: `/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/debug/deps/zipora-265d62c92a32b81e 'io::smart_ptr::tests::test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack'` (signal: 6, SIGABRT: process abort signal)
+
+running 1 test
+## exit=101
+```
+
+RED output (`test_s22_r1_nested_containers_rejected_on_2mib_stack` from `b84f34b:src/io/complex_types.rs:1273-1350` spliced onto parent `73a25d0:src/io/complex_types.rs` at line `1275`, debug and release):
+```text
+$ cargo test --locked --lib io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.14s
+     Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
+error: test failed, to rerun pass `--lib`
+
+running 1 test
+test io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack ... FAILED
+
+failures:
+
+---- io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack stdout ----
+
+thread 'io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack' (1283095) panicked at src/io/complex_types.rs:1313:13:
+depth-300 BTreeNode must be rejected by NestedSerialize::deserialize_nested
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3122 filtered out; finished in 0.00s
+
+## exit=101
+```
+```text
+$ cargo test --locked --release --lib io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack
+   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Finished `release` profile [optimized] target(s) in 42.58s
+     Running unittests src/lib.rs (target/release/deps/zipora-4e23e75520bbaae2)
+error: test failed, to rerun pass `--lib`
+
+running 1 test
+test io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack ... FAILED
+
+failures:
+
+---- io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack stdout ----
+
+thread 'io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack' (1284690) panicked at src/io/complex_types.rs:1313:13:
+depth-300 BTreeNode must be rejected by NestedSerialize::deserialize_nested
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3139 filtered out; finished in 0.00s
+
+## exit=101
+```
 
 ### 10.2 `d28462f` — perf(io): reserve full capacity up to 64 MiB when remaining_bytes is known (S22-R4)
 
-- **`S22-R4` (`DataInput::read_vec` single-allocation fast path on known-size inputs)**:
-  - Added `MAX_KNOWN_INPUT_PREALLOC = 64 * 1024 * 1024` (`d28462f:src/io/data_input.rs:28`) and updated `prealloc_capacity` (`d28462f:src/io/data_input.rs:59-68`) so slice/mmap inputs that report `remaining_bytes() == Some(rem)` preallocate the full element count in one allocation up to 64 MiB (after validating `count <= rem / elem_size`), while streaming readers (`remaining_bytes() == None`) retain the 64 KiB `MAX_INITIAL_PREALLOC` cap.
-  - Updated `DataInput::read_vec` (`d28462f:src/io/data_input.rs:117-124`) to take a direct `for _ in 0..count { vec.push(read_elem(self)?); }` loop when `cap == count`, eliminating the `52.9%` `vec_u64` / `10000` Criterion regression (`24.75 µs -> 15.86 µs`, matching the pre-`a24f443` `16.20 µs` baseline).
+- **`S22-R4` (`DataInput::read_vec` and `prealloc_capacity` 64 MiB budget on known-size inputs)**:
+  - Added `MAX_KNOWN_INPUT_PREALLOC = 64 * 1024 * 1024` (`d28462f:src/io/data_input.rs:28`) and updated `prealloc_capacity` (`d28462f:src/io/data_input.rs:59-68`) so slice/mmap inputs that report `remaining_bytes() == Some(r)` preallocate the full element count in one allocation up to 64 MiB (`count.min(byte_budget / elem_size).min(r_usize)`), while streaming readers (`remaining_bytes() == None`) retain the 64 KiB `MAX_READ_AHEAD_ALLOC` cap.
+  - Updated `DataInput::read_vec` (`d28462f:src/io/data_input.rs:114-124`) to reserve and read in a single allocation when `remaining.is_some() && len <= MAX_KNOWN_INPUT_PREALLOC` (note: the remaining `+44%` `Vec<u64>` deserialize regression came from `with_active_de_ctx` + `run_nested` in `src/io/smart_ptr.rs` and was fixed in `b84f34b`, §11.1).
   - Annotated `test_mmap_data_input` with `#[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]` (`d28462f:src/io/data_input.rs:697`).
-  - Regression test: `test_s22_r4_vec_u64_known_remaining_preallocates_full_count` (`d28462f:src/io/data_input.rs:938-952`).
+  - Regression test: `test_s22_r4_vec_u64_known_remaining_preallocates_full_count` (`d28462f:src/io/data_input.rs:938-952`; strengthened in `b84f34b:src/io/data_input.rs:938-956` for `S23-R5` to assert `decoded.capacity() == n`, which fails on `73a25d0` where incremental doubling leaves `capacity == 131072` for `n = 100000`).
+
+RED output (`test_s22_r4_vec_u64_known_remaining_preallocates_full_count` from `b84f34b:src/io/data_input.rs:938-956` spliced onto parent `73a25d0:src/io/data_input.rs` at line `908`):
+```text
+$ cargo test --locked --lib io::data_input::tests::test_s22_r4_vec_u64_known_remaining_preallocates_full_count
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
+error: test failed, to rerun pass `--lib`
+
+running 1 test
+test io::data_input::tests::test_s22_r4_vec_u64_known_remaining_preallocates_full_count ... FAILED
+
+failures:
+
+---- io::data_input::tests::test_s22_r4_vec_u64_known_remaining_preallocates_full_count stdout ----
+
+thread 'io::data_input::tests::test_s22_r4_vec_u64_known_remaining_preallocates_full_count' (1284703) panicked at src/io/data_input.rs:925:9:
+assertion `left == right` failed
+  left: 131072
+ right: 100000
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    io::data_input::tests::test_s22_r4_vec_u64_known_remaining_preallocates_full_count
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3122 filtered out; finished in 0.00s
+
+## exit=101
+```
 
 ### 10.3 `4790f48` — fix(mmap_vec): map read-only vectors with PROT_READ and inline validated slice access (S22-R3, S22-R5, S22-R7, S22-R8)
 
 - **`S22-R5` (`PROT_READ` mapping for read-only `MmapVec`)**:
-  - Replaced the single `mmap: Option<MmapMut>` field with `enum MappingKind { ReadWrite(MmapMut), ReadOnly(Mmap) }` (`4790f48:src/memory/mmap_vec.rs:41-92`).
-  - In `MmapVec::remap` (`4790f48:src/memory/mmap_vec.rs:1266-1317`), read-only handles now map with `OpenOptions::new().len(file_size).map(&self.file)` (`PROT_READ`, `MAP_SHARED`) instead of `map_copy_read_only` (`MAP_PRIVATE` + `PROT_WRITE`), and `apply_madvise` uses `libc::madvise` on `ReadOnly(Mmap)`.
-  - Regression test: `test_s22_r5_read_only_open_does_not_fault_into_rss_anon` (`4790f48:src/memory/mmap_vec.rs:3585-3619`) reads `/proc/self/status` `RssAnon` before and after touching every page of a 16 MiB read-only `MmapVec<u64>` and verifies `RssAnon` grows by `< 2 MiB` (measured `0 KiB` delta vs `16,384 KiB` before `4790f48`).
+  - Replaced `FileMapping::map: MmapMut` with `enum MappingKind { ReadWrite(MmapMut), ReadOnly(Mmap) }` (`4790f48:src/memory/mmap_vec.rs:41-92, 106`).
+  - In `MmapVec::map_file` (`4790f48:src/memory/mmap_vec.rs:1062-1098`), read-only handles now map with `unsafe { options.map(file) }.map(MappingKind::ReadOnly)` (`PROT_READ`) instead of `options.map_copy` (`MAP_PRIVATE` with `PROT_READ | PROT_WRITE`), and `MmapVec::advise_mapping` (`4790f48:src/memory/mmap_vec.rs:1040-1057`) delegates through `MappingKind::advise`.
+  - Regression test: `test_s22_r5_read_only_open_does_not_fault_into_rss_anon` (`4790f48:src/memory/mmap_vec.rs:3585-3619`) reads `/proc/self/status` `RssAnon` before and after opening and scanning a 32 MiB (`4 * 1024 * 1024` `u64`s) read-only `MmapVec<u64>` with `populate_pages: true` and asserts `RssAnon` grows by `< 4096 KiB` (`4 MiB`).
 - **`S22-R3` (`MmapVec` hot-path inlining and cached validated pointer)**:
-  - Cached `data_ptr: NonNull<T>` (`4790f48:src/memory/mmap_vec.rs:97`) computed and validated once in `validated_data_ptr` (`4790f48:src/memory/mmap_vec.rs:1164-1195`) whenever the mapping is created, remapped, or cleared, and marked `push` (`4790f48:src/memory/mmap_vec.rs:656-680`), `get`, `get_mut`, `as_slice`, and `as_mut_slice` (`4790f48:src/memory/mmap_vec.rs:722-770`) `#[inline]`.
+  - Cached `data: NonNull<T>` (`4790f48:src/memory/mmap_vec.rs:518`; `header: Option<NonNull<MmapVecHeader>>` at `4790f48:src/memory/mmap_vec.rs:516`) computed and alignment-validated once in `MmapVec::view_of` (`4790f48:src/memory/mmap_vec.rs:1159-1197`) whenever the mapping is created or remapped (`MmapVec::resize_to_capacity` at `4790f48:src/memory/mmap_vec.rs:1385-1389`), and marked `push` (`4790f48:src/memory/mmap_vec.rs:656-685`), `get` (`4790f48:src/memory/mmap_vec.rs:722-725`), `get_mut` (`4790f48:src/memory/mmap_vec.rs:733-736`), `as_slice` (`4790f48:src/memory/mmap_vec.rs:742-753`), and `as_mut_slice` (`4790f48:src/memory/mmap_vec.rs:761-771`) `#[inline]`.
 - **`S22-R7` (Miri test coverage in `mmap_vec.rs`)**:
-  - Un-ignored `test_c9_f1_with_capacity_simd_rejects_overflowing_capacity` (`4790f48:src/memory/mmap_vec.rs:2739`) and `test_c9_f9_create_rejects_read_only_config` (`4790f48:src/memory/mmap_vec.rs:3414`) under Miri so 6/58 `memory::mmap_vec::` tests execute under `make miri_io`.
+  - Un-ignored `test_c9_f1_with_capacity_simd_rejects_overflowing_capacity` (`4790f48:src/memory/mmap_vec.rs:2740`) and `test_c9_f9_create_rejects_read_only_config` (`4790f48:src/memory/mmap_vec.rs:3415`) under Miri so 6/58 `memory::mmap_vec::` tests execute under `make miri_io`.
+
+RED output (`test_s22_r5_read_only_open_does_not_fault_into_rss_anon` spliced onto parent `73a25d0:src/memory/mmap_vec.rs` at line `3473`):
+```text
+$ cargo test --locked --lib memory::mmap_vec::tests::test_s22_r5_read_only_open_does_not_fault_into_rss_anon
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
+error: test failed, to rerun pass `--lib`
+
+running 1 test
+test memory::mmap_vec::tests::test_s22_r5_read_only_open_does_not_fault_into_rss_anon ... FAILED
+
+failures:
+
+---- memory::mmap_vec::tests::test_s22_r5_read_only_open_does_not_fault_into_rss_anon stdout ----
+
+thread 'memory::mmap_vec::tests::test_s22_r5_read_only_open_does_not_fault_into_rss_anon' (1284717) panicked at src/memory/mmap_vec.rs:3506:13:
+opening 32 MiB read-only MmapVec with populate_pages inflated RssAnon by 32776 KiB (before=1304 KiB, after=34080 KiB)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    memory::mmap_vec::tests::test_s22_r5_read_only_open_does_not_fault_into_rss_anon
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3122 filtered out; finished in 0.08s
+
+## exit=101
+```
 
 ### 10.4 `5b33f98` — fix(io): disclose wire-format/API changes and guard zero_copy/stream_buffer bounds (S22-R2, S22-R8)
 
 - **`S22-R2` (Wire-format and public API compatibility disclosures)**:
   - Added `# Wire-format compatibility (C9 / 0.1.x pre-1.0)` and `# Compatibility (C9 / 0.1.x pre-1.0)` sections to `5b33f98:src/io/var_int_variants.rs:23-38, 80-81`, `5b33f98:src/io/versioning.rs:12-24, 58-59`, `5b33f98:src/io/range_stream.rs:13-18, 248-253`, and `5b33f98:src/io/mmap.rs:249-255`.
 - **`S22-R8` (`StreamBufferConfig::growth_factor` and `zero_copy` over-reported counts)**:
-  - Added `MAX_GROWTH_FACTOR: f64 = 16.0` and `growth_factor.is_finite()` validation in `StreamBufferConfig::validate` (`5b33f98:src/io/stream_buffer.rs:45-56, 93-98`), tested with `NaN`, `INFINITY`, and `1e300` in `test_c9_sb7_invalid_config_and_huge_ensure_buffered_return_err_without_panic` (`5b33f98:src/io/stream_buffer.rs:1549-1561`).
-  - Added over-reported byte checks to `ZeroCopyReader::read` direct path (`5b33f98:src/io/zero_copy.rs:560-567`), `ZeroCopyWriter::write_all_direct` / `write` / `zc_write` / `zc_ensure_write` (`5b33f98:src/io/zero_copy.rs:696-706, 720, 730`), and `VectoredIO::read_vectored` / `write_vectored` (`5b33f98:src/io/zero_copy.rs:787-804, 828-847`), verified by `test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts` (`5b33f98:src/io/zero_copy.rs:2190-2233`).
+  - Tightened `StreamBufferConfig::validate` (`5b33f98:src/io/stream_buffer.rs:77-102`) to require `self.growth_factor.is_finite() && self.growth_factor > 1.0 && self.growth_factor <= 1024.0`, and used `checked_add` / `min(self.config.max_capacity)` in `StreamBufferedReader::grow_buffer_to` (`5b33f98:src/io/stream_buffer.rs:334-354`), tested with `1.0`, `f64::NAN`, `f64::INFINITY`, and `f64::MAX` in `test_c9_sb7_invalid_config_and_huge_ensure_buffered_return_err_without_panic` (`5b33f98:src/io/stream_buffer.rs:1545-1565`).
+  - Added over-reported byte checks to `ZeroCopyReader::read` direct path (`5b33f98:src/io/zero_copy.rs:560-569`), `ZeroCopyWriter::write_direct` / `Write::write` (`5b33f98:src/io/zero_copy.rs:698-707, 721, 731`), and `VectoredIO::read_vectored` / `write_vectored` (`5b33f98:src/io/zero_copy.rs:796-805, 839-848`), verified by `test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts` (`5b33f98:src/io/zero_copy.rs:2190-2233`).
+
+RED output (`test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts` spliced onto parent `73a25d0:src/io/zero_copy.rs` at line `2154`):
+```text
+$ cargo test --locked --lib io::zero_copy::tests::test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
+error: test failed, to rerun pass `--lib`
+
+running 1 test
+test io::zero_copy::tests::test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts ... FAILED
+
+failures:
+
+---- io::zero_copy::tests::test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts stdout ----
+
+thread 'io::zero_copy::tests::test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts' (1284733) panicked at src/io/zero_copy.rs:2177:48:
+called `Result::unwrap_err()` on an `Ok` value: 64
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    io::zero_copy::tests::test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3122 filtered out; finished in 0.00s
+
+## exit=101
+```
 
 ### 10.5 `125b80a` — perf(io): use SSE2 PCMPEQB for strchr and add make miri_io target (S22-R7)
 
 - **`S22-R7` (`sse42_strchr_impl` `PCMPEQB` + `PMOVMSKB` and `make miri_io` target)**:
-  - Replaced `_mm_cmpestri` in `sse42_strchr_impl` (`125b80a:src/io/simd_memory/search.rs:262-302`) with `_mm_set1_epi8` + `_mm_cmpeq_epi8` + `_mm_movemask_epi8` (`2.875 µs` vs scalar `27.375 µs` on a 64 KiB haystack, `9.5x` speedup), verified by `test_s22_r7_strchr_pcmpeqb_matches_scalar` (`125b80a:src/io/simd_memory/search.rs:1411-1432`).
-  - Un-ignored `test_c9_do1_file_append_bytes_written_counts_new_bytes_only` under Miri (`125b80a:src/io/data_output.rs:703`), scaled slow iteration counts under `cfg!(miri)` in `125b80a:src/io/simd_memory/search.rs:845, 922, 1219, 1226-1231, 1277`, `125b80a:src/io/simd_validation/checksum.rs:483, 622, 650-651, 712, 742`, `125b80a:src/io/data_input.rs:724, 902`, `125b80a:src/io/stream_buffer.rs:1013, 1205, 1344, 1525`, `125b80a:src/io/versioning.rs:1019`, and `125b80a:src/io/zero_copy.rs:1244, 1363`, and added `miri_io` to `125b80a:Makefile:15, 42-44, 298-319`.
+  - Replaced `_mm_cmpestri` in `sse42_strchr_impl` (`125b80a:src/io/simd_memory/search.rs:287-308`) with `_mm_set1_epi8` + `_mm_cmpeq_epi8` + `_mm_movemask_epi8` (and updated the doc comments in `125b80a:src/io/simd_memory/mod.rs:19-23` and `125b80a:src/io/simd_memory/search.rs:10-14, 129-132, 261-267, 277-281`), verified by `test_s22_r7_strchr_pcmpeqb_matches_scalar` (`125b80a:src/io/simd_memory/search.rs:1411-1432`).
+  - Un-ignored `test_c9_do1_file_append_bytes_written_counts_new_bytes_only` under Miri (`125b80a:src/io/data_output.rs:704`), scaled slow iteration counts under `cfg!(miri)` in `125b80a:src/io/simd_memory/search.rs:1059-1068, 1217-1222, 1246-1261, 1326-1341`, `125b80a:src/io/simd_validation/checksum.rs:527, 549-555`, `125b80a:src/io/data_input.rs:764, 843, 942`, `125b80a:src/io/stream_buffer.rs:165, 618, 878, 943, 960, 1037, 1189`, `125b80a:src/io/versioning.rs:1003`, and `125b80a:src/io/zero_copy.rs:1419, 1484`, and added `miri_io` to `125b80a:Makefile:15, 42-44, 308-319`.
 
 ### 10.6 Full `make miri_io && make MIRI_SCALAR=1 miri_io` Verification (`125b80a`)
 
@@ -5404,6 +5560,326 @@ lib_debug       3148       3148       OK
 lib_release     3165       3165       OK        
 doctests        229        229        OK        
 all_targets     3809       3809       OK        
+------------------------------------------------
+Test count drift check: PASS
+=== Sanity: PASS ===
+```
+
+## 11. Stage 10 Re-Review Round 2 Remediation (`S23`: `b84f34b..cfefd93`)
+
+### 11.1 `b84f34b` — fix(io): flat thread-local depth guards and dense object table for smart_ptr and complex_types (S22-R4, S23-R1, S23-R5)
+
+- **`S22-R4` and `S23-R1` (Eliminate per-container and per-pointer `with_active_de_ctx` + `run_nested` closure and `HashMap` overhead)**:
+  - **Root cause**: In `3a9ca6f..125b80a`, `SerializableType for Vec<T>` (`0e8c6ba:src/io/smart_ptr.rs:890-933`), `SerializableType for Option<T>` (`0e8c6ba:src/io/smart_ptr.rs:953-975`), `ComplexSerialize` for `HashMap`/`HashSet`/`BTreeMap`/`BTreeSet` (`0e8c6ba:src/io/complex_types.rs:256-441`), `NestedSerialize` (`0e8c6ba:src/io/complex_types.rs:732-744`), and every `SmartPtrSerialize` implementation (`Box<T>`, `Option<Box<T>>`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`) wrapped every serialize/deserialize call in `with_active_ser_ctx` / `with_active_de_ctx` + `context.run_nested`. Even when no `Rc`/`Arc` was present (`Vec<u64>`, `Vec<Vec<u32>>`), every call allocated or borrowed a thread-local `DeserializationContext` (with a `HashMap<u32, Box<dyn Any>>`), swapped a thread-local pointer twice, and ran a non-inlined closure; for `Vec<Rc<u64>>`, each element also allocated a `Box<dyn Any>` and inserted into `HashMap<u32, Box<dyn Any>>`.
+  - **Fix in `b84f34b:src/io/smart_ptr.rs:17-224` and `b84f34b:src/io/complex_types.rs:256-416`**:
+    1. Added `Copy` thread-local state cells `SER_DEPTH: Cell<SerDepthState>` and `DE_DEPTH: Cell<DeDepthState>` (`b84f34b:src/io/smart_ptr.rs:28-76`) with inline RAII guards `SerDepthGuard` / `DeDepthGuard` and `enter_ser_depth()` / `enter_de_depth()` (`b84f34b:src/io/smart_ptr.rs:93-171`) plus `enter_nested_ser_depth` / `enter_nested_de_depth` (`b84f34b:src/io/smart_ptr.rs:174-224`). On the common path where no shared `Rc`/`Arc` table has been touched (`dirty_ctx == false`), entering and leaving a container or `Box<T>` is a single thread-local integer increment/decrement with no `DeserializationContext` or `HashMap` construction; when the top-level guard (`!self.prev.active`) exits after a shared pointer populated `ACTIVE_SER_CTX` / `ACTIVE_DE_CTX`, it calls the outlined `#[cold] #[inline(never)]` `clear_active_ser_ctx()` / `clear_active_de_ctx()` (`b84f34b:src/io/smart_ptr.rs:82-91`).
+    2. Added a dense sequential 1-based object table `dense_objects: Option<Box<dyn Any>>` (`Box<Vec<Option<T>>>`) to `DeserializationContext` (`b84f34b:src/io/smart_ptr.rs:345, 370-425`) alongside the fallback `objects: HashMap<u32, Box<dyn Any>>` for non-sequential or heterogeneous IDs, and added direct helpers `write_active_ser_id`, `read_active_de_id`, `store_active_de_object`, `get_active_de_object`, and `register_active_ser_ptr` (`b84f34b:src/io/smart_ptr.rs:593-664`).
+    3. Routed `Box<T>`, `Option<Box<T>>`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>` (`b84f34b:src/io/smart_ptr.rs:724-1033`), `Vec<T>` (`b84f34b:src/io/smart_ptr.rs:1167-1208`), `Option<T>` (`b84f34b:src/io/smart_ptr.rs:1229-1245`), `HashMap`, `HashSet`, `BTreeMap`, `BTreeSet` (`b84f34b:src/io/complex_types.rs:256-416`), and `NestedSerialize` (`b84f34b:src/io/complex_types.rs:708-720`) through `enter_ser_depth` / `enter_de_depth` / `enter_nested_ser_depth` / `enter_nested_de_depth`.
+  - **Measured release throughput (21-run median on AMD EPYC 7B13)**:
+
+| Workload | `db3c514` (pre-C9) | `5d35a51` (`S22`) | `cfefd93` (`S23`) | vs `db3c514` |
+|---|---|---|---|---|
+| `Vec<u64>::deserialize` (1,000,000 elems from `SliceDataInput`) | `1.002 ns/elem` (`1.002 ms`) | `1.447 ns/elem` (`1.447 ms`, `+44.4%`) | **`1.080 ns/elem` (`1.080 ms`)** | `+7.8%` (vs `+44.4%`) |
+| `Vec<Rc<u64>>::deserialize` (100,000 elems from `SliceDataInput`) | `61.3 ns/elem` (`6.13 ms`) | `139.6 ns/elem` (`13.96 ms`, `+127.7%`) | **`34.7 ns/elem` (`3.47 ms`)** | **`−43.4%` (`1.77x` faster than pre-C9)** |
+| `Vec<Vec<u32>>::deserialize` (1,000 × 100 elems from `SliceDataInput`) | `115.0 ns/inner Vec` (`115.0 µs`) | `217.0 ns/inner Vec` (`217.0 µs`, `+88.7%`) | **`120.9 ns/inner Vec` (`120.9 µs`)** | `+5.1%` (vs `+88.7%`) |
+
+- **`S23-R5` (`SmartPtrConfig::robust()` stack budget at `opt-level=0`, narrowed docs, and RED-verified tests)**:
+  - Lowered `SmartPtrConfig::robust().max_depth` from `384` to `DEFAULT_MAX_DEPTH` (`256`, `b84f34b:src/io/smart_ptr.rs:1070-1076`) and narrowed the doc comments on `DEFAULT_MAX_DEPTH` (`b84f34b:src/io/smart_ptr.rs:17-20`) and `SmartPtrConfig::robust` (`b84f34b:src/io/smart_ptr.rs:1066-1069`) to state that `256` is sized for pointer and typical struct frames on a 2 MiB thread stack and that types with multi-kilobyte stack frames should configure a smaller `max_depth`.
+  - Expanded the `# Wire-format compatibility (C9 / 0.1.x pre-1.0)` notes in `b84f34b:src/io/var_int_variants.rs:23-42` and `b84f34b:src/io/versioning.rs:12-27` to state that feeding pre-C9 bytes into the updated decoders can silently produce wrong values without returning `Err` when the leading payload bytes happen to satisfy header validation.
+  - Strengthened `test_s22_r1_nested_containers_rejected_on_2mib_stack` (`b84f34b:src/io/complex_types.rs:1273-1350`) and `test_s22_r4_vec_u64_known_remaining_preallocates_full_count` (`b84f34b:src/io/data_input.rs:938-956`) so both fail on `73a25d0` (RED outputs shown in §10.1 and §10.2 above), and added `test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack` (`b84f34b:src/io/smart_ptr.rs:1900-2015`), which tests `Vec<u64>`, `Vec<Rc<u64>>` (with shared back-references), `Vec<Vec<u32>>`, and a 300-deep `BigChain` (`Rc<BigChain>` with a `[u8; 512]` payload) under `SmartPtrConfig::robust()` on a 2 MiB thread stack.
+
+RED output (`test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack` spliced onto parent `5d35a51:src/io/smart_ptr.rs` at line `1627`, run at `opt-level=0`):
+```text
+$ CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test --locked --lib io::smart_ptr::tests::test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack
+   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 24.80s
+     Running unittests src/lib.rs (target/debug/deps/zipora-94eaf9373034a341)
+
+thread 's23-r5-bigchain-2mib' (1290636) has overflowed its stack
+fatal runtime error: stack overflow, aborting
+error: test failed, to rerun pass `--lib`
+
+Caused by:
+  process didn't exit successfully: `/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/debug/deps/zipora-94eaf9373034a341 'io::smart_ptr::tests::test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack'` (signal: 6, SIGABRT: process abort signal)
+
+running 1 test
+## exit=101
+```
+
+GREEN output (`cfefd93`, run at `opt-level=0`):
+```text
+$ CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test --locked --lib io::smart_ptr::tests::test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack
+   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 24.52s
+     Running unittests src/lib.rs (target/debug/deps/zipora-94eaf9373034a341)
+
+running 1 test
+test io::smart_ptr::tests::test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3127 filtered out; finished in 0.33s
+
+## exit=0
+```
+
+### 11.2 `cfefd93` — fix(io,memory): validate MmapVecConfig::growth_factor and reject over-reporting Read/Write in StreamBuffer (S23-R3, S23-R4, S23-R5)
+
+- **`S23-R3` (`MmapVecConfig::growth_factor` validation)**:
+  - Added `MmapVecConfig::validate(&self) -> Result<()>` (`cfefd93:src/memory/mmap_vec.rs:419-429`), rejecting `!self.growth_factor.is_finite() || self.growth_factor <= 1.0 || self.growth_factor > 1024.0` with `ZiporaError::invalid_parameter(...)`, and wired it into `MmapVec::create` (`cfefd93:src/memory/mmap_vec.rs:571`), `MmapVec::open` (`cfefd93:src/memory/mmap_vec.rs:606`), and `MmapVec::scaled_capacity` (`cfefd93:src/memory/mmap_vec.rs:1343-1352`, used by `reserve` at `cfefd93:src/memory/mmap_vec.rs:825` and `grow` at `cfefd93:src/memory/mmap_vec.rs:1357`).
+  - Removed the stale `data_ptr()` mention in `MmapVec` doc comments (`cfefd93:src/memory/mmap_vec.rs:485-487`, `S23-R5`).
+  - Regression test: `test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor` (`cfefd93:src/memory/mmap_vec.rs:3651-3703`).
+- **`S23-R4` (`StreamBufferedReader` and `StreamBufferedWriter` over-reporting `Read`/`Write` checks)**:
+  - In `StreamBufferedReader::read_inner_retry_interrupted` (`cfefd93:src/io/stream_buffer.rs:277-294`), reject `Ok(n) if n > buf.len()` with `io::Error::new(io::ErrorKind::InvalidData, ...)` ("Inner reader reported more bytes than fit in destination buffer").
+  - In `StreamBufferedWriter::flush_raw` (`cfefd93:src/io/stream_buffer.rs:653-690`) and `Write::write` (`cfefd93:src/io/stream_buffer.rs:801-834`), reject `Ok(n) if n > remaining.len()` / `Ok(n) if n > buf.len()` with `io::Error::new(io::ErrorKind::InvalidData, ...)` ("Inner writer reported more bytes than present in source buffer") before advancing `written` or indexing `self.buffer`.
+  - Regression test: `test_s23_r4_stream_buffer_rejects_over_reporting_read_and_write` (`cfefd93:src/io/stream_buffer.rs:1671-1721`).
+
+RED output (`test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor` spliced onto parent `5d35a51:src/memory/mmap_vec.rs` at line `3620`):
+```text
+$ cargo test --locked --lib memory::mmap_vec::tests::test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor
+   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Finished `test` profile [optimized + debuginfo] target(s) in 38.08s
+     Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
+error: test failed, to rerun pass `--lib`
+
+running 1 test
+test memory::mmap_vec::tests::test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor ... FAILED
+
+failures:
+
+---- memory::mmap_vec::tests::test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor stdout ----
+
+thread 'memory::mmap_vec::tests::test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor' (1289635) panicked at src/memory/mmap_vec.rs:3652:17:
+growth_factor 0 must be rejected by MmapVec::create
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    memory::mmap_vec::tests::test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3127 filtered out; finished in 0.01s
+
+## exit=101
+```
+
+RED output (`test_s23_r4_stream_buffer_rejects_over_reporting_read_and_write` spliced onto parent `5d35a51:src/io/stream_buffer.rs` at line `1637`):
+```text
+$ cargo test --locked --lib io::stream_buffer::tests::test_s23_r4_stream_buffer_rejects_over_reporting_read_and_write
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
+error: test failed, to rerun pass `--lib`
+
+running 1 test
+test io::stream_buffer::tests::test_s23_r4_stream_buffer_rejects_over_reporting_read_and_write ... FAILED
+
+failures:
+
+---- io::stream_buffer::tests::test_s23_r4_stream_buffer_rejects_over_reporting_read_and_write stdout ----
+
+thread 'io::stream_buffer::tests::test_s23_r4_stream_buffer_rejects_over_reporting_read_and_write' (1289707) panicked at src/io/stream_buffer.rs:1661:43:
+called `Result::unwrap_err()` on an `Ok` value: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    io::stream_buffer::tests::test_s23_r4_stream_buffer_rejects_over_reporting_read_and_write
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3127 filtered out; finished in 0.00s
+
+## exit=101
+```
+
+GREEN output (`S20`/`S22`/`S23` regression tests at `cfefd93`):
+```text
+$ cargo test --locked --lib test_s2
+   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Finished `test` profile [optimized + debuginfo] target(s) in 35.85s
+     Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
+
+running 28 tests
+test algorithms::external_sort::tests::test_s20_r9_open_file_limit_child ... ignored, run by test_s20_r9_merge_respects_open_file_limit under ulimit -n 64
+test algorithms::suffix_array::tests::test_s20_r6_suffix_array_reports_sequential_construction ... ok
+test algorithms::cache_oblivious::tests::test_s20_r6_cache_oblivious_reports_sequential_scalar_sort ... ok
+test io::complex_types::tests::test_s22_r8_checked_u32_len_rejects_above_u32_max ... ok
+test io::simd_memory::search::tests::test_s22_r7_strchr_pcmpeqb_matches_scalar ... ok
+test io::zero_copy::tests::test_s22_r8_zero_copy_direct_and_vectored_reject_over_reported_counts ... ok
+test string::unicode::tests::test_s20_r7_documented_limitations_hold ... ok
+test io::stream_buffer::tests::test_s23_r4_stream_buffer_rejects_over_reporting_read_and_write ... ok
+test algorithms::radix_sort::tests::test_s20_r5_sort_u32_every_radix_width ... ok
+test io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack ... ok
+test io::data_input::tests::test_s22_r4_vec_u64_known_remaining_preallocates_full_count ... ok
+test io::smart_ptr::tests::test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack ... ok
+test algorithms::radix_sort::tests::test_s21_r1_advanced_radix_sort_reports_the_path_that_ran ... ok
+test algorithms::simd_merge::tests::test_s20_r5_avx2_merge_matches_scalar_around_block_boundaries ... ok
+test memory::mmap_vec::tests::test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor ... ok
+test algorithms::cache_oblivious::tests::test_s20_r4_funnel_leaf_sort_is_stable_and_matches_std ... ok
+test io::smart_ptr::tests::test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack ... ok
+test algorithms::radix_sort::tests::test_s20_r3b_radix_sort_parallel_path_and_used_parallel ... ok
+test algorithms::external_sort::tests::test_s20_r9b_failed_sort_leaves_no_run_file ... ok
+test memory::mmap_vec::tests::test_s22_r5_read_only_open_does_not_fault_into_rss_anon ... ok
+test string::bmi2_string_ops::tests::test_s20_r1_wildcard_star_in_text_matches_dp_reference ... ok
+test algorithms::external_sort::tests::test_s20_r6d_documented_stats_hold ... ok
+test algorithms::external_sort::tests::test_s20_r5_in_memory_fast_path_matches_heap_path ... ok
+test algorithms::external_sort::tests::test_s20_r9b_sort_again_without_cleanup ... ok
+test algorithms::external_sort::tests::test_s20_r9_merge_respects_open_file_limit ... ok
+test algorithms::suffix_array::tests::test_s20_r2_suffix_array_exhaustive_short_texts_all_paths ... ok
+test algorithms::radix_sort::tests::test_s20_r3_parallel_merge_tree_stable_and_matches_std ... ok
+test algorithms::external_sort::tests::test_s20_r9_merge_passes_bounded_by_merge_ways ... ok
+
+test result: ok. 27 passed; 0 failed; 1 ignored; 0 measured; 3100 filtered out; finished in 3.09s
+
+## exit=0
+```
+
+### 11.3 Full `make miri_io && make MIRI_SCALAR=1 miri_io` Verification (`cfefd93`)
+
+Command:
+```text
+CARGO_BUILD_JOBS=16 make miri_io && CARGO_BUILD_JOBS=16 make MIRI_SCALAR=1 miri_io
+```
+Output:
+```text
+MIRIFLAGS="-Zmiri-disable-isolation" RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd cargo +nightly miri test --lib io:: -- --test-threads=1
+[... 69 lines elided ...]
+running 303 tests
+test io::complex_types::tests::test_array_length_validation ... ok
+test io::complex_types::tests::test_array_serialization ... ok
+test io::complex_types::tests::test_batch_serialization ... ok
+test io::complex_types::tests::test_c9_ct3_batch_version_skew_requires_allow_version_skew ... ok
+test io::complex_types::tests::test_c9_ct3_impl_macro_rejects_unknown_version ... ok
+test io::complex_types::tests::test_c9_ct3_tuple_arity_is_checked ... ok
+test io::complex_types::tests::test_c9_ct3_unknown_version_is_rejected ... ok
+test io::complex_types::tests::test_c9_ct3_validate_types_false_accepts_other_type_id ... ok
+test io::complex_types::tests::test_c9_ct3_version_skew_requires_allow_version_skew ... ok
+test io::complex_types::tests::test_c9_ct4_array_error_drops_decoded_elements ... ok
+test io::complex_types::tests::test_c9_ct5_nested_serialize_enforces_max_depth ... ok
+test io::complex_types::tests::test_complex_type_serializer ... ok
+test io::complex_types::tests::test_custom_struct_serialization ... ok
+test io::complex_types::tests::test_empty_tuple_serialization ... ok
+test io::complex_types::tests::test_hashmap_serialization ... ok
+[... 291 lines elided ...]
+test io::zero_copy::tests::test_zero_copy_buffer_zero_capacity_ops ... ok
+test io::zero_copy::tests::test_zero_copy_reader ... ok
+test io::zero_copy::tests::test_zero_copy_reader_checksum ... ok
+test io::zero_copy::tests::test_zero_copy_reader_checksum_consistency ... ok
+test io::zero_copy::tests::test_zero_copy_reader_checksum_empty ... ok
+test io::zero_copy::tests::test_zero_copy_reader_large_data_validation ... ok
+test io::zero_copy::tests::test_zero_copy_reader_skip ... ok
+test io::zero_copy::tests::test_zero_copy_reader_utf8_validation_after_read ... ok
+test io::zero_copy::tests::test_zero_copy_reader_utf8_validation_empty ... ok
+test io::zero_copy::tests::test_zero_copy_reader_utf8_validation_invalid ... ok
+test io::zero_copy::tests::test_zero_copy_reader_utf8_validation_multibyte ... ok
+test io::zero_copy::tests::test_zero_copy_reader_utf8_validation_valid ... ok
+test io::zero_copy::tests::test_zero_copy_reader_validate_and_checksum ... ok
+test io::zero_copy::tests::test_zero_copy_round_trip ... ok
+test io::zero_copy::tests::test_zero_copy_writer ... ok
+
+test result: ok. 278 passed; 0 failed; 25 ignored; 0 measured; 2818 filtered out; finished in 199.22s
+
+warning: 10 warnings emitted
+
+MIRIFLAGS="-Zmiri-disable-isolation" RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt" CARGO_TARGET_DIR=target/miri-simd cargo +nightly miri test --lib memory::mmap_vec:: -- --test-threads=1
+[... 56 lines elided ...]
+running 59 tests
+test memory::mmap_vec::tests::test_access_pattern_and_huge_page_configs_work ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_alignment_over_16 ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_builder_pattern ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_1_mapped_capacity_for_checks_layout ... ok
+test memory::mmap_vec::tests::test_c9_1_misaligned_mapping_reported_and_harmless ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f1_with_capacity_simd_honours_capacity ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f1_with_capacity_simd_rejects_overflowing_capacity ... ok
+test memory::mmap_vec::tests::test_c9_f2_guard_open_rejects_header_capacity_beyond_file ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f2_guard_open_rejects_zero_length_file ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f2_header_rewrite_does_not_widen_views ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f2_second_handle_growth_does_not_widen_first_handle ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f3_growth_never_reopens_path ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f5_counts_from_header_validates ... ok
+test memory::mmap_vec::tests::test_c9_f6_guard_calculate_file_size_is_checked ... ok
+test memory::mmap_vec::tests::test_c9_f6_reserve_and_extend_overflow_are_errors ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f7_compare_range_simd_respects_partial_eq ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f8_create_temp_in_retries_past_existing_symlink ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error ... ignored, real file mapping: Miri cannot execute mmap
+test memory::mmap_vec::tests::test_c9_f9_create_rejects_read_only_config ... ok
+test memory::mmap_vec::tests::test_c9_f9_header_validates_alignment_and_endianness_flags ... ok
+[... 39 lines elided ...]
+
+test result: ok. 7 passed; 0 failed; 52 ignored; 0 measured; 3062 filtered out; finished in 21.36s
+
+warning: 7 warnings emitted
+
+MIRIFLAGS="-Zmiri-disable-isolation" RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar cargo +nightly miri test --lib io:: -- --test-threads=1
+[... 69 lines elided ...]
+running 303 tests
+[... 321 lines elided ...]
+
+test result: ok. 278 passed; 0 failed; 25 ignored; 0 measured; 2818 filtered out; finished in 194.64s
+
+warning: 10 warnings emitted
+
+MIRIFLAGS="-Zmiri-disable-isolation" RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar cargo +nightly miri test --lib memory::mmap_vec:: -- --test-threads=1
+[... 56 lines elided ...]
+running 59 tests
+[... 59 lines elided ...]
+
+test result: ok. 7 passed; 0 failed; 52 ignored; 0 measured; 3062 filtered out; finished in 21.91s
+
+warning: 7 warnings emitted
+```
+
+### 11.4 Final `make sanity` Gate Verification (`cfefd93`)
+
+Command:
+```text
+CARGO_BUILD_JOBS=16 make sanity
+```
+Output:
+```text
+=== Clippy (all targets, all features, deny warnings) ===
+cargo clippy --locked --all-targets --all-features -- -D warnings
+    Checking zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.73s
+=== Unsafe Code Audit (B7) ===
+python3 scripts/unsafe_audit.py
+=== Unsafe Code Audit (Rule B7) ===
+Total unsafe sites in non-test code: 1310
+Documented (with SAFETY: or # Safety): 1304 (99.5%)
+Undocumented sites:                  6 (ratchet ceiling: 6)
+Precondition violations (§8.5):      0 (ratchet ceiling: 0)
+[... 36 lines elided ...]
+Audit status: PASS
+=== API Honesty Audit (D1) ===
+python3 scripts/api_honesty.py
+=== API Honesty Audit (Rule D1) ===
+Total honesty markers found: 30 (ratchet ceiling: 30)
+[... 52 lines elided ...]
+Audit status: PASS
+=== Decoder Indexing Safety Audit (D10.1) ===
+python3 scripts/index_audit.py
+=== Decoder Indexing Safety Audit (Rule D10.1) ===
+Total direct indexing sites in scoped paths: 0 (ratchet ceiling: 0)
+Total in-bounds exemptions (D10.1: in-bounds): 132 (exact baseline: 132)
+Total checked .get() sites:                   293
+[... 146 lines elided ...]
+Audit status: PASS
+=== Production Unwrap Audit (Rule D10 / S2-R1) ===
+python3 scripts/unwrap_audit.py
+=== Production Unwrap & Panic Audit (Rule D10 / S2-R1) ===
+Total .unwrap() found: 0 (ratchet ceiling: 0)
+Total .expect() found: 95 (ratchet ceiling: 95)
+
+Audit status: PASS
+=== No default features (guard feature-gated cfg attrs) ===
+cargo clippy --locked --no-default-features -- -D unused_variables -D unused_imports
+    Checking zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.73s
+[... 7210 lines elided ...]
+=== Test counts and drift guard (B8) ===
+python3 scripts/check_gate_drift.py target/sanity
+=== Test Count Drift Guard (Rule B8) ===
+Metric          Measured   Baseline   Status    
+------------------------------------------------
+lib_debug       3151       3151       OK        
+lib_release     3168       3168       OK        
+doctests        229        229        OK        
+all_targets     3812       3812       OK        
 ------------------------------------------------
 Test count drift check: PASS
 === Sanity: PASS ===
