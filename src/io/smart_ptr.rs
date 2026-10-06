@@ -24,58 +24,26 @@ use std::cell::{Cell, RefCell};
 /// in unoptimized builds.
 pub(crate) const DEFAULT_MAX_DEPTH: usize = 256;
 
-#[derive(Clone, Copy)]
-pub(crate) struct SerDepthState {
-    pub(crate) depth: u32,
-    pub(crate) max_depth: u32,
-    pub(crate) detect_cycles: bool,
-    pub(crate) compress_ids: bool,
-    pub(crate) dirty_ctx: bool,
-    pub(crate) active: bool,
-}
+const MAX_DEPTH_MASK: u64 = 0x0FFF_FFFF;
+const STATE_INSTALLED_BIT: u64 = 1 << 60;
+const STATE_DIRTY_CTX_BIT: u64 = 1 << 61;
+const STATE_COMPRESS_IDS_BIT: u64 = 1 << 62;
+const SER_DETECT_CYCLES_BIT: u64 = 1 << 63;
 
-impl SerDepthState {
-    #[inline]
-    const fn new() -> Self {
-        Self {
-            depth: 0,
-            max_depth: DEFAULT_MAX_DEPTH as u32,
-            detect_cycles: true,
-            compress_ids: false,
-            dirty_ctx: false,
-            active: false,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-#[repr(C)]
-pub(crate) struct DeDepthState {
-    pub(crate) depth: u16,
-    pub(crate) max_depth: u16,
-    pub(crate) compress_ids: bool,
-    pub(crate) dirty_ctx: bool,
-    pub(crate) active: bool,
-}
-
-impl DeDepthState {
-    #[inline]
-    const fn new() -> Self {
-        Self {
-            depth: 0,
-            max_depth: DEFAULT_MAX_DEPTH as u16,
-            compress_ids: false,
-            dirty_ctx: false,
-            active: false,
-        }
-    }
-}
+const INITIAL_SER_STATE: u64 = ((DEFAULT_MAX_DEPTH as u64) << 32) | SER_DETECT_CYCLES_BIT;
+const INITIAL_DE_STATE: u64 = (DEFAULT_MAX_DEPTH as u64) << 32;
 
 thread_local! {
-    static SER_DEPTH: Cell<SerDepthState> = const { Cell::new(SerDepthState::new()) };
-    static DE_DEPTH: Cell<DeDepthState> = const { Cell::new(DeDepthState::new()) };
+    static SER_DEPTH: Cell<u64> = const { Cell::new(INITIAL_SER_STATE) };
+    static DE_DEPTH: Cell<u64> = const { Cell::new(INITIAL_DE_STATE) };
     static ACTIVE_SER_CTX: RefCell<SerializationContext> = RefCell::new(SerializationContext::new());
     static ACTIVE_DE_CTX: RefCell<DeserializationContext> = RefCell::new(DeserializationContext::new());
+}
+
+#[cold]
+#[inline(never)]
+fn max_depth_exceeded_err() -> ZiporaError {
+    ZiporaError::invalid_data("Maximum nesting depth exceeded")
 }
 
 #[cold]
@@ -90,135 +58,186 @@ fn clear_active_de_ctx() {
     ACTIVE_DE_CTX.with(|ctx| ctx.borrow_mut().clear());
 }
 
-pub(crate) struct SerDepthGuard {
-    prev: SerDepthState,
+#[cold]
+#[inline(never)]
+fn finish_outer_ser_depth(cell: &Cell<u64>, next: u64) {
+    if (next & STATE_INSTALLED_BIT) == 0 {
+        if (next & STATE_DIRTY_CTX_BIT) != 0 {
+            clear_active_ser_ctx();
+        }
+        cell.set(INITIAL_SER_STATE);
+    }
 }
 
+#[cold]
+#[inline(never)]
+fn finish_outer_de_depth(cell: &Cell<u64>, next: u64) {
+    if (next & STATE_INSTALLED_BIT) == 0 {
+        if (next & STATE_DIRTY_CTX_BIT) != 0 {
+            clear_active_de_ctx();
+        }
+        cell.set(INITIAL_DE_STATE);
+    }
+}
+
+pub(crate) struct SerDepthGuard;
+
 impl Drop for SerDepthGuard {
+    #[inline(always)]
+    fn drop(&mut self) {
+        SER_DEPTH.with(|cell| {
+            let next = cell.get() - 1;
+            cell.set(next);
+            if (next as u32) == 0 && next != INITIAL_SER_STATE {
+                finish_outer_ser_depth(cell, next);
+            }
+        });
+    }
+}
+
+pub(crate) struct DeDepthGuard;
+
+impl Drop for DeDepthGuard {
+    #[inline(always)]
+    fn drop(&mut self) {
+        DE_DEPTH.with(|cell| {
+            let next = cell.get() - 1;
+            cell.set(next);
+            if (next as u32) == 0 && next != INITIAL_DE_STATE {
+                finish_outer_de_depth(cell, next);
+            }
+        });
+    }
+}
+
+#[inline(always)]
+pub(crate) fn enter_ser_depth() -> Result<SerDepthGuard> {
+    SER_DEPTH.with(|cell| {
+        let cur = cell.get();
+        let depth = cur as u32;
+        let max_depth = ((cur >> 32) & MAX_DEPTH_MASK) as u32;
+        if depth >= max_depth {
+            return Err(max_depth_exceeded_err());
+        }
+        cell.set(cur + 1);
+        Ok(SerDepthGuard)
+    })
+}
+
+#[inline(always)]
+pub(crate) fn enter_de_depth() -> Result<DeDepthGuard> {
+    DE_DEPTH.with(|cell| {
+        let cur = cell.get();
+        let depth = cur as u32;
+        let max_depth = ((cur >> 32) & MAX_DEPTH_MASK) as u32;
+        if depth >= max_depth {
+            return Err(max_depth_exceeded_err());
+        }
+        cell.set(cur + 1);
+        Ok(DeDepthGuard)
+    })
+}
+
+pub(crate) struct NestedSerDepthGuard {
+    prev: u64,
+}
+
+impl Drop for NestedSerDepthGuard {
     #[inline]
     fn drop(&mut self) {
         SER_DEPTH.with(|cell| {
             let cur = cell.get();
-            if !self.prev.active {
-                if cur.dirty_ctx {
+            let prev_active = (self.prev as u32) != 0 || (self.prev & STATE_INSTALLED_BIT) != 0;
+            if !prev_active {
+                if (cur & STATE_DIRTY_CTX_BIT) != 0 {
                     clear_active_ser_ctx();
                 }
-                cell.set(SerDepthState::new());
+                cell.set(INITIAL_SER_STATE);
             } else {
-                cell.set(SerDepthState {
-                    dirty_ctx: cur.dirty_ctx,
-                    ..self.prev
-                });
+                cell.set((self.prev & !STATE_DIRTY_CTX_BIT) | (cur & STATE_DIRTY_CTX_BIT));
             }
         });
     }
 }
 
-pub(crate) struct DeDepthGuard {
-    prev: DeDepthState,
+pub(crate) struct NestedDeDepthGuard {
+    prev: u64,
 }
 
-impl Drop for DeDepthGuard {
+impl Drop for NestedDeDepthGuard {
     #[inline]
     fn drop(&mut self) {
         DE_DEPTH.with(|cell| {
             let cur = cell.get();
-            if !self.prev.active {
-                if cur.dirty_ctx {
+            let prev_active = (self.prev as u32) != 0 || (self.prev & STATE_INSTALLED_BIT) != 0;
+            if !prev_active {
+                if (cur & STATE_DIRTY_CTX_BIT) != 0 {
                     clear_active_de_ctx();
                 }
-                cell.set(DeDepthState::new());
+                cell.set(INITIAL_DE_STATE);
             } else {
-                cell.set(DeDepthState {
-                    dirty_ctx: cur.dirty_ctx,
-                    ..self.prev
-                });
+                cell.set((self.prev & !STATE_DIRTY_CTX_BIT) | (cur & STATE_DIRTY_CTX_BIT));
             }
         });
     }
 }
 
 #[inline]
-pub(crate) fn enter_ser_depth() -> Result<SerDepthGuard> {
-    SER_DEPTH.with(|cell| {
-        let cur = cell.get();
-        if cur.depth >= cur.max_depth {
-            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
-        }
-        cell.set(SerDepthState {
-            depth: cur.depth + 1,
-            active: true,
-            ..cur
-        });
-        Ok(SerDepthGuard { prev: cur })
-    })
-}
-
-#[inline]
-pub(crate) fn enter_de_depth() -> Result<DeDepthGuard> {
-    DE_DEPTH.with(|cell| {
-        let cur = cell.get();
-        if cur.depth >= cur.max_depth {
-            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
-        }
-        cell.set(DeDepthState {
-            depth: cur.depth + 1,
-            active: true,
-            ..cur
-        });
-        Ok(DeDepthGuard { prev: cur })
-    })
-}
-
-#[inline]
-pub(crate) fn enter_nested_ser_depth(depth: usize, max_depth: usize) -> Result<SerDepthGuard> {
+pub(crate) fn enter_nested_ser_depth(
+    depth: usize,
+    max_depth: usize,
+) -> Result<NestedSerDepthGuard> {
     if depth > max_depth {
-        return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+        return Err(max_depth_exceeded_err());
     }
     SER_DEPTH.with(|cell| {
         let cur = cell.get();
-        let effective_depth = (cur.depth as usize).max(depth);
-        let effective_max = if cur.active {
-            (cur.max_depth as usize).min(max_depth)
+        let cur_depth = (cur as u32) as usize;
+        let cur_max = ((cur >> 32) & MAX_DEPTH_MASK) as usize;
+        let cur_active = cur_depth != 0 || (cur & STATE_INSTALLED_BIT) != 0;
+        let effective_depth = cur_depth.max(depth);
+        let effective_max = if cur_active {
+            cur_max.min(max_depth)
         } else {
             max_depth
         };
         if effective_depth > effective_max {
-            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+            return Err(max_depth_exceeded_err());
         }
-        cell.set(SerDepthState {
-            depth: u32::try_from(effective_depth).unwrap_or(u32::MAX),
-            max_depth: u32::try_from(effective_max).unwrap_or(u32::MAX),
-            active: true,
-            ..cur
-        });
-        Ok(SerDepthGuard { prev: cur })
+        let d = effective_depth.min(MAX_DEPTH_MASK as usize) as u64;
+        let m = effective_max.min(MAX_DEPTH_MASK as usize) as u64;
+        let flags = (cur & (SER_DETECT_CYCLES_BIT | STATE_COMPRESS_IDS_BIT | STATE_DIRTY_CTX_BIT))
+            | STATE_INSTALLED_BIT;
+        cell.set(d | (m << 32) | flags);
+        Ok(NestedSerDepthGuard { prev: cur })
     })
 }
 
 #[inline]
-pub(crate) fn enter_nested_de_depth(depth: usize, max_depth: usize) -> Result<DeDepthGuard> {
+pub(crate) fn enter_nested_de_depth(depth: usize, max_depth: usize) -> Result<NestedDeDepthGuard> {
     if depth > max_depth {
-        return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+        return Err(max_depth_exceeded_err());
     }
     DE_DEPTH.with(|cell| {
         let cur = cell.get();
-        let effective_depth = (cur.depth as usize).max(depth);
-        let effective_max = if cur.active {
-            (cur.max_depth as usize).min(max_depth)
+        let cur_depth = (cur as u32) as usize;
+        let cur_max = ((cur >> 32) & MAX_DEPTH_MASK) as usize;
+        let cur_active = cur_depth != 0 || (cur & STATE_INSTALLED_BIT) != 0;
+        let effective_depth = cur_depth.max(depth);
+        let effective_max = if cur_active {
+            cur_max.min(max_depth)
         } else {
             max_depth
         };
         if effective_depth > effective_max {
-            return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+            return Err(max_depth_exceeded_err());
         }
-        cell.set(DeDepthState {
-            depth: u16::try_from(effective_depth).unwrap_or(u16::MAX),
-            max_depth: u16::try_from(effective_max).unwrap_or(u16::MAX),
-            active: true,
-            ..cur
-        });
-        Ok(DeDepthGuard { prev: cur })
+        let d = effective_depth.min(MAX_DEPTH_MASK as usize) as u64;
+        let m = effective_max.min(MAX_DEPTH_MASK as usize) as u64;
+        let flags =
+            (cur & (STATE_COMPRESS_IDS_BIT | STATE_DIRTY_CTX_BIT)) | STATE_INSTALLED_BIT;
+        cell.set(d | (m << 32) | flags);
+        Ok(NestedDeDepthGuard { prev: cur })
     })
 }
 
@@ -333,15 +352,17 @@ impl Default for SerializationContext {
 /// Deserialization context for reconstructing shared objects.
 ///
 /// Note: `DeserializationContext` is non-generic and stores reconstructed
-/// shared pointers in a dense sequential table (`Vec<Option<T>>`) for the
-/// primary smart-pointer type and type-erased `Box<dyn Any>` slots
-/// (`store_object<T: 'static>` / `get_object<T: 'static>`) so a single context
-/// can reconstruct both homogeneous vectors of smart pointers without per-node
-/// `Box<dyn Any>` allocations and heterogeneous object graphs containing
-/// multiple `Rc<T>` and `Arc<U>` pointee types.
+/// shared pointers in a dense sequential table (`Vec<T>`) for sequential
+/// 1-based IDs (`1, 2, 3, ...`) of the primary smart-pointer type and
+/// type-erased `Box<dyn Any>` slots (`store_object<T: 'static>` /
+/// `get_object<T: 'static>`) for non-sequential IDs or secondary types, so a
+/// single context can reconstruct both homogeneous vectors of smart pointers
+/// without per-node `Box<dyn Any>` allocations and heterogeneous object graphs
+/// containing multiple `Rc<T>` and `Arc<U>` pointee types without allocating
+/// gap slots for non-sequential object IDs.
 #[derive(Debug)]
 pub struct DeserializationContext {
-    /// Dense 1-based table (`Box<Vec<Option<T>>>`) for sequential IDs of the primary type
+    /// Dense 1-based table (`Box<Vec<T>>`) for strictly sequential IDs (`1..=n`) of the primary type
     dense_objects: Option<Box<dyn Any>>,
     /// Map from object ID to reconstructed smart pointer for non-sequential IDs or secondary types
     objects: HashMap<u32, Box<dyn Any>>,
@@ -370,29 +391,22 @@ impl DeserializationContext {
     pub fn store_object<T: 'static>(&mut self, id: u32, object: T) {
         if id >= 1 {
             let idx = (id - 1) as usize;
-            if self.dense_objects.is_none() && idx <= 64 {
-                let mut vec = Vec::<Option<T>>::with_capacity(16);
-                if idx > 0 {
-                    vec.resize_with(idx, || None);
-                }
-                vec.push(Some(object));
+            if self.dense_objects.is_none() && idx == 0 {
+                let mut vec = Vec::<T>::with_capacity(16);
+                vec.push(object);
                 self.dense_objects = Some(Box::new(vec));
                 return;
             }
             if let Some(vec) = self
                 .dense_objects
                 .as_mut()
-                .and_then(|b| b.downcast_mut::<Vec<Option<T>>>())
+                .and_then(|b| b.downcast_mut::<Vec<T>>())
             {
                 if idx == vec.len() {
-                    vec.push(Some(object));
+                    vec.push(object);
                     return;
                 } else if idx < vec.len() {
-                    vec[idx] = Some(object);
-                    return;
-                } else if idx <= vec.len().saturating_add(64) {
-                    vec.resize_with(idx, || None);
-                    vec.push(Some(object));
+                    vec[idx] = object;
                     return;
                 }
             }
@@ -407,8 +421,8 @@ impl DeserializationContext {
             && let Some(vec) = self
                 .dense_objects
                 .as_ref()
-                .and_then(|b| b.downcast_ref::<Vec<Option<T>>>())
-            && let Some(Some(obj)) = vec.get((id - 1) as usize)
+                .and_then(|b| b.downcast_ref::<Vec<T>>())
+            && let Some(obj) = vec.get((id - 1) as usize)
         {
             return Some(obj);
         }
@@ -434,18 +448,21 @@ fn with_installed_ser_ctx<R>(
     f: impl FnOnce() -> Result<R>,
 ) -> Result<R> {
     if context.depth > context.max_depth {
-        return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+        return Err(max_depth_exceeded_err());
     }
     struct InstalledSerGuard<'a> {
         caller: &'a mut SerializationContext,
         prev_ctx: SerializationContext,
-        prev_state: SerDepthState,
+        prev_state: u64,
         orig_depth: usize,
     }
     impl Drop for InstalledSerGuard<'_> {
         fn drop(&mut self) {
             ACTIVE_SER_CTX.with(|cell| {
-                let mut active = std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(&mut self.prev_ctx));
+                let mut active = std::mem::replace(
+                    &mut *cell.borrow_mut(),
+                    std::mem::take(&mut self.prev_ctx),
+                );
                 active.depth = self.orig_depth;
                 *self.caller = active;
             });
@@ -453,14 +470,20 @@ fn with_installed_ser_ctx<R>(
         }
     }
     let orig_depth = context.depth;
-    let new_state = SerDepthState {
-        depth: u32::try_from(context.depth).unwrap_or(u32::MAX),
-        max_depth: u32::try_from(context.max_depth).unwrap_or(u32::MAX),
-        detect_cycles: context.detect_cycles,
-        compress_ids: context.compress_ids,
-        dirty_ctx: false,
-        active: true,
-    };
+    let d = context.depth.min(MAX_DEPTH_MASK as usize) as u64;
+    let m = context.max_depth.min(MAX_DEPTH_MASK as usize) as u64;
+    let flags = STATE_INSTALLED_BIT
+        | if context.detect_cycles {
+            SER_DETECT_CYCLES_BIT
+        } else {
+            0
+        }
+        | if context.compress_ids {
+            STATE_COMPRESS_IDS_BIT
+        } else {
+            0
+        };
+    let new_state = d | (m << 32) | flags;
     let prev_state = SER_DEPTH.with(|cell| cell.replace(new_state));
     let prev_ctx = ACTIVE_SER_CTX.with(|cell| {
         std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(context))
@@ -479,18 +502,21 @@ fn with_installed_de_ctx<R>(
     f: impl FnOnce() -> Result<R>,
 ) -> Result<R> {
     if context.depth > context.max_depth {
-        return Err(ZiporaError::invalid_data("Maximum nesting depth exceeded"));
+        return Err(max_depth_exceeded_err());
     }
     struct InstalledDeGuard<'a> {
         caller: &'a mut DeserializationContext,
         prev_ctx: DeserializationContext,
-        prev_state: DeDepthState,
+        prev_state: u64,
         orig_depth: usize,
     }
     impl Drop for InstalledDeGuard<'_> {
         fn drop(&mut self) {
             ACTIVE_DE_CTX.with(|cell| {
-                let mut active = std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(&mut self.prev_ctx));
+                let mut active = std::mem::replace(
+                    &mut *cell.borrow_mut(),
+                    std::mem::take(&mut self.prev_ctx),
+                );
                 active.depth = self.orig_depth;
                 *self.caller = active;
             });
@@ -498,13 +524,15 @@ fn with_installed_de_ctx<R>(
         }
     }
     let orig_depth = context.depth;
-    let new_state = DeDepthState {
-        depth: u16::try_from(context.depth).unwrap_or(u16::MAX),
-        max_depth: u16::try_from(context.max_depth).unwrap_or(u16::MAX),
-        compress_ids: context.compress_ids,
-        dirty_ctx: false,
-        active: true,
-    };
+    let d = context.depth.min(MAX_DEPTH_MASK as usize) as u64;
+    let m = context.max_depth.min(MAX_DEPTH_MASK as usize) as u64;
+    let flags = STATE_INSTALLED_BIT
+        | if context.compress_ids {
+            STATE_COMPRESS_IDS_BIT
+        } else {
+            0
+        };
+    let new_state = d | (m << 32) | flags;
     let prev_state = DE_DEPTH.with(|cell| cell.replace(new_state));
     let prev_ctx = ACTIVE_DE_CTX.with(|cell| {
         std::mem::replace(&mut *cell.borrow_mut(), std::mem::take(context))
@@ -523,10 +551,11 @@ pub(crate) fn with_active_ser_ctx<R>(
 ) -> Result<R> {
     let mut ctx = ACTIVE_SER_CTX.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
     let state = SER_DEPTH.with(|cell| cell.get());
-    ctx.depth = state.depth as usize;
-    ctx.max_depth = state.max_depth as usize;
-    ctx.detect_cycles = state.detect_cycles;
-    ctx.compress_ids = state.compress_ids;
+    let active = (state as u32) != 0 || (state & STATE_INSTALLED_BIT) != 0;
+    ctx.depth = (state as u32) as usize;
+    ctx.max_depth = ((state >> 32) & MAX_DEPTH_MASK) as usize;
+    ctx.detect_cycles = (state & SER_DETECT_CYCLES_BIT) != 0;
+    ctx.compress_ids = (state & STATE_COMPRESS_IDS_BIT) != 0;
     struct RestoreGuard {
         ctx: Option<SerializationContext>,
         clear_on_drop: bool,
@@ -545,7 +574,7 @@ pub(crate) fn with_active_ser_ctx<R>(
     }
     let mut guard = RestoreGuard {
         ctx: Some(ctx),
-        clear_on_drop: !state.active,
+        clear_on_drop: !active,
     };
     let ctx_ref = match guard.ctx.as_mut() {
         Some(c) => c,
@@ -559,9 +588,10 @@ pub(crate) fn with_active_de_ctx<R>(
 ) -> Result<R> {
     let mut ctx = ACTIVE_DE_CTX.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
     let state = DE_DEPTH.with(|cell| cell.get());
-    ctx.depth = state.depth as usize;
-    ctx.max_depth = state.max_depth as usize;
-    ctx.compress_ids = state.compress_ids;
+    let active = (state as u32) != 0 || (state & STATE_INSTALLED_BIT) != 0;
+    ctx.depth = (state as u32) as usize;
+    ctx.max_depth = ((state >> 32) & MAX_DEPTH_MASK) as usize;
+    ctx.compress_ids = (state & STATE_COMPRESS_IDS_BIT) != 0;
     struct RestoreGuard {
         ctx: Option<DeserializationContext>,
         clear_on_drop: bool,
@@ -580,7 +610,7 @@ pub(crate) fn with_active_de_ctx<R>(
     }
     let mut guard = RestoreGuard {
         ctx: Some(ctx),
-        clear_on_drop: !state.active,
+        clear_on_drop: !active,
     };
     let ctx_ref = match guard.ctx.as_mut() {
         Some(c) => c,
@@ -600,7 +630,7 @@ fn write_active_ser_id<O: DataOutput>(output: &mut O, id: u32, compress_ids: boo
 
 #[inline]
 fn read_active_de_id<I: DataInput>(input: &mut I) -> Result<u32> {
-    let compress_ids = DE_DEPTH.with(|cell| cell.get().compress_ids);
+    let compress_ids = DE_DEPTH.with(|cell| (cell.get() & STATE_COMPRESS_IDS_BIT) != 0);
     if compress_ids {
         u32::try_from(input.read_var_int()?)
             .map_err(|_| ZiporaError::invalid_data("Compressed object ID overflows u32"))
@@ -613,11 +643,8 @@ fn read_active_de_id<I: DataInput>(input: &mut I) -> Result<u32> {
 fn store_active_de_object<T: 'static>(id: u32, object: T) {
     DE_DEPTH.with(|cell| {
         let cur = cell.get();
-        if !cur.dirty_ctx {
-            cell.set(DeDepthState {
-                dirty_ctx: true,
-                ..cur
-            });
+        if (cur & STATE_DIRTY_CTX_BIT) == 0 {
+            cell.set(cur | STATE_DIRTY_CTX_BIT);
         }
     });
     ACTIVE_DE_CTX.with(|cell| {
@@ -634,17 +661,16 @@ fn get_active_de_object<T: Clone + 'static>(id: u32) -> Option<T> {
 fn register_active_ser_ptr<T, P: 'static>(obj_ref: &T, retained: Option<P>) -> (bool, u32, bool) {
     let state = SER_DEPTH.with(|cell| {
         let cur = cell.get();
-        if !cur.dirty_ctx {
-            cell.set(SerDepthState {
-                dirty_ctx: true,
-                ..cur
-            });
+        if (cur & STATE_DIRTY_CTX_BIT) == 0 {
+            cell.set(cur | STATE_DIRTY_CTX_BIT);
         }
         cur
     });
+    let detect_cycles = (state & SER_DETECT_CYCLES_BIT) != 0;
+    let compress_ids = (state & STATE_COMPRESS_IDS_BIT) != 0;
     let (seen, id) = ACTIVE_SER_CTX.with(|cell| {
         let mut ctx = cell.borrow_mut();
-        ctx.detect_cycles = state.detect_cycles;
+        ctx.detect_cycles = detect_cycles;
         let seen = ctx.has_seen(obj_ref);
         let id = ctx.get_or_assign_id(obj_ref);
         if !seen
@@ -654,7 +680,7 @@ fn register_active_ser_ptr<T, P: 'static>(obj_ref: &T, retained: Option<P>) -> (
         }
         (seen, id)
     });
-    (seen, id, state.compress_ids)
+    (seen, id, compress_ids)
 }
 
 /// Trait for types that can be serialized as smart pointers
@@ -1979,7 +2005,7 @@ mod tests {
             .expect("BigChain 2 MiB thread must not overflow stack");
 
         if !cfg!(miri) {
-            // Timing check for Vec<u64>, Vec<Rc<u64>>, and Vec<Vec<u32>>
+            // Round-trip correctness check for Vec<u64>, Vec<Rc<u64>>, and Vec<Vec<u32>>
             let vec_u64: Vec<u64> = (0..1_000_000u64).collect();
             let mut out_u64 = VecDataOutput::with_capacity(4 + 1_000_000 * 8);
             vec_u64.serialize(&mut out_u64).unwrap();
@@ -2013,4 +2039,150 @@ mod tests {
             assert_eq!(dec_vv[999][99], 99_999);
         }
     }
+
+    #[test]
+    fn test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory() {
+        let count: usize = if cfg!(miri) { 64 } else { 10_000 };
+        let mut ctx = DeserializationContext::new();
+        for i in 0..count {
+            let id = 1u32 + (i as u32) * 65;
+            ctx.store_object(id, Rc::new(i as u64));
+        }
+        for i in 0..count {
+            let id = 1u32 + (i as u32) * 65;
+            let got = ctx.get_object::<Rc<u64>>(id).expect("stored stride-65 object");
+            assert_eq!(**got, i as u64);
+        }
+
+        // Only id == 1 belongs in the sequential 1-based dense table; non-sequential
+        // IDs (66, 131, ...) must fall back to `objects` without padding 64 gap slots each.
+        let dense_len_and_cap = ctx
+            .dense_objects
+            .as_ref()
+            .and_then(|b| {
+                b.downcast_ref::<Vec<Rc<u64>>>()
+                    .map(|v| (v.len(), v.capacity()))
+                    .or_else(|| {
+                        b.downcast_ref::<Vec<Option<Rc<u64>>>>()
+                            .map(|v| (v.len(), v.capacity()))
+                    })
+            });
+        assert_eq!(
+            dense_len_and_cap.map(|(len, _)| len),
+            Some(1),
+            "stride-65 object IDs must not grow dense_objects beyond id == 1 (got {dense_len_and_cap:?})"
+        );
+        assert!(
+            dense_len_and_cap.map_or(false, |(_, cap)| cap <= 16),
+            "stride-65 object IDs must not amplify dense_objects capacity (got {dense_len_and_cap:?})"
+        );
+        assert_eq!(ctx.objects.len(), count - 1);
+
+        // Also verify end-to-end wire deserialization with stride-65 object IDs and back-references.
+        let wire_count: u32 = if cfg!(miri) { 32 } else { 2_000 };
+        let mut out = VecDataOutput::with_capacity(4 + (wire_count as usize) * 2 * 13);
+        out.write_u32(wire_count * 2).unwrap();
+        for i in 0..wire_count {
+            let id = 1 + i * 65;
+            out.write_u8(1).unwrap(); // New Rc<u64>
+            out.write_u32(id).unwrap();
+            out.write_u64(i as u64 + 1000).unwrap();
+        }
+        for i in 0..wire_count {
+            let id = 1 + i * 65;
+            out.write_u8(2).unwrap(); // Reference to existing Rc<u64>
+            out.write_u32(id).unwrap();
+        }
+        let wire = out.into_vec();
+        let mut input = SliceDataInput::new(&wire);
+        let decoded = Vec::<Rc<u64>>::deserialize(&mut input).unwrap();
+        assert_eq!(decoded.len(), (wire_count as usize) * 2);
+        for i in 0..(wire_count as usize) {
+            assert_eq!(*decoded[i], i as u64 + 1000);
+            assert!(Rc::ptr_eq(&decoded[i], &decoded[i + wire_count as usize]));
+        }
+    }
+
+    #[test]
+    #[ignore = "Timing benchmark harness for S23-R1 / S24-R3; run with `cargo test --release --lib bench_s24_r3_io_deserialize_timings -- --ignored --nocapture`"]
+    fn bench_s24_r3_io_deserialize_timings() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        fn median_ns_per_op<T>(iters: usize, elems: usize, mut f: impl FnMut() -> T) -> f64 {
+            for _ in 0..3 {
+                black_box(f());
+            }
+            let mut samples = Vec::with_capacity(iters);
+            for _ in 0..iters {
+                let t0 = Instant::now();
+                let val = black_box(f());
+                let elapsed = t0.elapsed().as_nanos() as f64;
+                drop(val);
+                samples.push(elapsed / elems as f64);
+            }
+            samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            samples[iters / 2]
+        }
+
+        // 1. Vec<u64> (1,000,000 elements)
+        let vec_u64: Vec<u64> = (0..1_000_000u64).collect();
+        let mut out_u64 = VecDataOutput::with_capacity(4 + 1_000_000 * 8);
+        vec_u64.serialize(&mut out_u64).unwrap();
+        let bytes_u64 = out_u64.into_vec();
+        let ns_u64 = median_ns_per_op(21, 1_000_000, || {
+            let mut input = SliceDataInput::new(black_box(&bytes_u64));
+            Vec::<u64>::deserialize(&mut input).unwrap()
+        });
+
+        // 2. Vec<Rc<u64>> (100,000 elements)
+        let vec_rc: Vec<Rc<u64>> = (0..100_000u64).map(Rc::new).collect();
+        let mut out_rc = VecDataOutput::with_capacity(4 + 100_000 * 13);
+        vec_rc.serialize(&mut out_rc).unwrap();
+        let bytes_rc = out_rc.into_vec();
+        let ns_rc = median_ns_per_op(21, 100_000, || {
+            let mut input = SliceDataInput::new(black_box(&bytes_rc));
+            Vec::<Rc<u64>>::deserialize(&mut input).unwrap()
+        });
+
+        // 3. Vec<Vec<u32>> (1,000 x 100)
+        let vec_vec_u32: Vec<Vec<u32>> = (0..1_000u32)
+            .map(|i| (0..100u32).map(|j| i * 100 + j).collect())
+            .collect();
+        let mut out_vv32 = VecDataOutput::with_capacity(4 + 1_000 * 404);
+        vec_vec_u32.serialize(&mut out_vv32).unwrap();
+        let bytes_vv32 = out_vv32.into_vec();
+        let ns_vv32 = median_ns_per_op(21, 1_000, || {
+            let mut input = SliceDataInput::new(black_box(&bytes_vv32));
+            Vec::<Vec<u32>>::deserialize(&mut input).unwrap()
+        });
+
+        // 4. Vec<Vec<u8>> (100,000 x 3)
+        let vec_vec_u8: Vec<Vec<u8>> = (0..100_000u32)
+            .map(|i| vec![(i & 0xFF) as u8, ((i >> 8) & 0xFF) as u8, 0x5Au8])
+            .collect();
+        let mut out_vv8 = VecDataOutput::with_capacity(4 + 100_000 * 7);
+        vec_vec_u8.serialize(&mut out_vv8).unwrap();
+        let bytes_vv8 = out_vv8.into_vec();
+        let ns_vv8 = median_ns_per_op(21, 100_000, || {
+            let mut input = SliceDataInput::new(black_box(&bytes_vv8));
+            Vec::<Vec<u8>>::deserialize(&mut input).unwrap()
+        });
+
+        // 5. Vec<Box<u64>> (100,000 elements)
+        let vec_box: Vec<Box<u64>> = (0..100_000u64).map(Box::new).collect();
+        let mut out_box = VecDataOutput::with_capacity(4 + 100_000 * 9);
+        vec_box.serialize(&mut out_box).unwrap();
+        let bytes_box = out_box.into_vec();
+        let ns_box = median_ns_per_op(21, 100_000, || {
+            let mut input = SliceDataInput::new(black_box(&bytes_box));
+            Vec::<Box<u64>>::deserialize(&mut input).unwrap()
+        });
+
+        println!(
+            "S24-R3 timings: Vec<u64>={ns_u64:.3} ns/elem | Vec<Rc<u64>>={ns_rc:.2} ns/elem | Vec<Vec<u32>>={ns_vv32:.1} ns/inner | Vec<Vec<u8>>(100kx3)={ns_vv8:.2} ns/inner | Vec<Box<u64>>={ns_box:.2} ns/elem"
+        );
+    }
 }
+
+

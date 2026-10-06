@@ -3695,8 +3695,15 @@ mod tests {
         for &bad in &invalid_factors {
             let cfg = MmapVecConfig::default().with_growth_factor(bad);
             assert!(
-                MmapVec::<u64>::create("/nonexistent/s23_r3_never_opened.mmap", cfg).is_err(),
-                "growth_factor {bad} must be rejected by create() before touching disk"
+                matches!(cfg.validate(), Err(ZiporaError::InvalidParameter { .. })),
+                "growth_factor {bad} must be rejected by cfg.validate() with InvalidParameter"
+            );
+            assert!(
+                matches!(
+                    MmapVec::<u64>::create("/nonexistent/s23_r3_never_opened.mmap", cfg),
+                    Err(ZiporaError::InvalidParameter { .. })
+                ),
+                "growth_factor {bad} must be rejected with InvalidParameter before touching disk"
             );
         }
     }
