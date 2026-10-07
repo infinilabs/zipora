@@ -355,14 +355,22 @@ macro_rules! impl_as_atomic {
 
             #[inline]
             fn as_atomic(&mut self) -> &Self::Atomic {
+                const {
+                    assert!(std::mem::size_of::<$type>() == std::mem::size_of::<$atomic>());
+                    assert!(std::mem::align_of::<$type>() >= std::mem::align_of::<$atomic>());
+                }
                 // SAFETY: `self` is a valid, aligned, exclusively-borrowed reference (`&mut`),
-                // so `from_ptr` receives a mutable pointer with write provenance and identical
-                // size/alignment to `$atomic`.
+                // and the const assertions above verify identical size and sufficient alignment
+                // for `$atomic`.
                 unsafe { <$atomic>::from_ptr(self) }
             }
 
             #[inline]
             fn as_atomic_mut(&mut self) -> &mut Self::Atomic {
+                const {
+                    assert!(std::mem::size_of::<$type>() == std::mem::size_of::<$atomic>());
+                    assert!(std::mem::align_of::<$type>() >= std::mem::align_of::<$atomic>());
+                }
                 // SAFETY: `self` is a valid, aligned, exclusively-borrowed reference (`&mut`),
                 // and `$type` and `$atomic` have identical size, alignment, and bit validity.
                 unsafe { &mut *(self as *mut $type as *mut $atomic) }
@@ -389,6 +397,10 @@ impl<T> AsAtomic<*mut T> for *mut T {
 
     #[inline]
     fn as_atomic(&mut self) -> &Self::Atomic {
+        const {
+            assert!(std::mem::size_of::<*mut T>() == std::mem::size_of::<AtomicPtr<T>>());
+            assert!(std::mem::align_of::<*mut T>() >= std::mem::align_of::<AtomicPtr<T>>());
+        }
         // SAFETY: `self` is a valid, aligned, exclusively-borrowed reference (`&mut *mut T`),
         // so `from_ptr` receives a mutable pointer with write provenance and identical
         // size/alignment to `AtomicPtr<T>`.
@@ -397,6 +409,10 @@ impl<T> AsAtomic<*mut T> for *mut T {
 
     #[inline]
     fn as_atomic_mut(&mut self) -> &mut Self::Atomic {
+        const {
+            assert!(std::mem::size_of::<*mut T>() == std::mem::size_of::<AtomicPtr<T>>());
+            assert!(std::mem::align_of::<*mut T>() >= std::mem::align_of::<AtomicPtr<T>>());
+        }
         // SAFETY: `self` is a valid, aligned, exclusively-borrowed reference (`&mut *mut T`),
         // and `*mut T` and `AtomicPtr<T>` have identical size, alignment, and bit validity.
         unsafe { &mut *(self as *mut *mut T as *mut AtomicPtr<T>) }
