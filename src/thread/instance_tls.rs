@@ -46,7 +46,7 @@ struct TlsMatrix<T, const ROWS: usize, const COLS: usize> {
     rows: Vec<Option<*mut [TlsCell<T>]>>,
 }
 
-/// Type-erased matrix pointer owned by [`TlsMatrices`].
+// SAFETY: `drop_fn` is only called on `ptr` created by `Box::into_raw` for the matching `TlsMatrix`.
 struct MatrixEntry {
     ptr: *mut (),
     drop_fn: unsafe fn(*mut ()),
