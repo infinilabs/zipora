@@ -721,3 +721,77 @@ async fn test_mixed_pipeline_batching_and_non_batching_stages() {
     let stats = pipeline.stats().await;
     assert_eq!(stats.total_processed, 6); // 3 from first stage + 3 from second
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_s25_r7_multithreaded_execute_stream_payload_writes_and_concurrent_stage_stats() {
+    let pipeline = Arc::new(Pipeline::new(PipelineConfig::default()));
+    let (in_tx, in_rx) = mpsc::channel::<Box<[u64; 8]>>(32);
+    let (out_tx, mut out_rx) = mpsc::channel::<Box<[u64; 8]>>(64);
+    for i in 0..32u64 {
+        in_tx.send(Box::new([i; 8])).await.unwrap();
+    }
+    drop(in_tx);
+
+    let stages = vec![
+        Box::new(MapStage::new(
+            "s0".to_string(),
+            |mut b: Box<[u64; 8]>| {
+                for slot in b.iter_mut() {
+                    *slot = slot.wrapping_add(3);
+                }
+                Ok(b)
+            },
+        )) as Box<dyn PipelineStage<_, _>>,
+        Box::new(MapStage::new(
+            "s1".to_string(),
+            |mut b: Box<[u64; 8]>| {
+                for slot in b.iter_mut() {
+                    *slot = slot.wrapping_mul(2);
+                }
+                Ok(b)
+            },
+        )),
+        Box::new(MapStage::new(
+            "s2".to_string(),
+            |mut b: Box<[u64; 8]>| {
+                for slot in b.iter_mut() {
+                    *slot ^= 0x55AA;
+                }
+                Ok(b)
+            },
+        )),
+    ];
+    pipeline
+        .execute_stream(stages, in_rx, out_tx)
+        .await
+        .unwrap();
+    for i in 0..32u64 {
+        let got = out_rx.recv().await.unwrap();
+        assert_eq!(*got, [((i + 3) * 2) ^ 0x55AA; 8]);
+    }
+    assert!(out_rx.recv().await.is_none());
+
+    for _ in 0..16 {
+        let mut handles = Vec::new();
+        for stage_count in [1usize, 5] {
+            let p = Arc::clone(&pipeline);
+            handles.push(tokio::spawn(async move {
+                let (tx, rx) = mpsc::channel::<i32>(4);
+                let (otx, mut orx) = mpsc::channel::<i32>(8);
+                tx.send(1).await.unwrap();
+                drop(tx);
+                let st: Vec<Box<dyn PipelineStage<i32, i32>>> = (0..stage_count)
+                    .map(|idx| {
+                        Box::new(MapStage::new(format!("s{idx}"), |x: i32| Ok(x + 1)))
+                            as Box<dyn PipelineStage<i32, i32>>
+                    })
+                    .collect();
+                p.execute_stream(st, rx, otx).await.unwrap();
+                assert_eq!(orx.recv().await, Some(1 + stage_count as i32));
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+    }
+}

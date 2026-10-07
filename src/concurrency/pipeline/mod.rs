@@ -229,13 +229,18 @@ impl Pipeline {
             .await
             .map_err(|_| ZiporaError::configuration("stage timeout"))?;
 
-        let processing_time = start_time.elapsed().as_micros() as u64;
+        let elapsed = start_time.elapsed();
+        let processing_time = elapsed.as_micros() as u64;
         // ORDERING: Relaxed is sufficient for cumulative processing time telemetry.
         self.stats
             .total_processing_time_us
             .fetch_add(processing_time, Ordering::Relaxed);
         // ORDERING: Relaxed is sufficient for cumulative item count telemetry.
         self.stats.total_processed.fetch_add(1, Ordering::Relaxed);
+
+        if elapsed > self.config.stage_timeout {
+            return Err(ZiporaError::configuration("stage timeout"));
+        }
 
         result
     }
@@ -272,18 +277,22 @@ impl Pipeline {
             return Err(ZiporaError::invalid_data("no stages provided"));
         }
 
-        // Initialize stage statistics
-        {
-            let mut stage_stats = self.stats.stage_stats.write().await;
-            stage_stats.clear();
-            for stage in &stages {
-                stage_stats.push(Arc::new(StageStatsInner {
+        // Initialize stage statistics locally first so concurrent execute_stream calls
+        // on the same Pipeline cannot overwrite stage_stats mid-loop with a shorter Vec.
+        let local_stage_stats: Vec<Arc<StageStatsInner>> = stages
+            .iter()
+            .map(|stage| {
+                Arc::new(StageStatsInner {
                     name: stage.name().to_string(),
                     processed: AtomicU64::new(0),
                     total_time_us: AtomicU64::new(0),
                     active_items: AtomicUsize::new(0),
-                }));
-            }
+                })
+            })
+            .collect();
+        {
+            let mut stage_stats = self.stats.stage_stats.write().await;
+            *stage_stats = local_stage_stats.clone();
         }
 
         let num_stages = stages.len();
@@ -305,10 +314,7 @@ impl Pipeline {
         let mut final_output = Some(output_tx);
 
         for (i, stage) in stages.into_iter().enumerate() {
-            let stage_stats = {
-                let stats = self.stats.stage_stats.read().await;
-                stats[i].clone()
-            };
+            let stage_stats = local_stage_stats[i].clone();
 
             let mut stage_input_rx = if i == 0 {
                 current_input.take().ok_or_else(|| {
@@ -337,10 +343,19 @@ impl Pipeline {
                 let mut stage_result: Result<()> = Ok(());
 
                 loop {
-                    let maybe_item = tokio::select! {
-                        biased;
-                        () = stage_output_tx.closed() => break,
-                        item = stage_input_rx.recv() => item,
+                    if stage_output_tx.is_closed() {
+                        break;
+                    }
+                    let maybe_item = match stage_input_rx.try_recv() {
+                        Ok(item) => Some(item),
+                        Err(mpsc::error::TryRecvError::Empty) => {
+                            tokio::select! {
+                                biased;
+                                () = stage_output_tx.closed() => break,
+                                item = stage_input_rx.recv() => item,
+                            }
+                        }
+                        Err(mpsc::error::TryRecvError::Disconnected) => None,
                     };
                     let Some(item) = maybe_item else {
                         break;
@@ -352,7 +367,8 @@ impl Pipeline {
 
                     let result = timeout(config.stage_timeout, stage.process(item)).await;
 
-                    let processing_time = start_time.elapsed().as_micros() as u64;
+                    let elapsed = start_time.elapsed();
+                    let processing_time = elapsed.as_micros() as u64;
                     // ORDERING: Relaxed is sufficient for per-stage cumulative time telemetry.
                     stage_stats
                         .total_time_us
@@ -365,7 +381,7 @@ impl Pipeline {
                         .fetch_add(processing_time, Ordering::Relaxed);
 
                     match result {
-                        Ok(Ok(output)) => {
+                        Ok(Ok(output)) if elapsed <= config.stage_timeout => {
                             if stage_output_tx.send(output).await.is_err() {
                                 break; // Downstream receiver closed
                             }
@@ -378,7 +394,7 @@ impl Pipeline {
                             stage_result = Err(err);
                             break;
                         }
-                        Err(_) => {
+                        Ok(Ok(_)) | Err(_) => {
                             stage_result = Err(ZiporaError::configuration("stage timeout"));
                             break;
                         }
@@ -437,16 +453,24 @@ impl Pipeline {
         let _in_flight = AtomicCountGuard::new(&self.stats.items_in_flight, batch_size);
 
         let result = if stage.supports_batching() && self.config.enable_batching {
-            timeout(self.config.stage_timeout, stage.process_batch(inputs))
+            let batch_res = timeout(self.config.stage_timeout, stage.process_batch(inputs))
                 .await
-                .map_err(|_| ZiporaError::configuration("batch processing timeout"))?
+                .map_err(|_| ZiporaError::configuration("batch processing timeout"))?;
+            if start_time.elapsed() > self.config.stage_timeout {
+                return Err(ZiporaError::configuration("batch processing timeout"));
+            }
+            batch_res
         } else {
             // Process individually
             let mut results = Vec::with_capacity(batch_size);
             for input in inputs {
+                let item_start = Instant::now();
                 let output = timeout(self.config.stage_timeout, stage.process(input))
                     .await
                     .map_err(|_| ZiporaError::configuration("stage timeout"))??;
+                if item_start.elapsed() > self.config.stage_timeout {
+                    return Err(ZiporaError::configuration("stage timeout"));
+                }
                 results.push(output);
             }
             Ok(results)

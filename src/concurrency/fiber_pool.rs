@@ -621,4 +621,45 @@ mod tests {
             "FiberPool::new with overflowing max_fibers + queue_capacity must return Err"
         );
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_s25_r7_multithreaded_fiber_pool_payload_writes_and_shutdown() {
+        let pool = Arc::new(
+            FiberPool::new(FiberPoolConfig {
+                max_fibers: 8,
+                initial_workers: 4,
+                max_workers: 4,
+                queue_capacity: 256,
+                idle_timeout: Duration::from_secs(10),
+            })
+            .unwrap(),
+        );
+        let completed = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for i in 0..64usize {
+            let completed = Arc::clone(&completed);
+            let mut payload = Box::new([0u64; 8]);
+            for (k, slot) in payload.iter_mut().enumerate() {
+                *slot = (i * 17 + k) as u64;
+            }
+            let expected: u64 = payload.iter().map(|v| v.wrapping_mul(3)).sum();
+            handles.push(
+                pool.spawn(async move {
+                    for slot in payload.iter_mut() {
+                        *slot = slot.wrapping_mul(3);
+                    }
+                    let actual: u64 = payload.iter().sum();
+                    assert_eq!(actual, expected);
+                    completed.fetch_add(1, Ordering::AcqRel);
+                    Ok(actual)
+                })
+                .unwrap(),
+            );
+        }
+        pool.shutdown().await.unwrap();
+        assert_eq!(completed.load(Ordering::Acquire), 64);
+        for h in handles {
+            assert!(h.await.is_ok());
+        }
+    }
 }

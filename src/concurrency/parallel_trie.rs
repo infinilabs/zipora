@@ -237,28 +237,35 @@ impl ParallelLoudsTrie {
         I: IntoIterator<Item = Vec<u8>>,
         I::IntoIter: Send,
     {
-        let keys: Vec<Vec<u8>> = keys.into_iter().collect();
+        let keys: Arc<Vec<Vec<u8>>> = Arc::new(keys.into_iter().collect());
 
         // Snapshot the replicas (cheap Arc clones) so the tokio mutex is not
         // held across the CPU-bound rayon work, and run that work on the
         // blocking pool so it cannot stall the async runtime's workers.
-        let replicas = self.replica_snapshot().await;
+        let replicas = Arc::new(self.replica_snapshot().await);
         let replica_count = self.replica_count;
-        let key_len = keys.len();
+        let keys_bg = Arc::clone(&keys);
+        let replicas_bg = Arc::clone(&replicas);
         tokio::task::spawn_blocking(move || {
             let counter = std::sync::atomic::AtomicUsize::new(0);
-            keys.par_iter()
+            keys_bg
+                .par_iter()
                 .map(|key| {
                     // ORDERING: Relaxed is sufficient for stateless round-robin replica selection;
                     // the Arc<ZiporaTrie> snapshot itself was acquired via Mutex lock.
                     let replica_id =
                         counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % replica_count;
-                    replicas[replica_id].contains(key)
+                    replicas_bg[replica_id].contains(key)
                 })
                 .collect()
         })
         .await
-        .unwrap_or_else(|_| vec![false; key_len])
+        .unwrap_or_else(|_| {
+            keys.iter()
+                .enumerate()
+                .map(|(i, key)| replicas[i % replica_count].contains(key))
+                .collect()
+        })
     }
 
     /// Parallel prefix search
@@ -267,16 +274,17 @@ impl ParallelLoudsTrie {
         I: IntoIterator<Item = Vec<u8>>,
         I::IntoIter: Send,
     {
-        let prefixes: Vec<Vec<u8>> = prefixes.into_iter().collect();
+        let prefixes: Arc<Vec<Vec<u8>>> = Arc::new(prefixes.into_iter().collect());
 
         // See parallel_contains: never run rayon on the async workers or while
         // holding the replica lock.
-        let replicas = self.replica_snapshot().await;
+        let replicas = Arc::new(self.replica_snapshot().await);
         let replica_count = self.replica_count;
-        let prefix_len = prefixes.len();
+        let prefixes_bg = Arc::clone(&prefixes);
+        let replicas_bg = Arc::clone(&replicas);
         tokio::task::spawn_blocking(move || {
             let counter = std::sync::atomic::AtomicUsize::new(0);
-            prefixes
+            prefixes_bg
                 .par_iter()
                 .map(|prefix| {
                     // ORDERING: Relaxed is sufficient for stateless round-robin replica selection;
@@ -284,12 +292,18 @@ impl ParallelLoudsTrie {
                     let replica_id =
                         counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % replica_count;
 
-                    replicas[replica_id].iter_prefix(prefix).collect()
+                    replicas_bg[replica_id].iter_prefix(prefix).collect()
                 })
                 .collect()
         })
         .await
-        .unwrap_or_else(|_| (0..prefix_len).map(|_| Vec::new()).collect())
+        .unwrap_or_else(|_| {
+            prefixes
+                .iter()
+                .enumerate()
+                .map(|(i, prefix)| replicas[i % replica_count].iter_prefix(prefix).collect())
+                .collect()
+        })
     }
 
     /// Clone the current replica set (Arc clones) under a short-lived lock
@@ -756,5 +770,37 @@ mod tests {
             "panicking closure in parallel_process must return Err instead of panicking caller"
         );
         assert_eq!(*results[1].as_ref().unwrap(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_s25_r7_multithreaded_parallel_louds_trie_concurrent_inserts_and_reads() {
+        let keys: Vec<Vec<u8>> = (0..128u32)
+            .map(|i| format!("mt_trie_key_{i:04}").into_bytes())
+            .collect();
+        let trie = Arc::new(
+            ParallelTrieBuilder::new()
+                .chunk_size(16)
+                .max_workers(4)
+                .build_louds_trie(keys.clone())
+                .await
+                .unwrap(),
+        );
+
+        let mut tasks = Vec::new();
+        for w in 0..4u32 {
+            let t = Arc::clone(&trie);
+            let ks = keys.clone();
+            tasks.push(tokio::spawn(async move {
+                let extra = format!("mt_extra_{w:02}").into_bytes();
+                t.insert(&extra).await.unwrap();
+                assert!(t.contains(&extra).await);
+                let found = t.parallel_contains(ks.iter().take(16).cloned()).await;
+                assert!(found.into_iter().all(|b| b));
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert_eq!(trie.len().await, 132);
     }
 }

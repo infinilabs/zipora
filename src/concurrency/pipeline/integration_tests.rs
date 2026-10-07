@@ -564,19 +564,21 @@ async fn test_pipeline_stage_timeout_configuration() {
         Ok(x * 2)
     });
 
-    // Should timeout with short timeout
+    // Should timeout with short timeout even for a synchronous built-in MapStage
     let slow_stage1 = MapStage::new("slow1".to_string(), |x: i32| -> Result<i32> {
-        std::thread::sleep(Duration::from_millis(100)); // Longer sleep
+        std::thread::sleep(Duration::from_millis(40));
         Ok(x * 2)
     });
 
-    // Note: Testing actual timeout behavior is tricky with sync sleep,
-    // so we just verify the pipeline works with timeout configuration
-    let _timeout_result = short_timeout_pipeline.execute_single(slow_stage1, 5).await;
+    let timeout_result = short_timeout_pipeline.execute_single(slow_stage1, 5).await;
+    assert!(
+        timeout_result.is_err(),
+        "execute_single must enforce stage_timeout for synchronous stages"
+    );
 
     // Should succeed with long timeout
     let slow_stage2 = MapStage::new("slow2".to_string(), |x: i32| -> Result<i32> {
-        std::thread::sleep(Duration::from_millis(50)); // Shorter sleep that should work
+        std::thread::sleep(Duration::from_millis(20)); // Shorter sleep that should work
         Ok(x * 2)
     });
 

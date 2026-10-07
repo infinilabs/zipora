@@ -103,6 +103,7 @@ where
 pub struct WorkStealingQueue {
     local_queue: Mutex<VecDeque<Box<dyn Task>>>,
     steal_queue: Mutex<VecDeque<Box<dyn Task>>>,
+    steal_len: AtomicUsize,
     worker_id: usize,
     capacity: usize,
 }
@@ -113,8 +114,23 @@ impl WorkStealingQueue {
         Self {
             local_queue: Mutex::new(VecDeque::with_capacity(capacity)),
             steal_queue: Mutex::new(VecDeque::with_capacity(capacity / 2)),
+            steal_len: AtomicUsize::new(0),
             worker_id,
             capacity,
+        }
+    }
+
+    #[inline]
+    fn insert_by_priority(queue: &mut VecDeque<Box<dyn Task>>, task: Box<dyn Task>) {
+        let priority = task.priority();
+        if queue.back().is_none_or(|t| t.priority() >= priority) {
+            queue.push_back(task);
+        } else {
+            let pos = queue
+                .iter()
+                .position(|t| t.priority() < priority)
+                .unwrap_or(queue.len());
+            queue.insert(pos, task);
         }
     }
 
@@ -128,24 +144,37 @@ impl WorkStealingQueue {
     /// if the queue is full so it can be requeued elsewhere instead of dropped.
     pub fn try_push_local(&self, task: Box<dyn Task>) -> std::result::Result<(), Box<dyn Task>> {
         let mut queue = self.local_queue.lock().unwrap_or_else(|e| e.into_inner());
-        let steal_len = self
-            .steal_queue
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .len();
+        // ORDERING: Relaxed is sufficient for capacity estimation alongside the `local_queue` lock.
+        let steal_len = self.steal_len.load(Ordering::Relaxed);
 
         if queue.len().saturating_add(steal_len) >= self.capacity {
             return Err(task);
         }
 
-        // Insert based on priority
-        let priority = task.priority();
-        let pos = queue
-            .iter()
-            .position(|t| t.priority() < priority)
-            .unwrap_or(queue.len());
-        queue.insert(pos, task);
+        Self::insert_by_priority(&mut queue, task);
+        Ok(())
+    }
 
+    /// Push a task to the local queue unless `shutdown` has been set.
+    /// Checking `shutdown` while holding `local_queue` serializes against `shutdown()`'s
+    /// lock-barrier sweep so an accepted task can never be stranded after workers exit.
+    fn try_push_local_unless_shutdown(
+        &self,
+        shutdown: &AtomicBool,
+        task: Box<dyn Task>,
+    ) -> std::result::Result<(), (Box<dyn Task>, bool)> {
+        let mut queue = self.local_queue.lock().unwrap_or_else(|e| e.into_inner());
+        if shutdown.load(Ordering::Acquire) {
+            return Err((task, true));
+        }
+        // ORDERING: Relaxed is sufficient for capacity estimation alongside the `local_queue` lock.
+        let steal_len = self.steal_len.load(Ordering::Relaxed);
+
+        if queue.len().saturating_add(steal_len) >= self.capacity {
+            return Err((task, false));
+        }
+
+        Self::insert_by_priority(&mut queue, task);
         Ok(())
     }
 
@@ -161,10 +190,16 @@ impl WorkStealingQueue {
             return Some(task);
         }
 
-        self.steal_queue
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .pop_front()
+        if self.steal_len.load(Ordering::Acquire) == 0 {
+            return None;
+        }
+
+        let mut steal = self.steal_queue.lock().unwrap_or_else(|e| e.into_inner());
+        let task = steal.pop_front();
+        if task.is_some() {
+            self.steal_len.fetch_sub(1, Ordering::Release);
+        }
+        task
     }
 
     /// Pop a task for the owning worker and atomically increment `active_tasks`
@@ -177,9 +212,13 @@ impl WorkStealingQueue {
                 return Some(task);
             }
         }
+        if self.steal_len.load(Ordering::Acquire) == 0 {
+            return None;
+        }
         let mut steal = self.steal_queue.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(task) = steal.pop_front() {
             active_tasks.fetch_add(1, Ordering::AcqRel);
+            self.steal_len.fetch_sub(1, Ordering::Release);
             return Some(task);
         }
         None
@@ -187,14 +226,13 @@ impl WorkStealingQueue {
 
     /// Steal a task from this queue (FIFO for load balancing)
     pub fn steal(&self) -> Option<Box<dyn Task>> {
-        // First try the steal queue
-        if let Some(task) = self
-            .steal_queue
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .pop_front()
-        {
-            return Some(task);
+        // First try the steal queue if non-empty
+        if self.steal_len.load(Ordering::Acquire) > 0 {
+            let mut steal_queue = self.steal_queue.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(task) = steal_queue.pop_front() {
+                self.steal_len.fetch_sub(1, Ordering::Release);
+                return Some(task);
+            }
         }
 
         // Then try to steal any stealable task from the back of the local queue (lowest priority)
@@ -218,10 +256,11 @@ impl WorkStealingQueue {
 
     /// Steal a task and atomically increment `active_tasks` while holding the queue lock.
     fn steal_and_activate(&self, active_tasks: &AtomicUsize) -> Option<Box<dyn Task>> {
-        {
+        if self.steal_len.load(Ordering::Acquire) > 0 {
             let mut steal_queue = self.steal_queue.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(task) = steal_queue.pop_front() {
                 active_tasks.fetch_add(1, Ordering::AcqRel);
+                self.steal_len.fetch_sub(1, Ordering::Release);
                 return Some(task);
             }
         }
@@ -257,16 +296,21 @@ impl WorkStealingQueue {
 
         if local_len > steal_len + 1 {
             let to_move = (local_len - steal_len) / 2;
+            let mut moved = 0usize;
             for _ in 0..to_move {
                 // Move from back (lower priority) to maintain priority ordering
                 if let Some(task) = local_queue.pop_back() {
                     if task.is_stealable() {
                         steal_queue.push_back(task);
+                        moved += 1;
                     } else {
                         local_queue.push_back(task);
                         break;
                     }
                 }
+            }
+            if moved > 0 {
+                self.steal_len.fetch_add(moved, Ordering::Release);
             }
         }
     }
@@ -274,15 +318,20 @@ impl WorkStealingQueue {
     /// Get the number of tasks in both queues
     #[inline]
     pub fn len(&self) -> usize {
-        self.local_queue
+        let local_len = self
+            .local_queue
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .len()
-            + self
-                .steal_queue
+            .len();
+        let steal_len = if self.steal_len.load(Ordering::Acquire) == 0 {
+            0
+        } else {
+            self.steal_queue
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .len()
+        };
+        local_len + steal_len
     }
 
     /// Check if both queues are empty
@@ -435,12 +484,19 @@ impl WorkStealingExecutor {
         // dispatch counter; queue locks provide synchronization for the task itself.
         let worker_id = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.workers.len();
 
-        // Capacity check and push happen under a single lock acquisition; on a
+        // Capacity + shutdown check and push happen under a single lock acquisition; on a
         // full local queue the task is handed back and requeued globally, so a
         // concurrent fill can never cause it to be dropped unexecuted.
-        let task = match self.queues[worker_id].try_push_local(task) {
+        let task = match self.queues[worker_id]
+            .try_push_local_unless_shutdown(&self.shutdown, task)
+        {
             Ok(()) => return Ok(()),
-            Err(task) => task,
+            Err((_task, true)) => {
+                return Err(ZiporaError::invalid_state(
+                    "cannot submit task to shut down executor",
+                ));
+            }
+            Err((task, false)) => task,
         };
 
         // Go straight to global queue with priority ordering
@@ -451,13 +507,7 @@ impl WorkStealingExecutor {
             ));
         }
         if global_queue.len() < 10000 {
-            // Insert based on priority (highest first)
-            let priority = task.priority();
-            let pos = global_queue
-                .iter()
-                .position(|t| t.priority() < priority)
-                .unwrap_or(global_queue.len());
-            global_queue.insert(pos, task);
+            WorkStealingQueue::insert_by_priority(&mut global_queue, task);
             Ok(())
         } else {
             Err(ZiporaError::configuration("all queues full"))
@@ -504,6 +554,17 @@ impl WorkStealingExecutor {
     pub async fn shutdown(&self) -> Result<()> {
         self.shutdown.store(true, Ordering::Release);
 
+        // Acquire and release each queue lock after storing `shutdown = true` so no
+        // concurrent `submit()` can insert a task after this barrier.
+        for q in &self.queues {
+            drop(q.local_queue.lock().unwrap_or_else(|e| e.into_inner()));
+        }
+        drop(
+            self.global_queue
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        );
+
         // Wait for all workers to drain remaining tasks and finish cleanly
         for worker in &self.workers {
             let handle = worker
@@ -516,7 +577,62 @@ impl WorkStealingExecutor {
             }
         }
 
+        // Drain any residual tasks in case all workers had already parked/exited.
+        for q in &self.queues {
+            while let Some(task) = q.pop_local_and_activate(&self.stats.active_tasks) {
+                Self::run_task_with_stats(task, &self.stats).await;
+            }
+        }
+        loop {
+            let task_opt = {
+                let mut gq = self.global_queue.lock().unwrap_or_else(|e| e.into_inner());
+                let t = gq.pop_front();
+                if t.is_some() {
+                    self.stats.active_tasks.fetch_add(1, Ordering::AcqRel);
+                }
+                t
+            };
+            let Some(task) = task_opt else {
+                break;
+            };
+            Self::run_task_with_stats(task, &self.stats).await;
+        }
+
         Ok(())
+    }
+
+    async fn run_task_with_stats(task: Box<dyn Task>, stats: &ExecutorStatsInner) -> usize {
+        // `active_tasks` was already incremented before releasing the queue lock;
+        // ensure it is always decremented even on panic.
+        struct ActiveTaskGuard<'a> {
+            stats: &'a ExecutorStatsInner,
+            start_time: Instant,
+        }
+        impl Drop for ActiveTaskGuard<'_> {
+            fn drop(&mut self) {
+                let execution_time = self.start_time.elapsed().as_micros() as usize;
+                // ORDERING: Relaxed is sufficient for cumulative execution-time telemetry.
+                self.stats
+                    .total_execution_time_us
+                    .fetch_add(execution_time, Ordering::Relaxed);
+                self.stats.active_tasks.fetch_sub(1, Ordering::AcqRel);
+            }
+        }
+
+        let task_guard = ActiveTaskGuard {
+            stats,
+            start_time: Instant::now(),
+        };
+
+        if let Ok(fut) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| task.execute()))
+        {
+            let _ = (CatchUnwindFuture { inner: fut }).await;
+        }
+
+        let executed = stats.total_executed.fetch_add(1, Ordering::Release) + 1;
+        drop(task_guard);
+        executed
     }
 
     /// Worker loop for processing tasks
@@ -552,42 +668,18 @@ impl WorkStealingExecutor {
 
         loop {
             let is_shutting_down = shutdown.load(Ordering::Acquire);
-            let task = Self::find_task(my_queue, &other_queues, &global_queue, &stats);
+            let task = Self::find_task(
+                my_queue,
+                &other_queues,
+                &global_queue,
+                &stats,
+                is_shutting_down,
+            );
 
             match task {
                 Some(task) => {
                     idle_count = 0;
-
-                    // `active_tasks` was already incremented inside `find_task` before
-                    // releasing the queue lock; ensure it is always decremented even on panic.
-                    struct ActiveTaskGuard<'a> {
-                        stats: &'a ExecutorStatsInner,
-                        start_time: Instant,
-                    }
-                    impl Drop for ActiveTaskGuard<'_> {
-                        fn drop(&mut self) {
-                            let execution_time = self.start_time.elapsed().as_micros() as usize;
-                            // ORDERING: Relaxed is sufficient for cumulative execution-time telemetry.
-                            self.stats
-                                .total_execution_time_us
-                                .fetch_add(execution_time, Ordering::Relaxed);
-                            self.stats.active_tasks.fetch_sub(1, Ordering::AcqRel);
-                        }
-                    }
-
-                    let task_guard = ActiveTaskGuard {
-                        stats: &stats,
-                        start_time: Instant::now(),
-                    };
-
-                    if let Ok(fut) =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| task.execute()))
-                    {
-                        let _ = (CatchUnwindFuture { inner: fut }).await;
-                    }
-
-                    let executed = stats.total_executed.fetch_add(1, Ordering::Release) + 1;
-                    drop(task_guard);
+                    let executed = Self::run_task_with_stats(task, &stats).await;
 
                     // Periodically balance the queue. Keyed to this worker's
                     // own completions: checking the shared counter on every
@@ -621,14 +713,22 @@ impl WorkStealingExecutor {
         other_queues: &[Arc<WorkStealingQueue>],
         global_queue: &Arc<Mutex<VecDeque<Box<dyn Task>>>>,
         stats: &Arc<ExecutorStatsInner>,
+        is_shutting_down: bool,
     ) -> Option<Box<dyn Task>> {
         // 1. Try local queue first (best cache locality)
         if let Some(task) = my_queue.pop_local_and_activate(&stats.active_tasks) {
             return Some(task);
         }
 
-        // 2. Try global queue
-        if let Ok(mut queue) = global_queue.try_lock()
+        // 2. Try global queue (lock unconditionally during shutdown drain so contended
+        //    submissions are never skipped before a worker exits)
+        if is_shutting_down {
+            let mut queue = global_queue.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(task) = queue.pop_front() {
+                stats.active_tasks.fetch_add(1, Ordering::AcqRel);
+                return Some(task);
+            }
+        } else if let Ok(mut queue) = global_queue.try_lock()
             && let Some(task) = queue.pop_front()
         {
             stats.active_tasks.fetch_add(1, Ordering::AcqRel);
@@ -658,9 +758,12 @@ impl WorkStealingExecutor {
         worker_tasks + global_tasks
     }
 
-    /// Check if the executor is idle (no active or queued tasks)
+    /// Check if the executor is idle (no queued or active tasks).
+    /// Scanning queues before reading `active_tasks` pairs with `pop_local_and_activate`
+    /// and `steal_and_activate` (which increment `active_tasks` before releasing the queue
+    /// lock), preventing a false-positive `true` when a task transitions from queued to active.
     pub fn is_idle(&self) -> bool {
-        self.stats.active_tasks.load(Ordering::Acquire) == 0 && self.total_queued() == 0
+        self.total_queued() == 0 && self.stats.active_tasks.load(Ordering::Acquire) == 0
     }
 }
 
@@ -707,36 +810,13 @@ impl WorkStealingExecutor {
         GLOBAL_EXECUTOR.get()
     }
 
-    /// Spawn a task on the global executor (or the current Tokio runtime if the global
-    /// executor has not been initialized), preserving the fiber's unique ID.
+    /// Spawn a fiber as an independent asynchronous task on the current Tokio runtime,
+    /// preserving the fiber's unique ID.
     pub fn spawn<T>(fiber: super::Fiber<T>) -> super::FiberHandle<T>
     where
         T: Send + 'static,
     {
         let id = fiber.id().as_u64();
-        if let Some(executor) = Self::global()
-            && !executor.shutdown.load(Ordering::Acquire)
-        {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            let mut fiber_opt = Some(fiber);
-            let _ = executor.submit_closure(move || {
-                let fiber = fiber_opt.take();
-                Box::pin(async move {
-                    if let Some(f) = fiber {
-                        let _ = tx.send(f.await);
-                    }
-                    Ok(())
-                })
-            });
-            let handle = tokio::spawn(async move {
-                rx.await.unwrap_or_else(|_| {
-                    Err(ZiporaError::invalid_state(
-                        "global executor dropped task before completion",
-                    ))
-                })
-            });
-            return super::FiberHandle::new(handle, id);
-        }
         let handle = tokio::spawn(fiber);
         super::FiberHandle::new(handle, id)
     }
@@ -984,12 +1064,167 @@ mod tests {
         let f2 = crate::concurrency::Fiber::new(async { Ok(2i32) });
         let expected_id = f2.id();
         let handle = WorkStealingExecutor::spawn(f2);
-        assert_ne!(
+        assert_eq!(
             handle.id(),
-            0,
-            "WorkStealingExecutor::spawn must preserve the Fiber's non-zero ID"
+            expected_id.as_u64(),
+            "WorkStealingExecutor::spawn must preserve the exact FiberId"
         );
-        let _ = expected_id;
         assert_eq!(handle.await.unwrap(), 2);
+    }
+
+    #[test]
+    fn test_s25_r2_global_init_dropped_runtime_and_nested_await_fibers() {
+        // (a) Calling init() on a temporary runtime and dropping that runtime must not
+        //     cause subsequent WorkStealingExecutor::spawn calls on a new runtime to hang.
+        {
+            let rt1 = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap();
+            rt1.block_on(async {
+                crate::init();
+                let h = WorkStealingExecutor::spawn(crate::concurrency::Fiber::new(async {
+                    Ok(1i32)
+                }));
+                assert_eq!(h.await.unwrap(), 1);
+            });
+        }
+
+        let rt2 = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt2.block_on(async {
+            let h = tokio::time::timeout(
+                Duration::from_secs(2),
+                WorkStealingExecutor::spawn(crate::concurrency::Fiber::new(async { Ok(2i32) })),
+            )
+            .await
+            .expect("spawn hung after the runtime that called init() was dropped");
+            assert_eq!(h.unwrap(), 2);
+
+            // (b) Parent fibers that spawn and await child fibers must not deadlock.
+            let mut parents = Vec::new();
+            for i in 0..4i32 {
+                parents.push(WorkStealingExecutor::spawn(crate::concurrency::Fiber::new(
+                    async move {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        let child = WorkStealingExecutor::spawn(crate::concurrency::Fiber::new(
+                            async move { Ok(i * 10) },
+                        ));
+                        child.await
+                    },
+                )));
+            }
+            for (i, p) in parents.into_iter().enumerate() {
+                let v = tokio::time::timeout(Duration::from_secs(2), p)
+                    .await
+                    .expect("parent fiber awaiting child fiber deadlocked")
+                    .unwrap();
+                assert_eq!(v, (i as i32) * 10);
+            }
+
+            // (c) Concurrent sleeping fibers must not serialize two-at-a-time.
+            let start = Instant::now();
+            let mut sleepers = Vec::new();
+            for i in 0..8i32 {
+                sleepers.push(WorkStealingExecutor::spawn(crate::concurrency::Fiber::new(
+                    async move {
+                        tokio::time::sleep(Duration::from_millis(80)).await;
+                        Ok(i)
+                    },
+                )));
+            }
+            for s in sleepers {
+                s.await.unwrap();
+            }
+            assert!(
+                start.elapsed() < Duration::from_millis(280),
+                "8 sleeping fibers took {:?}; expected concurrent timer execution",
+                start.elapsed()
+            );
+        });
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_s25_r6_is_idle_ordering_and_submit_shutdown_race() {
+        // 1. When is_idle() returns true, every previously submitted task must have finished.
+        let exec = Arc::new(WorkStealingExecutor::new(2, 64).unwrap());
+        for _ in 0..256 {
+            let finished = Arc::new(AtomicBool::new(false));
+            let f2 = Arc::clone(&finished);
+            exec.submit_closure(move || {
+                Box::pin(async move {
+                    for _ in 0..64 {
+                        std::hint::spin_loop();
+                    }
+                    f2.store(true, Ordering::Release);
+                    Ok(())
+                })
+            })
+            .unwrap();
+            while !exec.is_idle() {
+                std::hint::spin_loop();
+            }
+            assert!(
+                finished.load(Ordering::Acquire),
+                "is_idle() returned true before submitted task finished"
+            );
+        }
+        exec.shutdown().await.unwrap();
+
+        // 2. Concurrent submit() racing shutdown() must execute every accepted task,
+        //    including non-atomic payload mutations across worker threads.
+        for _ in 0..32 {
+            let exec = Arc::new(WorkStealingExecutor::new(4, 256).unwrap());
+            let accepted = Arc::new(AtomicUsize::new(0));
+            let executed = Arc::new(AtomicUsize::new(0));
+            let mut submitters = Vec::new();
+            for s in 0..4usize {
+                let ex = Arc::clone(&exec);
+                let acc = Arc::clone(&accepted);
+                let run = Arc::clone(&executed);
+                submitters.push(tokio::spawn(async move {
+                    for i in 0..32usize {
+                        let run = Arc::clone(&run);
+                        let mut payload = Box::new([0u64; 8]);
+                        for (k, slot) in payload.iter_mut().enumerate() {
+                            *slot = ((s * 32 + i) ^ k) as u64;
+                        }
+                        let expected_sum: u64 = payload.iter().map(|v| v.wrapping_add(1)).sum();
+                        let res = ex.submit_closure(move || {
+                            Box::pin(async move {
+                                let mut payload = payload;
+                                for slot in payload.iter_mut() {
+                                    *slot = slot.wrapping_add(1);
+                                }
+                                let actual_sum: u64 = payload.iter().sum();
+                                assert_eq!(actual_sum, expected_sum);
+                                run.fetch_add(1, Ordering::AcqRel);
+                                Ok(())
+                            })
+                        });
+                        if res.is_ok() {
+                            acc.fetch_add(1, Ordering::AcqRel);
+                        }
+                        if i == 8 {
+                            tokio::task::yield_now().await;
+                        }
+                    }
+                }));
+            }
+            tokio::task::yield_now().await;
+            exec.shutdown().await.unwrap();
+            for h in submitters {
+                h.await.unwrap();
+            }
+            assert_eq!(
+                accepted.load(Ordering::Acquire),
+                executed.load(Ordering::Acquire),
+                "every task accepted before shutdown() must execute"
+            );
+        }
     }
 }
