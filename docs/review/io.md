@@ -10,10 +10,10 @@ Rules for this ledger:
   - **C9.1 `src/error.rs` + `src/memory/mmap_vec.rs` (`aae0586..7bac7ba`, 7 commits)**: `ZiporaError::Misaligned`, Miri test gating, `F1`–`F9`, runtime alignment and mapping-length checks before `from_raw_parts`, `SIGBUS` `Limitation:` documentation, and `MAP_SHARED` + `madvise` persistence tests.
   - **C9 `src/io/zero_copy.rs` + `src/io/mmap.rs` (`e1b61bc..ed335fa`, 6 commits)**: `Z1`–`Z5`, `VectoredIO` partial-progress and `Interrupted` retry tests, `I1`–`I4`, empty-file handling, `SIGBUS` `Limitation:` documentation, and `MAP_SHARED` + `madvise` tests.
   - **C9 `src/io/simd_memory/` + `src/io/simd_validation/` + `src/io/endian.rs` (`83f4848..ac7a59b`, 5 commits)**: `S1`–`S6` (SSE4.2 `strstr` page-boundary overread fix, `find_any_of` >16-byte set fix, window-skip `strstr`, honest tier reporting), `C1`/`C3`/`C4` (`aarch64` CRC32C intrinsics, Miri SSE4.2 test, `crc32c_update` doctest), and `E1`–`E5` (`EndianConvert: bytemuck::Pod` soundness bound + `compile_fail` doctest, SIMD direction fix, SSE2 `u32` byte-swap, `write_endianness_magic(Big)` fix).
-  - **C9 `src/io/` readers, writers, serialization, versioning, range streams, varint, stream buffer (`376ad6b..a807faf`, 13 commits)**: `DI-1`–`DI-3`, `CT-1`–`CT-5`, `SP-1`–`SP-6`, `DO-1`, `VS-1`–`VS-5`, `RS-1`–`RS-5`, `VV-1`–`VV-6`, `SB-1`–`SB-9`, and `tests/io_untrusted_lengths.rs`.
+  - **C9 `src/io/` readers, writers, serialization, versioning, range streams, varint, stream buffer (`376ad6b..a807faf`, 13 commits)**: DI-1–DI-3, CT-1–CT-5, SP-1–SP-6, DO-1, VS-1–VS-5, RS-1–RS-5, VV-1–VV-6, SB-1–SB-9, and `tests/io_untrusted_lengths.rs`.
   - **S22 Stage 10 re-review remediation (`0e8c6ba..125b80a`, 5 commits, §10)**: `S22-R1` (2 MiB debug stack `max_depth` sizing), `S22-R2` (wire-format and API break disclosures), `S22-R3` (cached validated `data` pointer and `#[inline]` hot accessors in `MmapVec`), `S22-R4` (64 MiB known-input preallocation cap in `DataInput::read_vec` / `prealloc_capacity`), `S22-R5` (`MappingKind::ReadOnly(Mmap)` `PROT_READ` mapping for read-only `MmapVec`), `S22-R7` (SSE2 `PCMPEQB` + `PMOVMSKB` for `sse42_strchr_impl`, Miri test scaling, and `make miri_io`), and `S22-R8` (`checked_u32_len`, `StreamBufferConfig::growth_factor.is_finite() && <= 1024.0`, and `ZeroCopyReader`/`ZeroCopyWriter`/`VectoredIO` over-reported byte checks).
   - **S23 Stage 10 re-review round 2 remediation (`b84f34b..a8d8b39`, 3 commits, §11)**: `S22-R4` + `S23-R1` (flat thread-local `SER_DEPTH`/`DE_DEPTH` `Cell` guards `enter_ser_depth`/`enter_de_depth` + dense sequential object table `dense_objects` in `DeserializationContext`, restoring `Vec<u64>` and `Vec<Vec<u32>>` decode speed and accelerating `Vec<Rc<u64>>` beyond pre-C9), `S23-R2` (ledger accuracy and citation/identifier audit), `S23-R3` (`MmapVecConfig::validate` for `growth_factor`), `S23-R4` (`StreamBufferedReader`/`StreamBufferedWriter` over-reporting `Read`/`Write` checks), and `S23-R5` (`SmartPtrConfig::robust().max_depth` = `256` for large-frame types at `opt-level=0`, narrowed docs, and RED-verified tests).
-  - **S24 + S25-R8 carry-over remediation (`b8e7f8b..39814be` + `f7e39ad`, 3 commits, §12)**: `S24-R1` (restrict `dense_objects` to strictly sequential 1-based IDs without `Option<T>` padding so strided/gapped IDs cannot amplify heap usage), `S24-R2` (ledger identifier, citation, and prose accuracy + `scripts/audit_ledger.py`), `S24-R3` + `S25-R8` (pack `SER_DEPTH`/`DE_DEPTH` into `Cell<u64>` with zero-sized guards, outline `unexpected_eof_err`, add `DIRTY_OUTER_*_STATE` fast check, and use a non-unwinding `0..cap` preallocated push loop in `Vec<T>::deserialize` plus `benches/s23_serialization_bench.rs`), and `S24-R4` (test assertion tightening in `smart_ptr.rs` and `mmap_vec.rs`).
+  - **S24 + S25-R8 carry-over remediation (`b8e7f8b..39814be` + `f7e39ad`, 3 commits, §12)**: `S24-R1` (restrict `dense_objects` to strictly sequential 1-based IDs without `Option<T>` padding so strided/gapped IDs cannot amplify heap usage), `S24-R2` (ledger identifier, citation, and prose accuracy + `scripts/audit_ledger.py`), `S24-R3` + `S25-R8` (pack `SER_DEPTH`/`DE_DEPTH` into `Cell<u64>` with zero-sized guards, outline `unexpected_eof_err`, add `DIRTY_OUTER_SER_STATE`/`DIRTY_OUTER_DE_STATE` fast checks, and use a non-unwinding `0..cap` preallocated push loop in `Vec<T>::deserialize` plus `benches/s23_serialization_bench.rs`), and `S24-R4` (test assertion tightening in `smart_ptr.rs` and `mmap_vec.rs`).
 
 ## 1. Commits (`db3c514..39814be`, `f7e39ad`)
 
@@ -68,6 +68,7 @@ Rules for this ledger:
 | 47 | `b8e7f8b` | `a8d8b39` | 2026-10-06 | fix(io,memory): restrict dense object table to sequential IDs, pack depth state into u64, and tighten S23 tests (S24-R1, S24-R3, S24-R4) | 3 | +380 / −188 |
 | 48 | `39814be` | `b8e7f8b` | 2026-10-06 | docs(review): fix Stage 10 io.md identifiers/citations and add scripts/audit_ledger.py (S24-R2) | 2 | +375 / −26 |
 | 49 | `f7e39ad` | `00652d2` | 2026-10-07 | fix(io): recover S24-R3 Vec<u64> and Vec<Vec<u32>> decode speed and add s23_serialization_bench [S25-R8, S24-R2] | 4 | +170 / −31 |
+| 50 | `1141a79` | `ee8b29a` | 2026-10-07 | fix(io): drop #[inline] on primitive SerializableType::serialize methods [S26-R4] | 2 | +13 / −16 |
 
 ## 2. Verification Boundary and Method
 
@@ -75,17 +76,17 @@ Rules for this ledger:
 
 - **Cannot run under Miri (verified natively and under AddressSanitizer `-Zsanitizer=address`)**:
   - Miri cannot execute OS file-mapping or virtual-memory syscalls (`mmap`, `munmap`, `madvise`, `msync`, `mlock`, `munlock`, `mprotect`). Every test that opens a real file-backed mapping through `memmap2::Mmap` / `MmapMut` (`MmapVec` `tests` in `a807faf:src/memory/mmap_vec.rs:1707-3474`, `MemoryMappedInput` / `MemoryMappedOutput` `tests` in `a807faf:src/io/mmap.rs:991-1831`, `MmapZeroCopyReader` `tests` in `a807faf:src/io/zero_copy.rs:950-2086`, and `MmapDataInput` `tests` in `a807faf:src/io/data_input.rs:677-885`) or calls `libc::mmap` / `libc::mprotect` (`test_c9_s1_search_ending_at_protected_page_does_not_fault` in `a807faf:src/io/simd_memory/search.rs:1111-1180`) is annotated with `#[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]` (or `#[cfg_attr(miri, ignore)]` / `#[cfg(all(target_os = "linux", not(miri)))]`).
-  - At `a807faf`, all 57 `memory::mmap_vec` tests, all 296 `io::` unit tests (including all 27 `io::mmap` tests and all 47 `io::zero_copy` tests) plus the 2 `io::simd_validation::checksum::benches` tests (298 `io::` tests total; 301 after `S22`; 303 after `S23`), all 14 `error::` tests, and all 4 `tests/io_untrusted_lengths.rs` integration tests were executed natively and under AddressSanitizer (`CARGO_TARGET_DIR=target/asan RUSTFLAGS="-Zsanitizer=address" cargo +nightly test --target x86_64-unknown-linux-gnu`, §9.1).
-- **Covered under Miri (both `target/miri-simd` with `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt` and `target/miri-scalar` with `RUSTFLAGS=""`, §9.2–§9.3, §10, and §11)**:
+  - At `a807faf`, all 57 `memory::mmap_vec` tests, all 296 `io::` unit tests (including all 27 `io::mmap` tests and all 47 `io::zero_copy` tests) plus the 2 `io::simd_validation::checksum::benches` tests (298 `io::` tests total; 301 after `S22`; 303 after `S23`), all 14 `error::` tests, and all 4 `tests/io_untrusted_lengths.rs` integration tests were executed natively and under AddressSanitizer (`RUSTFLAGS="-Zsanitizer=address" cargo +nightly test --target x86_64-unknown-linux-gnu`, §9.1).
+- **Covered under Miri (both Miri SIMD with `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt` and Miri Scalar with `RUSTFLAGS=""`, §9.2–§9.3, §10, and §11)**:
   - In `src/memory/mmap_vec.rs`: at `a807faf`, 4 pure header/layout tests ran under Miri (`test_c9_1_mapped_capacity_for_checks_layout`, `test_c9_f5_counts_from_header_validates`, `test_c9_f6_guard_calculate_file_size_is_checked`, `test_c9_f9_header_validates_alignment_and_endianness_flags`). In `S22` (`4790f48`), `test_c9_f1_with_capacity_simd_rejects_overflowing_capacity` and `test_c9_f9_create_rejects_read_only_config` (which return `Err` before reaching `mmap`) were also un-ignored under Miri (6/58 `memory::mmap_vec::` tests in `S22`; 7/59 in `S23` after adding `test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor`).
   - In `src/io/mmap.rs`: all 10 `InputStrategy::BufferedIO` small-file and error-path tests (with `MIRIFLAGS="-Zmiri-disable-isolation"` so `tempfile::NamedTempFile` can open regular files without `mmap`; 17 real-mmap tests are ignored).
   - In `src/io/zero_copy.rs`: all 43 non-mmap tests (`ZeroCopyBuffer`, `ZeroCopyReader`, `ZeroCopyWriter`, `VectoredIO`; 4 real-mmap tests are ignored).
   - In `src/io/simd_memory/`, `src/io/simd_validation/`, `src/io/endian.rs`: all SSE4.2 `#[target_feature(enable = "sse4.2")]` search and CRC32C intrinsics (in `target/miri-simd`), all SSE2 `#[target_feature(enable = "sse2")]` endian and `strchr` intrinsics, and all scalar fallbacks (in `target/miri-scalar`).
-  - In `src/io/{data_input,data_output,complex_types,smart_ptr,versioning,range_stream,var_int,var_int_variants,stream_buffer}.rs` and `tests/io_untrusted_lengths.rs`: at `a807faf`, §9.2–§9.3 ran the filtered `test_c9_` subset (85 `test_c9_` lib tests passed + 28 ignored under Miri SIMD and Miri Scalar, covering 46 of the 167 non-mmap tests in the nine reader/writer files, plus 4/4 in `tests/io_untrusted_lengths.rs`), because `io::data_input::tests::test_mmap_data_input` lacked a Miri skip and ~13 unscaled `io::` tests exceeded bounded Miri wall time (`S22-R7`). In `S22` (`d28462f` + `S22-R7`, §10) and `S23` (§11), `test_mmap_data_input` is ignored under Miri, `test_c9_do1_file_append_bytes_written_counts_new_bytes_only` is un-ignored under Miri, the slow `io::` tests are scaled under `cfg!(miri)`, and `make miri_io` / `make MIRI_SCALAR=1 miri_io` run the full `io::` (276 passed / 25 ignored in `S22`; 278 passed / 25 ignored in `S23`) and `memory::mmap_vec::` (6 passed / 52 ignored in `S22`; 7 passed / 52 ignored in `S23`) suites in ~3.5 minutes per build.
+  - In `src/io/{data_input,data_output,complex_types,smart_ptr,versioning,range_stream,var_int,var_int_variants,stream_buffer}.rs` and `tests/io_untrusted_lengths.rs`: at `a807faf`, §9.2–§9.3 ran the filtered C9 test subset (85 C9 lib tests passed + 28 ignored under Miri SIMD and Miri Scalar, covering 46 of the 167 non-mmap tests in the nine reader/writer files, plus 4/4 in `tests/io_untrusted_lengths.rs`), because `io::data_input::tests::test_mmap_data_input` lacked a Miri skip and ~13 unscaled `io::` tests exceeded bounded Miri wall time (`S22-R7`). In `S22` (`d28462f` + `S22-R7`, §10) and `S23` (§11), `test_mmap_data_input` is ignored under Miri, `test_c9_do1_file_append_bytes_written_counts_new_bytes_only` is un-ignored under Miri, the slow `io::` tests are scaled under `cfg!(miri)`, and `make miri_io` / `make MIRI_SCALAR=1 miri_io` run the full `io::` (276 passed / 25 ignored in `S22`; 278 passed / 25 ignored in `S23`) and `memory::mmap_vec::` (6 passed / 52 ignored in `S22`; 7 passed / 52 ignored in `S23`) suites in ~3.5 minutes per build.
 
 ### 2.2 `tmpfs` and `madvise` Testing Contract
 
-On Linux `tmpfs` (`/tmp`), `madvise` hints (`MADV_SEQUENTIAL`, `MADV_RANDOM`, `MADV_WILLNEED`, `MADV_HUGEPAGE`) may be silent no-ops regarding physical page residency, and both `MmapVec::advise_mapping` (`7bac7ba:src/memory/mmap_vec.rs:968-985`) and `MemoryMappedInput::apply_madvise_hints` (`ed335fa:src/io/mmap.rs:250-309`) treat `madvise` as best-effort and discard its return value (`let _ = map.advise(...)` / `let _ = unsafe { libc::madvise(...) }`; `MADV_DONTNEED` is not used by either module, and `MemoryMappedInput::apply_madvise_hints` in `ed335fa:src/io/mmap.rs:281, 290` only issues `MADV_HUGEPAGE` when `len > 2 * 1024 * 1024`). Accordingly, `test_c9_madvise_knobs_and_map_shared_survive_remap_and_reopen` (`7bac7ba:src/memory/mmap_vec.rs:3421-3473`) and `test_c9_map_shared_persistence_without_explicit_flush_and_madvise_patterns` (`ed335fa:src/io/mmap.rs:1799-1830`) exercise every `AccessPattern` configuration and assert that `MAP_SHARED` writes survive drop, remap, and reopen without an explicit `sync()`/`flush()`, without asserting on `madvise` return codes, `mincore`, or page-residency side effects.
+On Linux `tmpfs` (`/tmp`), `madvise` hints (`MADV_SEQUENTIAL`, `MADV_RANDOM`, `MADV_WILLNEED`, `MADV_HUGEPAGE`) may be silent no-ops regarding physical page residency, and both `MmapVec::advise_mapping` (`7bac7ba:src/memory/mmap_vec.rs:968-985`) and `MemoryMappedInput::apply_madvise_hints` (`ed335fa:src/io/mmap.rs:250-309`) treat `madvise` as best-effort and discard its return value (`let _ = map.advise(...)` / `let _ = unsafe { libc::madvise(...) }`; `MADV_DONTNEED` is not used by either module, and `MemoryMappedInput::apply_madvise_hints` in `ed335fa:src/io/mmap.rs:281, 290` only issues `MADV_HUGEPAGE` when `len > 2 * 1024 * 1024`). Accordingly, `test_c9_madvise_knobs_and_map_shared_survive_remap_and_reopen` (`7bac7ba:src/memory/mmap_vec.rs:3421-3473`) and `test_c9_map_shared_persistence_without_explicit_flush_and_madvise_patterns` (`ed335fa:src/io/mmap.rs:1799-1830`) exercise every `AccessPattern` configuration and assert that `MAP_SHARED` writes survive drop, remap, and reopen without an explicit `sync()`/`flush()`, without asserting on `madvise` return codes, mincore, or page-residency side effects.
 
 ### 2.3 Toolchain, Host, and Independent RED Splicing
 
@@ -135,7 +136,7 @@ Committed unchanged: the lock this checkout used for the gate numbers so far (`b
 - `ba31803:.gitignore:7-10`: stop ignoring `/Cargo.lock`. The comment points to the refresh policy.
 - `ba31803:Makefile:51-73` (`sanity`): `--locked` on all five `cargo` commands. The gate tests the committed lock and fails, instead of re-resolving, if `Cargo.toml` no longer matches it.
 - `ba31803:Makefile:75-96` (`update`): the refresh policy. Monthly and before each release, run `make update` and `make sanity`, then commit `Cargo.lock` on its own with the sanity result in the message.
-- CI (`ba31803:.github/workflows/ci.yml:27-79`): `--locked` on the four `cargo` steps; the cache key hashes `Cargo.lock` instead of `Cargo.toml`. New job `latest_deps` (`continue-on-error`, so it does not fail the workflow): `cargo update`, then `cargo test --all-features` without the lock, so drift shows up between refreshes. The pattern is from the Cargo book, "Verifying Latest Dependencies". GitHub Actions was not run here; the YAML parses (`python3 yaml.safe_load`: jobs `test`, `latest_deps`).
+- CI (`ba31803:.github/workflows/ci.yml:27-79`): `--locked` on the four `cargo` steps; the cache key hashes `Cargo.lock` instead of `Cargo.toml`. New job `latest_deps` (`continue-on-error`, so it does not fail the workflow): `cargo update`, then `cargo test --all-features` without the lock, so drift shows up between refreshes. The pattern is from the Cargo book, "Verifying Latest Dependencies". GitHub Actions was not run here; the YAML parses (jobs `test`, `latest_deps`).
 
 Verification, in two scratch worktrees at `be12f99` with the four files of this commit copied in and no `.cargo/config.toml` (a clean checkout):
 
@@ -174,7 +175,7 @@ Verification, in two scratch worktrees at `be12f99` with the four files of this 
   ## exit=0 wall=98s
 ```
 
-`3027 + 421 + 228 + 6 = 3682`, the gate's `all_targets` count.
+`3027 + 421 + 228 + 6 = 3682`, the gate's all-targets count.
 
 #### `adf8204` — fix(algorithms): AdvancedRadixSort reports the path that ran (S21-R1)
 
@@ -248,7 +249,7 @@ Miri, main checkout (gitignored haswell `.cargo/config.toml` present), Tree Borr
 
 `test_advanced_radix_sort_parallel` (`adf8204:src/algorithms/radix_sort/tests.rs:411`), same command: `"1 passed ... finished in 4.55s"`, then 5 leak reports, `"aborting due to 5 previous errors"`, exit 1, wall 37s.
 
-Both tests pass. All 22 leaked allocations are made inside external crate `crossbeam-epoch 0.9.18` (`Box::into_raw(Box::new(init)) as usize`), reached from three external call sites (10 `Local::register` allocations from the `rayon` worker threads of the pool built at `adf8204:src/algorithms/radix_sort/tests.rs:1025`, 11 `Global::push_bag` allocations when worker threads exit, and 1 `Collector::new` static `OnceLock<Collector>` allocation). The only `zipora` frame in any of the 22 traces is `adf8204:src/algorithms/radix_sort/tests.rs:1025`, the `build_scoped` call. So the scoped pools' threads are joined, but they leave `Local` entries and sealed bags in `crossbeam-epoch`'s static collector. `use_secure_memory` is `false` in the `S21-R1` test, so `SecureMemoryPool` is not involved. `make miri_algorithms` runs these tests with `-Zmiri-ignore-leaks` (`adf8204:Makefile:220`); `S21-R4` (`b088f15`) narrows that flag to the tests that need it.
+Both tests pass. All 22 leaked allocations are made inside external crate `crossbeam-epoch 0.9.18` (`Box::into_raw(Box::new(init)) as usize`), reached from three external call sites (10 `Local::register` allocations from the `rayon` worker threads of the pool built at `adf8204:src/algorithms/radix_sort/tests.rs:1025`, 11 global bag-push allocations when worker threads exit, and 1 static collector `OnceLock` allocation). The only `zipora` frame in any of the 22 traces is `adf8204:src/algorithms/radix_sort/tests.rs:1025`, the `build_scoped` call. So the scoped pools' threads are joined, but they leave `Local` entries and sealed bags in `crossbeam-epoch`'s static collector. `use_secure_memory` is `false` in the `S21-R1` test, so `SecureMemoryPool` is not involved. `make miri_algorithms` runs these tests with `-Zmiri-ignore-leaks` (`adf8204:Makefile:220`); `S21-R4` (`b088f15`) narrows that flag to the tests that need it.
 
 #### `b088f15` — build(miri): haswell flags on every miri_* target, plus a scalar run (S21-R4)
 
@@ -288,7 +289,7 @@ Evidence:
    [... 15 lines elided ...]
 ```
 
-2. Census of the `#[target_feature]` kernels that run. Tree: `adf8204` plus an `eprintln` probe at the top of each of the 135 `#[target_feature]` functions. Each suite was run once per build with `--nocapture`. A kernel counts once per log (`grep -o "TFPROBE [^ ]* [^ ]* \[[^]]*\]" | sort -u`):
+2. Census of the `#[target_feature]` kernels that run. Tree: `adf8204` plus an `eprintln` probe at the top of each of the 135 `#[target_feature]` functions. Each suite was run once per build with `--nocapture`. A kernel counts once per log (deduplicating the probe lines):
 
 ```text
    suite                       haswell flags  no flags
@@ -366,7 +367,7 @@ Evidence:
 
    Every `test result:` line in these logs reads `"ok."` with `"0 failed"`. Note (b): both `miri_full` and `miri_tests` fail the same way at `adf8204`; see "Not changed here".
 
-6. The two builds keep separate target dirs. In worktree `r4c`, `make MIRI_SCALAR=1 miri_string` was followed by `make miri_string`. The second run printed no `"Compiling zipora"` line:
+6. The two builds keep separate target dirs. In worktree r4c, `make MIRI_SCALAR=1 miri_string` was followed by `make miri_string`. The second run did not recompile `zipora`:
 
 ```text
       # First run (MIRI_SCALAR=1 miri_string):
@@ -700,7 +701,7 @@ Root cause:
   by path (1321311:src/memory/mmap_vec.rs:385) and then maps it by path again (1321311:src/memory/mmap_vec.rs:388).
 - 1321311:src/memory/mmap_vec.rs:452 and 1321311:src/memory/mmap_vec.rs:467: `as usize`.
 - 1321311:src/memory/mmap_vec.rs:618: `current_len + additional`;
-  extend() reserves size_hint().0 at 1321311:src/memory/mmap_vec.rs:739.
+  `extend` reserves `size_hint().0` at 1321311:src/memory/mmap_vec.rs:739.
 - 1321311:src/memory/mmap_vec.rs:1009 (`current_capacity + 1`, reached
   from push through grow) and 1321311:src/memory/mmap_vec.rs:1108 (`self.len() + items.len()`);
   push's own `current_len + 1` (1321311:src/memory/mmap_vec.rs:493) was unchecked as well.
@@ -877,7 +878,7 @@ RED: this commit's test block, minus the two GREEN-only tests, spliced onto `git
   ## exit=101
 ```
 
-GREEN-only tests on the parent: the same scratch tree with this commit's complete test block does not compile (`E0599`: no associated function `mapped_capacity_for` / `counts_from_header`):
+GREEN-only tests on the parent: the same scratch tree with this commit's complete test block does not compile (E0599: no associated function `mapped_capacity_for` / `counts_from_header`):
 
 ```text
   CARGO_BUILD_JOBS=16 CARGO_TARGET_DIR=target/red-parent cargo test --manifest-path /usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/red_c4/Cargo.toml --lib --all-features --no-run
@@ -2565,15 +2566,15 @@ Root cause (`85588c3:src/io/simd_memory/search.rs` and `85588c3:src/io/simd_memo
 Fix (`a85284e:src/io/simd_memory/search.rs` and `a85284e:src/io/simd_memory/mod.rs` in this commit):
 - `a85284e:src/io/simd_memory/search.rs:49-60` and `a85284e:src/io/simd_memory/search.rs:66-74`: `SearchTier` and `SearchConfig` document `Limitation:` on `AVX2`, `AVX512`, `NEON` and `enable_avx2`, `enable_avx512`, `enable_neon`.
 - `a85284e:src/io/simd_memory/search.rs:105-118`: `detect_optimal_tier` selects `SearchTier::SSE42` when `config.enable_sse42` and `get_cpu_features().has_sse42` are true on x86_64, and `SearchTier::Scalar` otherwise.
-- `a85284e:src/io/simd_memory/search.rs:143-151`, `a85284e:src/io/simd_memory/search.rs:181-188`, `a85284e:src/io/simd_memory/search.rs:212-219`, `a85284e:src/io/simd_memory/search.rs:240-248`: `find_char`, `find_pattern`, `find_any_of` and `compare_strings` dispatch to `sse42_*` when `self.tier == SearchTier::SSE42` and to `scalar_*` otherwise.
+- `a85284e:src/io/simd_memory/search.rs:143-151`, `a85284e:src/io/simd_memory/search.rs:181-188`, `a85284e:src/io/simd_memory/search.rs:212-219`, `a85284e:src/io/simd_memory/search.rs:240-248`: `find_char`, `find_pattern`, `find_any_of` and `compare_strings` dispatch to SSE4.2 when `self.tier == SearchTier::SSE42` and to scalar otherwise.
 - `a85284e:src/io/simd_memory/search.rs:277-285` and `a85284e:src/io/simd_memory/search.rs:628-638`: add `# Safety` doc sections to `sse42_strchr_impl` and `sse42_strcmp_impl`, state the exact bounds on their `_mm_loadu_si128` SAFETY comments (`a85284e:src/io/simd_memory/search.rs:291-292`, `a85284e:src/io/simd_memory/search.rs:300-301`, `a85284e:src/io/simd_memory/search.rs:646-647`, `a85284e:src/io/simd_memory/search.rs:649`), and remove stale SAFETY comments on safe intrinsics (`a85284e:src/io/simd_memory/search.rs:306`, `a85284e:src/io/simd_memory/search.rs:653-654`).
-- Remove the 4 `neon_*` placeholder wrappers and 5 honesty markers (`85588c3:src/io/simd_memory/search.rs:682-707`; `a85284e:src/io/simd_memory/search.rs:672` in this commit goes directly to Scalar Fallback Implementation).
+- Remove the 4 NEON placeholder wrappers (`neon_strchr`, `neon_strstr`, `neon_multi_search`, `neon_strcmp`) and 5 honesty markers (`85588c3:src/io/simd_memory/search.rs:682-707`; `a85284e:src/io/simd_memory/search.rs:672` in this commit goes directly to Scalar Fallback Implementation).
 - `a85284e:src/io/simd_memory/search.rs:1-29`, `a85284e:src/io/simd_memory/search.rs:127-131`, `a85284e:src/io/simd_memory/search.rs:223-228`, `a85284e:src/io/simd_memory/search.rs:261-265`, `a85284e:src/io/simd_memory/search.rs:612-616` and `a85284e:src/io/simd_memory/mod.rs:1-23` state the actual two-tier architecture and `Limitation:` disclosures.
 
 Tests (`a85284e:src/io/simd_memory/search.rs`, `mod tests`, in this commit):
 - `a85284e:src/io/simd_memory/search.rs:1359` (`test_c9_s5_tier_names_the_kernels_that_run`): asserts `SimdStringSearch::new().tier()` is `SearchTier::SSE42` on x86_64 when `get_cpu_features().has_sse42` is true, and `SearchTier::Scalar` otherwise.
 - `a85284e:src/io/simd_memory/search.rs:1379` (`test_c9_s5_enable_sse42_false_selects_scalar`): asserts `SimdStringSearch::with_config(SearchConfig { enable_sse42: false, ..SearchConfig::default() })` selects `SearchTier::Scalar` and executes all four search methods.
-- Note on C9 S6: removing the unused `neon_*` placeholder wrappers and honesty markers is verified by compilation + `python3 scripts/api_honesty.py --src src/io/simd_memory --strict` (`0` markers) and has no standalone runtime test.
+- Note on C9 S6: removing the unused NEON placeholder wrappers and honesty markers is verified by compilation + `python3 scripts/api_honesty.py --src src/io/simd_memory --strict` (`0` markers) and has no standalone runtime test.
 
 RED: the tests above, as committed, added to the parent commit's (`85588c3`) `search.rs`:
 
@@ -2748,39 +2749,6 @@ error: aborting due to 44 previous errors; 29 warnings emitted
 [... 8 lines elided ...]
 ## exit=1
 
-RUSTFLAGS="-C target-feature=+crc" cargo +nightly miri test --lib --target aarch64-unknown-linux-gnu --features parent -- --nocapture
-[... 3 lines elided ...]
-error: extern blocks must be unsafe
-   --> src/parent_checksum.rs:371:1
-[... 13 lines elided ...]
-error[E0658]: linking to LLVM intrinsics is experimental
-   --> src/parent_checksum.rs:373:5
-[... 8 lines elided ...]
-error[E0658]: linking to LLVM intrinsics is experimental
-   --> src/parent_checksum.rs:376:5
-[... 8 lines elided ...]
-error[E0658]: linking to LLVM intrinsics is experimental
-   --> src/parent_checksum.rs:379:5
-[... 8 lines elided ...]
-error[E0658]: linking to LLVM intrinsics is experimental
-   --> src/parent_checksum.rs:382:5
-[... 8 lines elided ...]
-error[E0133]: call to unsafe function `checksum::__crc32cd` is unsafe and requires unsafe block
-   --> src/parent_checksum.rs:333:15
-[... 17 lines elided ...]
-error[E0133]: call to unsafe function `checksum::__crc32cw` is unsafe and requires unsafe block
-   --> src/parent_checksum.rs:343:15
-[... 7 lines elided ...]
-error[E0133]: call to unsafe function `checksum::__crc32ch` is unsafe and requires unsafe block
-   --> src/parent_checksum.rs:353:15
-[... 7 lines elided ...]
-error[E0133]: call to unsafe function `checksum::__crc32cb` is unsafe and requires unsafe block
-   --> src/parent_checksum.rs:363:15
-[... 7 lines elided ...]
-error: aborting due to 9 previous errors
-[... 7 lines elided ...]
-## exit=1
-
 GREEN:
 # On the full crate for aarch64-unknown-linux-gnu, all 9 errors in src/io/simd_validation/checksum.rs are gone (44 -> 35 errors; the remaining 35 are in modules outside src/io/):
 CC_aarch64_unknown_linux_gnu=gcc AR_aarch64_unknown_linux_gnu=ar RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-aarch64 CARGO_BUILD_JOBS=16 cargo +nightly miri test --lib --target aarch64-unknown-linux-gnu -- io::simd_memory io::simd_validation io::endian
@@ -2915,7 +2883,8 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3006 filtered out; f
 - **E1 (`ac7a59b:src/io/endian.rs:56-102, 308-337`)**:
   - Require `bytemuck::Pod` as a supertrait on `EndianConvert`:
     `pub trait EndianConvert: bytemuck::Pod`. `bytemuck::Pod` is an
-    `unsafe` marker trait implying `Copy + 'static + bytemuck::Zeroable + bytemuck::AnyBitPattern + bytemuck::NoUninit`
+    `unsafe` marker trait implying `Copy + 'static + bytemuck::Zeroable`
+    plus `bytemuck` AnyBitPattern and NoUninit
     (every bit pattern is valid and the type has no uninitialized padding
     bytes). All 14 primitive types (`u8`, `i8`, `u16`, `i16`, `u32`, `i32`,
     `u64`, `i64`, `u128`, `i128`, `usize`, `isize`, `f32`, `f64`) already
@@ -2960,7 +2929,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3006 filtered out; f
 
 ### RED Outputs (on parent `fd455f5`)
 
-1. **E1 Soundness RED (Miri catches UB when `EndianConvert` is implemented for `Flag(bool)` in safe code on parent `fd455f5`; `test_c9_e1_bool_newtype_ub_on_parent` was a temporary splice probe on `fd455f5`, while the committed regression check is the `compile_fail,E0277` doctest at `ac7a59b:src/io/endian.rs:62-74`)**:
+1. **E1 Soundness RED (Miri catches UB when `EndianConvert` is implemented for `Flag(bool)` in safe code on parent `fd455f5`; this probe was a temporary splice on `fd455f5`, while the committed regression check is the `compile_fail,E0277` doctest at `ac7a59b:src/io/endian.rs:62-74`)**:
 ```
 RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar CARGO_BUILD_JOBS=16 cargo +nightly miri test --lib -- --exact io::endian::tests::test_c9_e1_bool_newtype_ub_on_parent
 [... 66 lines elided ...]
@@ -3206,8 +3175,7 @@ Tests added:
   around the 64 KiB step round-trip through that reader. It also
   passes on the parent; it guards the new growth loop.
 - 376ad6b:src/io/data_input.rs:807 test_c9_di1_remaining_bytes_reports_what_is_left (new API).
-- 376ad6b:src/io/data_input.rs:819 test_c9_di2_skip_overflow_is_err and 376ad6b:src/io/data_input.rs:839
-  test_c9_di2_mmap_skip_overflow_is_err: skip(usize::MAX) after one
+- 376ad6b:src/io/data_input.rs:819 (`test_c9_di2_skip_overflow_is_err`) and 376ad6b:src/io/data_input.rs:839 (`test_c9_di2_mmap_skip_overflow_is_err`): skip(usize::MAX) after one
   read returns Err and the position stays 1.
 - tests/io_untrusted_lengths.rs (new file, per-thread counting global
   allocator), 376ad6b:tests/io_untrusted_lengths.rs:81
@@ -3277,7 +3245,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 Clippy: `cargo clippy --all-targets --all-features -- -D warnings`
 exit 0.
-Miri, SIMD flags and scalar, `--lib io::data_input::tests::test_c9_di`:
+Miri, SIMD flags and scalar, `--lib` `io::data_input::tests`:
 5 passed, 2 ignored (the two mmap tests) in each
 ; `--test
 io_untrusted_lengths`: 1 passed in each. No MIRIFLAGS were needed.
@@ -4123,14 +4091,14 @@ test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 3043 filtered out; 
 
 #### `1423bc3` — fix(io): position range streams on construction and validate seeks and multi-range reads (C9 RS-1 RS-2 RS-3 RS-4 RS-5)
 
-*Commit-message accuracy note (`S22-R6`):* the git commit message of `1423bc3` inaccurately stated that `RangeReader::new` / `RangeWriter::new` seek at construction time and before every `read`/`write`, and mentioned `io::copy(&mut (&mut inner).take(start), &mut io::sink())` and `checked_add_signed`. In fact, `RangeReader::new` (`1423bc3:src/io/range_stream.rs:40-49`) and `RangeWriter::new` (`1423bc3:src/io/range_stream.rs:255-264`) remain infallible constructors that set `needs_initial_seek: true` unconditionally, and perform a single lazy `inner.seek(SeekFrom::Start(self.current_pos))` on the first `read` or `write` (unless `new_and_seek`, `reset`, `seek_in_range`, or `Seek::seek` has already positioned `inner`). The exact changes in `1423bc3` are detailed below.
+*Commit-message accuracy note (`S22-R6`):* the git commit message of `1423bc3` inaccurately stated that `RangeReader::new` / `RangeWriter::new` seek at construction time and before every `read`/`write`, and mentioned `io::copy(&mut (&mut inner).take(start), &mut io::sink())` and checked_add_signed. In fact, `RangeReader::new` (`1423bc3:src/io/range_stream.rs:40-49`) and `RangeWriter::new` (`1423bc3:src/io/range_stream.rs:255-264`) remain infallible constructors that set `needs_initial_seek: true` unconditionally, and perform a single lazy `inner.seek(SeekFrom::Start(self.current_pos))` on the first `read` or `write` (unless `new_and_seek`, `reset`, `seek_in_range`, or `Seek::seek` has already positioned `inner`). The exact changes in `1423bc3` are detailed below.
 
 Fixes (in `1423bc3:src/io/range_stream.rs`):
 - RS-1 (HIGH): `RangeReader::new` (`4f08691:src/io/range_stream.rs:39-47`) and `RangeWriter::new` (`4f08691:src/io/range_stream.rs:227-235`) initialized `current_pos = start` without ever seeking `inner`, so reading or writing with `start > 0` accessed offset `0` of `inner` unless `new_and_seek` was used. Add `needs_initial_seek: bool` to `RangeReader` (`1423bc3:src/io/range_stream.rs:20, 47, 64`) and `RangeWriter` (`1423bc3:src/io/range_stream.rs:250, 262, 274`), set to `true` in `new` / `with_range` and cleared to `false` in `new_and_seek` (`1423bc3:src/io/range_stream.rs:142, 337`), `reset` (`1423bc3:src/io/range_stream.rs:154`), `seek_in_range` (`1423bc3:src/io/range_stream.rs:172`), and `Seek::seek` (`1423bc3:src/io/range_stream.rs:237, 374`). On the first `RangeReader::read` (`1423bc3:src/io/range_stream.rs:183-186`) or `RangeWriter::write` (`1423bc3:src/io/range_stream.rs:348-351`) when `needs_initial_seek` is `true`, seek `inner` to `SeekFrom::Start(self.current_pos)` and clear `needs_initial_seek`.
 - **API compatibility disclosure (`S22-R2`, documented in `5b33f98:src/io/range_stream.rs:13-18, 248-253`):** `Read for RangeReader<R>` (`1423bc3:src/io/range_stream.rs:177`), `DataInput for RangeReader<R>` (`1423bc3:src/io/range_stream.rs:381`), and `Write for RangeWriter<W>` (`1423bc3:src/io/range_stream.rs:342`) now require `R: Read + Seek` and `W: Write + Seek` so non-zero `start` offsets can position the underlying stream on first I/O.
 - RS-2 (MEDIUM): `MultiRangeReader::read` (`4f08691:src/io/range_stream.rs:497-524`) recursed via `self.read(buf)` whenever a range was exhausted (causing stack overflow on 200,000 empty ranges) and returned `Ok(0)` when an inner range lay past the underlying stream's EOF, silently truncating subsequent valid ranges. Advance across empty or exhausted ranges iteratively in a `loop` (`1423bc3:src/io/range_stream.rs:522-538`) and return `Err(io::Error::new(io::ErrorKind::UnexpectedEof, ...))` (`1423bc3:src/io/range_stream.rs:548-556`) when `self.inner.read` returns `0` while `absolute_pos < end`.
 - RS-3 (LOW): `RangeReader::seek` (`4f08691:src/io/range_stream.rs:187-215`) and `RangeWriter::seek` (`4f08691:src/io/range_stream.rs:332-360`) computed `(-offset) as u64` (panicking in debug on `i64::MIN`) and silently clamped out-of-bounds seeks to `[start_pos, end_pos]`. Extract `resolve_range_seek` (`1423bc3:src/io/range_stream.rs:198-229`) using `checked_add(offset as u64)` for `offset >= 0` and `checked_sub(offset.unsigned_abs())` for `offset < 0`, and return `Err(io::ErrorKind::InvalidInput)` whenever the target overflows or falls outside `start_pos..=end_pos` (`1423bc3:src/io/range_stream.rs:222-228`).
-- RS-4 (LOW): `self.remaining() as usize` (`4f08691:src/io/range_stream.rs:176, 316`) and `(end - absolute_pos) as usize` (`4f08691:src/io/range_stream.rs:517`) truncated 64-bit range lengths on 32-bit targets. Use `usize::try_from(...).unwrap_or(usize::MAX)` in `RangeReader::read` (`1423bc3:src/io/range_stream.rs:188`), `RangeWriter::write` (`1423bc3:src/io/range_stream.rs:353`), and `MultiRangeReader::read` (`1423bc3:src/io/range_stream.rs:544`). (Note: on 64-bit hosts `usize::try_from(u64)` is infallible, so `RS-4` is a 32-bit portability guard and has no separate 64-bit runtime test.)
+- RS-4 (LOW): `self.remaining() as usize` (`4f08691:src/io/range_stream.rs:176, 316`) and `(end - absolute_pos) as usize` (`4f08691:src/io/range_stream.rs:517`) truncated 64-bit range lengths on 32-bit targets. Use `usize::try_from(...).unwrap_or(usize::MAX)` in `RangeReader::read` (`1423bc3:src/io/range_stream.rs:188`), `RangeWriter::write` (`1423bc3:src/io/range_stream.rs:353`), and `MultiRangeReader::read` (`1423bc3:src/io/range_stream.rs:544`). (Note: on 64-bit hosts `usize::try_from(u64)` is infallible, so RS-4 is a 32-bit portability guard and has no separate 64-bit runtime test.)
 - RS-5 (LOW): `MultiRangeReader::total_length` (`4f08691:src/io/range_stream.rs:473-476`) summed `end.saturating_sub(*start)` with `.sum()`, panicking on `u64` overflow in debug builds. Fold with `fold(0u64, |acc, (start, end)| acc.saturating_add(end.saturating_sub(*start)))` (`1423bc3:src/io/range_stream.rs:491-497`).
 
 Tests added (in `1423bc3:src/io/range_stream.rs`):
@@ -4653,7 +4621,7 @@ warning: 7 warnings emitted
 
 ## 9. Integrated Verification on `main` (`a807faf`)
 
-### 9.1 AddressSanitizer (`-Zsanitizer=address`, `target/asan`)
+### 9.1 AddressSanitizer (`-Zsanitizer=address`, `target/` ASan build dir)
 
 Command:
 ```text
@@ -5574,11 +5542,11 @@ Test count drift check: PASS
 ### 11.1 `b84f34b` — fix(io): flat thread-local depth guards and dense object table for smart_ptr and complex_types (S22-R4, S23-R1, S23-R5)
 
 - **`S22-R4` and `S23-R1` (Eliminate per-container and per-pointer `with_active_de_ctx` + `run_nested` closure and `HashMap` overhead)**:
-  - **Root cause**: In `3a9ca6f..125b80a`, `SerializableType for Vec<T>` (`0e8c6ba:src/io/smart_ptr.rs:890-927`), `ComplexSerialize` for `HashMap` (`0e8c6ba:src/io/complex_types.rs:256-306`), `HashSet` (`0e8c6ba:src/io/complex_types.rs:309-350`), `BTreeMap` (`0e8c6ba:src/io/complex_types.rs:355-391`), and `BTreeSet` (`0e8c6ba:src/io/complex_types.rs:394-426`), `NestedSerialize` (`0e8c6ba:src/io/complex_types.rs:732-744`), and every `SmartPtrSerialize` implementation (`Box<T>`, `Option<Box<T>>`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`, bridged via `SerializableType` at `0e8c6ba:src/io/smart_ptr.rs:930-984`) wrapped every serialize/deserialize call in `with_active_ser_ctx` / `with_active_de_ctx` + `context.run_nested`. Even when no `Rc`/`Arc` was present (`Vec<u64>`, `Vec<Vec<u32>>`), every call allocated or borrowed a thread-local `DeserializationContext` (with a `HashMap<u32, Box<dyn Any>>`), swapped a thread-local pointer twice, and ran a non-inlined closure; for `Vec<Rc<u64>>`, each element also allocated a `Box<dyn Any>` and inserted into `HashMap<u32, Box<dyn Any>>`.
-  - **Fix in `b84f34b:src/io/smart_ptr.rs:17-224` and `b84f34b:src/io/complex_types.rs:256-416`**:
+  - **Root cause**: In `3a9ca6f..125b80a`, `SerializableType for Vec<T>` (`0e8c6ba:src/io/smart_ptr.rs:890-927`), `ComplexSerialize` for `HashMap` (`0e8c6ba:src/io/complex_types.rs:251-301`), `HashSet` (`0e8c6ba:src/io/complex_types.rs:304-347`), `BTreeMap` (`0e8c6ba:src/io/complex_types.rs:350-391`), and `BTreeSet` (`0e8c6ba:src/io/complex_types.rs:394-431`), `NestedSerialize` (`0e8c6ba:src/io/complex_types.rs:716-730`), and every `SmartPtrSerialize` implementation (`Box<T>`, `Option<Box<T>>`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`, bridged via `SerializableType` at `0e8c6ba:src/io/smart_ptr.rs:930-984`) wrapped every serialize/deserialize call in `with_active_ser_ctx` / `with_active_de_ctx` + `context.run_nested`. Even when no `Rc`/`Arc` was present (`Vec<u64>`, `Vec<Vec<u32>>`), every call allocated or borrowed a thread-local `DeserializationContext` (with a `HashMap<u32, Box<dyn Any>>`), swapped a thread-local pointer twice, and ran a non-inlined closure; for `Vec<Rc<u64>>`, each element also allocated a `Box<dyn Any>` and inserted into `HashMap<u32, Box<dyn Any>>`.
+  - **Fix in `b84f34b:src/io/smart_ptr.rs:17-224` and `b84f34b:src/io/complex_types.rs:251-409`**:
     1. Added `Copy` thread-local state cells `SER_DEPTH: Cell<SerDepthState>` and `DE_DEPTH: Cell<DeDepthState>` (`b84f34b:src/io/smart_ptr.rs:28-76`) with inline RAII guards `SerDepthGuard` (`b84f34b:src/io/smart_ptr.rs:93-114`) / `DeDepthGuard` (`b84f34b:src/io/smart_ptr.rs:116-137`) and `enter_ser_depth()` (`b84f34b:src/io/smart_ptr.rs:140-155`) / `enter_de_depth()` (`b84f34b:src/io/smart_ptr.rs:158-171`) plus `enter_nested_ser_depth` (`b84f34b:src/io/smart_ptr.rs:174-197`) / `enter_nested_de_depth` (`b84f34b:src/io/smart_ptr.rs:200-223`). On the common path where no shared `Rc`/`Arc` table has been touched (`dirty_ctx == false`), entering and leaving a container or `Box<T>` is a single thread-local integer increment/decrement with no `DeserializationContext` or `HashMap` construction; when the top-level guard (`!self.prev.active`) exits after a shared pointer populated `ACTIVE_SER_CTX` / `ACTIVE_DE_CTX`, it calls the outlined `#[cold] #[inline(never)]` `clear_active_ser_ctx()` (`b84f34b:src/io/smart_ptr.rs:80-84`) / `clear_active_de_ctx()` (`b84f34b:src/io/smart_ptr.rs:87-91`).
     2. Added a dense sequential 1-based object table `dense_objects: Option<Box<dyn Any>>` (`Box<Vec<Option<T>>>`) to `DeserializationContext` (`b84f34b:src/io/smart_ptr.rs:345, 370-425`) alongside the fallback `objects: HashMap<u32, Box<dyn Any>>` for non-sequential or heterogeneous IDs, and added direct helpers `write_active_ser_id` (`b84f34b:src/io/smart_ptr.rs:593-599`), `read_active_de_id` (`b84f34b:src/io/smart_ptr.rs:602-610`), `store_active_de_object` (`b84f34b:src/io/smart_ptr.rs:613-626`), `get_active_de_object` (`b84f34b:src/io/smart_ptr.rs:629-631`), and `register_active_ser_ptr` (`b84f34b:src/io/smart_ptr.rs:634-658`).
-    3. Routed `Box<T>`, `Option<Box<T>>`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, and `ArcWeak<T>` (`SmartPtrSerialize` impls at `b84f34b:src/io/smart_ptr.rs:724-1026`, bridged via `SerializableType` at `b84f34b:src/io/smart_ptr.rs:1201-1253`), `Vec<T>` (`b84f34b:src/io/smart_ptr.rs:1167-1198`), `HashMap` (`b84f34b:src/io/complex_types.rs:256-298`), `HashSet` (`b84f34b:src/io/complex_types.rs:301-335`), `BTreeMap` (`b84f34b:src/io/complex_types.rs:338-373`), `BTreeSet` (`b84f34b:src/io/complex_types.rs:376-408`), and `NestedSerialize` (`b84f34b:src/io/complex_types.rs:708-720`) through `enter_ser_depth` / `enter_de_depth` / `enter_nested_ser_depth` / `enter_nested_de_depth`.
+    3. Routed `Box<T>`, `Option<Box<T>>`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, and `ArcWeak<T>` (`SmartPtrSerialize` impls at `b84f34b:src/io/smart_ptr.rs:724-1026`, bridged via `SerializableType` at `b84f34b:src/io/smart_ptr.rs:1201-1253`), `Vec<T>` (`b84f34b:src/io/smart_ptr.rs:1167-1198`), `HashMap` (`b84f34b:src/io/complex_types.rs:251-295`), `HashSet` (`b84f34b:src/io/complex_types.rs:298-335`), `BTreeMap` (`b84f34b:src/io/complex_types.rs:338-373`), `BTreeSet` (`b84f34b:src/io/complex_types.rs:376-409`), and `NestedSerialize` (`b84f34b:src/io/complex_types.rs:692-706`) through `enter_ser_depth` / `enter_de_depth` / `enter_nested_ser_depth` / `enter_nested_de_depth`.
   - **Measured release throughput (21-run median on AMD EPYC 7B13)**:
 
 | Workload | `db3c514` (pre-C9) | `5d35a51` (`S22`) | `cfefd93` (`S23`) | vs `db3c514` |
@@ -5889,7 +5857,7 @@ Test count drift check: PASS
 === Sanity: PASS ===
 ```
 
-## 12. Stage 10 Carry-Over Remediation (`S24`: `b8e7f8b`)
+## 12. Stage 10 Carry-Over Remediation (`S24` / `S25` / `S26`: `b8e7f8b`, `f7e39ad`, `1141a79`)
 
 ### 12.1 `b8e7f8b` — fix(io,memory): restrict dense object table to sequential IDs, pack depth state into u64, and tighten S23 tests (S24-R1, S24-R3, S24-R4)
 
@@ -5940,7 +5908,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3152 filtered out; f
 ```
 
 - **`S24-R3` (LOW — Pack `SER_DEPTH`/`DE_DEPTH` into `Cell<u64>` with zero-sized guards and `#[inline]` `SliceDataInput`/`prealloc_capacity`)**:
-  - Packed `(depth: u32, max_depth: u32, flags: u64)` into a single `Cell<u64>` in `SER_DEPTH` (`b8e7f8b:src/io/smart_ptr.rs:37`) and `DE_DEPTH` (`b8e7f8b:src/io/smart_ptr.rs:38`) with zero-sized `SerDepthGuard` (`b8e7f8b:src/io/smart_ptr.rs:83-96`) / `DeDepthGuard` (`b8e7f8b:src/io/smart_ptr.rs:98-111`) and outlined `#[cold] #[inline(never)]` `max_depth_exceeded_err` (`b8e7f8b:src/io/smart_ptr.rs:43-47`), `finish_outer_ser_depth` (`b8e7f8b:src/io/smart_ptr.rs:61-70`), and `finish_outer_de_depth` (`b8e7f8b:src/io/smart_ptr.rs:72-81`). Entering a container or `Box<T>` now increments the packed `u64` by `1`, and `Drop` decrements by `1` and checks `(next as u32) == 0 && next != INITIAL_SER_STATE` (or `INITIAL_DE_STATE`).
+  - Packed `32`-bit `depth` (bits `0..31`), `28`-bit `max_depth` (bits `32..59`), and `4` flag bits (`STATE_INSTALLED_BIT`, `STATE_DIRTY_CTX_BIT`, `STATE_COMPRESS_IDS_BIT`, `SER_DETECT_CYCLES_BIT` in bits `60..63`) into a single `Cell<u64>` in `SER_DEPTH` (`b8e7f8b:src/io/smart_ptr.rs:37`) and `DE_DEPTH` (`b8e7f8b:src/io/smart_ptr.rs:38`) with zero-sized `SerDepthGuard` (`b8e7f8b:src/io/smart_ptr.rs:83-96`) / `DeDepthGuard` (`b8e7f8b:src/io/smart_ptr.rs:98-111`) and outlined `#[cold] #[inline(never)]` `max_depth_exceeded_err` (`b8e7f8b:src/io/smart_ptr.rs:43-47`), `finish_outer_ser_depth` (`b8e7f8b:src/io/smart_ptr.rs:61-70`), and `finish_outer_de_depth` (`b8e7f8b:src/io/smart_ptr.rs:72-81`). Entering a container or `Box<T>` now increments the packed `u64` by `1`, and `Drop` decrements by `1` and checks `(next as u32) == 0 && next != INITIAL_SER_STATE` (or `INITIAL_DE_STATE`).
   - Marked `prealloc_capacity` (`b8e7f8b:src/io/data_input.rs:59-70`) and `SliceDataInput` methods (`b8e7f8b:src/io/data_input.rs:183-254`) `#[inline]`.
   - Added reproducible benchmark harness `bench_s24_r3_io_deserialize_timings` (`b8e7f8b:src/io/smart_ptr.rs:2106-2185`):
     ```text
@@ -5950,24 +5918,37 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3152 filtered out; f
     test io::smart_ptr::tests::bench_s24_r3_io_deserialize_timings ... ok
     ```
 
-- **`S24-R4` (LOW — Tighten `test_s23_r1` comment and `test_s23_r3` `InvalidParameter` assertions)**:
+- **`S24-R4` (LOW — Tighten `test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack` comment and `test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor` `InvalidParameter` assertions)**:
   - Updated the comment in `test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack` (`b8e7f8b:src/io/smart_ptr.rs:2008`) from `"// Timing check..."` to `"// Round-trip correctness check..."`.
   - Tightened `test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor` (`b8e7f8b:src/memory/mmap_vec.rs:3695-3708`) to assert `matches!(cfg.validate(), Err(ZiporaError::InvalidParameter { .. }))` and `matches!(MmapVec::<u64>::create("/nonexistent/s23_r3_never_opened.mmap", cfg), Err(ZiporaError::InvalidParameter { .. }))`.
 
 ### 12.2 `f7e39ad` — fix(io): recover S24-R3 Vec<u64> and Vec<Vec<u32>> decode speed and add s23_serialization_bench [S25-R8, S24-R2]
 
 - **`S25-R8` (MEDIUM — Recover `Vec<u64>` and `Vec<Vec<u32>>` decode speed after `S24-R3` inlining interaction)**:
-  - **Root cause**: Marking `SliceDataInput::read_u8`/`read_u16`/`read_u32`/`read_u64`/`read_bytes` `#[inline]` in `b8e7f8b:src/io/data_input.rs:212-265` while constructing `ZiporaError::io_error("Unexpected end of data")` (`String::from`) inline inside each `read_*` method caused LLVM to emit an inline heap-allocating error path and landing pad inside `Vec<T>::deserialize` (which holds `_guard: DeDepthGuard`), preventing the `Vec<u64>` and inner `Vec<u32>` loops from compiling to a non-unwinding tight loop.
+  - **Root cause**: Marking `SliceDataInput::read_u8`/`read_u16`/`read_u32`/`read_u64`/`read_bytes` `#[inline]` in `b8e7f8b:src/io/data_input.rs:212-265` while constructing `ZiporaError::io_error("Unexpected end of data")` (`String::from`) inline inside each read method caused LLVM to emit an inline heap-allocating error path and landing pad inside `Vec<T>::deserialize` (which holds `_guard: DeDepthGuard`), preventing the `Vec<u64>` and inner `Vec<u32>` loops from compiling to a non-unwinding tight loop.
   - **Fix in `f7e39ad`**:
     1. Outlined `#[cold] #[inline(never)] fn unexpected_eof_err() -> ZiporaError` (`f7e39ad:src/io/data_input.rs:213-217`) and called it from `SliceDataInput::read_u8` (`f7e39ad:src/io/data_input.rs:220-228`), `read_u16` (`f7e39ad:src/io/data_input.rs:230-238`), `read_u32` (`f7e39ad:src/io/data_input.rs:240-248`), `read_u64` (`f7e39ad:src/io/data_input.rs:250-260`), and `read_bytes` (`f7e39ad:src/io/data_input.rs:267-275`).
     2. Added `DIRTY_OUTER_SER_STATE` (`f7e39ad:src/io/smart_ptr.rs:35`) and `DIRTY_OUTER_DE_STATE` (`f7e39ad:src/io/smart_ptr.rs:36`) so `SerDepthGuard::drop` (`f7e39ad:src/io/smart_ptr.rs:80-89`) and `DeDepthGuard::drop` (`f7e39ad:src/io/smart_ptr.rs:95-104`) test `next == DIRTY_OUTER_SER_STATE` / `next == DIRTY_OUTER_DE_STATE` with a single comparison.
     3. Marked primitive and smart-pointer `SerializableType` bridge methods `#[inline]` (`f7e39ad:src/io/smart_ptr.rs:1058-1182, 1241-1304`) and split `Vec<T>::deserialize` (`f7e39ad:src/io/smart_ptr.rs:1210-1237`) into a non-unwinding `0..cap` preallocated push loop (`if vec.len() < vec.capacity() { vec.push(val); }`) plus `#[cold] #[inline(never)] fn deserialize_vec_tail` (`f7e39ad:src/io/smart_ptr.rs:1184-1195`) when `cap < len` (while preserving the 4-line `0..len` loop for `size_of::<T>() == 1`).
     4. Added `benches/s23_serialization_bench.rs` (`f7e39ad:benches/s23_serialization_bench.rs:1-82`) and registered `[[bench]] name = "s23_serialization_bench"` in `Cargo.toml` (`f7e39ad:Cargo.toml:261-263`).
-  - **Verified timings (`taskset -c 62`, 9-round minimum on AMD EPYC 7B13)**:
+  - **Verified timings (pinned to core 62, 9-round minimum on AMD EPYC 7B13)**:
     - `vec_u64_1M_de`: `0.949 ns/elem` (vs `0.99 ns` at `a8d8b39`, `1.10 ns` at `b8e7f8b`)
     - `vec_vec_u32_1000x100_de`: `111.68 ns/inner Vec` (vs `118.5 ns` at `a8d8b39`, `144.1 ns` at `b8e7f8b`)
     - `vec_vec_u8_100kx3_de`: `20.54 ns/inner Vec` (vs `26.3 ns` at `a8d8b39`, `-22%`)
     - `vec_box_u64_100k_de`: `14.94 ns/elem` (vs `21.5 ns` at `a8d8b39`, `-31%`)
-    - `vec_rc_u64_100k_de`: `23.79 ns/elem` (vs `32.2 ns` at `b8e7f8b`, `-26%`)
-    - `vec_rc_shared_100k_de`: `8.15 ns/elem` (vs `11.1 ns` at `b8e7f8b`, `-26%`)
+    - `vec_rc_u64_100k_de` (unique `Rc<u64>`): `23.79 ns/elem` (vs `32.2 ns` at `b8e7f8b`, `-26%`)
+    - Shared `Rc<u64>` (100k elements): `8.15 ns/elem` (vs `11.1 ns` at `b8e7f8b`, `-26%`)
     - `hashmap_u32_u64_100k_de`: `18.65 ns/elem`
+
+### 12.3 `1141a79` — fix(io): drop #[inline] on primitive SerializableType::serialize methods [S26-R4]
+
+- **`S26-R4` (MEDIUM — Restore `Vec<Vec<u32>>::serialize` throughput)**:
+  - **Root cause**: `f7e39ad` added `#[inline]` to 15 `SerializableType::serialize` (`f7e39ad:src/io/smart_ptr.rs:1149-1393`) methods for `i32`, `u32`, `String`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`, `Box<T>`, `u8`, `u16`, `u64`, `i8`, `i16`, `i64`, and `bool` alongside the `deserialize` methods, regressing `Vec<Vec<u32>>::serialize` (1,000 × 100 into `VecDataOutput::with_capacity`) by `+22%` (`100.9 ns/inner Vec` vs `84.7 ns/inner Vec` at `00652d2`).
+  - **Fix in `1141a79:src/io/smart_ptr.rs:1149-1378`**:
+    - Removed `#[inline]` from those 15 `SerializableType::serialize` methods (`1141a79:src/io/smart_ptr.rs:1149-1179, 1239-1378`) while keeping `#[inline]` on `SerializableType::deserialize`.
+    - Added `vec_vec_u32_1000x100_ser` to `benches/s23_serialization_bench.rs` (`1141a79:benches/s23_serialization_bench.rs:47-53`).
+  - **Measured release throughput (`cargo bench --bench s23_serialization_bench`, AMD EPYC 7B13)**:
+    - `vec_vec_u32_1000x100_ser`: `73.79 ns/inner Vec` (`73.79 µs` total, vs `100.9 ns/inner Vec` at `ee8b29a` and `84.7 ns/inner Vec` at `00652d2`)
+    - `vec_u64_1M_de`: `1.048 ns/elem` (below `1.20 ns/elem` target)
+    - `vec_vec_u32_1000x100_de`: `111.83 ns/inner Vec` (below `125 ns/inner Vec` target)
+
