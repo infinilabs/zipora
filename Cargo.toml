@@ -259,5 +259,9 @@ name = "valvec32_performance_bench"
 harness = false
 
 [[bench]]
+name = "s23_serialization_bench"
+harness = false
+
+[[bench]]
 name = "version_sync_bench"
 harness = false

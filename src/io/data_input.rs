@@ -63,7 +63,7 @@ pub(crate) fn prealloc_capacity(count: usize, elem_size: usize, remaining: Optio
         Some(r) => {
             let r_usize = usize::try_from(r).unwrap_or(usize::MAX);
             let byte_budget = r_usize.min(MAX_KNOWN_INPUT_PREALLOC);
-            count.min(byte_budget / elem_size).min(r_usize)
+            count.min(byte_budget / elem_size)
         }
         None => count.min(MAX_READ_AHEAD_ALLOC / elem_size),
     }
@@ -210,11 +210,17 @@ impl<'a> SliceDataInput<'a> {
     }
 }
 
+#[cold]
+#[inline(never)]
+fn unexpected_eof_err() -> ZiporaError {
+    ZiporaError::io_error("Unexpected end of data")
+}
+
 impl<'a> DataInput for SliceDataInput<'a> {
     #[inline]
     fn read_u8(&mut self) -> Result<u8> {
         if self.position >= self.data.len() {
-            return Err(ZiporaError::io_error("Unexpected end of data"));
+            return Err(unexpected_eof_err());
         }
         let value = self.data[self.position];
         self.position += 1;
@@ -224,7 +230,7 @@ impl<'a> DataInput for SliceDataInput<'a> {
     #[inline]
     fn read_u16(&mut self) -> Result<u16> {
         if self.position + 2 > self.data.len() {
-            return Err(ZiporaError::io_error("Unexpected end of data"));
+            return Err(unexpected_eof_err());
         }
         let bytes = &self.data[self.position..self.position + 2];
         self.position += 2;
@@ -234,7 +240,7 @@ impl<'a> DataInput for SliceDataInput<'a> {
     #[inline]
     fn read_u32(&mut self) -> Result<u32> {
         if self.position + 4 > self.data.len() {
-            return Err(ZiporaError::io_error("Unexpected end of data"));
+            return Err(unexpected_eof_err());
         }
         let bytes = &self.data[self.position..self.position + 4];
         self.position += 4;
@@ -244,7 +250,7 @@ impl<'a> DataInput for SliceDataInput<'a> {
     #[inline]
     fn read_u64(&mut self) -> Result<u64> {
         if self.position + 8 > self.data.len() {
-            return Err(ZiporaError::io_error("Unexpected end of data"));
+            return Err(unexpected_eof_err());
         }
         let bytes = &self.data[self.position..self.position + 8];
         self.position += 8;
@@ -261,7 +267,7 @@ impl<'a> DataInput for SliceDataInput<'a> {
     #[inline]
     fn read_bytes(&mut self, buf: &mut [u8]) -> Result<()> {
         if self.position + buf.len() > self.data.len() {
-            return Err(ZiporaError::io_error("Unexpected end of data"));
+            return Err(unexpected_eof_err());
         }
         buf.copy_from_slice(&self.data[self.position..self.position + buf.len()]);
         self.position += buf.len();

@@ -32,6 +32,8 @@ const SER_DETECT_CYCLES_BIT: u64 = 1 << 63;
 
 const INITIAL_SER_STATE: u64 = ((DEFAULT_MAX_DEPTH as u64) << 32) | SER_DETECT_CYCLES_BIT;
 const INITIAL_DE_STATE: u64 = (DEFAULT_MAX_DEPTH as u64) << 32;
+const DIRTY_OUTER_SER_STATE: u64 = INITIAL_SER_STATE | STATE_DIRTY_CTX_BIT;
+const DIRTY_OUTER_DE_STATE: u64 = INITIAL_DE_STATE | STATE_DIRTY_CTX_BIT;
 
 thread_local! {
     static SER_DEPTH: Cell<u64> = const { Cell::new(INITIAL_SER_STATE) };
@@ -60,24 +62,16 @@ fn clear_active_de_ctx() {
 
 #[cold]
 #[inline(never)]
-fn finish_outer_ser_depth(cell: &Cell<u64>, next: u64) {
-    if (next & STATE_INSTALLED_BIT) == 0 {
-        if (next & STATE_DIRTY_CTX_BIT) != 0 {
-            clear_active_ser_ctx();
-        }
-        cell.set(INITIAL_SER_STATE);
-    }
+fn finish_outer_ser_depth(cell: &Cell<u64>) {
+    clear_active_ser_ctx();
+    cell.set(INITIAL_SER_STATE);
 }
 
 #[cold]
 #[inline(never)]
-fn finish_outer_de_depth(cell: &Cell<u64>, next: u64) {
-    if (next & STATE_INSTALLED_BIT) == 0 {
-        if (next & STATE_DIRTY_CTX_BIT) != 0 {
-            clear_active_de_ctx();
-        }
-        cell.set(INITIAL_DE_STATE);
-    }
+fn finish_outer_de_depth(cell: &Cell<u64>) {
+    clear_active_de_ctx();
+    cell.set(INITIAL_DE_STATE);
 }
 
 pub(crate) struct SerDepthGuard;
@@ -88,8 +82,8 @@ impl Drop for SerDepthGuard {
         SER_DEPTH.with(|cell| {
             let next = cell.get() - 1;
             cell.set(next);
-            if (next as u32) == 0 && next != INITIAL_SER_STATE {
-                finish_outer_ser_depth(cell, next);
+            if next == DIRTY_OUTER_SER_STATE {
+                finish_outer_ser_depth(cell);
             }
         });
     }
@@ -103,8 +97,8 @@ impl Drop for DeDepthGuard {
         DE_DEPTH.with(|cell| {
             let next = cell.get() - 1;
             cell.set(next);
-            if (next as u32) == 0 && next != INITIAL_DE_STATE {
-                finish_outer_de_depth(cell, next);
+            if next == DIRTY_OUTER_DE_STATE {
+                finish_outer_de_depth(cell);
             }
         });
     }
@@ -1152,33 +1146,52 @@ impl SmartPtrSerializer {
 
 // Implementations for basic types to make them SerializableType
 impl SerializableType for i32 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(*self as u32)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u32()? as i32)
     }
 }
 
 impl SerializableType for u32 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(*self)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u32()
     }
 }
 
 impl SerializableType for String {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_length_prefixed_string(self)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_length_prefixed_string()
     }
+}
+
+#[cold]
+#[inline(never)]
+fn deserialize_vec_tail<T: SerializableType, I: DataInput>(
+    vec: &mut Vec<T>,
+    input: &mut I,
+    remaining_elems: usize,
+) -> Result<()> {
+    for _ in 0..remaining_elems {
+        vec.push(T::deserialize(input)?);
+    }
+    Ok(())
 }
 
 impl<T: SerializableType> SerializableType for Vec<T> {
@@ -1194,6 +1207,7 @@ impl<T: SerializableType> SerializableType for Vec<T> {
         Ok(())
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         let len = input.read_u32()? as usize;
         if len == 0 {
@@ -1202,13 +1216,22 @@ impl<T: SerializableType> SerializableType for Vec<T> {
         let _guard = enter_de_depth()?;
         // `len` is untrusted: reserve within the read-ahead budget and let
         // the vector grow as elements arrive.
-        let mut vec = Vec::with_capacity(prealloc_capacity(
-            len,
-            std::mem::size_of::<T>(),
-            input.remaining_bytes(),
-        ));
-        for _ in 0..len {
-            vec.push(T::deserialize(input)?);
+        let cap = prealloc_capacity(len, std::mem::size_of::<T>(), input.remaining_bytes());
+        let mut vec = Vec::with_capacity(cap);
+        if std::mem::size_of::<T>() == 1 {
+            for _ in 0..len {
+                vec.push(T::deserialize(input)?);
+            }
+            return Ok(vec);
+        }
+        for _ in 0..cap {
+            let val = T::deserialize(input)?;
+            if vec.len() < vec.capacity() {
+                vec.push(val);
+            }
+        }
+        if cap < len {
+            deserialize_vec_tail(&mut vec, input, len - cap)?;
         }
         Ok(vec)
     }
@@ -1216,10 +1239,12 @@ impl<T: SerializableType> SerializableType for Vec<T> {
 
 // Bridge implementation for Rc<T>
 impl<T: SerializableType> SerializableType for Rc<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         <Self as SmartPtrSerialize<T>>::deserialize(input)
     }
@@ -1227,10 +1252,12 @@ impl<T: SerializableType> SerializableType for Rc<T> {
 
 // Bridge implementation for Arc<T> - requires Send + Sync for thread safety
 impl<T: SerializableType + Send + Sync> SerializableType for Arc<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         <Self as SmartPtrSerialize<T>>::deserialize(input)
     }
@@ -1238,10 +1265,12 @@ impl<T: SerializableType + Send + Sync> SerializableType for Arc<T> {
 
 // Bridge implementation for RcWeak<T>
 impl<T: SerializableType> SerializableType for RcWeak<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         <Self as SmartPtrSerialize<T>>::deserialize(input)
     }
@@ -1249,10 +1278,12 @@ impl<T: SerializableType> SerializableType for RcWeak<T> {
 
 // Bridge implementation for ArcWeak<T>
 impl<T: SerializableType + Send + Sync> SerializableType for ArcWeak<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         <Self as SmartPtrSerialize<T>>::deserialize(input)
     }
@@ -1260,10 +1291,12 @@ impl<T: SerializableType + Send + Sync> SerializableType for ArcWeak<T> {
 
 // Bridge implementation for Box<T>
 impl<T: SerializableType> SerializableType for Box<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         <Self as SmartPtrSerialize<T>>::deserialize(input)
     }
@@ -1271,70 +1304,84 @@ impl<T: SerializableType> SerializableType for Box<T> {
 
 // Implement for primitive types using available DataInput/DataOutput methods
 impl SerializableType for u8 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(*self)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u8()
     }
 }
 
 impl SerializableType for u16 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u16(*self)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u16()
     }
 }
 
 impl SerializableType for u64 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u64(*self)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u64()
     }
 }
 
 impl SerializableType for i8 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(*self as u8)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u8()? as i8)
     }
 }
 
 impl SerializableType for i16 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u16(*self as u16)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u16()? as i16)
     }
 }
 
 impl SerializableType for i64 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u64(*self as u64)
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u64()? as i64)
     }
 }
 
 impl SerializableType for bool {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(if *self { 1 } else { 0 })
     }
 
+    #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         // `serialize` writes only 0 or 1; any other byte is corrupt input.
         match input.read_u8()? {
