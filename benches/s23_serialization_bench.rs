@@ -44,6 +44,13 @@ fn bench_s23_serialization(c: &mut Criterion) {
             black_box(Vec::<Vec<u32>>::deserialize(&mut input).unwrap())
         });
     });
+    group.bench_function("vec_vec_u32_1000x100_ser", |b| {
+        b.iter(|| {
+            let mut output = VecDataOutput::with_capacity(4 + 1_000 * 404);
+            black_box(&vec_vec_u32).serialize(&mut output).unwrap();
+            black_box(output)
+        });
+    });
 
     let vec_vec_u8: Vec<Vec<u8>> = (0..100_000u32).map(|i| vec![i as u8; 3]).collect();
     let bytes_vv8 = serialize_bytes(&vec_vec_u8);

@@ -1146,7 +1146,6 @@ impl SmartPtrSerializer {
 
 // Implementations for basic types to make them SerializableType
 impl SerializableType for i32 {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(*self as u32)
     }
@@ -1158,7 +1157,6 @@ impl SerializableType for i32 {
 }
 
 impl SerializableType for u32 {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(*self)
     }
@@ -1170,7 +1168,6 @@ impl SerializableType for u32 {
 }
 
 impl SerializableType for String {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_length_prefixed_string(self)
     }
@@ -1239,7 +1236,6 @@ impl<T: SerializableType> SerializableType for Vec<T> {
 
 // Bridge implementation for Rc<T>
 impl<T: SerializableType> SerializableType for Rc<T> {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
@@ -1252,7 +1248,6 @@ impl<T: SerializableType> SerializableType for Rc<T> {
 
 // Bridge implementation for Arc<T> - requires Send + Sync for thread safety
 impl<T: SerializableType + Send + Sync> SerializableType for Arc<T> {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
@@ -1265,7 +1260,6 @@ impl<T: SerializableType + Send + Sync> SerializableType for Arc<T> {
 
 // Bridge implementation for RcWeak<T>
 impl<T: SerializableType> SerializableType for RcWeak<T> {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
@@ -1278,7 +1272,6 @@ impl<T: SerializableType> SerializableType for RcWeak<T> {
 
 // Bridge implementation for ArcWeak<T>
 impl<T: SerializableType + Send + Sync> SerializableType for ArcWeak<T> {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
@@ -1291,7 +1284,6 @@ impl<T: SerializableType + Send + Sync> SerializableType for ArcWeak<T> {
 
 // Bridge implementation for Box<T>
 impl<T: SerializableType> SerializableType for Box<T> {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
@@ -1304,7 +1296,6 @@ impl<T: SerializableType> SerializableType for Box<T> {
 
 // Implement for primitive types using available DataInput/DataOutput methods
 impl SerializableType for u8 {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(*self)
     }
@@ -1316,7 +1307,6 @@ impl SerializableType for u8 {
 }
 
 impl SerializableType for u16 {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u16(*self)
     }
@@ -1328,7 +1318,6 @@ impl SerializableType for u16 {
 }
 
 impl SerializableType for u64 {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u64(*self)
     }
@@ -1340,7 +1329,6 @@ impl SerializableType for u64 {
 }
 
 impl SerializableType for i8 {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(*self as u8)
     }
@@ -1352,7 +1340,6 @@ impl SerializableType for i8 {
 }
 
 impl SerializableType for i16 {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u16(*self as u16)
     }
@@ -1364,7 +1351,6 @@ impl SerializableType for i16 {
 }
 
 impl SerializableType for i64 {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u64(*self as u64)
     }
@@ -1376,7 +1362,6 @@ impl SerializableType for i64 {
 }
 
 impl SerializableType for bool {
-    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(if *self { 1 } else { 0 })
     }
@@ -2196,6 +2181,11 @@ mod tests {
             let mut input = SliceDataInput::new(black_box(&bytes_vv32));
             Vec::<Vec<u32>>::deserialize(&mut input).unwrap()
         });
+        let ns_vv32_ser = median_ns_per_op(21, 1_000, || {
+            let mut out = VecDataOutput::with_capacity(4 + 1_000 * 404);
+            black_box(&vec_vec_u32).serialize(&mut out).unwrap();
+            out
+        });
 
         // 4. Vec<Vec<u8>> (100,000 x 3)
         let vec_vec_u8: Vec<Vec<u8>> = (0..100_000u32)
@@ -2220,7 +2210,7 @@ mod tests {
         });
 
         println!(
-            "S24-R3 timings: Vec<u64>={ns_u64:.3} ns/elem | Vec<Rc<u64>>={ns_rc:.2} ns/elem | Vec<Vec<u32>>={ns_vv32:.1} ns/inner | Vec<Vec<u8>>(100kx3)={ns_vv8:.2} ns/inner | Vec<Box<u64>>={ns_box:.2} ns/elem"
+            "S24-R3 timings: Vec<u64>={ns_u64:.3} ns/elem | Vec<Rc<u64>>={ns_rc:.2} ns/elem | Vec<Vec<u32>> de={ns_vv32:.1} ns/inner ser={ns_vv32_ser:.1} ns/inner | Vec<Vec<u8>>(100kx3)={ns_vv8:.2} ns/inner | Vec<Box<u64>>={ns_box:.2} ns/elem"
         );
     }
 }
