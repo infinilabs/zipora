@@ -28,22 +28,92 @@ where
     _cleanup: Arc<CleanupHandle<T, ROWS, COLS>>,
 }
 
-/// A row of the per-thread matrix, allocated lazily on the heap as a boxed slice of length `COLS`.
+/// A cell of the per-thread matrix, allocated lazily on the heap inside a boxed row slice of length `COLS`.
 ///
 /// Each cell carries the generation of the instance that wrote it. Ids are
 /// recycled when an instance is dropped, but the dropping thread can only
 /// reach its own matrix, so every other thread still holds the dead
 /// instance's value in the cell the recycled id now maps to. Tagging the
 /// value makes those leftovers invisible without sweeping anything.
-type TlsCell<T> = UnsafeCell<Option<(u32, T)>>;
-
-/// Matrix storage for thread-local data.
 ///
-/// Rows are allocated lazily on the heap (`Vec` of raw boxed-slice pointers) so
-/// large `ROWS` or `COLS` const generics never allocate multi-megabyte arrays on
-/// the stack, and resizing `rows` never invalidates pointers to existing cells.
+/// `readers` counts active in-place `T::clone()` shared borrows of `value` on this cell.
+/// While `readers > 0`, `value` is only accessed via shared references `&Option<(u32, T)>`;
+/// any re-entrant `set`, `remove`, or `CleanupHandle::drop` on the same cell records its
+/// update in `TlsMatrix::deferred` to be applied once `readers` returns to `0`.
+struct TlsCell<T> {
+    readers: std::cell::Cell<u32>,
+    value: UnsafeCell<Option<(u32, T)>>,
+}
+
+impl<T> TlsCell<T> {
+    #[inline(always)]
+    const fn new() -> Self {
+        Self {
+            readers: std::cell::Cell::new(0),
+            value: UnsafeCell::new(None),
+        }
+    }
+}
+
+type DeferredCellWrite<T> = (*const TlsCell<T>, Option<(u32, T)>);
+
+/// Matrix storage for thread-local data (`Vec` of lazy heap-allocated row slices
+/// so large `ROWS`/`COLS` never allocate on the stack or invalidate cell pointers).
 struct TlsMatrix<T, const ROWS: usize, const COLS: usize> {
-    rows: Vec<Option<*mut [TlsCell<T>]>>,
+    rows: UnsafeCell<Vec<Option<*mut [TlsCell<T>]>>>,
+    deferred: UnsafeCell<Vec<DeferredCellWrite<T>>>,
+}
+
+struct CellReadGuard<T, const ROWS: usize, const COLS: usize> {
+    matrix_ptr: *const TlsMatrix<T, ROWS, COLS>,
+    cell_ptr: *const TlsCell<T>,
+}
+
+impl<T, const ROWS: usize, const COLS: usize> Drop for CellReadGuard<T, ROWS, COLS> {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `cell_ptr` and `matrix_ptr` are owned by the current thread and remain valid
+        // for the lifetime of the thread's `TlsMatrix`.
+        unsafe {
+            let r = (*self.cell_ptr).readers.get() - 1;
+            (*self.cell_ptr).readers.set(r);
+            if r == 0 && !(&*(*self.matrix_ptr).deferred.get()).is_empty() {
+                (&*self.matrix_ptr).apply_deferred(self.cell_ptr);
+            }
+        }
+    }
+}
+
+// SAFETY: Caller must ensure `matrix_ptr` and `cell_ptr` are valid on the current thread and
+// that `(*cell_ptr).value` currently contains `Some((generation, _))`.
+#[inline(always)]
+unsafe fn clone_cell_in_place<T: Clone, const ROWS: usize, const COLS: usize>(
+    matrix_ptr: *const TlsMatrix<T, ROWS, COLS>,
+    cell_ptr: *const TlsCell<T>,
+) -> T {
+    // SAFETY: `cell_ptr` is valid on the current thread.
+    let r = unsafe { (*cell_ptr).readers.get() };
+    // SAFETY: `cell_ptr` is valid on the current thread.
+    unsafe { (*cell_ptr).readers.set(r + 1) };
+    let guard = CellReadGuard {
+        matrix_ptr,
+        cell_ptr,
+    };
+    let cloned = {
+        // SAFETY: While `readers > 0`, no mutable reference to `(*cell_ptr).value` is created
+        // (any re-entrant write to this cell is queued in `matrix.deferred`), so this shared
+        // borrow `&T` remains valid throughout `val_ref.clone()`, including across re-entrant
+        // `get()` / `get_value()` shared reads on the same cell.
+        let val_ref: &T = unsafe {
+            match (&*(*cell_ptr).value.get()).as_ref() {
+                Some((_, v)) => v,
+                None => unreachable!(),
+            }
+        };
+        val_ref.clone()
+    };
+    drop(guard);
+    cloned
 }
 
 // SAFETY: `drop_fn` is only called on `ptr` created by `Box::into_raw` for the matching `TlsMatrix`.
@@ -70,12 +140,12 @@ impl TlsMatrices {
     #[inline(always)]
     fn get_or_init_matrix<T: 'static, const ROWS: usize, const COLS: usize>(
         &self,
-    ) -> Option<*mut TlsMatrix<T, ROWS, COLS>> {
+    ) -> Option<*const TlsMatrix<T, ROWS, COLS>> {
         let type_id = TypeId::of::<TlsMatrix<T, ROWS, COLS>>();
         if let Some((cached_id, cached_ptr)) = self.last.get()
             && cached_id == type_id
         {
-            return Some(cached_ptr as *mut TlsMatrix<T, ROWS, COLS>);
+            return Some(cached_ptr as *const TlsMatrix<T, ROWS, COLS>);
         }
         self.get_or_init_matrix_slow::<T, ROWS, COLS>(type_id)
     }
@@ -85,7 +155,7 @@ impl TlsMatrices {
     fn get_or_init_matrix_slow<T: 'static, const ROWS: usize, const COLS: usize>(
         &self,
         type_id: TypeId,
-    ) -> Option<*mut TlsMatrix<T, ROWS, COLS>> {
+    ) -> Option<*const TlsMatrix<T, ROWS, COLS>> {
         unsafe fn drop_matrix<T, const ROWS: usize, const COLS: usize>(ptr: *mut ()) {
             // SAFETY: `ptr` was allocated via `Box::into_raw(Box::new(TlsMatrix::<T, ROWS, COLS>::new()))`.
             unsafe {
@@ -104,24 +174,24 @@ impl TlsMatrices {
         let ptr = entry.ptr;
         drop(map);
         self.last.set(Some((type_id, ptr)));
-        Some(ptr as *mut TlsMatrix<T, ROWS, COLS>)
+        Some(ptr as *const TlsMatrix<T, ROWS, COLS>)
     }
 
     #[inline(always)]
     fn lookup_matrix<T: 'static, const ROWS: usize, const COLS: usize>(
         &self,
-    ) -> Option<*mut TlsMatrix<T, ROWS, COLS>> {
+    ) -> Option<*const TlsMatrix<T, ROWS, COLS>> {
         let type_id = TypeId::of::<TlsMatrix<T, ROWS, COLS>>();
         if let Some((cached_id, cached_ptr)) = self.last.get()
             && cached_id == type_id
         {
-            return Some(cached_ptr as *mut TlsMatrix<T, ROWS, COLS>);
+            return Some(cached_ptr as *const TlsMatrix<T, ROWS, COLS>);
         }
         let map = self.map.try_borrow().ok()?;
         let ptr = map.get(&type_id)?.ptr;
         drop(map);
         self.last.set(Some((type_id, ptr)));
-        Some(ptr as *mut TlsMatrix<T, ROWS, COLS>)
+        Some(ptr as *const TlsMatrix<T, ROWS, COLS>)
     }
 }
 
@@ -252,51 +322,48 @@ where
                     return T::default();
                 };
                 // SAFETY: `matrix_ptr` is owned by the current thread's `TLS_MATRICES`, and
-                // `ensure_cell` returns a stable heap pointer into the row's boxed slice
-                // before ending the `&mut TlsMatrix` borrow.
-                let cell_ptr = unsafe { (*matrix_ptr).ensure_cell(row, col) };
+                // `ensure_cell` returns a stable heap pointer into the row's boxed slice.
+                let cell_ptr = unsafe { (&*matrix_ptr).ensure_cell(row, col) };
 
-                // Temporarily take the entry out of `*cell_ptr` while calling `T::clone()`
-                // (or `T::default()`) so that no reference into `TlsMatrix` or `*cell_ptr`
-                // is live if `T::clone()`, `T::default()`, or `T::drop()` re-entrantly
-                // accesses any `InstanceTls` (including `self`).
-                // SAFETY: `cell_ptr` is valid on this thread and not aliased.
-                let existing = unsafe { (*cell_ptr).take() };
-                match existing {
-                    Some((stored, val)) if stored == generation => {
-                        let cloned = val.clone();
-                        // SAFETY: `cell_ptr` remains valid for the lifetime of the thread's
-                        // `TlsMatrix`; only restore `val` if a re-entrant `Clone` did not
-                        // overwrite the cell.
-                        let displaced = unsafe {
-                            if (*cell_ptr).is_none() {
-                                *cell_ptr = Some((stored, val));
-                                None
-                            } else {
-                                Some(val)
-                            }
-                        };
-                        drop(displaced);
-                        cloned
-                    }
-                    stale => {
-                        drop(stale);
-                        let default_val = T::default();
-                        let cloned = default_val.clone();
-                        // SAFETY: `cell_ptr` remains valid; store `default_val` unless a
-                        // re-entrant `Default`/`Clone` already populated the cell.
-                        let displaced = unsafe {
-                            if (*cell_ptr).is_none() {
-                                *cell_ptr = Some((generation, default_val));
-                                None
-                            } else {
-                                Some(default_val)
-                            }
-                        };
-                        drop(displaced);
-                        cloned
-                    }
+                // SAFETY: If `readers > 0`, `value` is only read via shared reference; if
+                // `readers == 0`, no reference to `value` exists on the stack.
+                let is_hit = unsafe {
+                    (&*(*cell_ptr).value.get())
+                        .as_ref()
+                        .is_some_and(|(stored, _)| *stored == generation)
+                };
+                if is_hit {
+                    // SAFETY: `cell_ptr` contains `Some((generation, _))` and `matrix_ptr` is valid.
+                    return unsafe { clone_cell_in_place(matrix_ptr, cell_ptr) };
                 }
+
+                // Cold miss or stale-generation path: evict any stale value (when no reader is
+                // active on this cell) before invoking `T::default()` / `T::clone()`.
+                // SAFETY: When `readers == 0`, no reference into `(*cell_ptr).value` is live.
+                let stale = unsafe {
+                    if (*cell_ptr).readers.get() == 0 {
+                        (&mut *(*cell_ptr).value.get()).take()
+                    } else {
+                        None
+                    }
+                };
+                drop(stale);
+
+                let default_val = T::default();
+                let cloned = default_val.clone();
+                // SAFETY: `cell_ptr` remains valid; store `default_val` only if no re-entrant
+                // call during `T::default()` / `T::clone()` populated the cell.
+                let displaced = unsafe {
+                    let slot = &mut *(*cell_ptr).value.get();
+                    if (*cell_ptr).readers.get() == 0 && slot.is_none() {
+                        *slot = Some((generation, default_val));
+                        None
+                    } else {
+                        Some(default_val)
+                    }
+                };
+                drop(displaced);
+                cloned
             })
             .unwrap_or_else(|_| T::default())
     }
@@ -313,32 +380,19 @@ where
         TLS_MATRICES
             .try_with(|tls| {
                 let matrix_ptr = tls.lookup_matrix::<T, ROWS, COLS>()?;
-                // SAFETY: `matrix_ptr` is valid on the current thread; borrow ends immediately.
-                let cell_ptr = unsafe { (*matrix_ptr).lookup_cell(row, col)? };
-                // SAFETY: `cell_ptr` is valid and unaliased on this thread.
+                // SAFETY: `matrix_ptr` is valid on the current thread.
+                let cell_ptr = unsafe { (&*matrix_ptr).lookup_cell(row, col)? };
+                // SAFETY: Shared inspection of `(*cell_ptr).value` on the current thread.
                 let matches = unsafe {
-                    (*cell_ptr)
+                    (&*(*cell_ptr).value.get())
                         .as_ref()
                         .is_some_and(|(stored, _)| *stored == generation)
                 };
                 if !matches {
                     return None;
                 }
-                // Take before cloning so re-entrant `T::clone()` cannot alias `*cell_ptr`.
-                // SAFETY: `cell_ptr` is valid and unaliased.
-                let (stored, val) = unsafe { (*cell_ptr).take()? };
-                let cloned = val.clone();
-                // SAFETY: `cell_ptr` remains valid on this thread.
-                let displaced = unsafe {
-                    if (*cell_ptr).is_none() {
-                        *cell_ptr = Some((stored, val));
-                        None
-                    } else {
-                        Some(val)
-                    }
-                };
-                drop(displaced);
-                Some(cloned)
+                // SAFETY: `cell_ptr` contains `Some((generation, _))` and `matrix_ptr` is valid.
+                Some(unsafe { clone_cell_in_place(matrix_ptr, cell_ptr) })
             })
             .ok()
             .flatten()
@@ -361,11 +415,18 @@ where
         let evicted = TLS_MATRICES
             .try_with(|tls| {
                 let matrix_ptr = tls.get_or_init_matrix::<T, ROWS, COLS>()?;
-                // SAFETY: `matrix_ptr` is valid on the current thread; borrow ends immediately.
-                let cell_ptr = unsafe { (*matrix_ptr).ensure_cell(row, col) };
-                // SAFETY: `cell_ptr` is valid and unaliased; any old value is returned to be
-                // dropped outside `try_with`.
-                unsafe { (*cell_ptr).replace((generation, value)) }
+                // SAFETY: `matrix_ptr` is valid on the current thread.
+                let cell_ptr = unsafe { (&*matrix_ptr).ensure_cell(row, col) };
+                // SAFETY: If `readers == 0`, no shared borrow of `(*cell_ptr).value` is active;
+                // otherwise queue the update in `matrix.deferred` until the active clone finishes.
+                unsafe {
+                    if (*cell_ptr).readers.get() == 0 {
+                        (&mut *(*cell_ptr).value.get()).replace((generation, value))
+                    } else {
+                        (&*matrix_ptr).defer_write(cell_ptr, Some((generation, value)));
+                        None
+                    }
+                }
             })
             .ok()
             .flatten();
@@ -381,15 +442,19 @@ where
             .try_with(|tls| {
                 let matrix_ptr = tls.lookup_matrix::<T, ROWS, COLS>()?;
                 // SAFETY: `matrix_ptr` is valid on the current thread.
-                let cell_ptr = unsafe { (*matrix_ptr).lookup_cell(row, col)? };
-                // SAFETY: `cell_ptr` is valid and unaliased on this thread.
+                let cell_ptr = unsafe { (&*matrix_ptr).lookup_cell(row, col)? };
+                // SAFETY: If `readers == 0`, no shared borrow of `(*cell_ptr).value` is active;
+                // otherwise defer clearing the cell until the active clone finishes.
                 unsafe {
-                    if (*cell_ptr)
-                        .as_ref()
-                        .is_some_and(|(stored, _)| *stored == generation)
-                    {
-                        (*cell_ptr).take().map(|(_, v)| v)
+                    if (*cell_ptr).readers.get() == 0 {
+                        let slot = &mut *(*cell_ptr).value.get();
+                        if slot.as_ref().is_some_and(|(stored, _)| *stored == generation) {
+                            slot.take().map(|(_, v)| v)
+                        } else {
+                            None
+                        }
                     } else {
+                        (&*matrix_ptr).defer_write(cell_ptr, None);
                         None
                     }
                 }
@@ -512,47 +577,94 @@ where
 impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
     /// Create a new TLS matrix with no rows allocated yet.
     fn new() -> Self {
-        Self { rows: Vec::new() }
+        Self {
+            rows: UnsafeCell::new(Vec::new()),
+            deferred: UnsafeCell::new(Vec::new()),
+        }
     }
 
     #[cold]
     #[inline(never)]
-    fn alloc_row(&mut self, row: usize) -> *mut [TlsCell<T>] {
-        if row >= self.rows.len() {
-            self.rows.resize(row + 1, None);
-        }
+    fn alloc_row(&self, row: usize) -> *mut [TlsCell<T>] {
         let mut cells = Vec::with_capacity(COLS);
-        cells.resize_with(COLS, || UnsafeCell::new(None));
+        cells.resize_with(COLS, TlsCell::new);
         let ptr = Box::into_raw(cells.into_boxed_slice());
-        self.rows[row] = Some(ptr);
+        // SAFETY: `self.rows` is only accessed on the owning thread and is not borrowed across calls.
+        unsafe {
+            let rows = &mut *self.rows.get();
+            if row >= rows.len() {
+                rows.resize(row + 1, None);
+            }
+            rows[row] = Some(ptr);
+        }
         ptr
     }
 
-    /// Return a raw pointer to the `(row, col)` option slot, allocating the row on demand.
+    /// Return a raw pointer to the `(row, col)` cell, allocating the row on demand.
     #[inline(always)]
-    fn ensure_cell(&mut self, row: usize, col: usize) -> *mut Option<(u32, T)> {
-        let row_ptr = match self.rows.get(row).copied().flatten() {
+    fn ensure_cell(&self, row: usize, col: usize) -> *const TlsCell<T> {
+        // SAFETY: `self.rows` is only accessed on the owning thread; borrow ends before `alloc_row`.
+        let existing_row = unsafe { (&*self.rows.get()).get(row).copied().flatten() };
+        let row_ptr = match existing_row {
             Some(ptr) => ptr,
             None => self.alloc_row(row),
         };
         // SAFETY: `row_ptr` points to a heap-allocated `[TlsCell<T>]` of length `COLS`
         // and `col < COLS` is guaranteed by `get_indices()`.
-        unsafe { (*row_ptr)[col].get() }
+        unsafe { &raw const (*row_ptr)[col] }
     }
 
-    /// Return a raw pointer to the `(row, col)` option slot if the row has been allocated.
+    /// Return a raw pointer to the `(row, col)` cell if the row has been allocated.
     #[inline(always)]
-    fn lookup_cell(&self, row: usize, col: usize) -> Option<*mut Option<(u32, T)>> {
-        let row_ptr = (*self.rows.get(row)?)?;
+    fn lookup_cell(&self, row: usize, col: usize) -> Option<*const TlsCell<T>> {
+        // SAFETY: `self.rows` is only accessed on the owning thread.
+        let row_ptr = unsafe { (&*self.rows.get()).get(row).copied().flatten()? };
         // SAFETY: `row_ptr` points to a heap-allocated `[TlsCell<T>]` of length `COLS`
         // and `col < COLS` is guaranteed by `get_indices()`.
-        Some(unsafe { (*row_ptr)[col].get() })
+        Some(unsafe { &raw const (*row_ptr)[col] })
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn defer_write(&self, cell_ptr: *const TlsCell<T>, next: Option<(u32, T)>) {
+        // SAFETY: `self.deferred` is only accessed on the owning thread; any displaced
+        // pending value is extracted before dropping outside the borrow.
+        let replaced = unsafe {
+            let deferred = &mut *self.deferred.get();
+            if let Some(slot) = deferred.iter_mut().find(|(c, _)| *c == cell_ptr) {
+                std::mem::replace(&mut slot.1, next)
+            } else {
+                deferred.push((cell_ptr, next));
+                None
+            }
+        };
+        drop(replaced);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn apply_deferred(&self, cell_ptr: *const TlsCell<T>) {
+        // SAFETY: Called only when `(*cell_ptr).readers.get() == 0` after all shared borrows
+        // of `(*cell_ptr).value` have ended.
+        let pending = unsafe {
+            let deferred = &mut *self.deferred.get();
+            deferred
+                .iter()
+                .position(|(c, _)| *c == cell_ptr)
+                .map(|idx| deferred.remove(idx).1)
+        };
+        if let Some(next_val) = pending {
+            // SAFETY: `readers == 0` on `cell_ptr`; extract old value to drop outside borrow.
+            let old = unsafe { std::mem::replace(&mut *(*cell_ptr).value.get(), next_val) };
+            drop(old);
+        }
     }
 }
 
 impl<T, const ROWS: usize, const COLS: usize> Drop for TlsMatrix<T, ROWS, COLS> {
     fn drop(&mut self) {
-        for row_opt in &mut self.rows {
+        self.deferred.get_mut().clear();
+        for row_opt in self.rows.get_mut() {
             if let Some(row_ptr) = row_opt.take() {
                 // SAFETY: `row_ptr` was allocated via `Box::into_raw` in `alloc_row` and is
                 // owned exclusively by this `TlsMatrix`.
@@ -564,7 +676,7 @@ impl<T, const ROWS: usize, const COLS: usize> Drop for TlsMatrix<T, ROWS, COLS> 
     }
 }
 
-// SAFETY: TlsMatrix owns heap-allocated row slices of `UnsafeCell<Option<(u32, T)>>` and is only
+// SAFETY: TlsMatrix owns heap-allocated row slices of `TlsCell<T>` and is only
 // accessed from its owning thread; transferring ownership across threads is safe when `T: Send`.
 unsafe impl<T: Send, const ROWS: usize, const COLS: usize> Send for TlsMatrix<T, ROWS, COLS> {}
 
@@ -581,15 +693,19 @@ impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop
                 .try_with(|tls| {
                     let matrix_ptr = tls.lookup_matrix::<T, ROWS, COLS>()?;
                     // SAFETY: `matrix_ptr` is valid on the current thread.
-                    let cell_ptr = unsafe { (*matrix_ptr).lookup_cell(row, col)? };
-                    // SAFETY: `cell_ptr` is valid and unaliased on this thread.
+                    let cell_ptr = unsafe { (&*matrix_ptr).lookup_cell(row, col)? };
+                    // SAFETY: If `readers == 0`, no shared borrow of `(*cell_ptr).value` is active;
+                    // otherwise defer clearing the cell until the active clone finishes.
                     unsafe {
-                        if (*cell_ptr)
-                            .as_ref()
-                            .is_some_and(|(stored, _)| *stored == generation)
-                        {
-                            (*cell_ptr).take().map(|(_, v)| v)
+                        if (*cell_ptr).readers.get() == 0 {
+                            let slot = &mut *(*cell_ptr).value.get();
+                            if slot.as_ref().is_some_and(|(stored, _)| *stored == generation) {
+                                slot.take().map(|(_, v)| v)
+                            } else {
+                                None
+                            }
                         } else {
+                            (&*matrix_ptr).defer_write(cell_ptr, None);
                             None
                         }
                     }
@@ -1062,16 +1178,45 @@ mod tests {
             }
         }
 
-        // Default matrix is 256x256 = 65,536 cells; churning 70,000 instances
-        // exercises wrap-around ID recycling on the default dimensions.
-        let n = if cfg!(miri) { 64 } else { 70_000 };
-        for i in 0..n {
+        // Default matrix is 256x256 = 65,536 cells. Hold `cap` live instances
+        // simultaneously so every ID in `0..cap` is allocated (and a `cap + 1`th
+        // allocation on the full matrix returns `Err`), then drop all `cap` and
+        // allocate `extra` recycled instances (70,000 total in non-Miri builds).
+        let (cap, extra) = if cfg!(miri) {
+            (32, 32)
+        } else {
+            (256 * 256, 70_000 - 256 * 256)
+        };
+        let mut live = Vec::with_capacity(cap);
+        for i in 0..cap {
             let tls = InstanceTls::<CountedA1>::new().unwrap();
             tls.set(CountedA1({
                 LIVE_A1.fetch_add(1, Ordering::Relaxed);
                 i as u64
             }));
             assert_eq!(tls.get().0, i as u64);
+            live.push(tls);
+        }
+        if !cfg!(miri) {
+            assert!(
+                InstanceTls::<CountedA1>::new().is_err(),
+                "65,537th live instance on a full 256x256 matrix must return Err"
+            );
+        }
+        drop(live);
+        assert_eq!(
+            LIVE_A1.load(Ordering::Relaxed),
+            0,
+            "dropping all 65,536 live instances must drop their stored values"
+        );
+        for i in 0..extra {
+            let val = (cap + i) as u64;
+            let tls = InstanceTls::<CountedA1>::new().unwrap();
+            tls.set(CountedA1({
+                LIVE_A1.fetch_add(1, Ordering::Relaxed);
+                val
+            }));
+            assert_eq!(tls.get().0, val);
             drop(tls);
         }
         assert_eq!(
@@ -1207,5 +1352,117 @@ mod tests {
         let large_tls = InstanceTls::<u64, 4_000_000, 1>::new().unwrap();
         large_tls.set(0xDEAD_BEEF);
         assert_eq!(large_tls.get(), 0xDEAD_BEEF);
+    }
+
+    #[test]
+    fn test_s26_r2_reentrant_same_instance_get_and_get_value_in_clone() {
+        use std::cell::Cell;
+
+        thread_local! {
+            static ENTERED_GET: Cell<bool> = const { Cell::new(false) };
+            static ENTERED_GET_VALUE: Cell<bool> = const { Cell::new(false) };
+        }
+
+        #[derive(Default)]
+        struct SelfGet(u64, Option<Arc<InstanceTls<SelfGet, 4, 4>>>);
+        impl Clone for SelfGet {
+            fn clone(&self) -> Self {
+                if let Some(ref tls) = self.1
+                    && !ENTERED_GET.with(|c| c.replace(true))
+                {
+                    let inner = tls.get();
+                    assert_eq!(
+                        inner.0, self.0,
+                        "re-entrant get() on the same InstanceTls must read the stored value"
+                    );
+                }
+                Self(self.0, self.1.clone())
+            }
+        }
+
+        let tls1 = Arc::new(InstanceTls::<SelfGet, 4, 4>::new().unwrap());
+        tls1.set(SelfGet(5, Some(Arc::clone(&tls1))));
+        let out1 = tls1.get();
+        assert_eq!(out1.0, 5);
+        assert_eq!(
+            tls1.get_value().map(|v| v.0),
+            Some(5),
+            "re-entrant get() during Clone must not overwrite stored value with T::default()"
+        );
+
+        #[derive(Default)]
+        struct SelfGetValue(u64, Option<Arc<InstanceTls<SelfGetValue, 4, 4>>>);
+        impl Clone for SelfGetValue {
+            fn clone(&self) -> Self {
+                if let Some(ref tls) = self.1
+                    && !ENTERED_GET_VALUE.with(|c| c.replace(true))
+                {
+                    let inner = tls.get_value().expect(
+                        "re-entrant get_value() on the same InstanceTls must return Some",
+                    );
+                    assert_eq!(inner.0, self.0);
+                }
+                Self(self.0, self.1.clone())
+            }
+        }
+
+        let tls2 = Arc::new(InstanceTls::<SelfGetValue, 4, 4>::new().unwrap());
+        tls2.set(SelfGetValue(5, Some(Arc::clone(&tls2))));
+        let out2 = tls2.get_value().map(|v| v.0);
+        assert_eq!(out2, Some(5));
+        assert_eq!(tls2.get_value().map(|v| v.0), Some(5));
+
+        // Re-entrant `set()` on the same instance during `Clone` must defer the
+        // write until the active `Clone` finishes without aliasing `&self`.
+        #[derive(Default)]
+        struct SelfSet(u64, Option<Arc<InstanceTls<SelfSet, 4, 4>>>);
+        impl Clone for SelfSet {
+            fn clone(&self) -> Self {
+                if let Some(ref tls) = self.1 {
+                    tls.set(SelfSet(99, None));
+                }
+                Self(self.0, None)
+            }
+        }
+
+        let tls3 = Arc::new(InstanceTls::<SelfSet, 4, 4>::new().unwrap());
+        tls3.set(SelfSet(7, Some(Arc::clone(&tls3))));
+        assert_eq!(tls3.get().0, 7);
+        assert_eq!(tls3.get_value().map(|v| v.0), Some(99));
+    }
+
+    #[test]
+    fn test_s26_r2_panicking_clone_preserves_stored_value() {
+        use std::sync::atomic::AtomicBool;
+
+        static SHOULD_PANIC: AtomicBool = AtomicBool::new(true);
+
+        #[derive(Default, Debug, PartialEq, Eq)]
+        struct FlakyClone(u64);
+        impl Clone for FlakyClone {
+            fn clone(&self) -> Self {
+                if SHOULD_PANIC.load(Ordering::Relaxed) {
+                    panic!("simulated panic in FlakyClone::clone");
+                }
+                Self(self.0)
+            }
+        }
+
+        let tls = InstanceTls::<FlakyClone, 4, 4>::new().unwrap();
+        tls.set(FlakyClone(77));
+
+        let res_get = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tls.get()));
+        assert!(res_get.is_err());
+        let res_get_val =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tls.get_value()));
+        assert!(res_get_val.is_err());
+
+        SHOULD_PANIC.store(false, Ordering::Relaxed);
+        assert_eq!(
+            tls.get_value(),
+            Some(FlakyClone(77)),
+            "panicking Clone must leave the stored value intact in the cell"
+        );
+        assert_eq!(tls.get(), FlakyClone(77));
     }
 }
