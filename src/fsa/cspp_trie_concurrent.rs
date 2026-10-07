@@ -235,35 +235,103 @@ impl SharedPool {
     /// Read `dst.len()` bytes starting at `slot` using Acquire 32-bit word loads.
     #[inline(always)]
     fn read_bytes_acquire(&self, slot: usize, dst: &mut [u8]) {
-        let full_words = dst.len() / 4;
-        for i in 0..full_words {
-            let bytes = self.load_acquire(slot + i).to_ne_bytes();
+        let len = dst.len();
+        let full_words = len / 4;
+        let rem = len % 4;
+        let total_words = full_words + usize::from(rem != 0);
+        let words = &self.data[slot..slot + total_words];
+        for (i, w) in words[..full_words].iter().enumerate() {
+            let bytes = w.load(Ordering::Acquire).to_ne_bytes();
             dst[i * 4..i * 4 + 4].copy_from_slice(&bytes);
         }
-        let rem = dst.len() % 4;
         if rem != 0 {
-            let bytes = self.load_acquire(slot + full_words).to_ne_bytes();
+            let bytes = words[full_words].load(Ordering::Acquire).to_ne_bytes();
             let base = full_words * 4;
             dst[base..base + rem].copy_from_slice(&bytes[..rem]);
         }
+    }
+
+    /// Compare `expected.len()` immutable bytes starting at `slot` against `expected`
+    /// using Relaxed 32-bit word loads after the caller has already Acquire-loaded
+    /// the node header or parent child pointer that published this node.
+    #[inline(always)]
+    fn bytes_eq_relaxed(&self, slot: usize, expected: &[u8]) -> bool {
+        let len = expected.len();
+        if len <= 4 {
+            // ORDERING: The caller already Acquire-loaded the parent child pointer and
+            // node header word, establishing happens-before for the node's immutable zpath.
+            let w = self.load_relaxed(slot);
+            return match len {
+                1 => (w as u8) == expected[0],
+                2 => (w as u16) == u16::from_ne_bytes([expected[0], expected[1]]),
+                3 => {
+                    (w & 0x00FF_FFFF)
+                        == u32::from_ne_bytes([expected[0], expected[1], expected[2], 0])
+                }
+                4 => {
+                    w == u32::from_ne_bytes([expected[0], expected[1], expected[2], expected[3]])
+                }
+                _ => true,
+            };
+        }
+        let full_words = len / 4;
+        let rem = len % 4;
+        let total_words = full_words + usize::from(rem != 0);
+        let words = &self.data[slot..slot + total_words];
+        for (w, chunk) in words[..full_words].iter().zip(expected.chunks_exact(4)) {
+            let mut exp = [0u8; 4];
+            exp.copy_from_slice(chunk);
+            // ORDERING: The caller already Acquire-loaded the parent child pointer and
+            // node header word, establishing happens-before for the node's immutable zpath.
+            if w.load(Ordering::Relaxed) != u32::from_ne_bytes(exp) {
+                return false;
+            }
+        }
+        if rem != 0 {
+            let base = full_words * 4;
+            // ORDERING: Same as above — immutable zpath bytes after Acquire header load.
+            let w = words[full_words].load(Ordering::Relaxed);
+            let ok = match rem {
+                1 => (w as u8) == expected[base],
+                2 => (w as u16) == u16::from_ne_bytes([expected[base], expected[base + 1]]),
+                _ => {
+                    (w & 0x00FF_FFFF)
+                        == u32::from_ne_bytes([
+                            expected[base],
+                            expected[base + 1],
+                            expected[base + 2],
+                            0,
+                        ])
+                }
+            };
+            if !ok {
+                return false;
+            }
+        }
+        true
     }
 
     /// Write `src.len()` bytes starting at `slot` (zero-padding any trailing partial 32-bit word)
     /// using Relaxed 32-bit word stores on newly-allocated uncontested slots.
     #[inline(always)]
     fn write_bytes_relaxed(&self, slot: usize, src: &[u8]) {
-        let full_words = src.len() / 4;
-        for i in 0..full_words {
+        let len = src.len();
+        let full_words = len / 4;
+        let rem = len % 4;
+        let total_words = full_words + usize::from(rem != 0);
+        let words = &self.data[slot..slot + total_words];
+        for (i, w) in words[..full_words].iter().enumerate() {
             let mut bytes = [0u8; 4];
             bytes.copy_from_slice(&src[i * 4..i * 4 + 4]);
-            self.store_relaxed(slot + i, u32::from_ne_bytes(bytes));
+            // ORDERING: Uncontested newly-allocated slot prior to publishing CAS.
+            w.store(u32::from_ne_bytes(bytes), Ordering::Relaxed);
         }
-        let rem = src.len() % 4;
         if rem != 0 {
             let mut bytes = [0u8; 4];
             let base = full_words * 4;
             bytes[..rem].copy_from_slice(&src[base..]);
-            self.store_relaxed(slot + full_words, u32::from_ne_bytes(bytes));
+            // ORDERING: Uncontested newly-allocated slot prior to publishing CAS.
+            words[full_words].store(u32::from_ne_bytes(bytes), Ordering::Relaxed);
         }
     }
 }
@@ -317,16 +385,16 @@ impl LockFreeFreelist {
         let bin = &self.bins[slots - 1];
         loop {
             // ORDERING: Relaxed is sufficient for the initial Treiber head read; the
-            // AcqRel CAS below validates `head` and publishes `store_relaxed(slot, head_slot)`.
+            // Release CAS below validates `head` and publishes `store_relaxed(slot, head_slot)`.
             let head = bin.load(Ordering::Relaxed);
             let head_slot = tagged_slot(head);
             pool.store_relaxed(slot as usize, head_slot);
             let new_gen = tagged_gen(head).wrapping_add(1);
             let new_head = tagged_pack(new_gen, slot);
-            // ORDERING: AcqRel on success releases the `store_relaxed` next-slot write to
+            // ORDERING: Release on success publishes the `store_relaxed` next-slot write to
             // subsequent Acquire poppers; Relaxed on failure is sufficient as the loop retries.
             if bin
-                .compare_exchange_weak(head, new_head, Ordering::AcqRel, Ordering::Relaxed)
+                .compare_exchange_weak(head, new_head, Ordering::Release, Ordering::Relaxed)
                 .is_ok()
             {
                 // ORDERING: Relaxed is sufficient for diagnostic fragmentation byte accounting.
@@ -348,8 +416,8 @@ impl LockFreeFreelist {
             if head_slot == FREE_LIST_NIL {
                 return None;
             }
-            //The Acquire load of `head` above synchronizes-with the AcqRel CAS in `push`,
-            // establishing happens-before for the `store_relaxed(head_slot, next_slot)` write.
+            // ORDERING: The Acquire load of `head` above synchronizes-with the Release CAS in
+            // `push`, establishing happens-before for the `store_relaxed(head_slot, next_slot)` write.
             let next_slot = pool.load_relaxed(head_slot as usize);
             let new_gen = tagged_gen(head).wrapping_add(1);
             let new_head = tagged_pack(new_gen, next_slot);
@@ -446,22 +514,25 @@ impl ThreadLocalAlloc {
 struct ConcurrentNodeView<'a> {
     pool: &'a SharedPool,
     curr: u32,
+    raw: u32,
     has_values: bool,
 }
 
 impl<'a> ConcurrentNodeView<'a> {
     #[inline(always)]
     fn new(pool: &'a SharedPool, curr: u32, has_values: bool) -> Self {
+        let raw = pool.load_acquire(curr as usize);
         Self {
             pool,
             curr,
+            raw,
             has_values,
         }
     }
 
     #[inline(always)]
     fn meta(&self) -> MetaInfo {
-        self.pool.load_meta(self.curr)
+        u32_to_meta(self.raw)
     }
 
     #[inline(always)]
@@ -485,7 +556,7 @@ impl<'a> ConcurrentNodeView<'a> {
         if t <= 6 {
             t as usize
         } else {
-            let big: BigCount = bytemuck::cast(self.pool.load_acquire(self.curr as usize));
+            let big: BigCount = bytemuck::cast(self.raw);
             big.n_children as usize
         }
     }
@@ -501,27 +572,19 @@ impl<'a> ConcurrentNodeView<'a> {
     }
 
     #[inline(always)]
-    fn get_label(&self, idx: usize) -> u8 {
-        if idx < 2 {
-            self.meta().c_label[idx]
-        } else {
-            self.pool.load_bytes(self.curr, 1)[idx - 2]
-        }
-    }
-
     fn state_move(&self, ch: u8) -> u32 {
-        let cnt_type = self.cnt_type();
+        let meta = self.meta();
+        let cnt_type = meta.flags & FLAG_CNT_MASK;
         match cnt_type {
             0 => NIL_STATE,
             1 => {
-                if ch == self.meta().c_label[0] {
+                if ch == meta.c_label[0] {
                     self.child(1)
                 } else {
                     NIL_STATE
                 }
             }
             2 => {
-                let meta = self.meta();
                 if ch == meta.c_label[1] {
                     self.child(2)
                 } else if ch == meta.c_label[0] {
@@ -531,76 +594,93 @@ impl<'a> ConcurrentNodeView<'a> {
                 }
             }
             3 => {
-                if ch == self.get_label(2) {
+                // ORDERING: `self.raw` was Acquire-loaded when constructing `ConcurrentNodeView`,
+                // synchronizing-with the AcqRel child-pointer CAS that published this node's
+                // immutable label word.
+                let pad = self.pool.load_relaxed(self.curr as usize + 1).to_ne_bytes();
+                if ch == pad[0] {
                     return self.child(4);
                 }
-                if ch == self.get_label(1) {
+                if ch == meta.c_label[1] {
                     return self.child(3);
                 }
-                if ch == self.get_label(0) {
+                if ch == meta.c_label[0] {
                     return self.child(2);
                 }
                 NIL_STATE
             }
             4 => {
-                if ch == self.get_label(3) {
+                // ORDERING: Immutable label word after Acquire load of `self.raw`.
+                let pad = self.pool.load_relaxed(self.curr as usize + 1).to_ne_bytes();
+                if ch == pad[1] {
                     return self.child(5);
                 }
-                if ch == self.get_label(2) {
+                if ch == pad[0] {
                     return self.child(4);
                 }
-                if ch == self.get_label(1) {
+                if ch == meta.c_label[1] {
                     return self.child(3);
                 }
-                if ch == self.get_label(0) {
+                if ch == meta.c_label[0] {
                     return self.child(2);
                 }
                 NIL_STATE
             }
             5 => {
-                if ch == self.get_label(4) {
+                // ORDERING: Immutable label word after Acquire load of `self.raw`.
+                let pad = self.pool.load_relaxed(self.curr as usize + 1).to_ne_bytes();
+                if ch == pad[2] {
                     return self.child(6);
                 }
-                if ch == self.get_label(3) {
+                if ch == pad[1] {
                     return self.child(5);
                 }
-                if ch == self.get_label(2) {
+                if ch == pad[0] {
                     return self.child(4);
                 }
-                if ch == self.get_label(1) {
+                if ch == meta.c_label[1] {
                     return self.child(3);
                 }
-                if ch == self.get_label(0) {
+                if ch == meta.c_label[0] {
                     return self.child(2);
                 }
                 NIL_STATE
             }
             6 => {
-                if ch == self.get_label(5) {
+                // ORDERING: Immutable label word after Acquire load of `self.raw`.
+                let pad = self.pool.load_relaxed(self.curr as usize + 1).to_ne_bytes();
+                if ch == pad[3] {
                     return self.child(7);
                 }
-                if ch == self.get_label(4) {
+                if ch == pad[2] {
                     return self.child(6);
                 }
-                if ch == self.get_label(3) {
+                if ch == pad[1] {
                     return self.child(5);
                 }
-                if ch == self.get_label(2) {
+                if ch == pad[0] {
                     return self.child(4);
                 }
-                if ch == self.get_label(1) {
+                if ch == meta.c_label[1] {
                     return self.child(3);
                 }
-                if ch == self.get_label(0) {
+                if ch == meta.c_label[0] {
                     return self.child(2);
                 }
                 NIL_STATE
             }
             7 => {
                 let n_children = self.n_children();
-                let mut label_buf = [0u8; 16];
-                self.pool
-                    .read_bytes_acquire(self.curr as usize + 1, &mut label_buf);
+                let base = self.curr as usize + 1;
+                let words = &self.pool.data[base..base + 4];
+                // ORDERING: Immutable label words after Acquire load of `self.raw`.
+                let label_words = [
+                    words[0].load(Ordering::Relaxed),
+                    words[1].load(Ordering::Relaxed),
+                    words[2].load(Ordering::Relaxed),
+                    words[3].load(Ordering::Relaxed),
+                ];
+                let label_buf: [u8; 16] = bytemuck::cast(label_words);
                 let idx =
                     crate::fsa::fast_search::fast_search_byte_max_16(&label_buf[..n_children], ch);
                 if idx < n_children {
@@ -610,18 +690,22 @@ impl<'a> ConcurrentNodeView<'a> {
                 }
             }
             8 => {
+                let base = self.curr as usize + 1;
+                let words = &self.pool.data[base..base + 9];
                 let word_idx = (ch / 32) as usize;
                 let bit_idx = ch % 32;
-                let bmp_word = self.pool.load_acquire(self.curr as usize + 2 + word_idx);
+                // ORDERING: Immutable bitmap/rank words after Acquire load of `self.raw`.
+                let bmp_word = words[1 + word_idx].load(Ordering::Relaxed);
                 if (bmp_word & (1u32 << bit_idx)) != 0 {
-                    let i = (ch / 64) as usize;
-                    let rank_bytes = self.pool.load_bytes(self.curr, 1);
-                    let b = rank_bytes[i] as usize;
-                    let lo = self.pool.load_acquire(self.curr as usize + 2 + i * 2) as u64;
-                    let hi = self.pool.load_acquire(self.curr as usize + 2 + i * 2 + 1) as u64;
-                    let w = lo | (hi << 32);
-                    let mask = (1u64 << (ch % 64)) - 1;
-                    let idx = b + (w & mask).count_ones() as usize;
+                    let i = word_idx >> 1;
+                    // ORDERING: Immutable rank word after Acquire load of `self.raw`.
+                    let rank_bytes = words[0].load(Ordering::Relaxed).to_ne_bytes();
+                    let mut idx = rank_bytes[i] as usize
+                        + (bmp_word & ((1u32 << bit_idx) - 1)).count_ones() as usize;
+                    if (word_idx & 1) != 0 {
+                        // ORDERING: Immutable low bitmap word after Acquire load of `self.raw`.
+                        idx += words[word_idx].load(Ordering::Relaxed).count_ones() as usize;
+                    }
                     self.child(10 + idx)
                 } else {
                     NIL_STATE
@@ -633,44 +717,46 @@ impl<'a> ConcurrentNodeView<'a> {
     }
 
     #[inline(always)]
-    fn read_zpath(&self, dst: &mut [u8]) {
-        if dst.is_empty() {
-            return;
+    fn zpath_offset(&self) -> usize {
+        let t = self.cnt_type();
+        if t == 0 {
+            1
+        } else if t <= 6 {
+            SKIP_SLOTS[t as usize] as usize + t as usize
+        } else {
+            let big: BigCount = bytemuck::cast(self.raw);
+            SKIP_SLOTS[t as usize] as usize + big.n_children as usize
         }
-        let skip = self.skip_slots();
-        let n_children = self.n_children();
-        let offset = skip + n_children;
-        self.pool
-            .read_bytes_acquire(self.curr as usize + offset, dst);
     }
 
+    #[inline(always)]
     fn valpos(&self) -> usize {
-        let skip = self.skip_slots();
-        let n_children = self.n_children();
+        let offset = self.zpath_offset();
         let zlen = self.zpath_len();
-        let offset = skip + n_children;
         let zpath_padded = (zlen + 3) & !3;
         let inline_slot = self.curr as usize + offset + zpath_padded / 4;
         if self.has_values {
-            self.pool.load_acquire(inline_slot) as usize
+            // ORDERING: `self.raw` was Acquire-loaded after the node's inline value pointer
+            // was written.
+            self.pool.load_relaxed(inline_slot) as usize
         } else {
             inline_slot * 4
         }
     }
 
     fn find_child_slot(&self, ch: u8) -> u32 {
-        let cnt_type = self.cnt_type();
+        let meta = self.meta();
+        let cnt_type = meta.flags & FLAG_CNT_MASK;
         match cnt_type {
             0 => NIL_STATE,
             1 => {
-                if ch == self.meta().c_label[0] {
+                if ch == meta.c_label[0] {
                     self.curr + 1
                 } else {
                     NIL_STATE
                 }
             }
             2 => {
-                let meta = self.meta();
                 if ch == meta.c_label[0] {
                     self.curr + 1
                 } else if ch == meta.c_label[1] {
@@ -680,18 +766,33 @@ impl<'a> ConcurrentNodeView<'a> {
                 }
             }
             3..=6 => {
-                for i in 0..cnt_type as usize {
-                    if ch == self.get_label(i) {
-                        return self.curr + 2 + i as u32;
+                if ch == meta.c_label[0] {
+                    return self.curr + 2;
+                }
+                if ch == meta.c_label[1] {
+                    return self.curr + 3;
+                }
+                // ORDERING: Immutable label word after Acquire load of `self.raw`.
+                let pad = self.pool.load_relaxed(self.curr as usize + 1).to_ne_bytes();
+                for (i, &lbl) in pad[..(cnt_type as usize - 2)].iter().enumerate() {
+                    if ch == lbl {
+                        return self.curr + 4 + i as u32;
                     }
                 }
                 NIL_STATE
             }
             7 => {
                 let n = self.n_children();
-                let mut label_buf = [0u8; 16];
-                self.pool
-                    .read_bytes_acquire(self.curr as usize + 1, &mut label_buf);
+                let base = self.curr as usize + 1;
+                let words = &self.pool.data[base..base + 4];
+                // ORDERING: Immutable label words after Acquire load of `self.raw`.
+                let label_words = [
+                    words[0].load(Ordering::Relaxed),
+                    words[1].load(Ordering::Relaxed),
+                    words[2].load(Ordering::Relaxed),
+                    words[3].load(Ordering::Relaxed),
+                ];
+                let label_buf: [u8; 16] = bytemuck::cast(label_words);
                 let idx = crate::fsa::fast_search::fast_search_byte_max_16(&label_buf[..n], ch);
                 if idx < n {
                     self.curr + 5 + idx as u32
@@ -700,18 +801,22 @@ impl<'a> ConcurrentNodeView<'a> {
                 }
             }
             8 => {
+                let base = self.curr as usize + 1;
+                let words = &self.pool.data[base..base + 9];
                 let word_idx = (ch / 32) as usize;
                 let bit_idx = ch % 32;
-                let bmp_word = self.pool.load_acquire(self.curr as usize + 2 + word_idx);
+                // ORDERING: Immutable bitmap/rank words after Acquire load of `self.raw`.
+                let bmp_word = words[1 + word_idx].load(Ordering::Relaxed);
                 if (bmp_word & (1u32 << bit_idx)) != 0 {
-                    let i = (ch / 64) as usize;
-                    let rank_bytes = self.pool.load_bytes(self.curr, 1);
-                    let b = rank_bytes[i] as usize;
-                    let lo = self.pool.load_acquire(self.curr as usize + 2 + i * 2) as u64;
-                    let hi = self.pool.load_acquire(self.curr as usize + 2 + i * 2 + 1) as u64;
-                    let w = lo | (hi << 32);
-                    let mask = (1u64 << (ch % 64)) - 1;
-                    let idx = b + (w & mask).count_ones() as usize;
+                    let i = word_idx >> 1;
+                    // ORDERING: Immutable rank word after Acquire load of `self.raw`.
+                    let rank_bytes = words[0].load(Ordering::Relaxed).to_ne_bytes();
+                    let mut idx = rank_bytes[i] as usize
+                        + (bmp_word & ((1u32 << bit_idx) - 1)).count_ones() as usize;
+                    if (word_idx & 1) != 0 {
+                        // ORDERING: Immutable low bitmap word after Acquire load of `self.raw`.
+                        idx += words[word_idx].load(Ordering::Relaxed).count_ones() as usize;
+                    }
                     self.curr + 10 + idx as u32
                 } else {
                     NIL_STATE
@@ -892,6 +997,7 @@ impl ConcurrentCsppTrie {
     // Lock-free reads
     // ========================================================================
 
+    #[inline(always)]
     fn node_view(&self, pos: u32) -> ConcurrentNodeView<'_> {
         ConcurrentNodeView::new(&self.inner.pool, pos, self.valsize > 0)
     }
@@ -972,42 +1078,65 @@ impl ConcurrentCsppTrie {
 
     /// Look up a key. Returns the value byte offset if found.
     /// Pins the current thread to the epoch internally.
+    #[inline]
     pub fn lookup(&self, key: &[u8]) -> Option<usize> {
         let _guard = epoch::pin();
         self.lookup_inner(key)
     }
 
     /// Look up with an existing epoch guard (for batch operations).
+    #[inline]
     pub fn lookup_with_guard(&self, key: &[u8], _guard: &Guard) -> Option<usize> {
         self.lookup_inner(key)
     }
 
+    #[inline]
     fn lookup_inner(&self, key: &[u8]) -> Option<usize> {
-        let mut curr = INITIAL_STATE;
-        let mut pos = 0;
+        if key.is_empty() {
+            let view = self.node_view(INITIAL_STATE);
+            return if view.is_final() {
+                Some(view.valpos())
+            } else {
+                None
+            };
+        }
+
+        // Root (`INITIAL_STATE == 0`) is always a 256-way fast node (`cnt_type == 15`,
+        // `zpath_len == 0`) with child pointers at `2 + ch`.
+        let mut curr = self.inner.pool.load_acquire(2 + key[0] as usize);
+        if curr == NIL_STATE {
+            return None;
+        }
+        let mut pos = 1;
 
         loop {
             let view = self.node_view(curr);
             let zlen = view.zpath_len();
             if zlen > 0 {
-                let mut zpath = [0u8; 256];
-                view.read_zpath(&mut zpath);
-                let remaining = key.len() - pos;
-                let match_len = std::cmp::min(zlen, remaining);
-                if key[pos..pos + match_len] != zpath[..match_len] {
+                let end = pos + zlen;
+                if end > key.len() {
                     return None;
                 }
-                pos += match_len;
-                if remaining < zlen {
-                    return None;
-                }
-                if pos == key.len() {
-                    return if view.is_final() {
-                        Some(view.valpos())
+                let zpath_slot = curr as usize + view.zpath_offset();
+                if end == key.len() {
+                    if !view.is_final()
+                        || !self.inner.pool.bytes_eq_relaxed(zpath_slot, &key[pos..end])
+                    {
+                        return None;
+                    }
+                    let inline_slot = zpath_slot + zlen.div_ceil(4);
+                    return Some(if view.has_values {
+                        // ORDERING: `view` already Acquire-loaded the node header word after
+                        // the writer populated the node's inline value pointer.
+                        self.inner.pool.load_relaxed(inline_slot) as usize
                     } else {
-                        None
-                    };
+                        inline_slot * 4
+                    });
                 }
+                if !self.inner.pool.bytes_eq_relaxed(zpath_slot, &key[pos..end]) {
+                    return None;
+                }
+                pos = end;
             } else if pos == key.len() {
                 return if view.is_final() {
                     Some(view.valpos())
@@ -1026,10 +1155,12 @@ impl ConcurrentCsppTrie {
     }
 
     /// Check if a key exists.
+    #[inline]
     pub fn contains(&self, key: &[u8]) -> bool {
         self.lookup(key).is_some()
     }
 
+    #[inline]
     pub fn contains_with_guard(&self, key: &[u8], guard: &Guard) -> bool {
         self.lookup_with_guard(key, guard).is_some()
     }
@@ -2974,6 +3105,58 @@ mod tests {
             let vp = trie.lookup(key).expect("inserted key must be found");
             assert_eq!(vp, orig_vp, "valpos must remain stable across node splits");
             assert_eq!(trie.get_value::<u32>(vp), expected_val);
+        }
+    }
+
+    #[test]
+    fn test_s25_r1_lookup_zpath_near_pool_end_does_not_overread() {
+        // S25-R1 regression: lookup_inner previously read a fixed 256-byte (64-word)
+        // zpath buffer regardless of `zlen`, panicking with index-out-of-bounds
+        // whenever a node with `zlen > 0` sat within 64 slots of `pool.capacity()`
+        // (e.g. every pool capacity in 269..=322 after inserting a single 5-byte key).
+        let caps: Vec<usize> = if cfg!(miri) {
+            vec![269, 270, 300, 322, 323]
+        } else {
+            (269..=330).collect()
+        };
+        for cap_slots in caps {
+            let trie = ConcurrentCsppTrie::with_capacity(4, cap_slots);
+            let (is_new, vp) = trie.insert(b"hello");
+            assert!(is_new);
+            trie.set_value(vp, 0xCAFE_BABEu32);
+            assert_eq!(trie.lookup(b"hello"), Some(vp), "failed at cap={cap_slots}");
+            assert!(trie.contains(b"hello"), "failed at cap={cap_slots}");
+            assert!(!trie.contains(b"hell"), "failed at cap={cap_slots}");
+            assert!(!trie.contains(b"hellx"), "failed at cap={cap_slots}");
+            assert!(!trie.contains(b"helloo"), "failed at cap={cap_slots}");
+            assert_eq!(trie.get_value::<u32>(vp), 0xCAFE_BABE);
+        }
+    }
+
+    #[test]
+    fn test_s25_r1_lookup_multi_insert_near_pool_end() {
+        // S25-R1 regression: filling a tight pool until nearly full and looking up
+        // every inserted key (including the last node allocated near pool capacity).
+        let trie = ConcurrentCsppTrie::with_capacity(4, 340);
+        let mut inserted = Vec::new();
+        for i in 0..16u32 {
+            let k = format!("key_{i:04}");
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                trie.insert(k.as_bytes())
+            }));
+            match res {
+                Ok((is_new, vp)) => {
+                    assert!(is_new);
+                    trie.set_value(vp, i + 100);
+                    inserted.push((k, vp, i + 100));
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(!inserted.is_empty());
+        for (k, vp, expected) in &inserted {
+            assert_eq!(trie.lookup(k.as_bytes()), Some(*vp), "lookup failed on {k}");
+            assert_eq!(trie.get_value::<u32>(*vp), *expected);
         }
     }
 }

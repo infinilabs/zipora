@@ -608,7 +608,7 @@ impl LockFreeMemoryPool {
             // only ever overlaps a pusher's atomic store. If it was stale the
             // generation tag makes the CAS below fail and the value is dropped.
             // ORDERING: The Acquire load of `bin.head` above synchronizes-with the pusher's
-            // AcqRel CAS in `deallocate_to_fast_bin`, which happens-after the pusher's
+            // Release CAS in `deallocate_to_fast_bin`, which happens-after the pusher's
             // `link_slot(offset).store(current_offset, Relaxed)`, establishing happens-before.
             let next_offset = self.link_slot(current_offset)?.load(Ordering::Relaxed);
 
@@ -708,20 +708,20 @@ impl LockFreeMemoryPool {
             // Link to the current head through the block header (offset only;
             // the generation lives in the bin head).
             // ORDERING: Relaxed is sufficient because this store is sequenced-before the
-            // AcqRel CAS on `bin.head` below, which releases the link write to Acquire poppers.
+            // Release CAS on `bin.head` below, which publishes the link write to Acquire poppers.
             self.link_slot(offset)?
                 .store(current_offset, Ordering::Relaxed);
 
             // ABA-SAFE: Pack new offset with INCREMENTED generation counter
             let new_packed = Self::pack_head(offset, current_gen.wrapping_add(1));
 
-            // ORDERING: AcqRel on success releases the caller's writes to the block and the
+            // ORDERING: Release on success publishes the caller's writes to the block and the
             // `link_slot` store above; Relaxed on failure is sufficient as the loop reloads
             // `bin.head` with Acquire on the next iteration.
             match bin.head.compare_exchange(
                 packed,     // Compare full packed value (offset + generation)
                 new_packed, // New packed value with incremented generation
-                Ordering::AcqRel,
+                Ordering::Release,
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
@@ -896,7 +896,11 @@ impl LockFreeMemoryPool {
         // fits in the arena fits in a u32.
         let width = u32::try_from(width)
             .map_err(|_| ZiporaError::invalid_data("Block width exceeds 32 bits"))?;
-        self.link_slot(offset)?.store(width, Ordering::Release);
+        // ORDERING: Relaxed is sufficient because `store_block_width` completes before
+        // `allocate` returns the pointer to the caller, and any cross-thread handoff of the
+        // pointer to `deallocate` (plus `large_free_list` Mutex across reuse cycles) provides
+        // happens-before.
+        self.link_slot(offset)?.store(width, Ordering::Relaxed);
         Ok(())
     }
 
@@ -909,7 +913,10 @@ impl LockFreeMemoryPool {
     /// did not come from this pool's large path, so the pool refuses it rather
     /// than filing a bogus region on the free list.
     fn load_block_width(&self, offset: u32, least: usize) -> Result<usize> {
-        let width = self.link_slot(offset)?.load(Ordering::Acquire) as usize;
+        // ORDERING: Relaxed is sufficient because the caller's handoff from `allocate` to
+        // `deallocate` (or single-thread program order) establishes happens-before with
+        // `store_block_width`.
+        let width = self.link_slot(offset)?.load(Ordering::Relaxed) as usize;
         if width < least || offset as usize + width > self.config.memory_size {
             return Err(ZiporaError::invalid_data(
                 "Block header does not describe a large block of at least the \
