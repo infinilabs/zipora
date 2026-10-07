@@ -133,7 +133,12 @@ pub struct PipelineConfig {
     pub buffer_size: usize,
     /// Maximum number of items in the entire pipeline
     pub max_in_flight: usize,
-    /// Timeout for individual stage processing
+    /// Timeout for individual stage processing.
+    ///
+    /// Asynchronous stages are cancelled at `.await` points via `tokio::time::timeout`.
+    /// Stages that block the executor thread synchronously without yielding (such as
+    /// [`MapStage`] or [`FilterStage`] closures) cannot be preempted mid-poll and are
+    /// instead checked against `stage_timeout` after the synchronous poll returns.
     pub stage_timeout: Duration,
     /// Enable batching optimization
     pub enable_batching: bool,
@@ -215,7 +220,11 @@ impl Pipeline {
         }
     }
 
-    /// Execute a single-stage pipeline
+    /// Execute a single-stage pipeline.
+    ///
+    /// Enforces [`PipelineConfig::stage_timeout`] via `tokio::time::timeout` across
+    /// `.await` points and a post-hoc `elapsed > stage_timeout` check after synchronous
+    /// single-poll stages return.
     pub async fn execute_single<T, U, S>(&self, stage: S, input: T) -> Result<U>
     where
         S: PipelineStage<T, U>,

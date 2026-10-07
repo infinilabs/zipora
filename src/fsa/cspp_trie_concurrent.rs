@@ -1118,12 +1118,13 @@ impl ConcurrentCsppTrie {
                     return None;
                 }
                 let zpath_slot = curr as usize + view.zpath_offset();
+                if end == key.len() && !view.is_final() {
+                    return None;
+                }
+                if !self.inner.pool.bytes_eq_relaxed(zpath_slot, &key[pos..end]) {
+                    return None;
+                }
                 if end == key.len() {
-                    if !view.is_final()
-                        || !self.inner.pool.bytes_eq_relaxed(zpath_slot, &key[pos..end])
-                    {
-                        return None;
-                    }
                     let inline_slot = zpath_slot + zlen.div_ceil(4);
                     return Some(if view.has_values {
                         // ORDERING: `view` already Acquire-loaded the node header word after
@@ -1132,9 +1133,6 @@ impl ConcurrentCsppTrie {
                     } else {
                         inline_slot * 4
                     });
-                }
-                if !self.inner.pool.bytes_eq_relaxed(zpath_slot, &key[pos..end]) {
-                    return None;
                 }
                 pos = end;
             } else if pos == key.len() {
@@ -3110,54 +3108,80 @@ mod tests {
 
     #[test]
     fn test_s25_r1_lookup_zpath_near_pool_end_does_not_overread() {
-        // S25-R1 regression: lookup_inner previously read a fixed 256-byte (64-word)
-        // zpath buffer regardless of `zlen`, panicking with index-out-of-bounds
-        // whenever a node with `zlen > 0` sat within 64 slots of `pool.capacity()`
-        // (e.g. every pool capacity in 269..=322 after inserting a single 5-byte key).
+        // S25-R1 / S26-R3 regression: `lookup_inner` previously read a fixed 256-byte
+        // (64-word) zpath buffer regardless of `zlen`, panicking with index-out-of-bounds
+        // whenever a node with `zlen > 0` sat within 64 slots of `pool.capacity()`.
+        // Using `valsize = 0` avoids `max_size_in_slots * (valsize + 16)` value-region
+        // padding so `pool.capacity()` is tight (`258..338` slots).
+        let key41: Vec<u8> = (0..41u8).map(|i| b'a' + (i % 26)).collect();
         let caps: Vec<usize> = if cfg!(miri) {
-            vec![269, 270, 300, 322, 323]
+            vec![260, 270, 272, 300, 322, 330]
         } else {
-            (269..=330).collect()
+            (258..338).collect()
         };
+        let mut verified = 0usize;
         for cap_slots in caps {
-            let trie = ConcurrentCsppTrie::with_capacity(4, cap_slots);
-            let (is_new, vp) = trie.insert(b"hello");
-            assert!(is_new);
-            trie.set_value(vp, 0xCAFE_BABEu32);
-            assert_eq!(trie.lookup(b"hello"), Some(vp), "failed at cap={cap_slots}");
-            assert!(trie.contains(b"hello"), "failed at cap={cap_slots}");
-            assert!(!trie.contains(b"hell"), "failed at cap={cap_slots}");
-            assert!(!trie.contains(b"hellx"), "failed at cap={cap_slots}");
-            assert!(!trie.contains(b"helloo"), "failed at cap={cap_slots}");
-            assert_eq!(trie.get_value::<u32>(vp), 0xCAFE_BABE);
+            let trie = ConcurrentCsppTrie::with_capacity(0, cap_slots);
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                trie.insert(&key41)
+            }));
+            if let Ok((is_new, vp)) = res {
+                assert!(is_new);
+                assert_eq!(trie.lookup(&key41), Some(vp), "failed at cap={cap_slots}");
+                assert!(trie.contains(&key41), "failed at cap={cap_slots}");
+                assert!(!trie.contains(&key41[..40]), "failed at cap={cap_slots}");
+                let mut miss = key41.clone();
+                miss[40] = b'z';
+                assert!(!trie.contains(&miss), "failed at cap={cap_slots}");
+                let mut ext = key41.clone();
+                ext.push(b'a');
+                assert!(!trie.contains(&ext), "failed at cap={cap_slots}");
+                verified += 1;
+            }
         }
+        assert!(verified > 0, "at least one tight pool capacity must fit key41");
     }
 
     #[test]
     fn test_s25_r1_lookup_multi_insert_near_pool_end() {
-        // S25-R1 regression: filling a tight pool until nearly full and looking up
-        // every inserted key (including the last node allocated near pool capacity).
-        let trie = ConcurrentCsppTrie::with_capacity(4, 340);
-        let mut inserted = Vec::new();
-        for i in 0..16u32 {
-            let k = format!("key_{i:04}");
-            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                trie.insert(k.as_bytes())
-            }));
-            match res {
-                Ok((is_new, vp)) => {
-                    assert!(is_new);
-                    trie.set_value(vp, i + 100);
-                    inserted.push((k, vp, i + 100));
+        // S25-R1 / S26-R3 regression: filling tight `valsize = 0` pools until nearly
+        // full and looking up every inserted key (including the last node allocated
+        // within 64 slots of `pool.capacity()`).
+        let caps: Vec<usize> = if cfg!(miri) {
+            vec![270, 290, 320]
+        } else {
+            (262..=330).step_by(4).collect()
+        };
+        let mut total_checked = 0usize;
+        for cap_slots in caps {
+            let trie = ConcurrentCsppTrie::with_capacity(0, cap_slots);
+            let mut inserted = Vec::new();
+            for i in 0..32u32 {
+                let k = format!("key_{i:04}_zpath_tail");
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    trie.insert(k.as_bytes())
+                }));
+                match res {
+                    Ok((is_new, _vp)) => {
+                        assert!(is_new);
+                        inserted.push(k);
+                    }
+                    Err(_) => break,
                 }
-                Err(_) => break,
+            }
+            for k in &inserted {
+                assert!(
+                    trie.contains(k.as_bytes()),
+                    "lookup failed on {k} at cap={cap_slots}"
+                );
+                assert!(
+                    !trie.contains(&k.as_bytes()[..k.len() - 1]),
+                    "prefix false positive on {k} at cap={cap_slots}"
+                );
+                total_checked += 1;
             }
         }
-        assert!(!inserted.is_empty());
-        for (k, vp, expected) in &inserted {
-            assert_eq!(trie.lookup(k.as_bytes()), Some(*vp), "lookup failed on {k}");
-            assert_eq!(trie.get_value::<u32>(*vp), *expected);
-        }
+        assert!(total_checked > 0);
     }
 }
 
