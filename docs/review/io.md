@@ -5943,7 +5943,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3152 filtered out; f
 ### 12.3 `1141a79` — fix(io): drop #[inline] on primitive SerializableType::serialize methods [S26-R4]
 
 - **`S26-R4` (MEDIUM — Restore `Vec<Vec<u32>>::serialize` throughput)**:
-  - **Root cause**: `f7e39ad` added `#[inline]` to 15 `SerializableType::serialize` (`f7e39ad:src/io/smart_ptr.rs:1149-1393`) methods for `i32`, `u32`, `String`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`, `Box<T>`, `u8`, `u16`, `u64`, `i8`, `i16`, `i64`, and `bool` alongside the `deserialize` methods, regressing `Vec<Vec<u32>>::serialize` (1,000 × 100 into `VecDataOutput::with_capacity`) by `+22%` (`100.9 ns/inner Vec` vs `84.7 ns/inner Vec` at `00652d2`).
+  - **Root cause**: `f7e39ad` added `#[inline]` to 15 `SerializableType::serialize` (`f7e39ad:src/io/smart_ptr.rs:1149-1393`) methods for `i32`, `u32`, `String`, `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`, `Box<T>`, `u8`, `u16`, `u64`, `i8`, `i16`, `i64`, and `bool` alongside the `deserialize` methods, regressing `Vec<Vec<u32>>::serialize` (1,000 × 100 into `VecDataOutput::with_capacity`) by `+19.1%` (`100.9 ns/inner Vec` vs `84.7 ns/inner Vec` at `00652d2`).
   - **Fix in `1141a79:src/io/smart_ptr.rs:1149-1378`**:
     - Removed `#[inline]` from those 15 `SerializableType::serialize` methods (`1141a79:src/io/smart_ptr.rs:1149-1179, 1239-1378`) while keeping `#[inline]` on `SerializableType::deserialize`.
     - Added `vec_vec_u32_1000x100_ser` to `benches/s23_serialization_bench.rs` (`1141a79:benches/s23_serialization_bench.rs:47-53`).
@@ -5952,3 +5952,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3152 filtered out; f
     - `vec_u64_1M_de`: `1.048 ns/elem` (below `1.20 ns/elem` target)
     - `vec_vec_u32_1000x100_de`: `111.83 ns/inner Vec` (below `125 ns/inner Vec` target)
 
+### 12.4 `4929ccc` — fix(concurrency,thread,io,fsa): guard unpolled workers on runtime drop, gate notify on parked_workers, tighten S25-R6 test, and restore smart-ptr inline [S27-R2, S27-R3, S27-R4, S27-R5]
+
+- **`S27-R5` (LOW — Restore `#[inline]` on smart-pointer `SerializableType::serialize` implementations)**:
+  - Restored `#[inline]` on `SerializableType::serialize` for `Rc<T>` (`4929ccc:src/io/smart_ptr.rs:1238-1248`), `Arc<T>` (`4929ccc:src/io/smart_ptr.rs:1251-1261`), `RcWeak<T>` (`4929ccc:src/io/smart_ptr.rs:1264-1274`), `ArcWeak<T>` (`4929ccc:src/io/smart_ptr.rs:1277-1287`), and `Box<T>` (`4929ccc:src/io/smart_ptr.rs:1290-1300`) while keeping primitive `SerializableType::serialize` un-annotated, recovering shared `Vec<Rc<u64>>` serialization throughput without regressing `Vec<Vec<u32>>::serialize`.
