@@ -114,7 +114,7 @@ mod tests {
     use super::*;
 
     #[cfg(feature = "async")]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_fiber_creation() {
         let fiber = Fiber::new(async { Ok(42i32) });
         let id = fiber.id();

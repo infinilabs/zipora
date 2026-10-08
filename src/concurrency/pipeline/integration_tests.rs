@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 
 type SimpleBatchFn = fn(Vec<i32>) -> Result<Vec<i32>>;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pipeline_batch_collector_integration() {
     let collector = BatchCollector::new(3, Duration::from_millis(100));
     let pipeline = Arc::new(
@@ -91,7 +91,7 @@ async fn test_pipeline_batch_collector_integration() {
     assert_eq!(all_squares, expected_squares);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pipeline_with_filter_and_batching() {
     let pipeline = PipelineBuilder::new()
         .enable_batching(true)
@@ -130,7 +130,7 @@ async fn test_pipeline_with_filter_and_batching() {
     assert_eq!(final_results, expected_final);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pipeline_batching_with_errors() {
     let pipeline = PipelineBuilder::new()
         .enable_batching(true)
@@ -195,7 +195,7 @@ async fn test_pipeline_batching_with_errors() {
     assert_eq!(stats.total_processed, 6); // Both successful individual (1) and successful batch (3) and then error stage (2, but failed) = 6 total attempted
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pipeline_timeout_scenarios() {
     // Test that timeout configuration is set correctly
     let short_timeout_pipeline = PipelineBuilder::new()
@@ -258,7 +258,7 @@ async fn test_pipeline_timeout_scenarios() {
 
 // Performance comparison and benchmarking tests
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_vs_individual_throughput() {
     use std::time::Instant;
 
@@ -340,7 +340,7 @@ async fn test_batch_vs_individual_throughput() {
     assert_eq!(batch_stats.total_processed, 1000);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_performance_under_load() {
     let collector = Arc::new(BatchCollector::new(10, Duration::from_millis(50)));
     let total_items = 10000;
@@ -409,7 +409,7 @@ async fn test_batch_collector_performance_under_load() {
 
 // Comprehensive error handling and edge case tests
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_edge_cases() {
     // Test with batch size of 1
     let collector1 = BatchCollector::new(1, Duration::from_millis(100));
@@ -439,7 +439,7 @@ async fn test_batch_collector_edge_cases() {
     assert!(flush3.is_none());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pipeline_error_propagation() {
     let pipeline = PipelineBuilder::new()
         .enable_batching(true)
@@ -549,7 +549,7 @@ async fn test_pipeline_error_propagation() {
     assert_eq!(batch_success, vec![2, 4, 6]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pipeline_stage_timeout_configuration() {
     let short_timeout_pipeline = PipelineBuilder::new()
         .stage_timeout(Duration::from_millis(5)) // Very short timeout
@@ -589,7 +589,7 @@ async fn test_pipeline_stage_timeout_configuration() {
     assert_eq!(success_result, 10);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_complex_error_scenarios() {
     let stage = BatchMapStage::with_batch_support(
         "complex_errors".to_string(),
@@ -647,7 +647,7 @@ async fn test_batch_map_stage_complex_error_scenarios() {
     assert_eq!(success_batch, vec!["HELLO", "WORLD"]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pipeline_resource_cleanup() {
     let pipeline = PipelineBuilder::new()
         .enable_batching(true)
@@ -677,7 +677,7 @@ async fn test_pipeline_resource_cleanup() {
     assert_eq!(pipeline_result, 11);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_c10_p1_execute_stream_multi_stage_and_error_propagation() {
     let pipeline = Pipeline::new(PipelineConfig::default());
 
@@ -726,7 +726,7 @@ async fn test_c10_p1_execute_stream_multi_stage_and_error_propagation() {
     drop(err_in_tx);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_c10_p2_items_in_flight_decremented_on_timeout_and_error() {
     let pipeline = PipelineBuilder::new()
         .stage_timeout(Duration::from_millis(10))
@@ -748,7 +748,7 @@ async fn test_c10_p2_items_in_flight_decremented_on_timeout_and_error() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_c10_p3_zero_buffer_size_max_in_flight_and_zero_batch_timeout_do_not_panic_or_nan() {
     let pipeline = PipelineBuilder::new()
         .buffer_size(0)
@@ -781,7 +781,7 @@ async fn test_c10_p3_zero_buffer_size_max_in_flight_and_zero_batch_timeout_do_no
     handle.abort();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_c10_p5_batch_collector_idle_before_first_item_waits_full_timeout() {
     let collector = BatchCollector::new(4, Duration::from_millis(80));
     // Let the collector sit empty past batch_timeout before the first item arrives.

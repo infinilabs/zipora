@@ -1236,6 +1236,7 @@ impl<T: SerializableType> SerializableType for Vec<T> {
 
 // Bridge implementation for Rc<T>
 impl<T: SerializableType> SerializableType for Rc<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
@@ -1248,6 +1249,7 @@ impl<T: SerializableType> SerializableType for Rc<T> {
 
 // Bridge implementation for Arc<T> - requires Send + Sync for thread safety
 impl<T: SerializableType + Send + Sync> SerializableType for Arc<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
@@ -1260,6 +1262,7 @@ impl<T: SerializableType + Send + Sync> SerializableType for Arc<T> {
 
 // Bridge implementation for RcWeak<T>
 impl<T: SerializableType> SerializableType for RcWeak<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
@@ -1272,6 +1275,7 @@ impl<T: SerializableType> SerializableType for RcWeak<T> {
 
 // Bridge implementation for ArcWeak<T>
 impl<T: SerializableType + Send + Sync> SerializableType for ArcWeak<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
@@ -1284,6 +1288,7 @@ impl<T: SerializableType + Send + Sync> SerializableType for ArcWeak<T> {
 
 // Bridge implementation for Box<T>
 impl<T: SerializableType> SerializableType for Box<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }

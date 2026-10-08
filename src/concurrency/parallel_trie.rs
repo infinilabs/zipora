@@ -524,7 +524,7 @@ mod tests {
     use super::*;
     use tokio;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_parallel_trie_builder() {
         let builder = ParallelTrieBuilder::new().chunk_size(1000).max_workers(2);
 
@@ -539,7 +539,7 @@ mod tests {
         assert!(!trie.is_empty().await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_parallel_louds_trie() {
         let trie = ParallelLoudsTrie::new();
 
@@ -592,7 +592,7 @@ mod tests {
         assert_eq!(*results[0].as_ref().unwrap(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_parallel_contains() {
         let trie = ParallelLoudsTrie::new();
 
@@ -613,7 +613,7 @@ mod tests {
         assert_eq!(results, vec![true, true, false, true]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_bulk_insert() {
         let trie = ParallelLoudsTrie::new();
 
@@ -624,7 +624,7 @@ mod tests {
         assert_eq!(trie.len().await, 3);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_find_common_prefixes() {
         let keys = vec![
             b"prefix_one".to_vec(),
@@ -641,7 +641,7 @@ mod tests {
         assert!(prefixes.iter().any(|p| p.starts_with(b"prefix")));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_replica_selection() {
         let trie = ParallelLoudsTrie::new();
 
@@ -655,7 +655,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_trie_similarity() {
         let trie1 = ParallelLoudsTrie::new();
         let trie2 = ParallelLoudsTrie::new();
@@ -690,7 +690,7 @@ mod tests {
         assert!(similarity > 0.0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_basic_trie_operations() {
         let trie = ParallelLoudsTrie::new();
 
@@ -703,7 +703,7 @@ mod tests {
         assert!(!trie.is_empty().await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_merge_tries() {
         // Create tries with minimal keys to avoid LoudsTrie issues
         let trie1 = ParallelLoudsTrie::new();
@@ -729,7 +729,7 @@ mod tests {
         assert!(merged_len <= len1 + len2);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_c10_pt1_zero_chunk_size_or_workers_returns_err_instead_of_panic() {
         let zero_chunk = ParallelTrieBuilder::new()
             .chunk_size(0)
@@ -750,7 +750,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_c10_pt3_parallel_process_catches_closure_panic_as_err() {
         let trie = ParallelLoudsTrie::new();
         trie.insert(b"hello").await.unwrap();

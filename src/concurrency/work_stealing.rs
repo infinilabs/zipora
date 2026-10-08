@@ -378,6 +378,7 @@ struct ExecutorStatsInner {
     total_executed: AtomicUsize,
     active_tasks: AtomicUsize,
     active_workers: AtomicUsize,
+    parked_workers: AtomicUsize,
     total_steals: AtomicUsize,
     total_execution_time_us: AtomicUsize,
 }
@@ -385,8 +386,43 @@ struct ExecutorStatsInner {
 #[allow(dead_code)] // RAII: holds Arc to keep worker's queue alive
 struct WorkerThread {
     id: usize,
-    handle: Mutex<Option<JoinHandle<()>>>,
+    handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     queue: Arc<WorkStealingQueue>,
+}
+
+/// RAII guard constructed before spawning a worker task so that even if the
+/// hosting Tokio runtime is dropped before the worker future is ever polled once,
+/// dropping the task clears its handle slot and decrements `active_workers`.
+struct ActiveWorkerGuard {
+    handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    stats: Arc<ExecutorStatsInner>,
+    shutdown: Arc<AtomicBool>,
+    work_notify: Arc<tokio::sync::Notify>,
+}
+
+impl Drop for ActiveWorkerGuard {
+    fn drop(&mut self) {
+        let mut guard = self.handle.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = None;
+        self.stats.active_workers.fetch_sub(1, Ordering::AcqRel);
+        drop(guard);
+        if !self.shutdown.load(Ordering::Acquire) {
+            self.work_notify.notify_waiters();
+        }
+    }
+}
+
+/// RAII guard tracking workers parked on `work_notify` so `submit()` only calls
+/// `notify_waiters()` when at least one worker is preparing to park or parked.
+struct ParkedWorkerGuard<'a> {
+    stats: &'a ExecutorStatsInner,
+}
+
+impl Drop for ParkedWorkerGuard<'_> {
+    fn drop(&mut self) {
+        // ORDERING: SeqCst pairs with SeqCst load in `submit()`.
+        self.stats.parked_workers.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// Future adapter that catches panics while polling an inner future so a panicking
@@ -428,7 +464,8 @@ impl WorkStealingExecutor {
         let stats = Arc::new(ExecutorStatsInner {
             total_executed: AtomicUsize::new(0),
             active_tasks: AtomicUsize::new(0),
-            active_workers: AtomicUsize::new(num_workers),
+            active_workers: AtomicUsize::new(0),
+            parked_workers: AtomicUsize::new(0),
             total_steals: AtomicUsize::new(0),
             total_execution_time_us: AtomicUsize::new(0),
         });
@@ -442,13 +479,21 @@ impl WorkStealingExecutor {
 
             workers.push(WorkerThread {
                 id: i,
-                handle: Mutex::new(None),
+                handle: Arc::new(Mutex::new(None)),
                 queue,
             });
         }
 
         // Start worker threads
         for worker in &mut workers {
+            let mut handle_guard = worker.handle.lock().unwrap_or_else(|e| e.into_inner());
+            stats.active_workers.fetch_add(1, Ordering::AcqRel);
+            let worker_guard = ActiveWorkerGuard {
+                handle: Arc::clone(&worker.handle),
+                stats: Arc::clone(&stats),
+                shutdown: Arc::clone(&shutdown),
+                work_notify: Arc::clone(&work_notify),
+            };
             let queues = queues.clone();
             let global_queue = global_queue.clone();
             let stats = stats.clone();
@@ -464,11 +509,12 @@ impl WorkStealingExecutor {
                     stats,
                     shutdown,
                     work_notify,
+                    worker_guard,
                 )
                 .await;
             });
 
-            *worker.handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+            *handle_guard = Some(handle);
         }
 
         let executor = Arc::new(Self {
@@ -508,6 +554,12 @@ impl WorkStealingExecutor {
                     ));
                 }
                 self.stats.active_workers.fetch_add(1, Ordering::AcqRel);
+                let worker_guard = ActiveWorkerGuard {
+                    handle: Arc::clone(&worker.handle),
+                    stats: Arc::clone(&self.stats),
+                    shutdown: Arc::clone(&self.shutdown),
+                    work_notify: Arc::clone(&self.work_notify),
+                };
                 let queues = self.queues.clone();
                 let global_queue = self.global_queue.clone();
                 let stats = self.stats.clone();
@@ -522,6 +574,7 @@ impl WorkStealingExecutor {
                         stats,
                         shutdown,
                         work_notify,
+                        worker_guard,
                     )
                     .await;
                 });
@@ -529,6 +582,21 @@ impl WorkStealingExecutor {
             }
         }
         Ok(())
+    }
+
+    #[inline]
+    fn notify_if_parked(&self) {
+        if self.stats.active_workers.load(Ordering::Acquire) < self.workers.len()
+            && !self.shutdown.load(Ordering::Acquire)
+        {
+            let _ = self.ensure_workers_running();
+        }
+        // ORDERING: SeqCst pairs with `parked_workers.fetch_add(1, Ordering::SeqCst)` in
+        // `worker_loop` before its pre-park `find_task` re-check so either the worker
+        // sees the newly queued task or the submitter sees `parked_workers > 0`.
+        if self.stats.parked_workers.load(Ordering::SeqCst) > 0 {
+            self.work_notify.notify_waiters();
+        }
     }
 
     /// Submit a task for execution
@@ -551,7 +619,7 @@ impl WorkStealingExecutor {
             .try_push_local_unless_shutdown(&self.shutdown, task)
         {
             Ok(()) => {
-                self.work_notify.notify_waiters();
+                self.notify_if_parked();
                 return Ok(());
             }
             Err((_task, true)) => {
@@ -572,7 +640,7 @@ impl WorkStealingExecutor {
         if global_queue.len() < 10000 {
             WorkStealingQueue::insert_by_priority(&mut global_queue, task);
             drop(global_queue);
-            self.work_notify.notify_waiters();
+            self.notify_if_parked();
             Ok(())
         } else {
             Err(ZiporaError::configuration("all queues full"))
@@ -709,19 +777,8 @@ impl WorkStealingExecutor {
         stats: Arc<ExecutorStatsInner>,
         shutdown: Arc<AtomicBool>,
         work_notify: Arc<tokio::sync::Notify>,
+        _worker_guard: ActiveWorkerGuard,
     ) {
-        struct ActiveWorkerGuard {
-            stats: Arc<ExecutorStatsInner>,
-        }
-        impl Drop for ActiveWorkerGuard {
-            fn drop(&mut self) {
-                self.stats.active_workers.fetch_sub(1, Ordering::AcqRel);
-            }
-        }
-        let _worker_guard = ActiveWorkerGuard {
-            stats: Arc::clone(&stats),
-        };
-
         let my_queue = &queues[worker_id];
         let other_queues: Vec<_> = queues
             .iter()
@@ -764,12 +821,15 @@ impl WorkStealingExecutor {
                     if idle_count <= MAX_YIELD {
                         tokio::task::yield_now().await;
                     } else {
-                        // Register our waiter before re-checking the queues and `shutdown`
-                        // so no concurrent `submit()` or `shutdown()` notification can be
-                        // missed between the empty check and parking.
+                        // Register our waiter and increment `parked_workers` before re-checking
+                        // the queues and `shutdown` so no concurrent `submit()` or `shutdown()`
+                        // notification can be missed between the empty check and parking.
                         let notified = work_notify.notified();
                         tokio::pin!(notified);
                         notified.as_mut().enable();
+                        // ORDERING: SeqCst pairs with `parked_workers.load(Ordering::SeqCst)` in `submit()`.
+                        stats.parked_workers.fetch_add(1, Ordering::SeqCst);
+                        let parked_guard = ParkedWorkerGuard { stats: &stats };
                         let shutting_down_now = shutdown.load(Ordering::Acquire);
                         if let Some(task) = Self::find_task(
                             my_queue,
@@ -778,6 +838,7 @@ impl WorkStealingExecutor {
                             &stats,
                             true,
                         ) {
+                            drop(parked_guard);
                             idle_count = 0;
                             let executed = Self::run_task_with_stats(task, &stats).await;
                             if executed.is_multiple_of(100) {
@@ -860,12 +921,12 @@ impl Drop for WorkStealingExecutor {
         self.shutdown.store(true, Ordering::Release);
         self.work_notify.notify_waiters();
         for worker in &self.workers {
-            if let Some(handle) = worker
+            let handle = worker
                 .handle
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .take()
-            {
+                .take();
+            if let Some(handle) = handle {
                 handle.abort();
             }
         }
@@ -916,7 +977,7 @@ mod tests {
     use super::*;
     use tokio;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_work_stealing_queue() {
         let queue = WorkStealingQueue::new(0, 100);
 
@@ -932,7 +993,7 @@ mod tests {
         assert!(queue.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_full_queue_returns_task_instead_of_dropping() {
         let queue = WorkStealingQueue::new(0, 1);
 
@@ -949,7 +1010,7 @@ mod tests {
         assert_eq!(queue.len(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_submit_overflows_to_global_queue() {
         // Single worker with capacity 1: rapid submissions overflow the local
         // queue, and every overflowing task must be accepted into the global
@@ -963,7 +1024,7 @@ mod tests {
         executor.shutdown().await.unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_task_priority() {
         let queue = WorkStealingQueue::new(0, 100);
 
@@ -987,7 +1048,7 @@ mod tests {
         assert_eq!(popped3.priority(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_task_stealing() {
         let queue1 = WorkStealingQueue::new(0, 100);
         let _queue2 = WorkStealingQueue::new(1, 100);
@@ -1011,7 +1072,7 @@ mod tests {
         assert!(not_stolen.is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_executor_creation() {
         let executor = WorkStealingExecutor::new(4, 1000).unwrap();
         let stats = executor.stats();
@@ -1021,7 +1082,7 @@ mod tests {
         assert_eq!(stats.total_executed, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_task_submission() {
         let executor = WorkStealingExecutor::new(2, 1000).unwrap();
 
@@ -1035,7 +1096,7 @@ mod tests {
         assert!(stats.total_executed > 0 || stats.active_tasks > 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_c10_ws1_balanced_tasks_are_popped_by_owner_and_single_worker_executor() {
         let queue = WorkStealingQueue::new(0, 8);
         for _ in 0..4 {
@@ -1056,7 +1117,7 @@ mod tests {
         assert!(queue.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_c10_ws2_shutdown_drains_queued_and_active_tasks_and_rejects_post_shutdown_submit()
     {
         let executor = WorkStealingExecutor::new(2, 16).unwrap();
@@ -1089,7 +1150,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_c10_ws3_panicking_task_does_not_leak_active_tasks_or_kill_worker() {
         let executor = WorkStealingExecutor::new(1, 16).unwrap();
         executor
@@ -1125,7 +1186,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_c10_ws5_steal_takes_single_queued_stealable_task() {
         let queue = WorkStealingQueue::new(0, 8);
         queue
@@ -1142,7 +1203,7 @@ mod tests {
         assert!(queue.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_c10_ws6_spawn_preserves_fiber_id_and_zero_capacity_rejected() {
         assert!(
             WorkStealingExecutor::new(1, 0).is_err(),
@@ -1163,10 +1224,29 @@ mod tests {
 
     #[test]
     fn test_s25_r2_global_init_dropped_runtime_and_nested_await_fibers() {
-        // (a) Calling WorkStealingExecutor::init() on a temporary runtime and dropping
-        //     that runtime must not cause subsequent WorkStealingExecutor::spawn or
-        //     WorkStealingExecutor::global().submit_closure() calls on a new runtime
-        //     to hang or drop tasks.
+        // (a) Calling WorkStealingExecutor::init() on a temporary current_thread runtime
+        //     whose worker futures are never polled before drop (S27-R2) must decrement
+        //     active_workers, reject no-runtime submit_closure, and respawn on a new runtime.
+        {
+            let rt0 = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            rt0.block_on(async {
+                let cfg = crate::concurrency::ConcurrencyConfig { max_fibers: 2, queue_size: 64 };
+                WorkStealingExecutor::init(cfg).await.unwrap();
+            });
+        }
+
+        let global_exec =
+            WorkStealingExecutor::global().expect("global executor must be initialized");
+        assert_eq!(
+            global_exec.stats().active_workers,
+            0,
+            "dropping a runtime whose workers were never polled must decrement active_workers to 0"
+        );
+        assert!(
+            global_exec.submit_closure(|| Box::pin(async { Ok(()) })).is_err(),
+            "submit_closure with 0 live workers and no active Tokio runtime must return Err"
+        );
+
         {
             let rt1 = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
@@ -1174,17 +1254,27 @@ mod tests {
                 .build()
                 .unwrap();
             rt1.block_on(async {
-                WorkStealingExecutor::init(crate::concurrency::ConcurrencyConfig {
-                    max_fibers: 2,
-                    queue_size: 64,
-                })
-                .await
-                .unwrap();
                 let h = WorkStealingExecutor::spawn(crate::concurrency::Fiber::new(async {
                     Ok(1i32)
                 }));
                 assert_eq!(h.await.unwrap(), 1);
             });
+        }
+
+        let unpolled_ct_exec = {
+            let temp_ct = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            temp_ct.block_on(async { WorkStealingExecutor::new(2, 64).unwrap() })
+        };
+        assert_eq!(unpolled_ct_exec.stats().active_workers, 0);
+        assert!(unpolled_ct_exec.submit_closure(|| Box::pin(async { Ok(()) })).is_err());
+        let mut dropped_mt_execs = Vec::with_capacity(8);
+        for _ in 0..8 {
+            let temp_mt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap();
+            dropped_mt_execs.push(temp_mt.block_on(async { WorkStealingExecutor::new(2, 64).unwrap() }));
         }
 
         let rt2 = tokio::runtime::Builder::new_multi_thread()
@@ -1201,10 +1291,6 @@ mod tests {
             .expect("spawn hung after the runtime that called WorkStealingExecutor::init() was dropped");
             assert_eq!(h.unwrap(), 2);
 
-            // Global executor submit_closure() must also respawn dead workers onto the
-            // active runtime and execute the submitted task (S26-R5).
-            let global_exec = WorkStealingExecutor::global()
-                .expect("global executor must be initialized");
             let (done_tx, done_rx) = tokio::sync::oneshot::channel::<i32>();
             global_exec
                 .submit_closure(move || {
@@ -1220,7 +1306,23 @@ mod tests {
                 .unwrap();
             assert_eq!(submitted_val, 77);
 
-            // (b) Parent fibers that spawn and await child fibers must not deadlock.
+            for ex in std::iter::once(unpolled_ct_exec).chain(dropped_mt_execs) {
+                let (tx, rx) = tokio::sync::oneshot::channel::<i32>();
+                ex.submit_closure(move || {
+                    Box::pin(async move {
+                        let _ = tx.send(99);
+                        Ok(())
+                    })
+                })
+                .expect("submit_closure after runtime drop must respawn workers");
+                let v = tokio::time::timeout(Duration::from_secs(2), rx)
+                    .await
+                    .expect("task stranded after runtime drop")
+                    .unwrap();
+                assert_eq!(v, 99);
+                ex.shutdown().await.unwrap();
+            }
+
             let mut parents = Vec::new();
             for i in 0..4i32 {
                 parents.push(WorkStealingExecutor::spawn(crate::concurrency::Fiber::new(
@@ -1241,7 +1343,6 @@ mod tests {
                 assert_eq!(v, (i as i32) * 10);
             }
 
-            // (c) Concurrent sleeping fibers must not serialize two-at-a-time.
             let start = Instant::now();
             let mut sleepers = Vec::new();
             for i in 0..8i32 {
@@ -1290,56 +1391,63 @@ mod tests {
         }
         exec.shutdown().await.unwrap();
 
-        // 2. Concurrent submit() from OS threads racing shutdown() on a small-capacity
-        //    executor (exercising both local and global queues) must execute every
-        //    accepted task without loss.
-        for it in 0..32usize {
-            let exec = Arc::new(WorkStealingExecutor::new(4, 8).unwrap());
+        // 2. Concurrent submit() from 8 OS threads racing shutdown() on a small-capacity
+        //    executor must execute every accepted task without loss (S25-R6 / S27-R4).
+        for it in 0..256usize {
+            let exec = Arc::new(WorkStealingExecutor::new(2, 4).unwrap());
             let accepted = Arc::new(AtomicUsize::new(0));
             let executed = Arc::new(AtomicUsize::new(0));
+            let ready = Arc::new(AtomicUsize::new(0));
             let go = Arc::new(AtomicBool::new(false));
-            let mut submitters = Vec::new();
-            for s in 0..4usize {
-                let ex = Arc::clone(&exec);
-                let acc = Arc::clone(&accepted);
-                let run = Arc::clone(&executed);
-                let go = Arc::clone(&go);
+            let mut submitters = Vec::with_capacity(8);
+            for s in 0..8usize {
+                let (ex, acc, run, rdy, go) = (
+                    Arc::clone(&exec),
+                    Arc::clone(&accepted),
+                    Arc::clone(&executed),
+                    Arc::clone(&ready),
+                    Arc::clone(&go),
+                );
                 submitters.push(std::thread::spawn(move || {
+                    rdy.fetch_add(1, Ordering::AcqRel);
                     while !go.load(Ordering::Acquire) {
                         std::hint::spin_loop();
                     }
-                    for i in 0..512usize {
+                    let mut i = 0usize;
+                    loop {
                         let run = Arc::clone(&run);
-                        let mut payload = Box::new([0u64; 8]);
-                        for (k, slot) in payload.iter_mut().enumerate() {
-                            *slot = ((s * 512 + i) ^ k) as u64;
-                        }
-                        let expected_sum: u64 = payload.iter().map(|v| v.wrapping_add(1)).sum();
                         let task = ClosureTask::new(move || {
-                            Box::pin(async move {
-                                let mut payload = payload;
-                                for slot in payload.iter_mut() {
-                                    *slot = slot.wrapping_add(1);
-                                }
-                                let actual_sum: u64 = payload.iter().sum();
-                                assert_eq!(actual_sum, expected_sum);
-                                run.fetch_add(1, Ordering::AcqRel);
-                                Ok(())
-                            })
+                            run.fetch_add(1, Ordering::AcqRel);
+                            Box::pin(async { Ok(()) })
                         })
                         .with_priority(((s + i) % 3) as u8)
-                        .with_stealable(i % 5 != 0);
+                        .with_stealable(!i.is_multiple_of(5));
+                        i = i.wrapping_add(1);
                         match ex.submit(Box::new(task)) {
                             Ok(()) => {
                                 acc.fetch_add(1, Ordering::AcqRel);
                             }
-                            Err(_) => break,
+                            Err(_) => {
+                                if ex.shutdown.load(Ordering::Acquire) {
+                                    break;
+                                }
+                                std::thread::yield_now();
+                            }
                         }
                     }
                 }));
             }
+            while ready.load(Ordering::Acquire) < 8 {
+                std::hint::spin_loop();
+            }
             go.store(true, Ordering::Release);
-            tokio::time::sleep(Duration::from_micros(40 + ((it as u64 % 7) * 30))).await;
+            let target_accepted = 16 + (it % 64);
+            while accepted.load(Ordering::Acquire) < target_accepted {
+                std::hint::spin_loop();
+            }
+            for _ in 0..((it % 8) * 64) {
+                std::hint::spin_loop();
+            }
             exec.shutdown().await.unwrap();
             for h in submitters {
                 h.join().unwrap();

@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 
 type SimpleBatchFn = fn(Vec<i32>) -> Result<Vec<i32>>;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pipeline_creation() {
     let pipeline = Pipeline::new(PipelineConfig::default());
     let stats = pipeline.stats().await;
@@ -13,7 +13,7 @@ async fn test_pipeline_creation() {
     assert_eq!(stats.items_in_flight, 0);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_single_stage_execution() {
     let pipeline = Pipeline::new(PipelineConfig::default());
     let stage = MapStage::new("double".to_string(), |x: i32| Ok(x * 2));
@@ -25,7 +25,7 @@ async fn test_single_stage_execution() {
     assert_eq!(stats.total_processed, 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_two_stage_execution() {
     let pipeline = Pipeline::new(PipelineConfig::default());
     let stage1 = MapStage::new("double".to_string(), |x: i32| Ok(x * 2));
@@ -41,7 +41,7 @@ async fn test_two_stage_execution() {
     assert_eq!(stats.total_processed, 2); // Two stages processed
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_processing() {
     let pipeline = Pipeline::new(PipelineConfig::default());
     let stage = MapStage::new("double".to_string(), |x: i32| Ok(x * 2));
@@ -55,7 +55,7 @@ async fn test_batch_processing() {
     assert_eq!(stats.total_processed, 5);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_filter_stage() {
     let pipeline = Pipeline::new(PipelineConfig::default());
 
@@ -68,7 +68,7 @@ async fn test_filter_stage() {
     assert_eq!(result2, None);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pipeline_builder() {
     let pipeline = PipelineBuilder::new()
         .buffer_size(500)
@@ -83,7 +83,7 @@ async fn test_pipeline_builder() {
     assert_eq!(pipeline.config.batch_size, 50);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector() {
     let collector = BatchCollector::new(3, Duration::from_millis(100));
 
@@ -112,7 +112,7 @@ async fn test_batch_collector() {
     assert_eq!(batch, None);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_timeout_checker() {
     let collector = BatchCollector::new(5, Duration::from_millis(50));
     let batches = Arc::new(Mutex::new(Vec::new()));
@@ -139,7 +139,7 @@ async fn test_batch_collector_timeout_checker() {
     assert_eq!(collected_batches[0], vec![1, 2]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_individual() {
     let pipeline = Pipeline::new(PipelineConfig::default());
     let stage: BatchMapStage<_, SimpleBatchFn> =
@@ -152,7 +152,7 @@ async fn test_batch_map_stage_individual() {
     assert_eq!(stats.total_processed, 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_with_batching() {
     let pipeline = PipelineBuilder::new()
         .enable_batching(true)
@@ -179,7 +179,7 @@ async fn test_batch_map_stage_with_batching() {
     assert_eq!(stats.total_processed, 5);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_improved_process_batch_fallback() {
     let pipeline = Pipeline::new(PipelineConfig::default());
     let stage = MapStage::new("add_ten".to_string(), |x: i32| Ok(x + 10));
@@ -194,7 +194,7 @@ async fn test_improved_process_batch_fallback() {
     assert_eq!(stats.total_processed, 3);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_concurrent_access() {
     let collector = Arc::new(BatchCollector::new(2, Duration::from_millis(50)));
     let mut handles = Vec::new();
@@ -228,7 +228,7 @@ async fn test_batch_collector_concurrent_access() {
 
 // Comprehensive BatchCollector tests
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_size_based_batching() {
     let collector = BatchCollector::new(5, Duration::from_secs(1));
 
@@ -249,7 +249,7 @@ async fn test_batch_collector_size_based_batching() {
     assert!(collector.is_empty().await);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_timeout_based_flushing() {
     let collector = BatchCollector::new(10, Duration::from_millis(50));
 
@@ -273,7 +273,7 @@ async fn test_batch_collector_timeout_based_flushing() {
     assert!(collector.is_empty().await);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_manual_flush() {
     let collector = BatchCollector::new(10, Duration::from_secs(1));
 
@@ -292,7 +292,7 @@ async fn test_batch_collector_manual_flush() {
     assert!(empty_batch.is_none());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_zero_timeout() {
     let collector = BatchCollector::new(5, Duration::from_millis(0));
 
@@ -304,7 +304,7 @@ async fn test_batch_collector_zero_timeout() {
     assert_eq!(batch, Some(vec![1, 2]));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_large_batch_size() {
     let collector = BatchCollector::new(1000, Duration::from_millis(10));
 
@@ -322,7 +322,7 @@ async fn test_batch_collector_large_batch_size() {
     assert_eq!(batch.unwrap().len(), 500);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_background_timeout_checker() {
     let collector = BatchCollector::new(10, Duration::from_millis(30));
     let received_batches = Arc::new(Mutex::new(Vec::new()));
@@ -357,7 +357,7 @@ async fn test_batch_collector_background_timeout_checker() {
     assert_eq!(batches[1], vec![3, 4]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_mixed_size_and_timeout_triggers() {
     let collector = BatchCollector::new(3, Duration::from_millis(50));
 
@@ -388,7 +388,7 @@ async fn test_batch_collector_mixed_size_and_timeout_triggers() {
     assert_eq!(final_batch, Some(vec![9])); // Timeout trigger
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_collector_high_concurrency() {
     let collector = Arc::new(BatchCollector::new(5, Duration::from_millis(100)));
     let batch_results = Arc::new(Mutex::new(Vec::new()));
@@ -430,7 +430,7 @@ async fn test_batch_collector_high_concurrency() {
 
 // Comprehensive BatchMapStage tests
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_individual_only() {
     let pipeline = Pipeline::new(PipelineConfig::default());
     let stage: BatchMapStage<_, SimpleBatchFn> =
@@ -448,7 +448,7 @@ async fn test_batch_map_stage_individual_only() {
     assert_eq!(stats.total_processed, 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_with_batch_function() {
     let _pipeline = PipelineBuilder::new()
         .enable_batching(true)
@@ -477,7 +477,7 @@ async fn test_batch_map_stage_with_batch_function() {
     assert_eq!(batch_results, vec![2, 4, 8, 16]); // [2^1, 2^2, 2^3, 2^4]
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_fallback_behavior() {
     // Stage with batch support but no batch function provided
     let stage = BatchMapStage::with_batch_support(
@@ -500,7 +500,7 @@ async fn test_batch_map_stage_fallback_behavior() {
     assert_eq!(results2, vec![3, 6, 9]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_with_max_concurrency() {
     let stage: BatchMapStage<_, SimpleBatchFn> =
         BatchMapStage::new("test".to_string(), |x: i32| Ok(x)).with_max_concurrency(4);
@@ -510,7 +510,7 @@ async fn test_batch_map_stage_with_max_concurrency() {
     assert!(!stage.supports_batching());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_error_handling() {
     let stage = BatchMapStage::with_batch_support(
         "error_prone".to_string(),
@@ -546,7 +546,7 @@ async fn test_batch_map_stage_error_handling() {
     assert_eq!(success_batch, vec![2, 4, 6]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_string_processing() {
     let stage = BatchMapStage::with_batch_support(
         "uppercase".to_string(),
@@ -564,7 +564,7 @@ async fn test_batch_map_stage_string_processing() {
     assert_eq!(results, vec!["WORLD", "RUST", "ASYNC"]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_empty_batch() {
     let stage = BatchMapStage::with_batch_support(
         "empty_test".to_string(),
@@ -578,7 +578,7 @@ async fn test_batch_map_stage_empty_batch() {
     assert!(empty_results.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_large_batch() {
     let stage = BatchMapStage::with_batch_support(
         "large_batch".to_string(),
@@ -597,7 +597,7 @@ async fn test_batch_map_stage_large_batch() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_batch_map_stage_performance_comparison() {
     use std::time::Instant;
 
@@ -644,7 +644,7 @@ async fn test_batch_map_stage_performance_comparison() {
 
 // Integration tests for end-to-end pipeline batching
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_end_to_end_pipeline_with_batching() {
     let pipeline = PipelineBuilder::new()
         .enable_batching(true)
@@ -687,7 +687,7 @@ async fn test_end_to_end_pipeline_with_batching() {
     assert_eq!(stats.total_processed, 7); // 1 single + 6 batch
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_mixed_pipeline_batching_and_non_batching_stages() {
     let pipeline = PipelineBuilder::new()
         .enable_batching(true)

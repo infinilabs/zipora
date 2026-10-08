@@ -409,7 +409,7 @@ mod tests {
     use super::*;
     use tokio;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_fiber_pool_creation() {
         let pool = FiberPool::default().unwrap();
         let stats = pool.stats();
@@ -419,7 +419,7 @@ mod tests {
         assert_eq!(stats.completed, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_fiber_spawning() {
         let pool = FiberPool::default().unwrap();
 
@@ -436,7 +436,7 @@ mod tests {
     /// A fiber that panics must still decrement active_fibers (Drop guard)
     /// and be accounted as failed; otherwise the counter leaks permanently
     /// and derived stats (queued, queue_utilization) skew forever after.
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_fiber_panic_does_not_leak_active_counter() {
         async fn panicking() -> Result<i32> {
             panic!("intentional fiber panic");
@@ -459,7 +459,7 @@ mod tests {
         assert_eq!(pool.stats().active_fibers, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_fiber_pool_builder() {
         let pool = FiberPoolBuilder::new()
             .max_fibers(100)
@@ -473,7 +473,7 @@ mod tests {
         assert_eq!(pool.config.max_workers, 8);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_load_factor() {
         let pool = FiberPool::default().unwrap();
 
@@ -501,7 +501,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_fiber_pool_queue_capacity_limit() {
         let config = FiberPoolConfig {
             max_fibers: 1,
@@ -512,16 +512,22 @@ mod tests {
         };
         let pool = FiberPool::new(config).unwrap();
 
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let started_cl = Arc::clone(&started);
+        let release_cl = Arc::clone(&release);
+
         // Spawn 1st task to block the only running slot
         let _h1 = pool
-            .spawn(async {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+            .spawn(async move {
+                started_cl.notify_one();
+                release_cl.notified().await;
                 Ok(())
             })
             .unwrap();
 
-        // Yield to allow task to start and acquire the run permit
-        tokio::task::yield_now().await;
+        // Wait until the 1st task has acquired the run permit and started
+        started.notified().await;
 
         // Spawn 2nd and 3rd tasks to fill the queue capacity (queue_capacity = 2)
         let _h2 = pool.spawn(async { Ok(()) }).unwrap();
@@ -544,10 +550,9 @@ mod tests {
             assert!(e.to_string().contains("queue capacity exceeded"));
         }
 
-        // Wait for the running task to complete so permits are released
+        // Release the running task and wait for all tasks to complete
+        release.notify_one();
         let _ = _h1.await;
-
-        // Wait for queued tasks to complete
         let _ = _h2.await;
         let _ = _h3.await;
 
@@ -557,7 +562,7 @@ mod tests {
         assert_eq!(result_again.unwrap().await.unwrap(), 100);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_c10_fp1_shutdown_waits_for_spawned_and_queued_fibers() {
         let config = FiberPoolConfig {
             max_fibers: 1,
@@ -591,7 +596,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_c10_fp2_invalid_config_returns_err_instead_of_panic_or_nan() {
         let zero_fibers = FiberPoolConfig {
             max_fibers: 0,

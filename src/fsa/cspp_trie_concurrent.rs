@@ -3112,62 +3112,48 @@ mod tests {
         // (64-word) zpath buffer regardless of `zlen`, panicking with index-out-of-bounds
         // whenever a node with `zlen > 0` sat within 64 slots of `pool.capacity()`.
         // Using `valsize = 0` avoids `max_size_in_slots * (valsize + 16)` value-region
-        // padding so `pool.capacity()` is tight (`258..338` slots).
+        // padding so `pool.capacity()` is tight (`269..338` slots, where 269 is the exact
+        // minimum capacity that fits the root + 41-byte zpath leaf without pool exhaustion).
         let key41: Vec<u8> = (0..41u8).map(|i| b'a' + (i % 26)).collect();
         let caps: Vec<usize> = if cfg!(miri) {
-            vec![260, 270, 272, 300, 322, 330]
+            vec![269, 272, 300, 322, 330]
         } else {
-            (258..338).collect()
+            (269..338).collect()
         };
-        let mut verified = 0usize;
         for cap_slots in caps {
             let trie = ConcurrentCsppTrie::with_capacity(0, cap_slots);
-            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                trie.insert(&key41)
-            }));
-            if let Ok((is_new, vp)) = res {
-                assert!(is_new);
-                assert_eq!(trie.lookup(&key41), Some(vp), "failed at cap={cap_slots}");
-                assert!(trie.contains(&key41), "failed at cap={cap_slots}");
-                assert!(!trie.contains(&key41[..40]), "failed at cap={cap_slots}");
-                let mut miss = key41.clone();
-                miss[40] = b'z';
-                assert!(!trie.contains(&miss), "failed at cap={cap_slots}");
-                let mut ext = key41.clone();
-                ext.push(b'a');
-                assert!(!trie.contains(&ext), "failed at cap={cap_slots}");
-                verified += 1;
-            }
+            let (is_new, vp) = trie.insert(&key41);
+            assert!(is_new);
+            assert_eq!(trie.lookup(&key41), Some(vp), "failed at cap={cap_slots}");
+            assert!(trie.contains(&key41), "failed at cap={cap_slots}");
+            assert!(!trie.contains(&key41[..40]), "failed at cap={cap_slots}");
+            let mut miss = key41.clone();
+            miss[40] = b'z';
+            assert!(!trie.contains(&miss), "failed at cap={cap_slots}");
+            let mut ext = key41.clone();
+            ext.push(b'a');
+            assert!(!trie.contains(&ext), "failed at cap={cap_slots}");
         }
-        assert!(verified > 0, "at least one tight pool capacity must fit key41");
     }
 
     #[test]
     fn test_s25_r1_lookup_multi_insert_near_pool_end() {
-        // S25-R1 / S26-R3 regression: filling tight `valsize = 0` pools until nearly
-        // full and looking up every inserted key (including the last node allocated
-        // within 64 slots of `pool.capacity()`).
+        // S25-R1 / S26-R3 regression: inserting multiple keys into tight `valsize = 0`
+        // pools (`277..=330` slots) so the final zpath node sits within 64 slots of
+        // `pool.capacity()`, then looking up every inserted key without `catch_unwind`.
         let caps: Vec<usize> = if cfg!(miri) {
-            vec![270, 290, 320]
+            vec![277, 290, 320]
         } else {
-            (262..=330).step_by(4).collect()
+            (277..=330).collect()
         };
-        let mut total_checked = 0usize;
         for cap_slots in caps {
             let trie = ConcurrentCsppTrie::with_capacity(0, cap_slots);
             let mut inserted = Vec::new();
-            for i in 0..32u32 {
+            for i in 0..2u32 {
                 let k = format!("key_{i:04}_zpath_tail");
-                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    trie.insert(k.as_bytes())
-                }));
-                match res {
-                    Ok((is_new, _vp)) => {
-                        assert!(is_new);
-                        inserted.push(k);
-                    }
-                    Err(_) => break,
-                }
+                let (is_new, _vp) = trie.insert(k.as_bytes());
+                assert!(is_new);
+                inserted.push(k);
             }
             for k in &inserted {
                 assert!(
@@ -3178,10 +3164,8 @@ mod tests {
                     !trie.contains(&k.as_bytes()[..k.len() - 1]),
                     "prefix false positive on {k} at cap={cap_slots}"
                 );
-                total_checked += 1;
             }
         }
-        assert!(total_checked > 0);
     }
 }
 

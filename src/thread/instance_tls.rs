@@ -307,7 +307,11 @@ where
         })
     }
 
-    /// Get copy of thread-local instance data
+    /// Get copy of thread-local instance data.
+    ///
+    /// If `T::clone()` re-entrantly calls [`Self::set`] or [`Self::remove`] on the
+    /// same `InstanceTls` instance on the current thread, that mutation is deferred
+    /// until the active `clone()` on the cell completes.
     #[inline]
     pub fn get(&self) -> T
     where
@@ -339,7 +343,8 @@ where
 
                 // Cold miss or stale-generation path: evict any stale value (when no reader is
                 // active on this cell) before invoking `T::default()` / `T::clone()`.
-                // SAFETY: When `readers == 0`, no reference into `(*cell_ptr).value` is live.
+                // SAFETY: `readers == 0` is checked before forming `&mut *(*cell_ptr).value.get()`,
+                // ensuring no shared reference into `(*cell_ptr).value` is live.
                 let stale = unsafe {
                     if (*cell_ptr).readers.get() == 0 {
                         (&mut *(*cell_ptr).value.get()).take()
@@ -351,13 +356,19 @@ where
 
                 let default_val = T::default();
                 let cloned = default_val.clone();
-                // SAFETY: `cell_ptr` remains valid; store `default_val` only if no re-entrant
-                // call during `T::default()` / `T::clone()` populated the cell.
+                // SAFETY: `cell_ptr` remains valid on the current thread. `readers == 0` is
+                // checked before forming `&mut *(*cell_ptr).value.get()`, and `default_val` is
+                // stored only if no re-entrant call during `T::default()` / `T::clone()`
+                // populated or borrowed the cell.
                 let displaced = unsafe {
-                    let slot = &mut *(*cell_ptr).value.get();
-                    if (*cell_ptr).readers.get() == 0 && slot.is_none() {
-                        *slot = Some((generation, default_val));
-                        None
+                    if (*cell_ptr).readers.get() == 0 {
+                        let slot = &mut *(*cell_ptr).value.get();
+                        if slot.is_none() {
+                            *slot = Some((generation, default_val));
+                            None
+                        } else {
+                            Some(default_val)
+                        }
                     } else {
                         Some(default_val)
                     }
@@ -368,7 +379,11 @@ where
             .unwrap_or_else(|_| T::default())
     }
 
-    /// Get copy of thread-local instance data if it exists
+    /// Get copy of thread-local instance data if it exists.
+    ///
+    /// If `T::clone()` re-entrantly calls [`Self::set`] or [`Self::remove`] on the
+    /// same `InstanceTls` instance on the current thread, that mutation is deferred
+    /// until the active `clone()` on the cell completes.
     #[inline]
     pub fn get_value(&self) -> Option<T>
     where
@@ -407,7 +422,11 @@ where
         self.get_value()
     }
 
-    /// Set the thread-local value
+    /// Set the thread-local value.
+    ///
+    /// If called re-entrantly from inside `T::clone()` on the same `InstanceTls`
+    /// instance and thread, the write is queued and takes effect as soon as the
+    /// outermost `clone()` on that cell finishes.
     pub fn set(&self, value: T) {
         let (row, col) = self.get_indices();
         let generation = self.generation;
@@ -433,7 +452,11 @@ where
         drop(evicted);
     }
 
-    /// Remove the thread-local value
+    /// Remove the thread-local value.
+    ///
+    /// If called re-entrantly from inside `T::clone()` on the same `InstanceTls`
+    /// instance and thread, clearing the cell is deferred until the outermost
+    /// `clone()` on that cell finishes and this call returns `None`.
     pub fn remove(&self) -> Option<T> {
         let (row, col) = self.get_indices();
         let generation = self.generation;
@@ -694,8 +717,9 @@ impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop
                     let matrix_ptr = tls.lookup_matrix::<T, ROWS, COLS>()?;
                     // SAFETY: `matrix_ptr` is valid on the current thread.
                     let cell_ptr = unsafe { (&*matrix_ptr).lookup_cell(row, col)? };
-                    // SAFETY: If `readers == 0`, no shared borrow of `(*cell_ptr).value` is active;
-                    // otherwise defer clearing the cell until the active clone finishes.
+                    // SAFETY: `CleanupHandle::drop` only runs when the last `Arc<CleanupHandle>`
+                    // (and thus the last `InstanceTls` for `(self.id, self.generation)`) is dropped,
+                    // while `get`/`get_value` borrow `&self`, so `readers == 0` for this generation.
                     unsafe {
                         if (*cell_ptr).readers.get() == 0 {
                             let slot = &mut *(*cell_ptr).value.get();
@@ -705,7 +729,6 @@ impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop
                                 None
                             }
                         } else {
-                            (&*matrix_ptr).defer_write(cell_ptr, None);
                             None
                         }
                     }
