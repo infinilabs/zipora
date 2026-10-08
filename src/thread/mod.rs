@@ -57,3 +57,23 @@ impl PlatformSync for FallbackSync {
         Ok(0)
     }
 }
+
+/// Returns a pointer-sized identifier for the underlying scheduler allocation
+/// of a [`tokio::runtime::Handle`].
+#[cfg(feature = "async")]
+#[inline]
+pub(crate) fn tokio_runtime_handle_id(handle: &tokio::runtime::Handle) -> usize {
+    const _: () = {
+        assert!(
+            std::mem::size_of::<tokio::runtime::Handle>() == 2 * std::mem::size_of::<usize>()
+        );
+        assert!(std::mem::align_of::<tokio::runtime::Handle>() == std::mem::align_of::<usize>());
+    };
+    let base = std::ptr::from_ref(handle).cast::<usize>();
+    // SAFETY: `tokio::runtime::Handle` is a 2-word (`ScalarPair`) wrapper around
+    // `scheduler::Handle::{CurrentThread(Arc<_>), MultiThread(Arc<_>)}` whose second
+    // pointer-aligned word (offset `size_of::<usize>()`) holds the initialized non-null
+    // `Arc` allocation address without padding bytes.
+    unsafe { base.add(1).read() }
+}
+

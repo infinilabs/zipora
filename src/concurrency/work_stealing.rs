@@ -370,7 +370,8 @@ const WORKER_LIVE: u8 = 2;
 static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(1);
 
 thread_local! {
-    static LAST_RECORDED_EXECUTOR_ID: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static LAST_RECORDED_FALLBACK: std::cell::Cell<Option<(usize, usize)>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// Work-stealing executor for parallel task execution
@@ -708,17 +709,18 @@ impl WorkStealingExecutor {
                 "cannot submit task to shut down executor",
             ));
         }
-        LAST_RECORDED_EXECUTOR_ID.with(|last_id| {
-            if last_id.get() != self.executor_id {
-                last_id.set(self.executor_id);
-                if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
+        if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
+            let key = (self.executor_id, crate::thread::tokio_runtime_handle_id(&rt_handle));
+            LAST_RECORDED_FALLBACK.with(|last| {
+                if last.get() != Some(key) {
                     *self
                         .fallback_runtime
                         .lock()
                         .unwrap_or_else(|e| e.into_inner()) = Some(rt_handle);
+                    last.set(Some(key));
                 }
-            }
-        });
+            });
+        }
         self.ensure_workers_running()?;
 
         // ORDERING: Relaxed is sufficient because next_worker is an independent round-robin
@@ -1651,4 +1653,225 @@ mod tests {
             );
         }
     }
+
+    fn run_s29_r1_fallback_respawn_mode(mode: char) {
+        let (wd_tx, wd_rx) = std::sync::mpsc::channel::<()>();
+        let wd_join = std::thread::spawn(move || {
+            let rt2 = Arc::new(
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .unwrap(),
+            );
+            let rt1 = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap();
+            let ex = rt1.block_on(async {
+                let ex = WorkStealingExecutor::new(1, 1024).unwrap();
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                ex
+            });
+
+            let ran = Arc::new(AtomicUsize::new(0));
+            let accepted = Arc::new(AtomicUsize::new(0));
+            {
+                let (ex, ran, accepted, rt2) = (
+                    Arc::clone(&ex),
+                    Arc::clone(&ran),
+                    Arc::clone(&accepted),
+                    Arc::clone(&rt2),
+                );
+                std::thread::spawn(move || {
+                    let pre = Arc::new(AtomicUsize::new(0));
+                    match mode {
+                        'b' => {
+                            let pre_c = Arc::clone(&pre);
+                            ex.submit_closure(move || {
+                                pre_c.fetch_add(1, Ordering::AcqRel);
+                                Box::pin(async { Ok(()) })
+                            })
+                            .unwrap();
+                        }
+                        'c' => {
+                            let rt3 = tokio::runtime::Builder::new_multi_thread()
+                                .worker_threads(1)
+                                .enable_all()
+                                .build()
+                                .unwrap();
+                            {
+                                let _enter = rt3.enter();
+                                let pre_c = Arc::clone(&pre);
+                                ex.submit_closure(move || {
+                                    pre_c.fetch_add(1, Ordering::AcqRel);
+                                    Box::pin(async { Ok(()) })
+                                })
+                                .unwrap();
+                            }
+                            drop(rt3);
+                        }
+                        _ => unreachable!(),
+                    }
+                    let deadline = std::time::Instant::now() + Duration::from_millis(500);
+                    while pre.load(Ordering::Acquire) < 1
+                        && std::time::Instant::now() < deadline
+                    {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    assert_eq!(pre.load(Ordering::Acquire), 1);
+
+                    let _enter = rt2.enter();
+                    ex.submit_closure(|| {
+                        Box::pin(async {
+                            tokio::time::sleep(Duration::from_millis(200)).await;
+                            Ok(())
+                        })
+                    })
+                    .unwrap();
+                    for _ in 0..100usize {
+                        let ran_c = Arc::clone(&ran);
+                        if ex
+                            .submit_closure(move || {
+                                ran_c.fetch_add(1, Ordering::AcqRel);
+                                Box::pin(async { Ok(()) })
+                            })
+                            .is_ok()
+                        {
+                            accepted.fetch_add(1, Ordering::AcqRel);
+                        }
+                    }
+                })
+                .join()
+                .unwrap();
+            }
+
+            std::thread::sleep(Duration::from_millis(10));
+            drop(rt1);
+
+            let deadline = std::time::Instant::now() + Duration::from_millis(1000);
+            while ran.load(Ordering::Acquire) < accepted.load(Ordering::Acquire)
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let executed = ran.load(Ordering::Acquire);
+            let total_accepted = accepted.load(Ordering::Acquire);
+            rt2.block_on(async {
+                let _ = ex.shutdown().await;
+            });
+            assert_eq!(
+                executed, total_accepted,
+                "S29-R1 mode '{mode}': queued backlog stranded after worker runtime drop (executed {executed}/{total_accepted})"
+            );
+            let _ = wd_tx.send(());
+        });
+        match wd_rx.recv_timeout(Duration::from_secs(15)) {
+            Ok(()) => wd_join.join().unwrap(),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                std::panic::resume_unwind(wd_join.join().unwrap_err());
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("S29-R1 watchdog timed out (>15s)");
+            }
+        }
+    }
+
+    #[test]
+    fn test_s29_r1_fallback_runtime_mode_b_plain_then_live_runtime() {
+        run_s29_r1_fallback_respawn_mode('b');
+    }
+
+    #[test]
+    fn test_s29_r1_fallback_runtime_mode_c_dropped_temp_then_live_runtime() {
+        run_s29_r1_fallback_respawn_mode('c');
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_s29_r1_executor_timings() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(8)
+            .enable_all()
+            .build()
+            .unwrap();
+        let ex = rt.block_on(async {
+            let ex = WorkStealingExecutor::new(8, 1 << 16).unwrap();
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            ex
+        });
+
+        let mut best_1t = Duration::MAX;
+        for _ in 0..7 {
+            let done = Arc::new(AtomicUsize::new(0));
+            let t = std::time::Instant::now();
+            for _ in 0..100_000usize {
+                loop {
+                    let d = Arc::clone(&done);
+                    if ex
+                        .submit_closure(move || {
+                            d.fetch_add(1, Ordering::Relaxed);
+                            Box::pin(async { Ok(()) })
+                        })
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    std::hint::spin_loop();
+                }
+            }
+            while done.load(Ordering::Relaxed) < 100_000 {
+                std::hint::spin_loop();
+            }
+            best_1t = best_1t.min(t.elapsed());
+        }
+
+        let mut best_8t = Duration::MAX;
+        for _ in 0..7 {
+            let done = Arc::new(AtomicUsize::new(0));
+            let total = 8 * 50_000usize;
+            let t = std::time::Instant::now();
+            let hs: Vec<_> = (0..8)
+                .map(|_| {
+                    let (ex, done) = (Arc::clone(&ex), Arc::clone(&done));
+                    std::thread::spawn(move || {
+                        let mut i = 0usize;
+                        while i < 50_000 {
+                            let d = Arc::clone(&done);
+                            if ex
+                                .submit_closure(move || {
+                                    d.fetch_add(1, Ordering::Relaxed);
+                                    Box::pin(async { Ok(()) })
+                                })
+                                .is_ok()
+                            {
+                                i += 1;
+                            } else {
+                                std::thread::yield_now();
+                            }
+                        }
+                    })
+                })
+                .collect();
+            for h in hs {
+                h.join().unwrap();
+            }
+            while done.load(Ordering::Relaxed) < total {
+                std::hint::spin_loop();
+            }
+            best_8t = best_8t.min(t.elapsed());
+        }
+
+        rt.block_on(async {
+            ex.shutdown().await.unwrap();
+        });
+        println!(
+            "S29-R1 executor bench: 1t_100k={:.1} ns/task | mp8_400k={:.1} ns/task",
+            best_1t.as_nanos() as f64 / 100_000.0,
+            best_8t.as_nanos() as f64 / 400_000.0,
+        );
+    }
 }
+
+
