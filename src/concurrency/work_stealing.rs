@@ -4,8 +4,8 @@ use crate::error::{Result, ZiporaError};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
@@ -363,14 +363,28 @@ pub struct ExecutorStats {
     pub utilization: f64,
 }
 
+const WORKER_DEAD: u8 = 0;
+const WORKER_SPAWNING: u8 = 1;
+const WORKER_LIVE: u8 = 2;
+
+static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(1);
+
+thread_local! {
+    static LAST_RECORDED_EXECUTOR_ID: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Work-stealing executor for parallel task execution
 pub struct WorkStealingExecutor {
+    executor_id: usize,
     workers: Vec<WorkerThread>,
     queues: Vec<Arc<WorkStealingQueue>>,
     global_queue: Arc<Mutex<VecDeque<Box<dyn Task>>>>,
     stats: Arc<ExecutorStatsInner>,
     shutdown: Arc<AtomicBool>,
     work_notify: Arc<tokio::sync::Notify>,
+    respawn_lock: Mutex<()>,
+    fallback_runtime: Mutex<Option<tokio::runtime::Handle>>,
+    self_weak: Weak<Self>,
     next_worker: AtomicUsize,
 }
 
@@ -386,28 +400,46 @@ struct ExecutorStatsInner {
 #[allow(dead_code)] // RAII: holds Arc to keep worker's queue alive
 struct WorkerThread {
     id: usize,
-    handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    state: Arc<AtomicU8>,
+    handle: Mutex<Option<JoinHandle<()>>>,
     queue: Arc<WorkStealingQueue>,
 }
 
 /// RAII guard constructed before spawning a worker task so that even if the
 /// hosting Tokio runtime is dropped before the worker future is ever polled once,
-/// dropping the task clears its handle slot and decrements `active_workers`.
+/// dropping the task marks the worker slot dead and decrements `active_workers`
+/// without acquiring any worker-handle mutex.
 struct ActiveWorkerGuard {
-    handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    state: Arc<AtomicU8>,
     stats: Arc<ExecutorStatsInner>,
     shutdown: Arc<AtomicBool>,
     work_notify: Arc<tokio::sync::Notify>,
+    executor: Weak<WorkStealingExecutor>,
 }
 
 impl Drop for ActiveWorkerGuard {
     fn drop(&mut self) {
-        let mut guard = self.handle.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = None;
         self.stats.active_workers.fetch_sub(1, Ordering::AcqRel);
-        drop(guard);
+        let prev_state = self.state.swap(WORKER_DEAD, Ordering::AcqRel);
         if !self.shutdown.load(Ordering::Acquire) {
             self.work_notify.notify_waiters();
+            if prev_state == WORKER_LIVE
+                && let Some(exec) = self.executor.upgrade()
+            {
+                let rt_opt = exec
+                    .fallback_runtime
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                if let Some(rt_handle) = rt_opt {
+                    drop(rt_handle.spawn(async move {
+                        let _ = exec.ensure_workers_running();
+                        if exec.stats.parked_workers.load(Ordering::SeqCst) > 0 {
+                            exec.work_notify.notify_waiters();
+                        }
+                    }));
+                }
+            }
         }
     }
 }
@@ -479,26 +511,45 @@ impl WorkStealingExecutor {
 
             workers.push(WorkerThread {
                 id: i,
-                handle: Arc::new(Mutex::new(None)),
+                state: Arc::new(AtomicU8::new(WORKER_DEAD)),
+                handle: Mutex::new(None),
                 queue,
             });
         }
 
-        // Start worker threads
-        for worker in &mut workers {
-            let mut handle_guard = worker.handle.lock().unwrap_or_else(|e| e.into_inner());
-            stats.active_workers.fetch_add(1, Ordering::AcqRel);
+        // ORDERING: Relaxed is sufficient for a monotonic unique executor identifier.
+        let executor_id = NEXT_EXECUTOR_ID.fetch_add(1, Ordering::Relaxed);
+        let executor = Arc::new_cyclic(|weak| Self {
+            executor_id,
+            workers,
+            queues,
+            global_queue,
+            stats,
+            shutdown,
+            work_notify,
+            respawn_lock: Mutex::new(()),
+            fallback_runtime: Mutex::new(None),
+            self_weak: weak.clone(),
+            next_worker: AtomicUsize::new(0),
+        });
+
+        // Start worker tasks without holding `worker.handle` across `tokio::spawn`, so an
+        // immediate synchronous drop (closed runtime or panic unwind) cannot self-deadlock.
+        for worker in &executor.workers {
+            worker.state.store(WORKER_SPAWNING, Ordering::Release);
+            executor.stats.active_workers.fetch_add(1, Ordering::AcqRel);
             let worker_guard = ActiveWorkerGuard {
-                handle: Arc::clone(&worker.handle),
-                stats: Arc::clone(&stats),
-                shutdown: Arc::clone(&shutdown),
-                work_notify: Arc::clone(&work_notify),
+                state: Arc::clone(&worker.state),
+                stats: Arc::clone(&executor.stats),
+                shutdown: Arc::clone(&executor.shutdown),
+                work_notify: Arc::clone(&executor.work_notify),
+                executor: executor.self_weak.clone(),
             };
-            let queues = queues.clone();
-            let global_queue = global_queue.clone();
-            let stats = stats.clone();
-            let shutdown = shutdown.clone();
-            let work_notify = work_notify.clone();
+            let queues = executor.queues.clone();
+            let global_queue = executor.global_queue.clone();
+            let stats = executor.stats.clone();
+            let shutdown = executor.shutdown.clone();
+            let work_notify = executor.work_notify.clone();
             let worker_id = worker.id;
 
             let handle = tokio::spawn(async move {
@@ -514,18 +565,18 @@ impl WorkStealingExecutor {
                 .await;
             });
 
-            *handle_guard = Some(handle);
+            match worker.state.compare_exchange(
+                WORKER_SPAWNING,
+                WORKER_LIVE,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) | Err(WORKER_LIVE) => {
+                    *worker.handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+                }
+                Err(_) => {}
+            }
         }
-
-        let executor = Arc::new(Self {
-            workers,
-            queues,
-            global_queue,
-            stats,
-            shutdown,
-            work_notify,
-            next_worker: AtomicUsize::new(0),
-        });
 
         Ok(executor)
     }
@@ -541,24 +592,43 @@ impl WorkStealingExecutor {
                 "cannot submit task: executor workers terminated with previous Tokio runtime and no current Tokio runtime is active",
             )
         })?;
-        for worker in &self.workers {
-            let mut handle_guard = worker.handle.lock().unwrap_or_else(|e| e.into_inner());
-            let is_dead = match handle_guard.as_ref() {
-                Some(h) => h.is_finished(),
-                None => true,
-            };
-            if is_dead {
+        let _respawn_guard = self
+            .respawn_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        while self.stats.active_workers.load(Ordering::Acquire) < self.workers.len() {
+            if self.shutdown.load(Ordering::Acquire) {
+                return Err(ZiporaError::invalid_state(
+                    "cannot submit task to shut down executor",
+                ));
+            }
+            let mut progressed = false;
+            for worker in &self.workers {
+                if worker
+                    .state
+                    .compare_exchange(
+                        WORKER_DEAD,
+                        WORKER_SPAWNING,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_err()
+                {
+                    continue;
+                }
                 if self.shutdown.load(Ordering::Acquire) {
+                    worker.state.store(WORKER_DEAD, Ordering::Release);
                     return Err(ZiporaError::invalid_state(
                         "cannot submit task to shut down executor",
                     ));
                 }
                 self.stats.active_workers.fetch_add(1, Ordering::AcqRel);
                 let worker_guard = ActiveWorkerGuard {
-                    handle: Arc::clone(&worker.handle),
+                    state: Arc::clone(&worker.state),
                     stats: Arc::clone(&self.stats),
                     shutdown: Arc::clone(&self.shutdown),
                     work_notify: Arc::clone(&self.work_notify),
+                    executor: self.self_weak.clone(),
                 };
                 let queues = self.queues.clone();
                 let global_queue = self.global_queue.clone();
@@ -578,7 +648,30 @@ impl WorkStealingExecutor {
                     )
                     .await;
                 });
-                *handle_guard = Some(new_handle);
+                match worker.state.compare_exchange(
+                    WORKER_SPAWNING,
+                    WORKER_LIVE,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) | Err(WORKER_LIVE) => {
+                        *worker.handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(new_handle);
+                        progressed = true;
+                    }
+                    Err(_) => {
+                        if self.shutdown.load(Ordering::Acquire) {
+                            return Err(ZiporaError::invalid_state(
+                                "cannot submit task to shut down executor",
+                            ));
+                        }
+                        return Err(ZiporaError::invalid_state(
+                            "cannot submit task: current Tokio runtime is shutting down",
+                        ));
+                    }
+                }
+            }
+            if !progressed {
+                std::hint::spin_loop();
             }
         }
         Ok(())
@@ -599,13 +692,33 @@ impl WorkStealingExecutor {
         }
     }
 
-    /// Submit a task for execution
+    /// Submit a task for execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ZiporaError::InvalidState`] if the executor has been shut down, if its
+    /// worker tasks terminated when a previous Tokio runtime was dropped and no active
+    /// Tokio runtime is available on the calling thread to respawn them, or if the
+    /// current Tokio runtime is shutting down. Returns [`ZiporaError::Configuration`]
+    /// if both the target worker's local queue and the bounded global fallback queue
+    /// (10,000 tasks) are full.
     pub fn submit(&self, task: Box<dyn Task>) -> Result<()> {
         if self.shutdown.load(Ordering::Acquire) {
             return Err(ZiporaError::invalid_state(
                 "cannot submit task to shut down executor",
             ));
         }
+        LAST_RECORDED_EXECUTOR_ID.with(|last_id| {
+            if last_id.get() != self.executor_id {
+                last_id.set(self.executor_id);
+                if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
+                    *self
+                        .fallback_runtime
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = Some(rt_handle);
+                }
+            }
+        });
         self.ensure_workers_running()?;
 
         // ORDERING: Relaxed is sufficient because next_worker is an independent round-robin
@@ -643,11 +756,19 @@ impl WorkStealingExecutor {
             self.notify_if_parked();
             Ok(())
         } else {
+            drop(global_queue);
+            self.notify_if_parked();
             Err(ZiporaError::configuration("all queues full"))
         }
     }
 
-    /// Submit a closure as a task
+    /// Submit a closure as a task.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`Self::submit`]: if the executor
+    /// is shut down, if workers cannot be respawned on an active Tokio runtime, or if
+    /// both the target local queue and the global queue are full.
     pub fn submit_closure<F>(&self, closure: F) -> Result<()>
     where
         F: FnOnce() -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + 'static,
@@ -779,6 +900,12 @@ impl WorkStealingExecutor {
         work_notify: Arc<tokio::sync::Notify>,
         _worker_guard: ActiveWorkerGuard,
     ) {
+        let _ = _worker_guard.state.compare_exchange(
+            WORKER_SPAWNING,
+            WORKER_LIVE,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
         let my_queue = &queues[worker_id];
         let other_queues: Vec<_> = queues
             .iter()
@@ -1267,6 +1394,71 @@ mod tests {
         };
         assert_eq!(unpolled_ct_exec.stats().active_workers, 0);
         assert!(unpolled_ct_exec.submit_closure(|| Box::pin(async { Ok(()) })).is_err());
+
+        // S28-R1: Synchronous future drop inside `tokio::spawn` / `Handle::spawn` must never
+        // self-deadlock on `worker.handle`:
+        // (D3) `new()` outside any runtime panics cleanly instead of hanging during unwind;
+        // (D2) `new()` with a shut-down runtime's handle entered returns `Ok` with 0 active workers;
+        // (D1) `submit()` with a shut-down runtime's handle entered returns `Err` without hanging;
+        // (D4) a task whose `Drop` submits while its runtime shuts down completes without hanging.
+        {
+            let (wd_tx, wd_rx) = std::sync::mpsc::channel::<()>();
+            let wd_join = std::thread::spawn(move || {
+                let no_rt = std::panic::catch_unwind(|| WorkStealingExecutor::new(2, 64));
+                assert!(no_rt.is_err(), "WorkStealingExecutor::new outside runtime must panic");
+
+                let closed_rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let closed_handle = closed_rt.handle().clone();
+                let dead_exec = closed_rt.block_on(async { WorkStealingExecutor::new(2, 64).unwrap() });
+                drop(closed_rt);
+                assert_eq!(dead_exec.stats().active_workers, 0);
+                {
+                    let _enter = closed_handle.enter();
+                    let d2_exec = WorkStealingExecutor::new(2, 64).unwrap();
+                    assert_eq!(d2_exec.stats().active_workers, 0);
+                    assert!(
+                        dead_exec
+                            .submit_closure(|| Box::pin(async { Ok(()) }))
+                            .is_err(),
+                        "submit with shut-down runtime handle entered must return Err"
+                    );
+                }
+
+                struct SubmitOnDrop(Arc<WorkStealingExecutor>);
+                impl Drop for SubmitOnDrop {
+                    fn drop(&mut self) {
+                        let _ = self.0.submit_closure(|| Box::pin(async { Ok(()) }));
+                    }
+                }
+                for _ in 0..8 {
+                    let drop_rt = tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(2)
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    drop_rt.block_on(async {
+                        let ex = WorkStealingExecutor::new(2, 64).unwrap();
+                        let sod = SubmitOnDrop(ex);
+                        tokio::spawn(async move {
+                            let _keep = sod;
+                            std::future::pending::<()>().await;
+                        });
+                        tokio::task::yield_now().await;
+                    });
+                    drop(drop_rt);
+                }
+                let _ = wd_tx.send(());
+            });
+            wd_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("S28-R1 self-deadlock when Tokio synchronously drops worker future during spawn");
+            wd_join.join().unwrap();
+        }
+
         let mut dropped_mt_execs = Vec::with_capacity(8);
         for _ in 0..8 {
             let temp_mt = tokio::runtime::Builder::new_multi_thread()

@@ -38,8 +38,8 @@ where
 ///
 /// `readers` counts active in-place `T::clone()` shared borrows of `value` on this cell.
 /// While `readers > 0`, `value` is only accessed via shared references `&Option<(u32, T)>`;
-/// any re-entrant `set`, `remove`, or `CleanupHandle::drop` on the same cell records its
-/// update in `TlsMatrix::deferred` to be applied once `readers` returns to `0`.
+/// any re-entrant `set` or `remove` on the same cell records its update in
+/// `TlsMatrix::deferred` to be applied once `readers` returns to `0`.
 struct TlsCell<T> {
     readers: std::cell::Cell<u32>,
     value: UnsafeCell<Option<(u32, T)>>,
@@ -311,7 +311,7 @@ where
     ///
     /// If `T::clone()` re-entrantly calls [`Self::set`] or [`Self::remove`] on the
     /// same `InstanceTls` instance on the current thread, that mutation is deferred
-    /// until the active `clone()` on the cell completes.
+    /// until the outermost active `clone()` on the cell completes (`readers == 0`).
     #[inline]
     pub fn get(&self) -> T
     where
@@ -383,7 +383,7 @@ where
     ///
     /// If `T::clone()` re-entrantly calls [`Self::set`] or [`Self::remove`] on the
     /// same `InstanceTls` instance on the current thread, that mutation is deferred
-    /// until the active `clone()` on the cell completes.
+    /// until the outermost active `clone()` on the cell completes (`readers == 0`).
     #[inline]
     pub fn get_value(&self) -> Option<T>
     where
@@ -717,9 +717,9 @@ impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop
                     let matrix_ptr = tls.lookup_matrix::<T, ROWS, COLS>()?;
                     // SAFETY: `matrix_ptr` is valid on the current thread.
                     let cell_ptr = unsafe { (&*matrix_ptr).lookup_cell(row, col)? };
-                    // SAFETY: `CleanupHandle::drop` only runs when the last `Arc<CleanupHandle>`
-                    // (and thus the last `InstanceTls` for `(self.id, self.generation)`) is dropped,
-                    // while `get`/`get_value` borrow `&self`, so `readers == 0` for this generation.
+                    // SAFETY: `cell_ptr` is valid on the current thread, and `readers == 0` is
+                    // checked before forming `&mut *(*cell_ptr).value.get()`, ensuring no shared
+                    // reference into `(*cell_ptr).value` is live on the call stack.
                     unsafe {
                         if (*cell_ptr).readers.get() == 0 {
                             let slot = &mut *(*cell_ptr).value.get();
