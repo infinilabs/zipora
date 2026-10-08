@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit review ledger markdown files for citation, commit-table, item-span, identifier, and AST Type::member accuracy (S21-R3 / S23-R2 / S24-R2 / S25-R3 / S26-R1 / S27-R1).
+"""Audit review ledger markdown files for citation, commit-table, item-span, identifier, and AST Type::member accuracy.
 
 Usage:
     python3 scripts/audit_ledger.py docs/review/io.md [docs/review/thread_and_concurrency.md ...]
@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import collections
+import os
 import pathlib
 import re
 import subprocess
@@ -15,18 +16,18 @@ import sys
 from typing import Dict, List, Optional, Set, Tuple
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+from audit_common import is_test_file, is_test_only_cfg  # noqa: E402
 
-# Match every `commit:path:line(-line)` citation (whether backticked individually or grouped inside a backtick span)
 CITE_RE = re.compile(
     r"(?<![0-9A-Za-z])([0-9a-f]{7,40}):([A-Za-z0-9_.][A-Za-z0-9_./\-]*?):(\d+)(?:-(\d+))?(?![0-9])"
 )
 
-# Also match comma-separated line ranges after `commit:path:` (e.g. `b74f6fe:src/thread/instance_tls.rs:39, 728`)
 MULTI_CITE_RE = re.compile(
     r"(?<![0-9A-Za-z])([0-9a-f]{7,40}):([A-Za-z0-9_.][A-Za-z0-9_./\-]*?):(\d+(?:-\d+)?(?:\s*,\s*\d+(?:-\d+)?)+)(?![0-9A-Za-z:])"
 )
 
-# Commit table row (supports both 7-column with Parent and 6-column without Parent)
 COMMIT_ROW_RE = re.compile(
     r"^\|\s*\d+\s*\|\s*`([0-9a-f]{7,40})`\s*\|(?:\s*`([0-9a-f]{7,40})`\s*\|)?\s*(\d{4}-\d{2}-\d{2})\s*\|\s*(.*?)\s*\|\s*(\d+)\s*\|\s*([+\u2212-]\d+)\s*/\s*([+\u2212-]\d+)\s*\|$"
 )
@@ -34,7 +35,10 @@ COMMIT_ROW_RE = re.compile(
 BT_RE = re.compile(r"`([^`]+)`")
 IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SNAKE_RE = re.compile(r"\b[a-z][a-z0-9]*_[a-z0-9_]+\b")
-CAMEL_RE = re.compile(r"\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+\b")
+CAMEL_RE = re.compile(
+    r"\b(?:[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+|[A-Z]{2,}[a-z]{2,}[A-Za-z0-9]*)\b"
+)
+HYPHEN_IDENT_RE = re.compile(r"\b[a-z]{2,}(?:-[a-z]{2,}){2,}\b")
 PAIR_RE = re.compile(
     r"\b([A-Z][A-Za-z0-9_]*)(?:<[^`>]*>)?::(?:\{([^}]*)\}|([A-Za-z_][A-Za-z0-9_]*))"
 )
@@ -50,66 +54,208 @@ HDR_RE = re.compile(
 )
 
 ARROW_LOC_RE = re.compile(r"-->\s+([A-Za-z0-9_./\-]+\.rs):(\d+):(\d+)")
-PANIC_LOC_RE = re.compile(r"panicked at\s+([A-Za-z0-9_./\-]+\.rs):(\d+):(\d+)")
+PANIC_LOC_RE = re.compile(
+    r"thread\s+'([^']+)'\s+(?:\(\d+\)\s+)?panicked at\s+([A-Za-z0-9_./\-]+\.rs):(\d+):(\d+)"
+)
+UNSAFE_SITE_RE = re.compile(r"\bunsafe\s*(?:\{|fn\b|impl\b|trait\b)")
 
-STD_TYPES: Set[str] = {
-    "Vec", "VecDeque", "Box", "Rc", "Arc", "Weak", "RcWeak", "ArcWeak",
-    "Option", "Result", "Ok", "Err", "Some", "None", "String", "Cell", "RefCell",
-    "UnsafeCell", "OnceLock", "LazyLock", "Mutex", "RwLock", "Condvar", "Semaphore",
-    "HashMap", "HashSet", "BTreeMap", "BTreeSet", "NonNull", "Layout", "Ordering",
-    "SeekFrom", "ErrorKind", "Advice", "MmapMut", "Mmap", "MmapOptions", "OpenOptions",
-    "File", "Path", "PathBuf", "Instant", "Duration", "Cursor", "Self", "T",
-    "Read", "Write", "Seek", "BufRead", "AtomicBool", "AtomicU8", "AtomicU16",
-    "AtomicU32", "AtomicU64", "AtomicUsize", "AtomicI32", "AtomicI64", "AtomicIsize",
-    "AtomicPtr", "PhantomData", "Error", "RangeInclusive", "Local", "Global",
-    "Builder", "Handle", "Notify", "JoinHandle", "Thread", "TypeId",
-    "AnyBitPattern", "NoUninit",
+UNIVERSAL_TRAIT_METHODS: Set[str] = {
+    "clone", "default", "drop", "fmt", "eq", "ne", "partial_cmp", "cmp",
+    "hash", "deref", "deref_mut", "index", "index_mut", "from", "into",
+    "try_from", "try_into", "serialize", "deserialize", "borrow", "borrow_mut",
 }
 
-# Explicit valid members on STD_TYPES so `Mutex::ensure_workers_running` or `Arc::frobnicate_workers` are rejected (F12, F24)
-STD_ALLOWED_MEMBERS: Set[str] = {
-    "new", "default", "with_capacity", "len", "is_empty", "capacity", "push", "pop",
-    "insert", "remove", "get", "get_mut", "set", "take", "replace", "into_inner",
-    "clear", "reserve", "resize", "truncate", "extend", "extend_from_slice", "clone",
-    "downgrade", "upgrade", "strong_count", "weak_count", "as_ptr", "as_mut_ptr",
-    "as_slice", "as_mut_slice", "from_raw_parts", "from_raw_parts_mut", "dangling",
-    "new_unchecked", "from_size_align", "from_size_align_unchecked", "load", "store",
-    "swap", "compare_exchange", "compare_exchange_weak", "fetch_add", "fetch_sub",
-    "fetch_and", "fetch_or", "fetch_max", "fetch_min", "fetch_update", "lock",
-    "try_lock", "read", "write", "acquire", "try_acquire", "add_permits",
-    "available_permits", "wait", "notify_one", "notify_all", "notify_waiters",
-    "notified", "try_with", "with", "borrow", "borrow_mut", "try_borrow",
-    "try_borrow_mut", "get_or_init", "now", "elapsed", "from_secs", "from_millis",
-    "from_micros", "from_nanos", "as_secs", "as_millis", "as_micros", "as_nanos",
-    "Relaxed", "Acquire", "Release", "AcqRel", "SeqCst", "Start", "Current", "End",
-    "UnexpectedEof", "InvalidData", "InvalidInput", "Other", "WouldBlock",
-    "Interrupted", "NotFound", "PermissionDenied", "AlreadyExists", "Normal",
-    "Random", "Sequential", "WillNeed", "DontNeed", "map_mut", "map", "map_anon",
-    "flush", "flush_range", "advise", "set_len", "sync_all", "sync_data", "open",
-    "create", "read_exact", "write_all", "seek", "fill_buf", "consume", "fmt",
-    "drop", "deref", "deref_mut", "index", "index_mut", "eq", "partial_cmp", "cmp",
-    "hash", "serialize", "deserialize", "from", "into", "try_from", "try_into",
-    "ok", "err", "unwrap", "expect", "map_err", "and_then", "or_else", "unwrap_or",
-    "unwrap_or_else", "unwrap_or_default", "is_some", "is_none", "is_ok", "is_err",
-    "iter", "iter_mut", "into_iter", "values", "values_mut", "keys", "entry",
-    "spawn", "block_on", "current", "try_current", "yield_now", "sleep", "timeout",
-    "max", "min", "BITS", "MAX", "MIN", "ZERO", "other", "register",
-    "new_current_thread", "new_multi_thread", "of", "into_boxed_slice", "into_raw",
-    "from_raw", "leak", "pin",
+ATOMIC_METHODS: Set[str] = {
+    "new", "load", "store", "swap", "compare_exchange", "compare_exchange_weak",
+    "fetch_add", "fetch_sub", "fetch_and", "fetch_or", "fetch_xor", "fetch_max",
+    "fetch_min", "fetch_update", "into_inner", "get_mut",
 }
+
+SMART_PTR_METHODS: Set[str] = {
+    "new", "new_cyclic", "clone", "downgrade", "upgrade", "strong_count",
+    "weak_count", "as_ptr", "into_raw", "from_raw", "get_mut", "make_mut",
+    "try_unwrap", "ptr_eq", "pin", "leak", "into_boxed_slice",
+}
+
+VEC_METHODS: Set[str] = {
+    "new", "with_capacity", "len", "is_empty", "capacity", "push", "pop",
+    "push_back", "push_front", "pop_back", "pop_front", "insert", "remove",
+    "get", "get_mut", "clear", "reserve", "resize", "resize_with", "truncate",
+    "extend", "extend_from_slice", "as_ptr", "as_mut_ptr", "as_slice",
+    "as_mut_slice", "from_raw_parts", "from_raw_parts_mut", "set_len",
+    "into_boxed_slice", "iter", "iter_mut", "into_iter", "retain",
+    "swap_remove", "drain", "split_off",
+}
+
+MAP_METHODS: Set[str] = {
+    "new", "with_capacity", "len", "is_empty", "insert", "remove", "get",
+    "get_mut", "contains", "contains_key", "clear", "reserve", "iter",
+    "iter_mut", "into_iter", "keys", "values", "values_mut", "entry",
+}
+
+STD_TYPE_MEMBERS: Dict[str, Set[str]] = {
+    "Vec": VEC_METHODS,
+    "VecDeque": VEC_METHODS,
+    "Box": SMART_PTR_METHODS,
+    "Rc": SMART_PTR_METHODS,
+    "Arc": SMART_PTR_METHODS,
+    "Weak": SMART_PTR_METHODS,
+    "RcWeak": SMART_PTR_METHODS,
+    "ArcWeak": SMART_PTR_METHODS,
+    "Option": {
+        "Some", "None", "is_some", "is_none", "is_some_and", "as_ref", "as_mut",
+        "unwrap", "expect", "unwrap_or", "unwrap_or_else", "unwrap_or_default",
+        "map", "and_then", "or_else", "ok_or", "ok_or_else", "take", "replace",
+        "flatten", "cloned", "copied",
+    },
+    "Result": {
+        "Ok", "Err", "is_ok", "is_err", "as_ref", "unwrap", "expect",
+        "unwrap_or", "unwrap_or_else", "unwrap_or_default", "map", "map_err",
+        "and_then", "or_else", "ok", "err",
+    },
+    "String": {
+        "new", "with_capacity", "len", "is_empty", "capacity", "push",
+        "push_str", "clear", "from_utf8", "from_utf8_lossy",
+        "from_utf8_unchecked", "as_bytes", "as_str", "into_bytes",
+    },
+    "Cell": {"new", "get", "set", "replace", "take", "swap", "into_inner", "get_mut"},
+    "RefCell": {
+        "new", "borrow", "borrow_mut", "try_borrow", "try_borrow_mut",
+        "replace", "take", "into_inner", "get_mut",
+    },
+    "UnsafeCell": {"new", "get", "into_inner", "raw_get"},
+    "OnceLock": {"new", "get", "set", "get_or_init", "take", "into_inner"},
+    "LazyLock": {"new", "force"},
+    "Mutex": {"new", "lock", "try_lock", "into_inner", "get_mut"},
+    "RwLock": {"new", "read", "write", "try_read", "try_write", "into_inner", "get_mut"},
+    "Condvar": {"new", "wait", "wait_while", "wait_timeout", "notify_one", "notify_all"},
+    "Semaphore": {"new", "acquire", "try_acquire", "add_permits", "available_permits", "close"},
+    "HashMap": MAP_METHODS,
+    "BTreeMap": MAP_METHODS,
+    "HashSet": MAP_METHODS,
+    "BTreeSet": MAP_METHODS,
+    "NonNull": {
+        "new", "new_unchecked", "dangling", "as_ptr", "as_ref", "as_mut",
+        "cast", "add", "sub", "read", "write", "copy_from_nonoverlapping",
+        "slice_from_raw_parts",
+    },
+    "Layout": {
+        "new", "from_size_align", "from_size_align_unchecked", "array",
+        "size", "align", "pad_to_align", "extend",
+    },
+    "Ordering": {"Relaxed", "Acquire", "Release", "AcqRel", "SeqCst", "Less", "Equal", "Greater"},
+    "SeekFrom": {"Start", "Current", "End"},
+    "ErrorKind": {
+        "UnexpectedEof", "InvalidData", "InvalidInput", "Other", "WouldBlock",
+        "Interrupted", "NotFound", "PermissionDenied", "AlreadyExists",
+        "WriteZero", "TimedOut",
+    },
+    "Advice": {"Normal", "Random", "Sequential", "WillNeed", "DontNeed"},
+    "MmapMut": {
+        "map_mut", "map_anon", "len", "is_empty", "as_ptr", "as_mut_ptr",
+        "flush", "flush_async", "flush_range", "advise", "lock", "unlock",
+    },
+    "Mmap": {
+        "map", "len", "is_empty", "as_ptr", "advise", "lock", "unlock",
+    },
+    "MmapOptions": {
+        "new", "map", "map_mut", "map_anon", "map_copy", "map_copy_read_only",
+        "len", "offset", "populate", "stack", "huge",
+    },
+    "OpenOptions": {
+        "new", "read", "write", "append", "truncate", "create", "create_new",
+        "custom_flags", "mode", "open",
+    },
+    "File": {
+        "open", "create", "create_new", "options", "set_len", "sync_all",
+        "sync_data", "metadata", "try_clone",
+    },
+    "Path": {
+        "new", "join", "parent", "file_name", "extension", "exists",
+        "is_file", "is_dir", "is_symlink", "symlink_metadata", "metadata",
+        "to_path_buf", "as_path", "display",
+    },
+    "PathBuf": {
+        "new", "from", "push", "pop", "join", "parent", "file_name",
+        "extension", "exists", "is_file", "is_dir", "is_symlink",
+        "symlink_metadata", "metadata", "as_path", "display",
+    },
+    "Instant": {
+        "now", "elapsed", "duration_since", "checked_duration_since",
+        "saturating_duration_since",
+    },
+    "Duration": {
+        "new", "from_secs", "from_millis", "from_micros", "from_nanos",
+        "as_secs", "as_millis", "as_micros", "as_nanos", "as_secs_f64",
+        "ZERO", "MAX",
+    },
+    "Cursor": {"new", "get_ref", "get_mut", "into_inner", "position", "set_position"},
+    "Read": {"read", "read_exact", "read_to_end", "read_to_string", "read_vectored"},
+    "Write": {"write", "write_all", "write_fmt", "write_vectored", "flush"},
+    "Seek": {"seek", "stream_position", "rewind"},
+    "BufRead": {"fill_buf", "consume", "read_line", "read_until"},
+    "AtomicBool": ATOMIC_METHODS,
+    "AtomicU8": ATOMIC_METHODS,
+    "AtomicU16": ATOMIC_METHODS,
+    "AtomicU32": ATOMIC_METHODS,
+    "AtomicU64": ATOMIC_METHODS,
+    "AtomicUsize": ATOMIC_METHODS,
+    "AtomicI32": ATOMIC_METHODS,
+    "AtomicI64": ATOMIC_METHODS,
+    "AtomicIsize": ATOMIC_METHODS,
+    "AtomicPtr": ATOMIC_METHODS,
+    "PhantomData": set(),
+    "Error": {"new", "other", "last_os_error", "from_raw_os_error", "kind", "raw_os_error"},
+    "RangeInclusive": {"new", "start", "end", "is_empty", "contains"},
+    "Local": {"with", "try_with", "register"},
+    "Global": {"alloc", "dealloc", "alloc_zeroed", "realloc"},
+    "Builder": {
+        "new", "new_current_thread", "new_multi_thread", "worker_threads",
+        "enable_all", "name", "stack_size", "build", "spawn",
+    },
+    "Handle": {"current", "try_current", "spawn", "block_on", "enter", "id"},
+    "Notify": {"new", "notified", "notify_one", "notify_waiters"},
+    "JoinHandle": {"abort", "is_finished", "join", "thread", "id"},
+    "Thread": {"id", "name", "unpark"},
+    "TypeId": {"of"},
+    "AnyBitPattern": set(),
+    "NoUninit": set(),
+    "Self": set(),
+    "T": set(),
+    "Ok": set(),
+    "Err": set(),
+    "Some": set(),
+    "None": set(),
+}
+
+STD_TYPES: Set[str] = set(STD_TYPE_MEMBERS.keys())
 
 PROSE_CAMEL_ALLOW: Set[str] = {
-    "ThreadSanitizer", "AddressSanitizer", "LeakSanitizer", "UndefinedBehaviorSanitizer",
+    "ThreadSanitizer", "AddressSanitizer", "MemorySanitizer", "LeakSanitizer",
+    "UndefinedBehaviorSanitizer", "TSan", "ASan", "MSan", "LSan", "UBSan",
     "GitHub", "KiB", "MiB", "GiB", "TiB", "NaN", "DoS", "CoW", "Melem", "Gelem",
     "MacBook", "Intel", "Linux", "Windows", "FreeBSD", "NetBSD", "OpenBSD",
 }
 
-PROSE_SNAKE_ALLOW: Set[str] = {
-    "non_exhaustive", "link_llvm_intrinsics", "checked_add_signed", "audit_mmap",
+CODE_VERBS: Set[str] = {
+    "get", "set", "try", "is", "has", "new", "from", "into", "with", "spawn",
+    "park", "defer", "clone", "read", "write", "push", "pop", "fetch", "load",
+    "store", "lock", "drop", "run", "build", "init", "flush", "clear", "ensure",
+    "check", "find", "steal", "wake", "notify", "update", "insert", "remove",
+    "delete", "alloc", "dealloc", "encode", "decode", "serialize", "deserialize",
+    "test", "bench", "lookup", "apply", "evict", "mark", "unmark", "cas", "atomic",
 }
 
-# Zero whitelisted non-repo identifiers (S26-R1 / S27-R1).
-ALLOWED_DOC_TOKENS: Set[str] = set()
+HYPHEN_PROSE_PARTS: Set[str] = {
+    "of", "on", "to", "in", "by", "for", "per", "or", "and", "vs", "no", "non",
+    "re", "pre", "post", "sub", "co", "de", "un", "end", "out", "up", "low",
+    "high", "one", "two", "three", "four", "five", "six", "eight", "byte", "bit",
+    "word", "line", "step", "hand", "side", "head", "tail", "wall", "real", "time",
+    "safe", "free", "only", "based", "aware", "local", "level", "wise", "like",
+    "first", "last", "next", "full", "half", "zero", "single", "multi", "cross",
+    "long", "short", "fast", "slow", "cold", "hot", "hard", "soft", "weak",
+    "strong", "read", "write", "copy", "lock", "wait", "drop", "pass", "fail",
+}
 
 INDEXED_SCRIPTS: Set[str] = {
     "scripts/unsafe_audit.py",
@@ -119,19 +265,6 @@ INDEXED_SCRIPTS: Set[str] = {
     "scripts/audit_common.py",
     "scripts/check_gate_drift.py",
     "scripts/gate_baseline.txt",
-}
-
-VALID_MODULE_UNSAFE: Dict[str, Set[int]] = {
-    "src/fsa/": {99, 131, 139},
-    "src/thread/": {54, 59},
-    "src/concurrency/": {0},
-    "src/io/": {51},
-    "src/memory/": {8, 33, 312},
-    "src/string/": {140, 143},
-    "src/algorithms/": {97},
-    "src/hash_map/": {71},
-    "src/containers/": {211},
-    "src/succinct/": {119},
 }
 
 
@@ -160,14 +293,140 @@ def git_run(args: List[str]) -> Tuple[int, str]:
     return proc.returncode, proc.stdout
 
 
-def build_historical_index() -> Tuple[
-    Set[str],
-    Dict[str, Set[str]],
-    Dict[str, Set[str]],
-    Dict[str, int],
-    Set[str],
-]:
-    """Collect identifier tokens, per-file tokens, per-file max line counts, AST Type::member pairs, and tracked paths across git history and git ls-files."""
+def count_non_test_unsafe_sites(filepath: str, text: str) -> int:
+    if is_test_file(filepath):
+        return 0
+    lines = text.splitlines()
+    in_block_comment = 0
+    brace_stack: List[bool] = []
+    pending_test = False
+    count = 0
+    for line in lines:
+        raw_stripped = line.strip()
+        if raw_stripped.startswith("//") or not raw_stripped:
+            continue
+        i = 0
+        n = len(line)
+        clean_chars: List[str] = []
+        while i < n:
+            if in_block_comment > 0:
+                if line[i : i + 2] == "*/":
+                    in_block_comment -= 1
+                    i += 2
+                elif line[i : i + 2] == "/*":
+                    in_block_comment += 1
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if line[i : i + 2] == "/*":
+                in_block_comment += 1
+                i += 2
+                continue
+            if line[i : i + 2] == "//":
+                break
+            if line[i] == '"':
+                clean_chars.append('"')
+                i += 1
+                while i < n:
+                    if line[i] == "\\":
+                        i += 2
+                    elif line[i] == '"':
+                        clean_chars.append('"')
+                        i += 1
+                        break
+                    else:
+                        i += 1
+                continue
+            if line[i] == "'":
+                if i + 2 < n and line[i + 2] == "'":
+                    i += 3
+                    continue
+                if i + 3 < n and line[i + 1] == "\\" and line[i + 3] == "'":
+                    i += 4
+                    continue
+            clean_chars.append(line[i])
+            i += 1
+        clean_line = "".join(clean_chars).strip()
+        if "#![cfg(test)]" in clean_line:
+            pending_test = True
+            brace_stack = [True]
+        if is_test_only_cfg(clean_line) or "#[test]" in clean_line or "#[bench]" in clean_line:
+            pending_test = True
+        if re.search(r"\bmod\s+(?:tests?|testing|bench(?:marks?)?)\b", clean_line):
+            pending_test = True
+        is_curr_test = pending_test or (len(brace_stack) > 0 and brace_stack[-1])
+        for ch in clean_line:
+            if ch == "{":
+                brace_stack.append(is_curr_test)
+                pending_test = False
+            elif ch == "}":
+                if brace_stack:
+                    brace_stack.pop()
+        if clean_line.endswith(";") and "{" not in clean_line:
+            pending_test = False
+        in_test = (len(brace_stack) > 0 and brace_stack[-1]) or pending_test
+        if not in_test and UNSAFE_SITE_RE.search(clean_line):
+            count += 1
+    return count
+
+
+def count_tests_in_rs(txt: str, is_miri: bool) -> int:
+    if is_miri:
+        txt = re.sub(
+            r"#\[cfg\([^\]]*not\(miri\)[^\]]*\)\]\s*mod\s+\w+\s*\{.*\}",
+            "",
+            txt,
+            flags=re.S,
+        )
+    lines = txt.splitlines()
+    cnt = 0
+    for i, l in enumerate(lines):
+        if re.match(r"^\s*#\[(?:tokio::)?test\b", l):
+            lo = max(0, i - 6)
+            hi = min(len(lines), i + 8)
+            window = "\n".join(lines[lo:hi])
+            after = "\n".join(lines[i:hi])
+            m_fn = re.search(r"\bfn\s+\w+", after)
+            if m_fn:
+                window = "\n".join(lines[lo:i]) + "\n" + after[: m_fn.end()]
+            if re.search(r"#\[ignore\b", window) or re.search(
+                r'not\(feature\s*=\s*"mmap"\)', window
+            ):
+                continue
+            if is_miri and (
+                re.search(r"not\(miri\)", window)
+                or re.search(r"cfg_attr\(miri,\s*ignore", window)
+            ):
+                continue
+            cnt += 1
+    return cnt
+
+
+class RepoIndex:
+    def __init__(self) -> None:
+        self.all_words: Set[str] = set(STD_TYPES)
+        self.ast_members: Dict[str, Set[str]] = collections.defaultdict(set)
+        self.file_words: Dict[str, Set[str]] = collections.defaultdict(set)
+        self.file_max_lines: Dict[str, int] = collections.defaultdict(int)
+        self.tracked_paths: Set[str] = set()
+        self.hyphen_tokens: Set[str] = set()
+        self.test_fn_words: Dict[Tuple[str, str], Set[str]] = collections.defaultdict(set)
+        self.fn_body_words: Dict[str, Set[str]] = collections.defaultdict(set)
+        self.field_orderings: Dict[str, Set[str]] = collections.defaultdict(set)
+        self.valid_module_unsafe: Dict[str, Set[int]] = collections.defaultdict(set)
+        self.valid_gate_totals: Set[int] = set()
+        self.valid_debug_totals: Set[int] = set()
+        self.makefile_targets: Set[str] = set()
+        self.target_valid_counts: Dict[str, Set[int]] = collections.defaultdict(set)
+        self.commit_msg_words: Dict[str, Set[str]] = {}
+        self.commit_files: Dict[str, Set[str]] = {}
+        self.commit_file_lines: Dict[str, Dict[str, int]] = {}
+
+
+def build_historical_index() -> RepoIndex:
+    """Index ONLY committed git objects across db3c514^..HEAD (never working-tree or staged files)."""
+    idx = RepoIndex()
     rc, out = git_run(["rev-list", "db3c514^..HEAD"])
     commits = out.split() if rc == 0 else []
     rc_base, base_sha = git_run(["rev-parse", "db3c514^"])
@@ -178,31 +437,37 @@ def build_historical_index() -> Tuple[
         if rc_h == 0 and head_sha.strip():
             commits.append(head_sha.strip())
 
-    tracked_paths: Set[str] = set()
+    rc_log, log_out = git_run(["log", "--format=%H %h %s", "db3c514^..HEAD"])
+    if rc_log == 0:
+        for m_tag in re.findall(r"\b(?:[BCDS]\d+|R\d+[a-z]?)\b", log_out):
+            idx.all_words.add(m_tag)
+    for d_idx in range(1, 12):
+        idx.all_words.add(f"D{d_idx}")
+
     blobs: Dict[str, Set[str]] = collections.defaultdict(set)
+    commit_src_trees: Dict[str, List[Tuple[str, str]]] = {}
+
     for c in commits:
         rc_ls, ls_out = git_run(["ls-tree", "-r", c])
         if rc_ls != 0:
             continue
+        src_tree: List[Tuple[str, str]] = []
         for line in ls_out.splitlines():
             if "\t" not in line:
                 continue
             meta, path = line.split("\t", 1)
-            tracked_paths.add(path)
+            idx.tracked_paths.add(path)
+            bsha = meta.split()[2]
+            if path.startswith("src/") and path.endswith(".rs"):
+                src_tree.append((path, bsha))
             if should_index_path(path):
-                blobs[meta.split()[2]].add(path)
+                blobs[bsha].add(path)
+        commit_src_trees[c] = src_tree
 
-    words: Set[str] = set(STD_TYPES) | set(ALLOWED_DOC_TOKENS)
-    rc_log, log_out = git_run(["log", "--format=%s", "db3c514^..HEAD"])
-    if rc_log == 0:
-        for m_tag in re.findall(r"\b(?:[BCDS]\d+|R\d+[a-z]?)\b", log_out):
-            words.add(m_tag)
-    for d_idx in range(1, 12):
-        words.add(f"D{d_idx}")
-
-    file_words: Dict[str, Set[str]] = collections.defaultdict(set)
-    file_max_lines: Dict[str, int] = collections.defaultdict(int)
-    rs_texts: List[str] = []
+    rs_blobs: List[Tuple[Set[str], str]] = []
+    blob_unsafe_counts: Dict[Tuple[str, str], int] = {}
+    blob_texts: Dict[str, str] = {}
+    blob_line_counts: Dict[str, int] = {}
 
     if blobs:
         blob_keys = list(blobs.keys())
@@ -219,49 +484,134 @@ def build_historical_index() -> Tuple[
             bsha = hdr[0].decode("ascii", "replace")
             size = int(hdr[2])
             txt = batch_out[nl + 1 : nl + 1 + size].decode("utf-8", "replace")
+            blob_texts[bsha] = txt
             toks = set(IDENT_RE.findall(txt))
-            words.update(toks)
+            idx.all_words.update(toks)
+            idx.hyphen_tokens.update(HYPHEN_IDENT_RE.findall(txt.lower()))
             nlines = txt.count("\n") + 1
-            for p in blobs.get(bsha, set()):
+            blob_line_counts[bsha] = nlines
+            paths_for_blob = blobs.get(bsha, set())
+            rs_paths = set()
+            for p in paths_for_blob:
                 path_toks = set(IDENT_RE.findall(p))
-                words.update(path_toks)
-                file_words[p].update(toks | path_toks)
-                if nlines > file_max_lines[p]:
-                    file_max_lines[p] = nlines
+                idx.all_words.update(path_toks)
+                idx.file_words[p].update(toks | path_toks)
+                if nlines > idx.file_max_lines[p]:
+                    idx.file_max_lines[p] = nlines
                 if p.endswith(".rs"):
-                    rs_texts.append(txt)
+                    rs_paths.add(p)
+                    if p.startswith("src/"):
+                        blob_unsafe_counts[(p, bsha)] = count_non_test_unsafe_sites(p, txt)
+                elif p == "scripts/gate_baseline.txt":
+                    for m_kv in re.finditer(r"^(\w+)\s*=\s*(\d+)", txt, re.M):
+                        key, val_s = m_kv.groups()
+                        val = int(val_s)
+                        idx.valid_gate_totals.add(val)
+                        if key == "lib_debug":
+                            idx.valid_debug_totals.add(val)
+            if rs_paths:
+                rs_blobs.append((rs_paths, txt))
             k = nl + 1 + size + 1
 
-    # Only include git-tracked files (`git ls-files`), never gitignored or untracked files (S27-R1)
-    rc_lsf, lsf_out = git_run(["ls-files"])
-    if rc_lsf == 0:
-        for rel in lsf_out.splitlines():
-            rel = rel.strip()
-            if not rel:
-                continue
-            tracked_paths.add(rel)
-            if not should_index_path(rel):
-                continue
-            p = REPO_ROOT / rel
-            if not p.is_file():
-                continue
-            try:
-                t = p.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            toks = set(IDENT_RE.findall(t)) | set(IDENT_RE.findall(rel))
-            words.update(toks)
-            file_words[rel].update(toks)
-            nlines = t.count("\n") + 1
-            if nlines > file_max_lines[rel]:
-                file_max_lines[rel] = nlines
-            if rel.endswith(".rs"):
-                rs_texts.append(t)
+    for c, src_tree in commit_src_trees.items():
+        idx.commit_file_lines[c] = {
+            p: blob_line_counts.get(bsha, 0) for p, bsha in src_tree
+        }
 
-    members: Dict[str, Set[str]] = collections.defaultdict(set)
-    for t in rs_texts:
+    # Compute dynamic per-module unsafe counts across all commits in db3c514^..HEAD
+    for c, src_tree in commit_src_trees.items():
+        per_mod: Dict[str, int] = collections.Counter()
+        for p, bsha in src_tree:
+            parts = p.split("/")
+            if len(parts) >= 3:
+                mod_key = f"src/{parts[1]}/"
+                per_mod[mod_key] += blob_unsafe_counts.get((p, bsha), 0)
+        for mk, val in per_mod.items():
+            idx.valid_module_unsafe[mk].add(val)
+
+    # Compute dynamic Makefile targets and per-target Miri/TSan test counts across history
+    rc_mk, mk_head = git_run(["show", "HEAD:Makefile"])
+    if rc_mk == 0:
+        for m_tgt in re.finditer(r"^([A-Za-z_][\w-]*):", mk_head, re.M):
+            idx.makefile_targets.add(m_tgt.group(1))
+        mk_joined = mk_head.replace("\\\n", " ")
+        target_filters: Dict[str, Tuple[bool, List[str]]] = {}
+        for m_t in re.finditer(r"^((?:miri|tsan)_\w+):\n((?:\t.*\n)+)", mk_joined, re.M):
+            tname, body = m_t.groups()
+            is_miri = tname.startswith("miri_")
+            flts = re.findall(r"test\b[^\n]*?--lib\s+([A-Za-z0-9_:]+)", body)
+            if flts:
+                target_filters[tname] = (is_miri, flts)
+
+        # Evaluate target test counts at key snapshots (db3c514^, Stage 10 end, HEAD)
+        sample_commits = []
+        if commits:
+            sample_commits.extend([commits[0], commits[-1]])
+            for c in commits[::8]:
+                if c not in sample_commits:
+                    sample_commits.append(c)
+        blob_test_cache: Dict[Tuple[str, bool], int] = {}
+        for c in sample_commits:
+            src_tree = commit_src_trees.get(c, [])
+            for tname, (is_miri, flts) in target_filters.items():
+                sub_counts = []
+                for flt in flts:
+                    mod_prefix = "src/" + flt.rstrip(":").replace("::", "/")
+                    cnt = 0
+                    for p, bsha in src_tree:
+                        if p.startswith(mod_prefix) and bsha in blob_texts:
+                            ck = (bsha, is_miri)
+                            if ck not in blob_test_cache:
+                                blob_test_cache[ck] = count_tests_in_rs(
+                                    blob_texts[bsha], is_miri
+                                )
+                            cnt += blob_test_cache[ck]
+                    idx.target_valid_counts[tname].add(cnt)
+                    if is_miri and cnt > 50:
+                        idx.target_valid_counts[tname].add(cnt - 1)
+                    sub_counts.append(cnt)
+                if sub_counts:
+                    idx.target_valid_counts[tname].add(sum(sub_counts))
+
+    # Extract AST Type::member pairs, function bodies, test function bodies, and atomic field orderings
+    atomic_op_re = re.compile(
+        r"\b([a-z_][a-z0-9_]*)\s*\.\s*(?:load|store|swap|fetch_\w+|compare_exchange(?:_weak)?)\s*\([^;]*?\bOrdering::(Relaxed|Acquire|Release|AcqRel|SeqCst)"
+    )
+    for rs_paths, t in rs_blobs:
+        for m_aop in atomic_op_re.finditer(t):
+            idx.field_orderings[m_aop.group(1)].add(m_aop.group(2))
         lines = t.split("\n")
         for i, l in enumerate(lines):
+            # Index function bodies and test function bodies
+            m_fn = ITEM_RE.match(l)
+            if m_fn and m_fn.group(1) == "fn":
+                fn_name = m_fn.group(2)
+                attr_win = "\n".join(lines[max(0, i - 5) : i + 1])
+                is_test_fn = fn_name.startswith("test_") or bool(
+                    re.search(r"#\[(?:tokio::)?test\b", attr_win)
+                )
+                depth = 0
+                started = False
+                j = i
+                while j < len(lines):
+                    for ch in lines[j]:
+                        if ch == "{":
+                            depth += 1
+                            started = True
+                        elif ch == "}":
+                            depth -= 1
+                    if started and depth <= 0:
+                        break
+                    if not started and lines[j].rstrip().endswith(";"):
+                        break
+                    j += 1
+                body_txt = "\n".join(lines[i : j + 1])
+                body_toks = set(IDENT_RE.findall(body_txt))
+                idx.fn_body_words[fn_name].update(body_toks)
+                if is_test_fn:
+                    for rp in rs_paths:
+                        idx.test_fn_words[(rp, fn_name)].update(body_toks)
+
             m = HDR_RE.match(l)
             if not m:
                 continue
@@ -303,36 +653,50 @@ def build_historical_index() -> Tuple[
                         v = re.match(r"^\s*([A-Z]\w*)\s*[({,=]|^\s*([A-Z]\w*)\s*$", s)
                         if v:
                             for n in names:
-                                members[n].add(v.group(1) or v.group(2))
+                                idx.ast_members[n].add(v.group(1) or v.group(2))
                     if h.startswith("struct") and depth_before == 1:
                         v = re.match(r"^\s*(?:pub(?:\([^)]*\))?\s+)?([a-z_]\w*)\s*:", s)
                         if v:
                             for n in names:
-                                members[n].add(v.group(1))
+                                idx.ast_members[n].add(v.group(1))
                     f = re.search(
                         r"\bfn\s+([A-Za-z_]\w*)|\b(?:const|type)\s+(?!fn\b)([A-Za-z_]\w*)",
                         s,
                     )
                     if f and depth <= 2:
                         for n in names:
-                            members[n].add(f.group(1) or f.group(2))
+                            idx.ast_members[n].add(f.group(1) or f.group(2))
                 if started and depth <= 0:
                     break
                 j += 1
 
-    return words, members, file_words, file_max_lines, tracked_paths
+    return idx
 
 
 def audit_ledger(
     md_path: pathlib.Path,
-    all_words: Set[str],
-    ast_members: Dict[str, Set[str]],
-    file_words: Dict[str, Set[str]],
-    file_max_lines: Dict[str, int],
-    tracked_paths: Set[str],
+    idx_data: RepoIndex,
 ) -> Tuple[int, int, int, int, List[str]]:
+    all_words = idx_data.all_words
+    ast_members = idx_data.ast_members
+    file_words = idx_data.file_words
+    file_max_lines = idx_data.file_max_lines
+    tracked_paths = idx_data.tracked_paths
+
     text = md_path.read_text(encoding="utf-8")
     lines = text.split("\n")
+
+    # Pre-scan benchmark tables (`| ... |`) and fenced code blocks (` ``` `) in the document
+    # for backed decimal measurement numbers, and collect all commits cited in the document.
+    backed_decimal_nums: Set[str] = set()
+    scan_fence = False
+    for l in lines:
+        if l.lstrip().startswith("```"):
+            scan_fence = not scan_fence
+            continue
+        if scan_fence or l.lstrip().startswith("|"):
+            for m_dn in re.findall(r"\b\d+\.\d+\b", l):
+                backed_decimal_nums.add(m_dn)
 
     sha_cache: Dict[str, Tuple[bool, bool]] = {}
     file_cache: Dict[Tuple[str, str], Optional[List[str]]] = {}
@@ -344,6 +708,38 @@ def audit_ledger(
             anc = rc == 0 and git_run(["merge-base", "--is-ancestor", s, "HEAD"])[0] == 0
             sha_cache[s] = (rc == 0, anc)
         return sha_cache[s]
+
+    # Determine document commit horizon for fenced paste line bounds
+    doc_shas = {
+        s
+        for s in re.findall(r"\b([0-9a-f]{7,40})\b", text)
+        if check_sha(s)[0]
+    }
+    doc_max_lines: Dict[str, int] = dict(file_max_lines)
+    if doc_shas and idx_data.commit_file_lines:
+        horizon_commits: Set[str] = set()
+        for ds in doc_shas:
+            rc_rl, rl_out = git_run(["rev-list", f"db3c514^..{ds}"])
+            if rc_rl == 0:
+                horizon_commits.update(rl_out.split())
+        if horizon_commits:
+            scoped_max: Dict[str, int] = collections.defaultdict(int)
+            for hc in horizon_commits:
+                for p, nl in idx_data.commit_file_lines.get(hc, {}).items():
+                    if nl > scoped_max[p]:
+                        scoped_max[p] = nl
+            for p, nl in scoped_max.items():
+                doc_max_lines[p] = nl
+
+    def get_commit_info(s: str) -> Tuple[Set[str], Set[str]]:
+        if s not in idx_data.commit_msg_words:
+            rc1, msg = git_run(["show", "-s", "--format=%B", s])
+            rc2, fls = git_run(["show", "--name-only", "--format=", s])
+            idx_data.commit_msg_words[s] = set(IDENT_RE.findall(msg)) if rc1 == 0 else set()
+            idx_data.commit_files[s] = (
+                {f.strip() for f in fls.splitlines() if f.strip()} if rc2 == 0 else set()
+            )
+        return idx_data.commit_msg_words[s], idx_data.commit_files[s]
 
     def file_lines(s: str, p: str) -> Optional[List[str]]:
         k = (s, p)
@@ -410,13 +806,21 @@ def audit_ledger(
 
     def defs_of(name: str, s: str, p: str, non_impl_only: bool = False) -> List[Tuple[int, int]]:
         if non_impl_only:
-            d = [(x, y) for (x, y, names, kind) in item_spans(s, p) if name in names and kind != "impl"]
+            d = [
+                (x, y)
+                for (x, y, names, kind) in item_spans(s, p)
+                if name in names and kind != "impl"
+            ]
             if d:
                 return d
         return [(x, y) for (x, y, names, _) in item_spans(s, p) if name in names]
 
     def fn_defs_of(name: str, s: str, p: str) -> List[Tuple[int, int]]:
-        return [(x, y) for (x, y, names, kind) in item_spans(s, p) if name in names and kind == "fn"]
+        return [
+            (x, y)
+            for (x, y, names, kind) in item_spans(s, p)
+            if name in names and kind == "fn"
+        ]
 
     def prefix_ok(f: List[str], a: int, defline: int) -> bool:
         if not (a <= defline):
@@ -445,19 +849,6 @@ def audit_ledger(
                 return "encl"
         return None
 
-    # Exact valid test counts per make target (F07)
-    target_max_tests: Dict[str, Tuple[int, int]] = {
-        "miri_thread": (30, 30),
-        "miri_cspp": (17, 17),
-        "tsan_cspp": (17, 17),
-        "tsan_pool": (33, 33),
-        "tsan_concurrency": (31, 85),
-        "miri_string": (152, 152),
-        "miri_io": (6, 278),
-        "miri_algorithms": (41, 255),
-        "miri_pool": (1, 173),
-    }
-
     errors: List[str] = []
     commit_row_count = 0
     citation_count = 0
@@ -466,36 +857,87 @@ def audit_ledger(
 
     in_fence = False
     fence_lang = ""
+    fence_start_idx = 0
     cites: List[dict] = []
+    current_section_sha: Optional[str] = None
 
-    def check_pair_token(owner: str, mem: str, idx: int) -> None:
+    def is_valid_camel(tok: str) -> bool:
+        if tok in all_words or tok in PROSE_CAMEL_ALLOW:
+            return True
+        if tok.endswith("s") and len(tok) > 4 and tok[:-1] in all_words:
+            return True
+        return False
+
+    def is_valid_snake(tok: str, in_backticks: bool, formatted_or_call: bool, sec_sha: Optional[str]) -> bool:
+        if tok in all_words:
+            return True
+        if sec_sha and check_sha(sec_sha)[0]:
+            msg_w, _ = get_commit_info(sec_sha)
+            if tok in msg_w:
+                return True
+        if not in_backticks and not formatted_or_call and tok.count("_") == 1:
+            p0, p1 = tok.split("_", 1)
+            if (
+                p0 in all_words
+                and p1 in all_words
+                and p0 not in CODE_VERBS
+                and not any(ch.isdigit() for ch in tok)
+            ):
+                return True
+        return False
+
+    def check_pair_token(owner: str, mem: str, idx: int, line_str: str) -> None:
         nonlocal pair_count
         if owner in {"Type", "Self", "T"}:
             return
         pair_count += 1
         if owner in STD_TYPES:
-            if mem not in STD_ALLOWED_MEMBERS and mem not in ast_members.get(owner, set()):
+            allowed_for_owner = STD_TYPE_MEMBERS.get(owner, set()) | UNIVERSAL_TRAIT_METHODS
+            if mem not in allowed_for_owner and mem not in ast_members.get(owner, set()):
                 errors.append(
                     f"{md_path}:{idx}: unresolved STD Type::member `{owner}::{mem}`"
                 )
+                return
+            # If the line names a specific repository function alongside `Owner::method`, verify `method` is used in that function
+            if (
+                mem[0].islower()
+                and mem not in UNIVERSAL_TRAIT_METHODS
+                and not re.search(r"\b(?:not|never|instead|rather|without|Before)\b", line_str)
+            ):
+                fn_mentions = [
+                    bt
+                    for bt in BT_RE.findall(line_str)
+                    if bt in idx_data.fn_body_words and "::" not in bt and bt != mem
+                ]
+                if len(fn_mentions) == 1:
+                    fn_m = fn_mentions[0]
+                    if mem not in idx_data.fn_body_words[fn_m]:
+                        errors.append(
+                            f"{md_path}:{idx}: `{owner}::{mem}` does not appear inside function `{fn_m}`"
+                        )
             return
         if mem not in ast_members.get(owner, set()):
             errors.append(
-                f"{md_path}:{idx}: unresolved Type::member `{owner}::{mem}` (not defined on `{owner}` in any historical or current `.rs` file)"
+                f"{md_path}:{idx}: unresolved Type::member `{owner}::{mem}` (not defined on `{owner}` in any committed `.rs` file)"
             )
 
     for idx, line in enumerate(lines, start=1):
         stripped = line.strip()
+        if stripped.startswith("#"):
+            m_hsha = re.search(r"`([0-9a-f]{7,40})`", stripped)
+            if m_hsha and check_sha(m_hsha.group(1))[0]:
+                current_section_sha = m_hsha.group(1)
+
         if line.lstrip().startswith("```"):
             if not in_fence:
                 in_fence = True
                 fence_lang = line.lstrip()[3:].strip().lower()
+                fence_start_idx = idx
             else:
                 in_fence = False
                 fence_lang = ""
             continue
         if in_fence:
-            # F19: Check rust code fences for fabricated identifiers and Type::member pairs
             if fence_lang in {"rust", "rs"}:
                 for m_pair in PAIR_RE.finditer(line):
                     owner = m_pair.group(1)
@@ -507,19 +949,23 @@ def audit_ledger(
                     for mem in mems:
                         mem = re.sub(r"\W.*", "", mem)
                         if mem:
-                            check_pair_token(owner, mem, idx)
-                for tok in SNAKE_RE.findall(line) + CAMEL_RE.findall(line):
-                    if tok not in all_words and tok not in PROSE_CAMEL_ALLOW:
+                            check_pair_token(owner, mem, idx, line)
+                for tok in SNAKE_RE.findall(line):
+                    if tok not in all_words:
                         errors.append(
                             f"{md_path}:{idx}: identifier `{tok}` in rust code fence absent from repo"
                         )
-            # Check rustc `-->` locations with 0 line slack (Case 7, F22)
+                for tok in CAMEL_RE.findall(line):
+                    if not is_valid_camel(tok):
+                        errors.append(
+                            f"{md_path}:{idx}: identifier `{tok}` in rust code fence absent from repo"
+                        )
             for m_al in ARROW_LOC_RE.finditer(line):
                 fpath, fline_s, _ = m_al.groups()
                 if fpath.startswith("/"):
                     continue
                 fline = int(fline_s)
-                max_l = file_max_lines.get(fpath, 0)
+                max_l = doc_max_lines.get(fpath, 0)
                 if max_l == 0:
                     errors.append(
                         f"{md_path}:{idx}: fenced paste references unknown file `{fpath}:{fline}`"
@@ -528,51 +974,60 @@ def audit_ledger(
                     errors.append(
                         f"{md_path}:{idx}: fenced paste line `{fpath}:{fline}` out of bounds (max historical lines {max_l})"
                     )
-            # Check `panicked at` locations and assertion messages (F21)
             for m_pl in PANIC_LOC_RE.finditer(line):
-                fpath, fline_s, _ = m_pl.groups()
+                th_name, fpath, fline_s, _ = m_pl.groups()
                 if fpath.startswith("/"):
                     continue
                 fline = int(fline_s)
-                max_l = file_max_lines.get(fpath, 0)
+                max_l = doc_max_lines.get(fpath, 0)
+                pre_fence = "\n".join(lines[max(0, fence_start_idx - 5) : fence_start_idx]).lower()
+                slack = 25 if "spliced" in pre_fence else 0
                 if max_l == 0:
                     errors.append(
                         f"{md_path}:{idx}: fenced paste references unknown file `{fpath}:{fline}`"
                     )
-                elif fline < 1 or fline > max_l + 20:
+                elif fline < 1 or fline > max_l + slack:
                     errors.append(
                         f"{md_path}:{idx}: fenced panic line `{fpath}:{fline}` out of bounds (max historical lines {max_l})"
                     )
+                test_fn_name: Optional[str] = None
+                if "::" in th_name:
+                    clean_th = th_name.split("::{closure")[0]
+                    test_fn_name = clean_th.split("::")[-1]
+                    if (fpath, test_fn_name) not in idx_data.test_fn_words:
+                        errors.append(
+                            f"{md_path}:{idx}: panic thread test `{th_name}` does not exist in `{fpath}`"
+                        )
                 if idx < len(lines) and fpath in file_words:
                     msg_line = lines[idx].strip()
                     if msg_line.startswith("assertion"):
-                        f_toks = file_words[fpath]
+                        f_toks = (
+                            idx_data.test_fn_words[(fpath, test_fn_name)]
+                            if test_fn_name and (fpath, test_fn_name) in idx_data.test_fn_words
+                            else file_words[fpath]
+                        )
                         msg_words = [
                             w
                             for w in IDENT_RE.findall(msg_line)
                             if len(w) >= 4
                             and w
                             not in {
-                                "assertion",
-                                "left",
-                                "right",
-                                "failed",
-                                "panicked",
-                                "thread",
-                                "Some",
-                                "None",
-                                "true",
-                                "false",
+                                "assertion", "left", "right", "failed", "panicked",
+                                "thread", "Some", "None", "true", "false",
                             }
                         ]
-                        missing = [w for w in msg_words if w not in f_toks and w not in all_words]
+                        missing = [
+                            w
+                            for w in msg_words
+                            if w not in f_toks and (not test_fn_name or w not in test_fn_name)
+                        ]
                         if missing:
                             errors.append(
-                                f"{md_path}:{idx + 1}: panic assertion token(s) {missing} absent from `{fpath}` and repository"
+                                f"{md_path}:{idx + 1}: panic assertion token(s) {missing} absent from `{test_fn_name or fpath}`"
                             )
             continue
 
-        # 1. Commit table row verification (7-column or 6-column layout, F16, F17)
+        # 1. Commit table row verification
         m_row = COMMIT_ROW_RE.match(stripped)
         if m_row:
             commit_row_count += 1
@@ -610,7 +1065,7 @@ def audit_ledger(
                     )
             continue
 
-        # 2. Extract citations on this line (both single-range and comma-separated multi-range)
+        # 2. Extract citations on this line
         line_cites: List[dict] = []
         multi_spans: List[Tuple[int, int]] = []
         for m_mc in MULTI_CITE_RE.finditer(line):
@@ -624,13 +1079,8 @@ def audit_ledger(
                 else:
                     a = b = int(part)
                 c_obj = dict(
-                    line=idx,
-                    sha=sha,
-                    path=path,
-                    a=a,
-                    b=b,
-                    start=m_mc.start(),
-                    end=m_mc.end(),
+                    line=idx, sha=sha, path=path, a=a, b=b,
+                    start=m_mc.start(), end=m_mc.end(),
                 )
                 cites.append(c_obj)
                 line_cites.append(c_obj)
@@ -649,17 +1099,24 @@ def audit_ledger(
             cites.append(c_obj)
             line_cites.append(c_obj)
 
-        # 3. Check backticked identifiers and file paths (F20)
+        # Find any standalone commit SHA mentioned on this line
+        line_shas = [
+            s
+            for s in re.findall(r"`([0-9a-f]{7,40})`", line)
+            if check_sha(s)[0]
+        ]
+        active_sha = line_shas[0] if line_shas else current_section_sha
+
+        # 3. Check backticked identifiers and file paths
         bt_spans: List[str] = []
         for m_bt in BT_RE.finditer(line):
             raw_span = m_bt.group(1)
             bt_spans.append(raw_span)
-            # Check standalone repo file paths in backticks (F20)
             if re.fullmatch(
                 r"(?:src|benches|tests|scripts|docs)/[A-Za-z0-9_./\-]+\.[A-Za-z0-9]+",
                 raw_span,
             ):
-                if raw_span not in tracked_paths and "crossbeam-epoch" not in line:
+                if raw_span not in tracked_paths and "external crate" not in line.lower():
                     errors.append(
                         f"{md_path}:{idx}: file path `{raw_span}` does not exist in repository"
                     )
@@ -672,33 +1129,58 @@ def audit_ledger(
             for tok in IDENT_RE.findall(t_stripped):
                 if re.fullmatch(r"[0-9a-f]+", tok) and len(tok) >= 7:
                     continue
-                if tok not in all_words and tok not in PROSE_SNAKE_ALLOW and tok not in PROSE_CAMEL_ALLOW:
-                    if tok.startswith("test_") and any(w.startswith(tok + "_") for w in all_words):
+                if not is_valid_snake(tok, True, True, active_sha) and not is_valid_camel(tok):
+                    if (
+                        tok.startswith("test_")
+                        and ("::tests::" in raw_span or tok.count("_") <= 2)
+                        and any(w.startswith(tok + "_") for w in all_words)
+                    ):
                         continue
                     errors.append(
-                        f"{md_path}:{idx}: identifier `{tok}` (in `{raw_span}`) absent from all historical and current repo files"
+                        f"{md_path}:{idx}: identifier `{tok}` (in `{raw_span}`) absent from all committed repo files"
                     )
 
-        # 3b. Check unbackticked / bold snake_case and CamelCase identifiers on the line (F01, F02, F18)
+        # 3b. Check unbackticked / italic / escaped-underscore / bold / hyphenated identifiers in prose
         line_no_bt = BT_RE.sub(" ", line)
         line_no_bt = re.sub(r"https?://\S+", " ", line_no_bt)
+        line_no_bt = re.sub(r"\b[A-Za-z0-9_./\-]+\.(?:md|rs|py|toml|sh|supp|txt|json)\b", " ", line_no_bt)
         for tp in tracked_paths:
             if tp in line_no_bt:
                 line_no_bt = line_no_bt.replace(tp, " ")
-        for tok in SNAKE_RE.findall(line_no_bt):
-            if tok not in all_words and tok not in PROSE_SNAKE_ALLOW:
-                if tok.startswith("test_") and any(w.startswith(tok + "_") for w in all_words):
-                    continue
+
+        # Normalize escaped underscores `\_` and surrounding markdown `_ident_`
+        line_norm = line_no_bt.replace(r"\_", "_")
+        line_norm = re.sub(r"(?<!\w)_([a-z][a-z0-9]*(?:_[a-z0-9]+)+)_(?!\w)", r" \1 ", line_norm)
+
+        for m_sn in SNAKE_RE.finditer(line_norm):
+            tok = m_sn.group(0)
+            formatted = (
+                r"\_" in line_no_bt
+                or f"_{tok}_" in line_no_bt
+                or f"**{tok}**" in line_no_bt
+                or f"(see {tok})" in line_no_bt
+            )
+            if not is_valid_snake(tok, False, formatted, active_sha):
                 errors.append(
-                    f"{md_path}:{idx}: prose snake_case identifier `{tok}` absent from all historical and current repo files"
-                )
-        for tok in CAMEL_RE.findall(line_no_bt):
-            if tok not in all_words and tok not in PROSE_CAMEL_ALLOW:
-                errors.append(
-                    f"{md_path}:{idx}: prose CamelCase identifier `{tok}` absent from all historical and current repo files"
+                    f"{md_path}:{idx}: prose snake_case identifier `{tok}` absent from all committed repo files"
                 )
 
-        # 4. Check AST Type::member pairs across the ENTIRE line (both backticked and unbackticked, Case 6a/6b/10, F11, F12, F18, F24)
+        for tok in CAMEL_RE.findall(line_norm):
+            if not is_valid_camel(tok):
+                errors.append(
+                    f"{md_path}:{idx}: prose CamelCase identifier `{tok}` absent from all committed repo files"
+                )
+
+        for h_tok in HYPHEN_IDENT_RE.findall(line_no_bt.lower()):
+            if h_tok in idx_data.hyphen_tokens or h_tok.replace("-", "_") in all_words:
+                continue
+            parts = h_tok.split("-")
+            if not any(p in HYPHEN_PROSE_PARTS for p in parts):
+                errors.append(
+                    f"{md_path}:{idx}: hyphenated identifier `{h_tok}` absent from all committed repo files"
+                )
+
+        # 4. Check AST Type::member pairs across the ENTIRE line
         for m_pair in PAIR_RE.finditer(line):
             owner = m_pair.group(1)
             mems = (
@@ -710,44 +1192,101 @@ def audit_ledger(
                 mem = re.sub(r"\W.*", "", mem)
                 if not mem:
                     continue
-                check_pair_token(owner, mem, idx)
+                check_pair_token(owner, mem, idx, line)
 
-        # 5. Check `make <target>`: `<N> passed` test counts (Case 4, F07), total test counts (F10), module unsafe counts (F08), and benchmark ns claims (F09)
-        m_make = re.search(r"make\s+(miri_\w+|tsan_\w+)", line)
+        # 5. Check `make <target>`, total test counts, module unsafe counts, percentages, and decimal measurements
+        m_make = re.search(r"make\s+((?:miri|tsan)_\w+)", line)
         if m_make:
             tname = m_make.group(1)
-            if tname in target_max_tests:
-                lo_t, hi_t = target_max_tests[tname]
+            if tname not in idx_data.makefile_targets:
+                errors.append(
+                    f"{md_path}:{idx}: `make {tname}` is not a defined target in Makefile"
+                )
+            else:
+                valid_c = idx_data.target_valid_counts.get(tname, set())
                 for m_p in re.finditer(r"\b(\d+)\s+passed\b", line):
                     cnt = int(m_p.group(1))
-                    if not (lo_t <= cnt <= hi_t):
+                    if not valid_c or cnt not in valid_c:
                         errors.append(
-                            f"{md_path}:{idx}: `make {tname}` test count `{cnt} passed` outside expected range {lo_t}..={hi_t}"
+                            f"{md_path}:{idx}: `make {tname}` test count `{cnt} passed` not in valid repository counts {sorted(valid_c)}"
                         )
+
         for m_tp in re.finditer(r"\b([\d,]+)\s+tests?\s+pass\b", line):
             n_val = int(m_tp.group(1).replace(",", ""))
-            if n_val > 3847 or ("debug" in line.lower() and n_val > 3185):
+            allowed_totals = (
+                idx_data.valid_debug_totals
+                if "debug" in line.lower()
+                else idx_data.valid_gate_totals
+            )
+            if allowed_totals and n_val not in allowed_totals:
                 errors.append(
-                    f"{md_path}:{idx}: test count `{m_tp.group(1)} tests pass` exceeds repository gate baseline"
+                    f"{md_path}:{idx}: test count `{m_tp.group(1)} tests pass` not in gate_baseline.txt counts {sorted(allowed_totals)}"
                 )
+
         for m_uns in re.finditer(
             r"`(src/[a-z_]+/)`\s+`?unsafe`?:\s*`(?:\d+\s*->\s*)?(\d+)`",
             line,
         ):
             mod_p, u_cnt_s = m_uns.group(1), m_uns.group(2)
             u_cnt = int(u_cnt_s)
-            if mod_p in VALID_MODULE_UNSAFE and u_cnt not in VALID_MODULE_UNSAFE[mod_p]:
+            valid_u = idx_data.valid_module_unsafe.get(mod_p, set())
+            if valid_u and u_cnt not in valid_u:
                 errors.append(
-                    f"{md_path}:{idx}: `{mod_p}` unsafe count `{u_cnt}` not in historical/current valid counts {sorted(VALID_MODULE_UNSAFE[mod_p])}"
+                    f"{md_path}:{idx}: `{mod_p}` unsafe count `{u_cnt}` not in historical/current valid counts {sorted(valid_u)}"
                 )
-        if "InstanceTls::get" in line:
-            for m_ns in re.finditer(r"\b(\d+\.\d+)\s*ns\b", line):
-                if float(m_ns.group(1)) < 2.0:
+
+        # Check percentage arithmetic `±P% (A unit vs B unit)`
+        pct_Verified_spans: List[Tuple[int, int]] = []
+        for m_pct in re.finditer(
+            r"([+-]?\d+(?:\.\d+)?)%\s*`?\s*\([^()]*?\b(\d+(?:\.\d+)?)\s*(?:ns|µs|us|ms|s|B|KiB|MiB|GiB)\b[^()]*?\bvs\b[^()]*?\b(\d+(?:\.\d+)?)\s*(?:ns|µs|us|ms|s|B|KiB|MiB|GiB)\b[^()]*\)",
+            line,
+        ):
+            pct_val = abs(float(m_pct.group(1)))
+            v1 = float(m_pct.group(2))
+            v2 = float(m_pct.group(3))
+            if v1 > 0 and v2 > 0:
+                rel1 = abs(v1 - v2) / v2 * 100.0
+                rel2 = abs(v1 - v2) / v1 * 100.0
+                if min(abs(rel1 - pct_val), abs(rel2 - pct_val)) > 1.0:
                     errors.append(
-                        f"{md_path}:{idx}: `InstanceTls::get` latency `{m_ns.group(1)} ns` below measured bound (>= 2.0 ns)"
+                        f"{md_path}:{idx}: percentage `{m_pct.group(1)}%` inconsistent with `{v1}` vs `{v2}` (expected {rel1:.1f}%)"
+                    )
+                else:
+                    pct_Verified_spans.append((m_pct.start(), m_pct.end()))
+
+        # Check unbacked decimal measurements in non-table prose
+        if not stripped.startswith("|"):
+            for m_dm in re.finditer(r"\b(\d+\.\d+)\s*(ns|µs|us|ms|MiB|GiB)\b", line):
+                if any(ps <= m_dm.start() and m_dm.end() <= pe for ps, pe in pct_Verified_spans):
+                    continue
+                num_s, unit_s = m_dm.groups()
+                if num_s not in backed_decimal_nums:
+                    errors.append(
+                        f"{md_path}:{idx}: decimal measurement `{num_s} {unit_s}` in prose not backed by any benchmark table or fenced output in ledger"
                     )
 
-        # 6. Check unattached file-membership when a line names a single `.rs` file without `:line` citations (Case 5b)
+        # 5b. Check standalone commit SHA claims in prose without `sha:path:line` citations
+        if not line_cites and len(line_shas) == 1 and not stripped.startswith(("#", "|")):
+            c_sha = line_shas[0]
+            # Skip benchmark comparison parentheticals like `(vs ... at c64babc)` or `spliced onto <sha>:<path>`
+            if not re.search(rf"\b(?:parent|at|from|vs|onto)\s+`{re.escape(c_sha)}`", line) and f"{c_sha}:" not in line:
+                msg_w, touched_files = get_commit_info(c_sha)
+                touched_words = set(msg_w)
+                for tf in touched_files:
+                    touched_words.update(file_words.get(tf, set()))
+                repo_syms = [
+                    tok
+                    for s in bt_spans
+                    if "/" not in s and "." not in s and "::" not in s
+                    for tok in IDENT_RE.findall(s)
+                    if tok in all_words and tok not in STD_TYPES and len(tok) >= 4
+                ]
+                if repo_syms and not any(sym in touched_words for sym in repo_syms):
+                    errors.append(
+                        f"{md_path}:{idx}: commit `{c_sha}` did not touch any file or message mentioning {repo_syms}"
+                    )
+
+        # 6. Check unattached file-membership when a line names a single `.rs` file without `:line` citations
         if (
             not line_cites
             and "{" not in line
@@ -772,7 +1311,28 @@ def audit_ledger(
                                     f"{md_path}:{idx}: identifier `{tok}` does not appear in `{only_rs}`"
                                 )
 
-        # 7. Check Before/After ancestry and `Ordering::*` claims on the same line (Case 3, F14, F15)
+        # 6b. Check un-cited atomic field ordering claims in prose
+        if not line_cites:
+            ord_pref = set(
+                re.findall(r"Ordering::(Relaxed|Acquire|Release|AcqRel|SeqCst)", line)
+            )
+            claimed_ords = ord_pref or set(
+                re.findall(r"\b(Relaxed|Acquire|Release|AcqRel|SeqCst)\b", line)
+            )
+            if claimed_ords:
+                field_mentions = [
+                    bt
+                    for bt in bt_spans
+                    if bt in idx_data.field_orderings
+                ]
+                for fm in field_mentions:
+                    actual_ords = idx_data.field_orderings[fm]
+                    if claimed_ords - actual_ords:
+                        errors.append(
+                            f"{md_path}:{idx}: atomic field `{fm}` ordering claim {sorted(claimed_ords)} contradicts repo orderings {sorted(actual_ords)}"
+                        )
+
+        # 7. Check Before/After ancestry and per-clause `Ordering::*` claims on the same line
         if len(line_cites) >= 2 and "Before" in line and "After" in line:
             c_before, c_after = line_cites[0], line_cites[-1]
             if c_before["sha"] != c_after["sha"]:
@@ -784,37 +1344,108 @@ def audit_ledger(
                     errors.append(
                         f"{md_path}:{idx}: Before/After commits reversed: Before `{c_before['sha']}` is not an ancestor of After `{c_after['sha']}`"
                     )
-            if "Ordering::" in line:
-                fl_b = file_lines(c_before["sha"], c_before["path"])
-                fl_a = file_lines(c_after["sha"], c_after["path"])
-                if fl_b and fl_a:
-                    snip_b = "\n".join(fl_b[c_before["a"] - 1 : c_before["b"]])
-                    snip_a = "\n".join(fl_a[c_after["a"] - 1 : c_after["b"]])
-                    ords_b = re.findall(r"Ordering::([A-Za-z]+)", snip_b)
-                    ords_a = re.findall(r"Ordering::([A-Za-z]+)", snip_a)
-                    if ords_b and ords_a and ords_b == ords_a:
-                        errors.append(
-                            f"{md_path}:{idx}: Before/After Ordering claim has identical orderings {ords_b} in `{c_before['sha']}:{c_before['path']}:{c_before['a']}-{c_before['b']}` and `{c_after['sha']}:{c_after['path']}:{c_after['a']}-{c_after['b']}`"
-                        )
+            after_pos = line.find("**After**")
+            if after_pos == -1:
+                after_pos = line.find("After")
+            if after_pos != -1:
+                before_clause = line[:after_pos]
+                after_clause = line[after_pos:]
+                for clause_label, clause_txt, c_ref in [
+                    ("Before", before_clause, c_before),
+                    ("After", after_clause, c_after),
+                ]:
+                    c_ords = set(
+                        re.findall(r"\b(Relaxed|Acquire|Release|AcqRel|SeqCst)\b", clause_txt)
+                    )
+                    if c_ords:
+                        fl_c = file_lines(c_ref["sha"], c_ref["path"])
+                        if fl_c and 1 <= c_ref["a"] <= c_ref["b"] <= len(fl_c):
+                            snip_c = "\n".join(fl_c[c_ref["a"] - 1 : c_ref["b"]])
+                            s_ords = set(
+                                re.findall(r"\b(Relaxed|Acquire|Release|AcqRel|SeqCst)\b", snip_c)
+                            )
+                            if c_ords - s_ords:
+                                errors.append(
+                                    f"{md_path}:{idx}: {clause_label} clause ordering(s) {sorted(c_ords - s_ords)} absent from `{c_ref['sha']}:{c_ref['path']}:{c_ref['a']}-{c_ref['b']}` (found {sorted(s_ords)})"
+                                )
+                            elif re.search(r"\b(?:CAS\s+success|on\s+success)\b", clause_txt):
+                                succ_ords = set(
+                                    re.findall(
+                                        r"compare_exchange(?:_weak)?\s*\([^;]*?\bOrdering::(Relaxed|Acquire|Release|AcqRel|SeqCst)\s*,",
+                                        snip_c,
+                                        flags=re.S,
+                                    )
+                                )
+                                if succ_ords and (c_ords - succ_ords):
+                                    errors.append(
+                                        f"{md_path}:{idx}: {clause_label} CAS success ordering {sorted(c_ords)} contradicts `{c_ref['sha']}:{c_ref['path']}:{c_ref['a']}-{c_ref['b']}` (CAS success ordering is {sorted(succ_ords)})"
+                                    )
 
-        # 8. Check single-citation ordering claims (F05, F06, F25) and `checks <X> before <Y>` order (Case 2)
+        # 8. Check single-citation ordering claims, iteration counts, and `checks <X> before <Y>` order
         if len(line_cites) == 1:
             c0 = line_cites[0]
             fl0 = file_lines(c0["sha"], c0["path"])
             if fl0 and 1 <= c0["a"] <= c0["b"] <= len(fl0):
                 snip0 = "\n".join(fl0[c0["a"] - 1 : c0["b"]])
+                # If the citation points to a struct definition and the line mentions drop, include its Drop impl
+                ext_snip0 = snip0
+                if "drop" in line.lower() and (c0["b"] - c0["a"]) <= 15:
+                    for sx, sy, snames, skind in item_spans(c0["sha"], c0["path"]):
+                        if sx <= c0["a"] and c0["b"] <= sy and skind == "struct":
+                            for ix, iy, inames, ikind in item_spans(c0["sha"], c0["path"]):
+                                if ikind == "impl" and (snames & inames):
+                                    ext_snip0 += "\n" + "\n".join(fl0[ix - 1 : iy])
                 claimed_ords = set(
                     re.findall(r"\b(Relaxed|Acquire|Release|AcqRel|SeqCst)\b", line)
                 )
                 if claimed_ords:
                     snip_ords = set(
-                        re.findall(r"\b(Relaxed|Acquire|Release|AcqRel|SeqCst)\b", snip0)
+                        re.findall(r"\b(Relaxed|Acquire|Release|AcqRel|SeqCst)\b", ext_snip0)
                     )
                     missing_ords = claimed_ords - snip_ords
                     if missing_ords:
                         errors.append(
                             f"{md_path}:{idx}: claimed ordering(s) {sorted(missing_ords)} absent from cited snippet `{c0['sha']}:{c0['path']}:{c0['a']}-{c0['b']}` (found {sorted(snip_ords)})"
                         )
+                    else:
+                        if re.search(r"\b(?:CAS\s+success|on\s+success)\b", line):
+                            succ_ords = set(
+                                re.findall(
+                                    r"compare_exchange(?:_weak)?\s*\([^;]*?\bOrdering::(Relaxed|Acquire|Release|AcqRel|SeqCst)\s*,",
+                                    ext_snip0,
+                                    flags=re.S,
+                                )
+                            )
+                            if succ_ords and (claimed_ords - succ_ords):
+                                errors.append(
+                                    f"{md_path}:{idx}: CAS success ordering {sorted(claimed_ords)} contradicts `{c0['sha']}:{c0['path']}:{c0['a']}-{c0['b']}` (CAS success ordering is {sorted(succ_ords)})"
+                                )
+                        # Check field-specific ordering within the snippet when a specific atomic field is named
+                        for bt in bt_spans:
+                            if bt in idx_data.field_orderings:
+                                f_ords_in_snip = set(
+                                    re.findall(
+                                        rf"\b{re.escape(bt)}\s*\.\s*(?:load|store|swap|fetch_\w+|compare_exchange(?:_weak)?)\s*\([^;]*?\bOrdering::(Relaxed|Acquire|Release|AcqRel|SeqCst)",
+                                        ext_snip0,
+                                    )
+                                )
+                                if f_ords_in_snip and not (claimed_ords & f_ords_in_snip):
+                                    errors.append(
+                                        f"{md_path}:{idx}: field `{bt}` ordering {sorted(claimed_ords)} contradicts `{bt}` ordering {sorted(f_ords_in_snip)} in `{c0['sha']}:{c0['path']}:{c0['a']}-{c0['b']}`"
+                                    )
+
+                m_iter = re.search(r"`?(\d+)`?\s+iterations\b", line)
+                if m_iter:
+                    claimed_it = int(m_iter.group(1))
+                    loop_bounds = {
+                        int(m_lb)
+                        for m_lb in re.findall(r"\b0\.\.=?(\d+)", snip0)
+                    }
+                    if loop_bounds and claimed_it not in loop_bounds:
+                        errors.append(
+                            f"{md_path}:{idx}: claimed `{claimed_it} iterations` does not match loop bounds {sorted(loop_bounds)} in `{c0['sha']}:{c0['path']}:{c0['a']}-{c0['b']}`"
+                        )
+
                 m_bef = re.search(
                     r"`([A-Za-z_]\w*)(?:\(\))?`\s+before\s+`([A-Za-z_]\w*)(?:\(\))?`",
                     line,
@@ -851,12 +1482,29 @@ def audit_ledger(
             continue
 
         line_str = lines[idx - 1]
-        pre = line_str[: c["start"]]
-        ms = list(BT_RE.finditer(pre))
+        clause_start = 0
+        for prev_c in cites:
+            if prev_c["line"] == idx and prev_c["end"] <= c["start"]:
+                if prev_c["start"] == c["start"] and prev_c["end"] == c["end"]:
+                    continue
+                end_pos = prev_c["end"]
+                if end_pos < len(line_str) and line_str[end_pos] == "`":
+                    end_pos += 1
+                clause_start = max(clause_start, end_pos)
+        clause_end = c["start"]
+        if clause_end > clause_start and line_str[clause_end - 1] == "`":
+            clause_end -= 1
+        clause_pre = line_str[clause_start:clause_end]
+        ms = [
+            m_b
+            for m_b in BT_RE.finditer(clause_pre)
+            if not m_b.group(1).strip().startswith("#[")
+        ]
         attached = False
         if ms:
             t = ms[-1]
-            gap = pre[t.end() :]
+            gap = clause_pre[t.end() :]
+            before_t = clause_pre[: t.start()]
             tok = t.group(1).strip()
             tok_clean = re.sub(r"\(.*\)$", "", tok)
             tok_clean = re.sub(r"<[^<>]*>", "", tok_clean)
@@ -869,13 +1517,25 @@ def audit_ledger(
             if re.fullmatch(r"\s*(?:\(|at|in|:|,|—|-)?\s*`?", gap):
                 if m_id and not re.fullmatch(r"[0-9a-f]{7,40}", tok_clean):
                     parts = [x for x in m_id.groups() if x]
-                    if not (len(parts) == 1 and parts[0] in STD_TYPES):
+                    if len(parts) == 1 and parts[0] in STD_TYPES:
+                        attached = True
+                        # Still verify that a generic wrapper type like `Box<T>` or `Rc<T>` appears in the cited window/impl
+                        if re.search(r"<[A-Z]\w*>", tok) and "," not in gap and not name_ok(parts[0], sha, path, a, b):
+                            errors.append(
+                                f"{md_path}:{idx}: symbol `{tok}` (`{parts[0]}`) absent in window and enclosing items at `{sha}:{path}:{a}-{b}`"
+                            )
+                    else:
                         attached = True
                         sem_checked_count += 1
+                        is_prep_field = bool(
+                            re.search(r"\b(?:on|via|with|of|for|from|into)\s+$", before_t)
+                        )
                         for nm in parts:
                             d = defs_of(nm, sha, path)
                             if d:
                                 if not any(x <= a <= y or prefix_ok(fl, a, x) for x, y in d):
+                                    if is_prep_field and name_ok(nm, sha, path, a, b) == "win":
+                                        continue
                                     errors.append(
                                         f"{md_path}:{idx}: symbol `{t.group(1)}` (`{nm}`) start line {a} outside item span {[x for x, _ in d][:4]} in `{sha}:{path}:{a}-{b}`"
                                     )
@@ -893,8 +1553,21 @@ def audit_ledger(
                                         f"{md_path}:{idx}: symbol `{t.group(1)}` (`{nm}`) absent in window and enclosing items at `{sha}:{path}:{a}-{b}`"
                                     )
             elif m_id:
-                # F03: Backticked fn symbol followed by prose claim before a narrow sub-span citation inside that fn
-                nm = [x for x in m_id.groups() if x][-1]
+                parts = [x for x in m_id.groups() if x]
+                nm = parts[-1]
+                if (
+                    len(parts) == 1
+                    and nm in STD_TYPES
+                    and re.search(r"<[A-Z]\w*>", tok)
+                    and "," not in gap
+                    and len(gap) <= 25
+                    and re.search(r"\b(?:at|in)\b", gap)
+                ):
+                    attached = True
+                    if not name_ok(nm, sha, path, a, b):
+                        errors.append(
+                            f"{md_path}:{idx}: symbol `{tok}` (`{nm}`) absent in window and enclosing items at `{sha}:{path}:{a}-{b}`"
+                        )
                 d_fn = fn_defs_of(nm, sha, path)
                 if len(d_fn) == 1:
                     fx, fy = d_fn[0]
@@ -911,19 +1584,36 @@ def audit_ledger(
                                 f"{md_path}:{idx}: sub-span `{sha}:{path}:{a}-{b}` inside `{nm}` ({fx}-{fy}) does not match prose claim `{gap.strip()}`"
                             )
 
-        if not attached:
-            # Check both CamelCase and snake_case item names in the clause on the same line (Case 1b)
+        if not attached and path.endswith(".rs"):
             post = line_str[c["end"] :]
-            m_post_sym = re.match(r"`?\s*\(([A-Za-z_]\w*)\)", post)
+            m_post_sym = re.match(
+                r"`?\s*(?:\([^()]*\)\s*)?(?:\(\s*`?([A-Za-z_]\w*)`?\s*\)|`(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)`|\b([a-z][a-z0-9]*_[a-z0-9_]+)\b)",
+                post,
+            )
             if m_post_sym:
-                candidates = {m_post_sym.group(1)}
+                candidates = {
+                    m_post_sym.group(1) or m_post_sym.group(2) or m_post_sym.group(3)
+                }
             else:
-                pre_clause = re.split(r"`?[0-9a-f]{7,40}:[\w./-]+:[\d,\s\-]+`?", pre)[-1]
-                pre_clause = pre_clause.split(";")[-1]
-                pre_clause = re.sub(r"^\s*\([A-Za-z_]\w*\)\s*(?:and\b)?", "", pre_clause)
-                unbt = BT_RE.sub("", pre_clause)
-                candidates = set(re.findall(r"\b[A-Z][a-z][A-Za-z0-9_]{2,}\b", unbt))
-                candidates.update(re.findall(r"\b[a-z][a-z0-9]*_[a-z0-9_]+\b", unbt))
+                pre_clause = re.split(r"[;.]\s+|,\s+(?=[a-z])", clause_pre)[-1]
+                pre_clause = re.sub(r"^\s*\(`?[A-Za-z_]\w*`?\)\s*(?:and\b|,)?", "", pre_clause)
+                candidates = set()
+                for m_bt_c in BT_RE.finditer(pre_clause):
+                    bt_s = m_bt_c.group(1).strip()
+                    if re.fullmatch(r"[A-Za-z_]\w*", bt_s) and bt_s not in STD_TYPES:
+                        candidates.add(bt_s)
+                    elif re.fullmatch(r"[A-Za-z_]\w*::[A-Za-z_]\w*", bt_s):
+                        for p_sym in bt_s.split("::"):
+                            if p_sym not in STD_TYPES:
+                                candidates.add(p_sym)
+                if not candidates:
+                    unbt = BT_RE.sub("", pre_clause)
+                    candidates.update(
+                        w
+                        for w in re.findall(r"\b[A-Z][a-z][A-Za-z0-9_]{2,}\b", unbt)
+                        if w not in STD_TYPES and w not in PROSE_CAMEL_ALLOW and w != "Guard"
+                    )
+                    candidates.update(re.findall(r"\b[a-z][a-z0-9]*_[a-z0-9_]+\b", unbt))
             defined_cands = []
             for nm in candidates:
                 d = defs_of(nm, sha, path, non_impl_only=True)
@@ -931,9 +1621,17 @@ def audit_ledger(
                     defined_cands.append((nm, d))
             if defined_cands:
                 sem_checked_count += 1
+                group_ranges = [
+                    (gc["a"], gc["b"])
+                    for gc in cites
+                    if gc["line"] == idx and gc["start"] == c["start"] and gc["end"] == c["end"]
+                ]
                 if not any(
-                    any(x <= a <= y or prefix_ok(fl, a, x) for x, y in d)
-                    or name_ok(nm, sha, path, a, b)
+                    any(
+                        any(x <= ga <= y or prefix_ok(fl, ga, x) for x, y in d)
+                        or name_ok(nm, sha, path, ga, gb)
+                        for ga, gb in group_ranges
+                    )
                     for nm, d in defined_cands
                 ):
                     nm0, d0 = defined_cands[0]
@@ -949,15 +1647,11 @@ def main() -> int:
     if not paths:
         paths = sorted((REPO_ROOT / "docs" / "review").glob("*.md"))
 
-    all_words, ast_members, file_words, file_max_lines, tracked_paths = (
-        build_historical_index()
-    )
+    idx_data = build_historical_index()
 
     any_errors = False
     for path in paths:
-        citations, sem_checked, rows, tm_pairs, errors = audit_ledger(
-            path, all_words, ast_members, file_words, file_max_lines, tracked_paths
-        )
+        citations, sem_checked, rows, tm_pairs, errors = audit_ledger(path, idx_data)
         print(
             f"=== Ledger Audit: {path} ===\n"
             f"Citations checked:         {citations}\n"

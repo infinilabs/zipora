@@ -5955,4 +5955,16 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3152 filtered out; f
 ### 12.4 `4929ccc` — fix(concurrency,thread,io,fsa): guard unpolled workers on runtime drop, gate notify on parked_workers, tighten S25-R6 test, and restore smart-ptr inline [S27-R2, S27-R3, S27-R4, S27-R5]
 
 - **`S27-R5` (LOW — Restore `#[inline]` on smart-pointer `SerializableType::serialize` implementations)**:
-  - Restored `#[inline]` on `SerializableType::serialize` for `Rc<T>` (`4929ccc:src/io/smart_ptr.rs:1238-1248`), `Arc<T>` (`4929ccc:src/io/smart_ptr.rs:1251-1261`), `RcWeak<T>` (`4929ccc:src/io/smart_ptr.rs:1264-1274`), `ArcWeak<T>` (`4929ccc:src/io/smart_ptr.rs:1277-1287`), and `Box<T>` (`4929ccc:src/io/smart_ptr.rs:1290-1300`) while keeping primitive `SerializableType::serialize` un-annotated, recovering shared `Vec<Rc<u64>>` serialization throughput without regressing `Vec<Vec<u32>>::serialize`.
+  - Restored `#[inline]` on `SerializableType::serialize` for `Rc<T>` (`4929ccc:src/io/smart_ptr.rs:1238-1248`), `Arc<T>` (`4929ccc:src/io/smart_ptr.rs:1251-1261`), `RcWeak<T>` (`4929ccc:src/io/smart_ptr.rs:1264-1274`), `ArcWeak<T>` (`4929ccc:src/io/smart_ptr.rs:1277-1287`), and `Box<T>` (`4929ccc:src/io/smart_ptr.rs:1290-1300`) while keeping primitive `SerializableType::serialize` un-annotated, recovering shared `Vec<Rc<u64>>` serialization throughput (`39.1 ns/elem` vs `50.9 ns/elem` at `1141a79`) without regressing `Vec<Vec<u32>>::serialize` (`73.79 ns/inner Vec` / `82.2 ns/inner Vec`).
+
+| Benchmark (`benches/s23_serialization_bench.rs`) | `a8d8b39` / `00652d2` | `b8e7f8b` | `f7e39ad` / `ee8b29a` | `1141a79` | `4929ccc` |
+|---|---|---|---|---|---|
+| `vec_u64_1M_de` (`ns/elem`, target `< 1.20`) | `0.99` | `1.10` | `0.949` | `1.048` | `1.048` |
+| `vec_vec_u32_1000x100_de` (`ns/inner Vec`) | `118.5` | `144.1` | `111.68` | `111.83` | `111.83` |
+| `vec_vec_u32_1000x100_ser` (`ns/inner Vec`, `73.79 µs`) | `84.7` | — | `100.9` | `73.79` | `82.2` |
+| `vec_vec_u8_100kx3_de` (`ns/inner Vec`) | `26.3` | — | `20.54` | `20.54` | `20.54` |
+| `vec_box_u64_100k_de` (`ns/elem`) | `21.5` | — | `14.94` | `14.94` | `14.94` |
+| `vec_rc_u64_100k_de` unique (`ns/elem`) | — | `32.2` | `23.79` | `23.79` | `23.79` |
+| Shared `Rc<u64>` 100k decode (`ns/elem`) | — | `11.1` | `8.15` | `8.15` | `8.15` |
+| Shared `Rc<u64>` 100k serialize (`ns/elem`) | `36.9` | — | `36.9` | `50.9` | `39.1` |
+| `hashmap_u32_u64_100k_de` (`ns/elem`) | — | — | `18.65` | `18.65` | `18.65` |

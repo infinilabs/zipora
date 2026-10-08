@@ -1,4 +1,4 @@
-# Adversarial Ledger Audit Fixtures (S25 + S26)
+# Adversarial Ledger Audit Fixtures (S25 + S26 + S27 + S28)
 
 ## Round 1 (S25-R9: 9 planted error classes)
 
@@ -76,3 +76,48 @@ F25 prose claim, citation, no candidate symbol: the push CAS is SeqCst (`0932ce7
 F26 non-existent file with line (control, expected caught): `worker_loop` (`c64babc:src/concurrency/executor.rs:705-795`).
 F27 invented Type::member (control, expected caught): `WorkStealingExecutor::park_all_workers`.
 
+## Round 4 (S28-R2: 30 fool cases G01..G30)
+
+G01 hyphenated invented ident: the ensure-workers-alive path respawns dead workers after a runtime drop.
+G02 markdown-italic underscore invented ident: workers park via _park_all_idle_workers_ before shutdown.
+G03 escaped-underscore invented ident: workers park via park\_all\_idle\_workers before shutdown.
+G04 acronym CamelCase invented type: the AWGuard RAII type clears the slot before spawning.
+G05 std type with allow-listed but wrong member: `Mutex::upgrade` re-acquires the worker handle after a runtime drop.
+G06 std type, real tokio method but code uses another: `notify_if_parked` wakes one worker via `Notify::notify_one`.
+G07 Ordering in prose without citation (code uses SeqCst): `ParkedWorkerGuard` decrements `parked_workers` with `Ordering::Relaxed` on drop.
+G08 Ordering in prose with citation whose range contains the wrong ordering elsewhere: `notify_if_parked` loads `parked_workers` with `Acquire` (`4929ccc:src/concurrency/work_stealing.rs:588-600`).
+G09 fabricated µs number: `notify_if_parked` adds `0.42 µs` per `submit()` on 8 threads.
+G10 fabricated MiB number: the 65,536-instance churn test peaks at `11.5 MiB` RSS.
+G11 percentage over-computed: 8-thread submit+drain improved by `+38.5%` (`359.9 ns/task` vs `412.0 ns/task` at `c64babc`).
+G12 percentage under-computed: `Vec<Vec<u32>>::serialize` regressed by `+12.0%` (`100.9 ns/inner Vec` vs `84.7 ns/inner Vec`).
+G13 real sha in prose that never touched the file: `parked_workers` was added to `ExecutorStatsInner` in `1141a79`.
+G14 right sha+file+range, wrong STD-ish type named: `Box<T>` regained `#[inline]` at `4929ccc:src/io/smart_ptr.rs:1238-1248`.
+G15 real assertion literal from a different test in a RED paste at a valid line:
+```text
+thread 'concurrency::work_stealing::tests::test_s25_r6_is_idle_ordering_and_submit_shutdown_race' (1) panicked at src/concurrency/work_stealing.rs:1453:13:
+assertion `left == right` failed: dropping a runtime whose workers were never polled must decrement active_workers to 0
+```
+G16 RED paste with a real line/message but wrong file:
+```text
+thread 'fsa::cspp_trie_concurrent::tests::test_s25_r1_lookup_multi_insert_near_pool_end' (1) panicked at src/concurrency/fiber_pool.rs:150:9:
+index out of bounds: the len is 277 but the index is 277
+```
+G17 panic line beyond file end within slack (fiber_pool.rs max 670 lines):
+```text
+thread 'concurrency::fiber_pool::tests::x' (1) panicked at src/concurrency/fiber_pool.rs:684:9:
+index out of bounds: the len is 4 but the index is 4
+```
+G18 fabricated make miri_io count in range: `make miri_io`: `250 passed; 0 failed`.
+G19 fabricated count for a target missing from the tool table: `make miri_simd`: `9999 passed; 0 failed`.
+G20 fabricated tsan_concurrency count in range: `make tsan_concurrency`: `60 passed; 0 failed` (`concurrency::`).
+G21 fabricated debug test total under threshold: 3,180 tests pass in the debug gate.
+G22 Before/After, ancestry correct, but Before content contradicts the claim: **Before**: `ActiveWorkerGuard` used `Ordering::Relaxed` in `drop` (`c64babc:src/concurrency/work_stealing.rs:713-723`). **After**: `Ordering::AcqRel` (`4929ccc:src/concurrency/work_stealing.rs:403-413`).
+G23 truncated test name that prefixes a real test: the regression is covered by `test_s25_r2_global_init_dropped`.
+G24 invented ident in a heading:
+#### 9.9 `respawn_dead_workers` fast path
+G25 invented ident in a list item in parentheses, unbackticked: - parks workers (see park_idle_worker) before shutdown.
+G26 real ident, wrong file, no citation: `src/io/smart_ptr.rs` defines `ParkedWorkerGuard` for the worker loop.
+G27 real ident attached to a citation in another fn: - `ParkedWorkerGuard` (`4929ccc:src/concurrency/work_stealing.rs:396-401`).
+G28 member on wrong type where both exist, with call parens: `WorkStealingQueue::ensure_workers_running()` respawns workers.
+G29 test count claim, wrong number of iterations: part 2 of `test_s25_r6_is_idle_ordering_and_submit_shutdown_race` runs `64` iterations (`4929ccc:src/concurrency/work_stealing.rs:1396-1461`).
+G30 plural invented type: both WorkerParkSlots are released.
