@@ -82,7 +82,7 @@ Rules for this ledger:
   - In `src/io/mmap.rs`: all 10 `InputStrategy::BufferedIO` small-file and error-path tests (with `MIRIFLAGS="-Zmiri-disable-isolation"` so `tempfile::NamedTempFile` can open regular files without `mmap`; 17 real-mmap tests are ignored).
   - In `src/io/zero_copy.rs`: all 43 non-mmap tests (`ZeroCopyBuffer`, `ZeroCopyReader`, `ZeroCopyWriter`, `VectoredIO`; 4 real-mmap tests are ignored).
   - In `src/io/simd_memory/`, `src/io/simd_validation/`, `src/io/endian.rs`: all SSE4.2 `#[target_feature(enable = "sse4.2")]` search and CRC32C intrinsics (in `target/miri-simd`), all SSE2 `#[target_feature(enable = "sse2")]` endian and `strchr` intrinsics, and all scalar fallbacks (in `target/miri-scalar`).
-  - In `src/io/{data_input,data_output,complex_types,smart_ptr,versioning,range_stream,var_int,var_int_variants,stream_buffer}.rs` and `tests/io_untrusted_lengths.rs`: at `a807faf`, §9.2–§9.3 ran the filtered C9 test subset (85 C9 lib tests passed + 28 ignored under Miri SIMD and Miri Scalar, covering 46 of the 167 non-mmap tests in the nine reader/writer files, plus 4/4 in `tests/io_untrusted_lengths.rs`), because `io::data_input::tests::test_mmap_data_input` lacked a Miri skip and ~13 unscaled `io::` tests exceeded bounded Miri wall time (`S22-R7`). In `S22` (`d28462f` + `S22-R7`, §10) and `S23` (§11), `test_mmap_data_input` is ignored under Miri, `test_c9_do1_file_append_bytes_written_counts_new_bytes_only` is un-ignored under Miri, the slow `io::` tests are scaled under `cfg!(miri)`, and `make miri_io` / `make MIRI_SCALAR=1 miri_io` run the full `io::` (276 passed / 25 ignored in `S22`; 278 passed / 25 ignored in `S23`) and `memory::mmap_vec::` (6 passed / 52 ignored in `S22`; 7 passed / 52 ignored in `S23`) suites in ~3.5 minutes per build.
+  - In `src/io/{data_input,data_output,complex_types,smart_ptr,versioning,range_stream,var_int,var_int_variants,stream_buffer}.rs` and `tests/io_untrusted_lengths.rs`: at `a807faf`, §9.2–§9.3 ran the filtered C9 test subset (85 C9 lib tests passed + 28 ignored under Miri SIMD and Miri Scalar, covering 46 of the 167 non-mmap tests in the nine reader/writer files, plus 4/4 in `tests/io_untrusted_lengths.rs`), because `io::data_input::tests::test_mmap_data_input` lacked a Miri skip and ~13 unscaled `io::` tests exceeded bounded Miri wall time (`S22-R7`). In `S23` (§11), `test_mmap_data_input` is ignored under Miri, `test_c9_do1_file_append_bytes_written_counts_new_bytes_only` is un-ignored under Miri, the slow `io::` tests are scaled under `cfg!(miri)`, and `make miri_io` / `make MIRI_SCALAR=1 miri_io` run the full `io::` (278 passed / 25 ignored) and `memory::mmap_vec::` (7 passed / 52 ignored) suites in ~3.5 minutes per build.
 
 ### 2.2 `tmpfs` and `madvise` Testing Contract
 
@@ -5937,7 +5937,6 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3152 filtered out; f
     - `vec_vec_u8_100kx3_de`: `20.54 ns/inner Vec` (vs `26.3 ns` at `a8d8b39`, `-22%`)
     - `vec_box_u64_100k_de`: `14.94 ns/elem` (vs `21.5 ns` at `a8d8b39`, `-31%`)
     - `vec_rc_u64_100k_de` (unique `Rc<u64>`): `23.79 ns/elem` (vs `32.2 ns` at `b8e7f8b`, `-26%`)
-    - Shared `Rc<u64>` (100k elements): `8.15 ns/elem` (vs `11.1 ns` at `b8e7f8b`, `-26%`)
     - `hashmap_u32_u64_100k_de`: `18.65 ns/elem`
 
 ### 12.3 `1141a79` — fix(io): drop #[inline] on primitive SerializableType::serialize methods [S26-R4]
@@ -5955,16 +5954,16 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3152 filtered out; f
 ### 12.4 `4929ccc` — fix(concurrency,thread,io,fsa): guard unpolled workers on runtime drop, gate notify on parked_workers, tighten S25-R6 test, and restore smart-ptr inline [S27-R2, S27-R3, S27-R4, S27-R5]
 
 - **`S27-R5` (LOW — Restore `#[inline]` on smart-pointer `SerializableType::serialize` implementations)**:
-  - Restored `#[inline]` on `SerializableType::serialize` for `Rc<T>` (`4929ccc:src/io/smart_ptr.rs:1238-1248`), `Arc<T>` (`4929ccc:src/io/smart_ptr.rs:1251-1261`), `RcWeak<T>` (`4929ccc:src/io/smart_ptr.rs:1264-1274`), `ArcWeak<T>` (`4929ccc:src/io/smart_ptr.rs:1277-1287`), and `Box<T>` (`4929ccc:src/io/smart_ptr.rs:1290-1300`) while keeping primitive `SerializableType::serialize` un-annotated, recovering shared `Vec<Rc<u64>>` serialization throughput (`39.1 ns/elem` vs `50.9 ns/elem` at `1141a79`) without regressing `Vec<Vec<u32>>::serialize` (`73.79 ns/inner Vec` / `82.2 ns/inner Vec`).
+  - Restored `#[inline]` on `SerializableType::serialize` for `Rc<T>` (`4929ccc:src/io/smart_ptr.rs:1238-1248`), `Arc<T>` (`4929ccc:src/io/smart_ptr.rs:1251-1261`), `RcWeak<T>` (`4929ccc:src/io/smart_ptr.rs:1264-1274`), `ArcWeak<T>` (`4929ccc:src/io/smart_ptr.rs:1277-1287`), and `Box<T>` (`4929ccc:src/io/smart_ptr.rs:1290-1300`) while keeping primitive `SerializableType::serialize` un-annotated, with a `+11.4%` shift on `Vec<Vec<u32>>::serialize` (`82.2 ns/inner Vec` at `4929ccc` vs `73.79 ns/inner Vec` at `1141a79`, still below `84.7 ns/inner Vec` at `00652d2`).
 
-| Benchmark (`benches/s23_serialization_bench.rs`) | `a8d8b39` / `00652d2` | `b8e7f8b` | `f7e39ad` / `ee8b29a` | `1141a79` | `4929ccc` |
-|---|---|---|---|---|---|
-| `vec_u64_1M_de` (`ns/elem`, target `< 1.20`) | `0.99` | `1.10` | `0.949` | `1.048` | `1.048` |
-| `vec_vec_u32_1000x100_de` (`ns/inner Vec`) | `118.5` | `144.1` | `111.68` | `111.83` | `111.83` |
-| `vec_vec_u32_1000x100_ser` (`ns/inner Vec`, `73.79 µs`) | `84.7` | — | `100.9` | `73.79` | `82.2` |
-| `vec_vec_u8_100kx3_de` (`ns/inner Vec`) | `26.3` | — | `20.54` | `20.54` | `20.54` |
-| `vec_box_u64_100k_de` (`ns/elem`) | `21.5` | — | `14.94` | `14.94` | `14.94` |
-| `vec_rc_u64_100k_de` unique (`ns/elem`) | — | `32.2` | `23.79` | `23.79` | `23.79` |
-| Shared `Rc<u64>` 100k decode (`ns/elem`) | — | `11.1` | `8.15` | `8.15` | `8.15` |
-| Shared `Rc<u64>` 100k serialize (`ns/elem`) | `36.9` | — | `36.9` | `50.9` | `39.1` |
-| `hashmap_u32_u64_100k_de` (`ns/elem`) | — | — | `18.65` | `18.65` | `18.65` |
+- **Harness & command**: `bench_s24_r3_io_deserialize_timings` (`src/io/smart_ptr.rs`: `cargo test --locked --release --lib io::smart_ptr::tests::bench_s24_r3_io_deserialize_timings -- --ignored --nocapture`) and Criterion suite `benches/s23_serialization_bench.rs` (`cargo bench --bench s23_serialization_bench`).
+
+| Benchmark (`bench_s24_r3_io_deserialize_timings` in `src/io/smart_ptr.rs` / `benches/s23_serialization_bench.rs`) | `a8d8b39` / `00652d2` | `b8e7f8b` | `f7e39ad` / `ee8b29a` | `1141a79` |
+|---|---|---|---|---|
+| `vec_u64_1M_de` (`ns/elem`, target `< 1.20`) | `0.99` | `1.10` | `0.949` | `1.048` |
+| `vec_vec_u32_1000x100_de` (`ns/inner Vec`) | `118.5` | `144.1` | `111.68` | `111.83` |
+| `vec_vec_u32_1000x100_ser` (`ns/inner Vec`, `82.2` at `4929ccc`) | `84.7` | — | `100.9` | `73.79` |
+| `vec_vec_u8_100kx3_de` (`ns/inner Vec`) | `26.3` | — | `20.54` | `20.54` |
+| `vec_box_u64_100k_de` (`ns/elem`) | `21.5` | — | `14.94` | `14.94` |
+| `vec_rc_u64_100k_de` unique (`ns/elem`) | — | `32.2` | `23.79` | `23.79` |
+| `hashmap_u32_u64_100k_de` (`ns/elem`) | — | — | `18.65` | `18.65` |

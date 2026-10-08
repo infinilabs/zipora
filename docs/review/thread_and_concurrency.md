@@ -10,7 +10,7 @@ Stage 11 covers:
    - `S25-R1` (`0932ce7`): Eliminated the 256-byte `read_zpath` over-read in `ConcurrentCsppTrie::lookup`/`contains`/`lookup_with_guard` via zero-copy word-wise `SharedPool::bytes_eq_relaxed`, cached `raw: u32` header word in `ConcurrentNodeView`, peeled root fast-node step, and inlined leaf `valpos`.
    - `S25-R2` (`48438fe`): Fixed `WorkStealingExecutor::spawn` to spawn directly onto the current Tokio runtime (`tokio::spawn`) so it never hangs when a global executor's creation runtime has been dropped or when a fiber awaits a child fiber on a 1-worker executor.
    - `S25-R3` (`ee8b29a`): Updated `docs/review/thread_and_concurrency.md`, `docs/review/io.md`, and `scripts/audit_ledger.py`.
-   - `S25-R4` (`0932ce7`, `b74f6fe`, `48438fe`): Restored `ConcurrentCsppTrie` lookup throughput, sped up `InstanceTls::get` ~9x (`26.8 ns -> 2.83 ns` on `u64`), restored `WorkStealingQueue` owner push+pop (`24.1 ns -> 20.0 ns`) and `Pipeline::execute_stream` (`396 ns -> 323 ns/item`), and relaxed `LockFreeFreelist::push` / `deallocate_to_fast_bin` / `store_block_width` / `load_block_width` orderings back to `a8d8b39`'s set.
+   - `S25-R4` (`0932ce7`, `b74f6fe`, `48438fe`): Restored `ConcurrentCsppTrie` lookup throughput, sped up `InstanceTls::get` ~9x on `u64`, added lock-free `steal_len` fast path on `WorkStealingQueue` owner push+pop and `try_recv()` batching on `Pipeline::execute_stream`, and relaxed `LockFreeFreelist::push` / `deallocate_to_fast_bin` / `store_block_width` / `load_block_width` orderings back to `a8d8b39`'s set.
    - `S25-R5` (`b74f6fe`): Made `InstanceTls` / `CleanupHandle` `drop` / `TlsMatrix` thread-exit-safe (`TLS_MATRICES.try_with`, heap-backed lazy row table `Vec<Option<*mut [TlsCell<T>]>>` supporting `ROWS = 4_000_000`, and compile-time size/alignment assertions in `AsAtomic`).
    - `S25-R6` (`48438fe`): Fixed `WorkStealingExecutor::is_idle()` to scan queues (`self.total_queued() == 0`) before loading `active_tasks`, synchronized `submit()` vs `shutdown()` under queue locks, checked `stage_timeout` after synchronous pipeline stages (`execute_single`, `execute_stream`, `process_batch`), and isolated per-call `local_stage_stats` in `execute_stream`.
    - `S25-R7` & `S25-R9` (`0932ce7`, `b74f6fe`, `48438fe`): Unified `allocate_id` and `CleanupHandle` `drop` on `global_registry`, asserted `expected_id.as_u64()` in `test_c10_ws6_spawn_preserves_fiber_id_and_zero_capacity_rejected`, computed fallback results on `spawn_blocking` failure in `ParallelLoudsTrie::parallel_contains`/`parallel_prefix_search`, and added multi-threaded `#[tokio::test(flavor = "multi_thread", worker_threads = 4)]` tests with non-atomic payload writes for `WorkStealingExecutor`, `FiberPool`, `Pipeline`, and `ParallelLoudsTrie`.
@@ -22,24 +22,27 @@ Stage 11 covers:
    - `S26-R1` (`2050294`): Removed all whitelisted doc tokens from `scripts/audit_ledger.py`, excluded `scripts/audit_ledger.py` and `scripts/tests/` from the repository index, and committed the Round 1–2 adversarial fixture (`scripts/tests/audit_ledger_adversarial.md`).
 6. **`S27-R1..R5` Stage 11 Re-Review Round 3 Remediation (`4929ccc..6e7fee4`, §9)**:
    - `S27-R2` (`4929ccc`): Constructed `ActiveWorkerGuard` before `tokio::spawn` in `WorkStealingExecutor::new` and before `rt_handle.spawn` in `WorkStealingExecutor::ensure_workers_running`, wrapped `WorkerThread::handle` in `Arc<Mutex<Option<JoinHandle<()>>>>`, re-checked `active_workers` in `notify_if_parked`, and expanded `test_s25_r2_global_init_dropped_runtime_and_nested_await_fibers` to cover unpolled `new_current_thread()` `init()`, plain-thread `submit_closure` rejection with 0 live workers, and immediate `multi_thread` runtime drops.
-   - `S27-R3` (`4929ccc`): Added `parked_workers: AtomicUsize` to `ExecutorStatsInner` and `ParkedWorkerGuard` in `worker_loop`, gating `work_notify.notify_waiters()` in `notify_if_parked()` on `parked_workers.load(Ordering::SeqCst) > 0` (`359.9 ns/task` on 8-thread submit+drain).
+   - `S27-R3` (`4929ccc`): Added `parked_workers: AtomicUsize` to `ExecutorStatsInner` and `ParkedWorkerGuard` in `worker_loop`, gating `work_notify.notify_waiters()` in `notify_if_parked()` on `parked_workers.load(Ordering::SeqCst) > 0` (`313.8 ns/task` on 8-thread submit+drain via `bench_s29_r1_executor_timings`).
    - `S27-R4` (`4929ccc`): Rewrote part 2 of `test_s25_r6_is_idle_ordering_and_submit_shutdown_race` with `WorkStealingExecutor::new(2, 4)` and 8 synchronized OS-thread submitters without `tokio::time::sleep`, failing in ~60% of runs (12/20) when `try_push_local_unless_shutdown`'s shutdown check is reverted.
    - `S27-R5` (`4929ccc`): Documented deferred `set`/`remove` visibility during `T::clone()` on `InstanceTls`, checked `(*cell_ptr).readers.get() == 0` in `InstanceTls::get` before forming `&mut *(*cell_ptr).value.get()`, removed unreachable `defer_write` in `CleanupHandle` `drop`, restored `#[inline]` on smart-pointer `SerializableType::serialize` (`Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`, `Box<T>`), removed `catch_unwind` from both `S25-R1` tests in `src/fsa/cspp_trie_concurrent.rs`, and upgraded all `#[tokio::test]` attributes across `src/concurrency/` to `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`.
    - `S27-R1`: Hardened `scripts/audit_ledger.py` to index only git-tracked files (`git ls-files` + `git ls-tree`, never gitignored or untracked files such as `GEMINI.md`, `CLAUDE.md`, or `plan.md`), added Round 3 (27 new cases, 49/49 total adversarial checks caught) to `scripts/tests/audit_ledger_adversarial.md`, and replaced the three reconstructed RED blocks in §8 with verbatim `cargo test` output.
 7. **`S28-R1..R3` Stage 11 Re-Review Round 4 Remediation (`b18bad3..`, §10)**:
    - `S28-R1` (`b18bad3`): Eliminated the self-deadlock in `WorkStealingExecutor::new` and `WorkStealingExecutor::ensure_workers_running` when Tokio synchronously drops a newly spawned worker future (e.g. `new()` called outside a runtime or `submit()` called on a closed/shutting-down runtime), by replacing the shared `Arc<Mutex<Option<JoinHandle<()>>>>` inside `ActiveWorkerGuard` with lock-free per-worker `state: Arc<AtomicU8>` (`WORKER_DEAD = 0`, `WORKER_SPAWNING = 1`, `WORKER_LIVE = 2`) plus `respawn_lock: Mutex<()>`, `fallback_runtime: Mutex<Option<tokio::runtime::Handle>>`, and `self_weak: Weak<Self>`, never locking `worker.handle` inside `ActiveWorkerGuard::drop` or holding `worker.handle` across `tokio::spawn` / `rt_handle.spawn`.
-   - `S28-R3` (`b18bad3`): Eliminated the shutdown-window strand when `ActiveWorkerGuard::drop` runs on a dropping runtime while another runtime's `Handle` was recorded in `fallback_runtime`, documented `# Errors` on `WorkStealingExecutor::submit` and `WorkStealingExecutor::submit_closure`, fixed the 3 stale/imprecise `InstanceTls` comments (`b18bad3:src/thread/instance_tls.rs:39-42, 312-315, 384-386, 720-722`), and disclosed in §8.3 that `test_s25_r1_lookup_multi_insert_near_pool_end` inserts `2` keys (`0..2u8`) in `4929ccc` (reduced from up to `32` keys `0..32u8` in `c64babc`).
+   - `S28-R3` (`b18bad3`): Eliminated the shutdown-window strand when `ActiveWorkerGuard::drop` runs on a dropping runtime while another runtime's `Handle` was recorded in `fallback_runtime`, documented `# Errors` on `WorkStealingExecutor::submit` and `WorkStealingExecutor::submit_closure`, fixed the 3 stale/imprecise `InstanceTls` comments (`b18bad3:src/thread/instance_tls.rs:39-42, 312-315, 384-386, 720-722`), and disclosed in §8.3 that `test_s25_r1_lookup_multi_insert_near_pool_end` inserts `2` keys (`0..2u32`) in `4929ccc` (reduced from up to `32` keys `0..32u32` in `c64babc`).
    - `S28-R2`: Generalized `scripts/audit_ledger.py` (removing all hardcoded test literals/numbers and non-repo whitelists, indexing only committed git state, and verifying percentage arithmetic, prose decimal measurement backing, panic assertion tokens, and AST/citation semantics), added Round 4 (30 new cases, 79 total adversarial cases across Rounds 1–4) to `scripts/tests/audit_ledger_adversarial.md`, and aligned §8.3 and §9.1 with the exact committed code.
-8. **Phase D (`B7`, `B8`, `D1`, `D9`, `D10`)**:
-   - `src/thread/` undocumented `unsafe`: `2 -> 0` (`67/67 = 100.0%` at `b18bad3`, `59/59 = 100.0%` at `c87db71`); `src/concurrency/` `unsafe`: `0/0`; `src/fsa/` `unsafe`: `131 -> 99` (`99/99 = 100.0%`); crate-wide `max_undocumented`: `6 -> 4`.
+8. **`S29-R1..R3` Stage 11 Final Fix Round Remediation (`c0a56de..fd1ec65`, §11)**:
+   - `S29-R1` (`c0a56de`): Keyed the thread-local fallback runtime cache `LAST_RECORDED_FALLBACK` in `src/concurrency/work_stealing.rs` on `Option<(executor_id, runtime_id)>` via `tokio_runtime_handle_id(&rt_handle)` (`c0a56de:src/thread/mod.rs:65-78`), setting the marker only when `tokio::runtime::Handle::try_current()` returns `Ok` and refreshing `fallback_runtime` whenever the active runtime changes for the same executor (`test_s29_r1_fallback_runtime_mode_b_plain_then_live_runtime` and `test_s29_r1_fallback_runtime_mode_c_dropped_temp_then_live_runtime`, plus splice-and-run script `scripts/verify_s29_r1_red.sh`).
+   - `S29-R3` (`fd1ec65`): Changed `ActiveWorkerGuard::drop` to `.take()` `fallback_runtime` and capture `Weak<WorkStealingExecutor>` inside the spawned respawn task (`drop(exec)` before `rt_handle.spawn`), cleared `fallback_runtime` in `WorkStealingExecutor::shutdown`, replaced `std::hint::spin_loop()` with `std::thread::yield_now()` in `ensure_workers_running`'s `!progressed` window, and documented the ~50–63% per-run single-line revert detection rate of `test_s25_r6_is_idle_ordering_and_submit_shutdown_race` Part 2.
+9. **Phase D (`B7`, `B8`, `D1`, `D9`, `D10`)**:
+   - `src/thread/` undocumented `unsafe`: `2 -> 0` (`68/68 = 100.0%` at `c0a56de`, `67/67 = 100.0%` at `b18bad3`, `59/59 = 100.0%` at `c87db71`); `src/concurrency/` `unsafe`: `0/0`; `src/fsa/` `unsafe`: `131 -> 99` (`99/99 = 100.0%`); crate-wide `max_undocumented`: `6 -> 4`.
    - `src/concurrency/` honesty markers (`D1`): `3 -> 0`; crate-wide `max_markers`: `30 -> 27`.
    - `src/thread/` `.expect()` (`D10`): `8 -> 0` (all 8 in `src/thread/instance_tls.rs`); `src/concurrency/` `.expect()`: `5 -> 0`; crate-wide `max_expects`: `82`.
    - `src/concurrency/pipeline.rs` (`2,183 -> 2,366` lines) split into 4 `< 800`-line submodules (`D9`): `src/concurrency/pipeline/mod.rs` (`627` lines at `4929ccc`), `src/concurrency/pipeline/stages.rs` (`270` lines), `src/concurrency/pipeline/tests.rs` (`797` lines), and `src/concurrency/pipeline/integration_tests.rs` (`797` lines).
-   - Gate baseline ratcheted (`B8`): `lib_debug: 3151 -> 3185`, `lib_release: 3168 -> 3202`, `doctests: 229`, `compile_fail` doctests: `7 -> 8`, `all_targets: 3812 -> 3847`.
+   - Gate baseline ratcheted (`B8`): `lib_debug: 3151 -> 3187`, `lib_release: 3168 -> 3204`, `doctests: 229`, `compile_fail` doctests: `7 -> 8`, `all_targets: 3812 -> 3849`.
 
 ---
 
-## 2. Commit Table (`b8e7f8b..b18bad3`)
+## 2. Commit Table (`b8e7f8b..fd1ec65`)
 
 | # | Commit | Parent | Date | Subject | Files | +Ins / −Del |
 |---|--------|--------|------|---------|-------|-------------|
@@ -63,8 +66,11 @@ Stage 11 covers:
 | 18 | `4929ccc` | `2050294` | 2026-10-08 | fix(concurrency,thread,io,fsa): guard unpolled workers on runtime drop, gate notify on parked_workers, tighten S25-R6 test, and restore smart-ptr inline [S27-R2, S27-R3, S27-R4, S27-R5] | 9 | +334 / −209 |
 | 19 | `6e7fee4` | `4929ccc` | 2026-10-08 | docs(review): update thread_and_concurrency.md and io.md with verbatim RED outputs and harden audit_ledger.py [S27-R1, B8] | 4 | +492 / −141 |
 | 20 | `b18bad3` | `6e7fee4` | 2026-10-08 | fix(concurrency,thread): avoid worker-handle lock in ActiveWorkerGuard::drop and across spawn [S28-R1, S28-R3] | 2 | +243 / −51 |
+| 21 | `f37cf61` | `b18bad3` | 2026-10-08 | docs(review): generalize audit_ledger.py and update Stage 11 review ledger for S28 [S28-R2, S28-R3, B8] | 4 | +1084 / −275 |
+| 22 | `c0a56de` | `f37cf61` | 2026-10-09 | fix(concurrency): key thread-local fallback runtime cache on (executor_id, runtime_id) [S29-R1] | 4 | +298 / −10 |
+| 23 | `fd1ec65` | `c0a56de` | 2026-10-09 | fix(concurrency): release dead fallback handles, hold Weak in fallback task, and yield on respawn wait [S29-R3] | 1 | +15 / −5 |
 
-Note on `b74f6fe..ee8b29a` (`S26-R1` disclosure): `b74f6fe` added `MatrixEntry` (`b74f6fe:src/thread/instance_tls.rs:50-53`) with `drop_fn: unsafe fn(*mut ())` preceded by a `///` doc comment instead of a `// SAFETY:` line comment, leaving 5 undocumented `unsafe` occurrences crate-wide (1 above the ceiling of 4) at `b74f6fe` and `48438fe`; `ee8b29a` replaced that doc comment with a `// SAFETY:` comment above `MatrixEntry` (`ee8b29a:src/thread/instance_tls.rs:50-53`). Every commit in the `S26`, `S27`, and `S28` remediation rounds (`1141a79`, `c87db71`, `c64babc`, `2050294`, `4929ccc`, `6e7fee4`, `b18bad3`, and the ledger commit) passes the gate individually.
+Note on `b74f6fe..ee8b29a` (`S26-R1` disclosure): `b74f6fe` added `MatrixEntry` (`b74f6fe:src/thread/instance_tls.rs:50-53`) with `drop_fn: unsafe fn(*mut ())` preceded by a `///` doc comment instead of a `// SAFETY:` line comment, leaving 5 undocumented `unsafe` occurrences crate-wide (1 above the ceiling of 4) at `b74f6fe` and `48438fe`; `ee8b29a` replaced that doc comment with a `// SAFETY:` comment above `MatrixEntry` (`ee8b29a:src/thread/instance_tls.rs:50-53`). Every commit in the `S26`, `S27`, `S28`, and `S29` remediation rounds (`1141a79`, `c87db71`, `c64babc`, `2050294`, `4929ccc`, `6e7fee4`, `b18bad3`, `f37cf61`, `c0a56de`, `fd1ec65`, and the ledger commit) passes the gate individually.
 
 ---
 
@@ -353,7 +359,7 @@ WorkStealingExecutor::new with queue_capacity == 0 must return Err
 ## 7. Stage 11 Re-Review Round 1 Remediation (`S25-R1..R9`: `f7e39ad..48438fe`)
 
 ### 7.1 `f7e39ad` — `S25-R8` & `S24-R2` (`src/io/data_input.rs`, `src/io/smart_ptr.rs`, `benches/s23_serialization_bench.rs`, `Cargo.toml`)
-- Outlined `unexpected_eof_err` (`f7e39ad:src/io/data_input.rs:213-217`), added `DIRTY_OUTER_SER_STATE` (`f7e39ad:src/io/smart_ptr.rs:35`) and `DIRTY_OUTER_DE_STATE` (`f7e39ad:src/io/smart_ptr.rs:36`), and split `Vec<T>::deserialize` (`f7e39ad:src/io/smart_ptr.rs:1210-1237`) into a non-unwinding `0..cap` preallocated push loop plus `deserialize_vec_tail` (`f7e39ad:src/io/smart_ptr.rs:1184-1195`), recovering `Vec<u64>` decode to `0.949 ns/elem` (vs `0.99 ns` at `a8d8b39`) and `Vec<Vec<u32>>` decode to `111.7 ns/inner Vec` (vs `118.5 ns` at `a8d8b39`). Committed `benches/s23_serialization_bench.rs` (`f7e39ad:benches/s23_serialization_bench.rs:1-82`). See `docs/review/io.md` §12.2.
+- Outlined `unexpected_eof_err` (`f7e39ad:src/io/data_input.rs:213-217`), added `DIRTY_OUTER_SER_STATE` (`f7e39ad:src/io/smart_ptr.rs:35`) and `DIRTY_OUTER_DE_STATE` (`f7e39ad:src/io/smart_ptr.rs:36`), and split `Vec<T>::deserialize` (`f7e39ad:src/io/smart_ptr.rs:1210-1237`) into a non-unwinding `0..cap` preallocated push loop plus `deserialize_vec_tail` (`f7e39ad:src/io/smart_ptr.rs:1184-1195`), recovering `Vec<u64>` decode to `0.949 ns/elem` (vs `0.99 ns` at `a8d8b39`) and `Vec<Vec<u32>>` decode to `111.68 ns/inner Vec` (vs `118.5 ns` at `a8d8b39`). Committed `benches/s23_serialization_bench.rs` (`f7e39ad:benches/s23_serialization_bench.rs:1-82`). See `docs/review/io.md` §12.2.
 
 ### 7.2 `0932ce7` — `S25-R1`, `S25-R4`, `S25-R9` (`src/fsa/cspp_trie_concurrent.rs`, `src/memory/lockfree_pool.rs`)
 - **`S25-R1` (HIGH — `ConcurrentCsppTrie` 256-byte `read_zpath` over-read panic on `lookup` / `contains` near pool end)**:
@@ -368,7 +374,7 @@ WorkStealingExecutor::new with queue_capacity == 0 must return Err
 - **`S25-R4`, `S25-R5`, `S25-R7`, `S25-R9` (`InstanceTls` thread-exit safety, heap row table, ID pool unification, and `O(1)` MRU cache)**:
   - **Fixes in `b74f6fe:src/thread/instance_tls.rs`**:
     1. Replaced inline `[Option<Box<TlsRow<T, COLS>>>; ROWS]` (which stack-overflowed on large `ROWS` such as `ROWS = 4_000_000`) with a heap-backed lazy row pointer table `rows: Vec<Option<*mut [TlsCell<T>]>>` in `TlsMatrix` (`b74f6fe:src/thread/instance_tls.rs:45-47`) and `alloc_row` (`b74f6fe:src/thread/instance_tls.rs:518-529`), `ensure_cell` (`b74f6fe:src/thread/instance_tls.rs:531-541`), and `lookup_cell` (`b74f6fe:src/thread/instance_tls.rs:543-550`).
-    2. Added `TlsMatrices` (`b74f6fe:src/thread/instance_tls.rs:57-60`) with a 1-entry MRU `(TypeId, *mut ())` cache in `get_or_init_matrix` (`b74f6fe:src/thread/instance_tls.rs:71-81`) and `lookup_matrix` (`b74f6fe:src/thread/instance_tls.rs:111-125`), re-entrancy-safe `TlsMatrices` `drop` (`b74f6fe:src/thread/instance_tls.rs:129-152`), and `TLS_MATRICES.try_with` + `try_borrow_mut`, speeding up `InstanceTls::<u64>::get` ~9x (`26.8 ns` at `00652d2` -> `2.83 ns`).
+    2. Added `TlsMatrices` (`b74f6fe:src/thread/instance_tls.rs:57-60`) with a 1-entry MRU `(TypeId, *mut ())` cache in `get_or_init_matrix` (`b74f6fe:src/thread/instance_tls.rs:71-81`) and `lookup_matrix` (`b74f6fe:src/thread/instance_tls.rs:111-125`), re-entrancy-safe `TlsMatrices` `drop` (`b74f6fe:src/thread/instance_tls.rs:129-152`), and `TLS_MATRICES.try_with` + `try_borrow_mut`, speeding up `InstanceTls::<u64>::get` ~9x.
     3. Unified `allocate_id` (`b74f6fe:src/thread/instance_tls.rs:414-495`) and `CleanupHandle` `drop` (`b74f6fe:src/thread/instance_tls.rs:574-618`) on `global_registry` (`b74f6fe:src/thread/instance_tls.rs:189-191`) so `test_instance_ids_are_recycled_after_drop` and 65,536+ ID churn tests exercise the same `(id, generation)` free list.
   - **Regression tests**:
     - `test_s25_r7_sequential_70k_churn_on_default_dimensions_no_leak` (`b74f6fe:src/thread/instance_tls.rs:1041-1081`; tightened in `c87db71:src/thread/instance_tls.rs:1157-1227`)
@@ -381,9 +387,9 @@ WorkStealingExecutor::new with queue_capacity == 0 must return Err
   - Fixed `WorkStealingExecutor::spawn` (`48438fe:src/concurrency/work_stealing.rs:815-823`) to spawn `fiber` directly onto the current Tokio runtime via `tokio::spawn(async move { fiber.await })` while preserving `fiber.id().as_u64()`.
   - **Regression test**: `test_s25_r2_global_init_dropped_runtime_and_nested_await_fibers` (`48438fe:src/concurrency/work_stealing.rs:1076-1149`; tightened in `c64babc:src/concurrency/work_stealing.rs:1165-1264`).
 - **`S25-R4` & `S25-R6` (`WorkStealingQueue` lock-free steal check, `is_idle()` load order, `submit`/`shutdown` synchronization, sync `stage_timeout`, and isolated `local_stage_stats`)**:
-  - Added `steal_len: AtomicUsize` in `WorkStealingQueue` (`48438fe:src/concurrency/work_stealing.rs:103-109`) and an $O(1)$ back-check in `insert_by_priority` (`48438fe:src/concurrency/work_stealing.rs:124-135`), recovering `WorkStealingQueue` owner push+pop to `20.0 ns/op` (vs `24.1 ns` at `00652d2` and `22.4 ns` at `a8d8b39`).
+  - Added `steal_len: AtomicUsize` in `WorkStealingQueue` (`48438fe:src/concurrency/work_stealing.rs:103-109`) and an $O(1)$ back-check in `insert_by_priority` (`48438fe:src/concurrency/work_stealing.rs:124-135`) on `WorkStealingQueue` owner push+pop.
   - Reordered `WorkStealingExecutor::is_idle()` (`48438fe:src/concurrency/work_stealing.rs:765-767`) to check `self.total_queued() == 0` before `self.stats.active_tasks.load(Ordering::Acquire) == 0`, and synchronized `submit()` (`48438fe:src/concurrency/work_stealing.rs:476-515`) with `shutdown()` (`48438fe:src/concurrency/work_stealing.rs:554-602`) via `try_push_local_unless_shutdown` (`48438fe:src/concurrency/work_stealing.rs:161-180`) and a final drain pass in `shutdown()`.
-  - Checked `self.config.stage_timeout` after synchronous stages (`elapsed > stage_timeout`) in `Pipeline::execute_single` (`48438fe:src/concurrency/pipeline/mod.rs:219-245`), `Pipeline::execute_stream` (`48438fe:src/concurrency/pipeline/mod.rs:267-438`), and `Pipeline::process_batch` (`48438fe:src/concurrency/pipeline/mod.rs:441-490`), isolated per-call `local_stage_stats` in `execute_stream`, and added a `try_recv()` batching fast path (`323 ns/item` 1-stage vs `396 ns/item` at `00652d2` and `318.6 ns/item` at `a8d8b39`).
+  - Checked `self.config.stage_timeout` after synchronous stages (`elapsed > stage_timeout`) in `Pipeline::execute_single` (`48438fe:src/concurrency/pipeline/mod.rs:219-245`), `Pipeline::execute_stream` (`48438fe:src/concurrency/pipeline/mod.rs:267-438`), and `Pipeline::process_batch` (`48438fe:src/concurrency/pipeline/mod.rs:441-490`), isolated per-call `local_stage_stats` in `execute_stream`, and added a `try_recv()` batching fast path (`323 ns/item` 1-stage vs `396 ns/item` at `00652d2`).
 - **`S25-R7` & `S25-R9` (Multi-threaded tests with non-atomic payload writes + `ParallelLoudsTrie` fallback evaluation)**:
   - Computed exact fallback results from a cloned `replicas` snapshot on `spawn_blocking` failure in `ParallelLoudsTrie::parallel_contains` (`48438fe:src/concurrency/parallel_trie.rs:235-269`) and `parallel_prefix_search` (`48438fe:src/concurrency/parallel_trie.rs:272-307`), and asserted `handle.id() == expected_id.as_u64()` in `test_c10_ws6_spawn_preserves_fiber_id_and_zero_capacity_rejected` (`48438fe:src/concurrency/work_stealing.rs:1057-1073`).
   - Added multi-threaded `#[tokio::test(flavor = "multi_thread", worker_threads = 4)]` tests with non-atomic payload writes across all 4 concurrency modules:
@@ -394,17 +400,19 @@ WorkStealingExecutor::new with queue_capacity == 0 must return Err
 
 ### 7.5 Stage 11 Performance Summary Table
 
-| Benchmark / Operation | `a8d8b39` | `00652d2` | `ee8b29a` | `2050294` | `4929ccc` / `b18bad3` |
-|---|---|---|---|---|---|
-| `Vec<u64>::deserialize` (100,000 elems) | `0.99 ns` | `1.39 ns` | `0.949 ns` | `1.048 ns` | `1.048 ns` |
-| `Vec<Vec<u32>>::deserialize` (1,000 × 100) | `118.5 ns` | `124.2 ns` | `111.7 ns` | `111.83 ns` | `111.83 ns` |
-| `Vec<Vec<u32>>::serialize` (1,000 × 100) | `84.7 ns` | `84.7 ns` | `100.9 ns` | `73.79 ns` | `73.79 ns` (`82.2 ns` reviewer) |
-| `Vec<Rc<u64>>::serialize` (10,000 × 100 shared) | `39.1 ns` | `39.1 ns` | `39.1 ns` | `50.9 ns` | `39.1 ns` |
-| `InstanceTls::<u64>::get` | `26.8 ns` | `26.8 ns` | `2.83 ns` | `2.91 ns` | `2.91 ns` (`25.75 ns` `String`) |
-| `WorkStealingQueue` owner push+pop | `22.4 ns` | `24.1 ns` | `20.0 ns` | `20.0 ns` | `20.0 ns` |
-| `Pipeline::execute_stream` (1-stage) | `318.6 ns` | `396 ns` | `323 ns` | `323 ns` | `323 ns` |
-| `WorkStealingExecutor` 8-thread submit+drain | `292.0 ns` | `292.0 ns` | `292.0 ns` | `442.0 ns` | `359.9 ns` (`312.0 ns` reviewer) |
-| `ConcurrentCsppTrie` 8-thread lookup | `25.5 ns` | `40.4 ns` | `27.3 ns` | `25.5 ns` | `25.5 ns` |
+Commands for the committed benchmark harnesses in this table:
+```bash
+cargo test --locked --release --lib io::smart_ptr::tests::bench_s24_r3_io_deserialize_timings -- --ignored --nocapture
+cargo bench --bench s23_serialization_bench
+cargo test --release --locked --lib bench_s29_r1_executor_timings -- --ignored --nocapture
+```
+
+| Benchmark | Committed Harness | `a8d8b39` / `00652d2` | `f7e39ad` / `ee8b29a` | `1141a79` / `2050294` | `4929ccc` / `f37cf61` | `fd1ec65` (`S29`) |
+|---|---|---|---|---|---|---|
+| `Vec<u64>::deserialize` (`1,000,000` elems) | `bench_s24_r3_io_deserialize_timings` / `benches/s23_serialization_bench.rs` | `0.99 ns` | `0.949 ns` | `1.048 ns` | — | — |
+| `Vec<Vec<u32>>::deserialize` (`1,000 × 100`) | `bench_s24_r3_io_deserialize_timings` / `benches/s23_serialization_bench.rs` | `118.5 ns` | `111.68 ns` | `111.83 ns` | — | — |
+| `Vec<Vec<u32>>::serialize` (`1,000 × 100`) | `bench_s24_r3_io_deserialize_timings` / `benches/s23_serialization_bench.rs` | `84.7 ns` | `100.9 ns` | `73.79 ns` | `82.2 ns` | — |
+| `WorkStealingExecutor` 8-thread submit+drain (`400,000` tasks) | `bench_s29_r1_executor_timings` (`src/concurrency/work_stealing.rs`) | — | — | — | `313.8 ns` | `314.5 ns` |
 
 ---
 
@@ -446,7 +454,7 @@ assertion `left == right` failed: re-entrant get() on the same InstanceTls must 
 
 ### 8.3 `c64babc` — `S26-R3` & `S26-R5` (`src/fsa/cspp_trie_concurrent.rs`, `src/concurrency/work_stealing.rs`, `src/concurrency/pipeline/mod.rs`)
 - **`S26-R3` (MEDIUM — Make `S25-R1`, `S25-R2`, and `S25-R6` regression tests fail on `00652d2`)**:
-  1. **`S25-R1` tests (`c64babc:src/fsa/cspp_trie_concurrent.rs:3110-3185`)**: Changed `test_s25_r1_lookup_zpath_near_pool_end_does_not_overread` (`c64babc:src/fsa/cspp_trie_concurrent.rs:3110-3143`) and `test_s25_r1_lookup_multi_insert_near_pool_end` (`c64babc:src/fsa/cspp_trie_concurrent.rs:3146-3185`) from `valsize = 4` (which caused `ConcurrentCsppTrie::with_capacity` to pad `pool_cap` by `capacity / 2 + 1024`, keeping nodes far from `pool.data.len()`) to `valsize = 0` across capacities `258..338` and `262..=330` (wrapping `insert` in `catch_unwind` for capacities `< 269` / `< 277` across `0..32u8`, which in `4929ccc:src/fsa/cspp_trie_concurrent.rs:3110-3169` was narrowed to capacities `269..338` and `277..=330` with `2` keys `0..2u8` in `test_s25_r1_lookup_multi_insert_near_pool_end` so `trie.insert` succeeds without `catch_unwind`). Both tests fail with `index out of bounds` on `00652d2` (verbatim RED output below).
+  1. **`S25-R1` tests (`c64babc:src/fsa/cspp_trie_concurrent.rs:3110-3185`)**: Changed `test_s25_r1_lookup_zpath_near_pool_end_does_not_overread` (`c64babc:src/fsa/cspp_trie_concurrent.rs:3110-3143`) and `test_s25_r1_lookup_multi_insert_near_pool_end` (`c64babc:src/fsa/cspp_trie_concurrent.rs:3146-3185`) from `valsize = 4` (which caused `ConcurrentCsppTrie::with_capacity` to pad `pool_cap` by `capacity / 2 + 1024`, keeping nodes far from `pool.data.len()`) to `valsize = 0` across capacities `258..338` and `262..=330` (wrapping `insert` in `catch_unwind` for capacities `< 269` / `< 277` across `0..32u32`, which in `4929ccc:src/fsa/cspp_trie_concurrent.rs:3110-3169` was narrowed to capacities `269..338` and `277..=330` with `2` keys `0..2u32` in `test_s25_r1_lookup_multi_insert_near_pool_end` so `trie.insert` succeeds without `catch_unwind`). Both tests fail with `index out of bounds` on `00652d2` (verbatim RED output below).
   2. **`S25-R2` test (`c64babc:src/concurrency/work_stealing.rs:1165-1264`)**: Changed `test_s25_r2_global_init_dropped_runtime_and_nested_await_fibers` from calling `crate::init()` to calling `WorkStealingExecutor::init(ConcurrencyConfig { max_fibers: 2, queue_size: 64 })` on `rt1`, dropping `rt1`, and verifying that both `WorkStealingExecutor::spawn` and `WorkStealingExecutor::global().unwrap().submit_closure(...)` complete on `rt2`.
   3. **`S25-R6` test part 2 (`c64babc:src/concurrency/work_stealing.rs:1267-1353`)**: Updated part 2 of `test_s25_r6_is_idle_ordering_and_submit_shutdown_race` to use a 4-worker `WorkStealingExecutor::new(4, 8)` with 4 `std::thread::spawn` submitters racing against `exec.shutdown().await` (subsequently tightened in `4929ccc:src/concurrency/work_stealing.rs:1368-1461`, see §9.1).
 - **`S26-R5` (LOW — Global executor post-runtime-drop `submit()`, idle worker CPU polling, `lookup_inner` duplicate `bytes_eq_relaxed`, and `stage_timeout` documentation)**:
@@ -454,7 +462,7 @@ assertion `left == right` failed: re-entrant get() on the same InstanceTls must 
   2. **Deduplicate `bytes_eq_relaxed` in `ConcurrentCsppTrie::lookup_inner` (`c64babc:src/fsa/cspp_trie_concurrent.rs:1094-1153`)**: Removed the duplicate `if !self.inner.pool.bytes_eq_relaxed(zpath_slot, &key[pos..end])` check inside `lookup_inner` so each node with `zlen > 0` compares its `zpath` slice once.
   3. **Document post-hoc synchronous `stage_timeout` behavior (`c64babc:src/concurrency/pipeline/mod.rs:131-149, 228-255`)**: Updated the doc comments on `PipelineConfig` and `Pipeline::execute_single` to state that futures which yield are cancelled at the `.await` point on timeout, whereas synchronous `PipelineStage::process` implementations that block without yielding cannot be preempted mid-call and have `elapsed > stage_timeout` checked immediately after `process` returns.
 
-RED output (`test_s25_r1_lookup_zpath_near_pool_end_does_not_overread` and `test_s25_r1_lookup_multi_insert_near_pool_end` from `4929ccc` spliced onto `00652d2:src/fsa/cspp_trie_concurrent.rs` before closing `}` at line `3018`):
+RED output (`test_s25_r1_lookup_zpath_near_pool_end_does_not_overread` and `test_s25_r1_lookup_multi_insert_near_pool_end` from `4929ccc` spliced into `mod tests` in `00652d2:src/fsa/cspp_trie_concurrent.rs` before its closing `}` at line `2979`; line `3018` closes top-level `test_concurrent_cspp_trie_deletion_support`):
 ```text
 ---- fsa::cspp_trie_concurrent::tests::test_s25_r1_lookup_multi_insert_near_pool_end stdout ----
 thread 'fsa::cspp_trie_concurrent::tests::test_s25_r1_lookup_multi_insert_near_pool_end' (2453182) panicked at src/fsa/cspp_trie_concurrent.rs:150:9:
@@ -494,7 +502,7 @@ assertion `left == right` failed: dropping a runtime whose workers were never po
   - **Fix in `4929ccc:src/concurrency/work_stealing.rs`**:
     1. Added `parked_workers: AtomicUsize` to `ExecutorStatsInner` (`4929ccc:src/concurrency/work_stealing.rs:377-384`) and `ParkedWorkerGuard` (`4929ccc:src/concurrency/work_stealing.rs:417-419`, `Drop` at `4929ccc:src/concurrency/work_stealing.rs:422-425`).
     2. In `worker_loop` (`4929ccc:src/concurrency/work_stealing.rs:773-856`), the worker increments `stats.parked_workers.fetch_add(1, Ordering::SeqCst)`, creates `ParkedWorkerGuard`, loads `shutdown.load(Ordering::Acquire)`, and calls `Self::find_task(my_queue, &other_queues, &global_queue, &stats, true)`, awaiting `notified.await` only if `find_task` returns `None` and `shutting_down_now` is `false`.
-    3. In `notify_if_parked` (`4929ccc:src/concurrency/work_stealing.rs:588-600`), `self.work_notify.notify_waiters()` is called only when `self.stats.parked_workers.load(Ordering::SeqCst) > 0`, recovering 8-thread submit+drain (`400k` tasks) to `359.9 ns/task`.
+    3. In `notify_if_parked` (`4929ccc:src/concurrency/work_stealing.rs:588-600`), `self.work_notify.notify_waiters()` is called only when `self.stats.parked_workers.load(Ordering::SeqCst) > 0`, recovering 8-thread submit+drain (`400k` tasks) throughput (`313.8 ns/task` via `bench_s29_r1_executor_timings`).
 
 - **`S27-R4` (MEDIUM — Part 2 of `test_s25_r6_is_idle_ordering_and_submit_shutdown_race` passed with the `S25-R6` local-queue shutdown check reverted)**:
   - **Root cause**: In `c64babc:src/concurrency/work_stealing.rs:1296-1352`, part 2 of `test_s25_r6_is_idle_ordering_and_submit_shutdown_race` slept `40..220 µs` before calling `exec.shutdown().await` on a 4-worker executor with 4 submitters (`512` tasks each), allowing the submitters to finish or hit `Full` before `shutdown()` set `self.shutdown = true`.
@@ -515,7 +523,7 @@ assertion `left == right` failed: every task accepted before shutdown() must exe
      - Checked `(*cell_ptr).readers.get() == 0` before forming `&mut *(*cell_ptr).value.get()` in the post-`T::default()` store path of `InstanceTls::get` (`4929ccc:src/thread/instance_tls.rs:359-375`) so the code matches its `// SAFETY:` comment even if a custom `T::default()` or `T::clone()` re-entrantly borrows the cell.
      - Removed the unreachable `defer_write` branch from `CleanupHandle` `drop` (`4929ccc:src/thread/instance_tls.rs:709-757`), since `CleanupHandle` `drop` only runs when the last `Arc<CleanupHandle>` (and thus the last `InstanceTls`) is dropped while `get`/`get_value` borrow `&self`.
   2. **Smart-pointer `SerializableType::serialize` `#[inline]` (`4929ccc:src/io/smart_ptr.rs:1238-1300`)**: Restored `#[inline]` on `SerializableType::serialize` for `Rc<T>`, `Arc<T>`, `RcWeak<T>`, `ArcWeak<T>`, and `Box<T>` (see `docs/review/io.md` §12.4).
-  3. **`S25-R1` test `catch_unwind` removal (`4929ccc:src/fsa/cspp_trie_concurrent.rs:3110-3169`)**: Started the slot loops at `269..338` in `test_s25_r1_lookup_zpath_near_pool_end_does_not_overread` (`4929ccc:src/fsa/cspp_trie_concurrent.rs:3110-3137`) and `277..=330` in `test_s25_r1_lookup_multi_insert_near_pool_end` (`4929ccc:src/fsa/cspp_trie_concurrent.rs:3140-3169`, inserting `2` keys `0..2u8` per capacity) and unwrapped `trie.insert(...)` directly without `catch_unwind`.
+  3. **`S25-R1` test `catch_unwind` removal (`4929ccc:src/fsa/cspp_trie_concurrent.rs:3110-3169`)**: Started the slot loops at `269..338` in `test_s25_r1_lookup_zpath_near_pool_end_does_not_overread` (`4929ccc:src/fsa/cspp_trie_concurrent.rs:3110-3137`) and `277..=330` in `test_s25_r1_lookup_multi_insert_near_pool_end` (`4929ccc:src/fsa/cspp_trie_concurrent.rs:3140-3169`, inserting `2` keys `0..2u32` per capacity) and unwrapped `trie.insert(...)` directly without `catch_unwind`.
   4. **Multi-thread Tokio runtime across all `src/concurrency/` tests (`4929ccc`)**: Upgraded all `#[tokio::test]` attributes in `src/concurrency/mod.rs` (`4929ccc:src/concurrency/mod.rs:107-135`), `src/concurrency/fiber_pool.rs` (`4929ccc:src/concurrency/fiber_pool.rs:412-669`, synchronizing `test_fiber_pool_queue_capacity_limit` at `4929ccc:src/concurrency/fiber_pool.rs:505-563` with `tokio::sync::Notify`), `src/concurrency/parallel_trie.rs` (`4929ccc:src/concurrency/parallel_trie.rs:514-805`), `src/concurrency/work_stealing.rs` (`4929ccc:src/concurrency/work_stealing.rs:1007-1461`), `src/concurrency/pipeline/tests.rs` (`4929ccc:src/concurrency/pipeline/tests.rs:64-796`), and `src/concurrency/pipeline/integration_tests.rs` (`4929ccc:src/concurrency/pipeline/integration_tests.rs:28-796`) to `#[tokio::test(flavor = "multi_thread", ...)]`.
 
 ### 9.2 Sanitizer & Gate Verification (`S27`)
@@ -551,7 +559,7 @@ S28-R1 self-deadlock when Tokio synchronously drops worker future during spawn: 
   1. **Eliminate shutdown-window strand on concurrent runtime drop (`b18bad3:src/concurrency/work_stealing.rs`)**: Added `fallback_runtime: Mutex<Option<tokio::runtime::Handle>>` and `self_weak: Weak<Self>` to `WorkStealingExecutor` (`b18bad3:src/concurrency/work_stealing.rs:377-389`), recorded the active Tokio `Handle` in `submit` (`b18bad3:src/concurrency/work_stealing.rs:711-721`) via thread-local `LAST_RECORDED_EXECUTOR_ID`, and in `ActiveWorkerGuard::drop` (`b18bad3:src/concurrency/work_stealing.rs:426-442`) spawned a respawn/notify task onto `fallback_runtime` whenever a `WORKER_LIVE` worker is dropped while `!self.shutdown.load(Ordering::Acquire)`.
   2. **Document `# Errors` on `submit` (`b18bad3:src/concurrency/work_stealing.rs:695-705`) and `submit_closure` (`b18bad3:src/concurrency/work_stealing.rs:765-772`)**: Documented the [`ZiporaError::InvalidState`] and [`ZiporaError::Configuration`] error conditions on `WorkStealingExecutor::submit` and `WorkStealingExecutor::submit_closure`.
   3. **Fix 3 stale/imprecise `InstanceTls` comments (`b18bad3:src/thread/instance_tls.rs:39-42, 312-315, 384-386, 720-722`)**: Updated the doc comment on `TlsCell` (`b18bad3:src/thread/instance_tls.rs:39-42`) to state that `value` is only accessed via shared references while `readers > 0` and re-entrant `set`/`remove` updates are recorded in `TlsMatrix::deferred`; updated `InstanceTls::get` (`b18bad3:src/thread/instance_tls.rs:312-315`) and `InstanceTls::get_value` (`b18bad3:src/thread/instance_tls.rs:384-386`) docstrings to say `until the outermost active clone() on the cell completes (readers == 0)`; and updated the `// SAFETY:` comment in `CleanupHandle` `drop` (`b18bad3:src/thread/instance_tls.rs:720-722`) to match the `(*cell_ptr).readers.get() == 0` guard.
-  4. **Disclose `test_s25_r1_lookup_multi_insert_near_pool_end` key count (`S28-R3`)**: Documented in §8.3 and §9.1 above that `test_s25_r1_lookup_multi_insert_near_pool_end` (`4929ccc:src/fsa/cspp_trie_concurrent.rs:3140-3169`) inserts `2` keys (`0..2u8`) per capacity across `277..=330` (reduced from up to `32` keys `0..32u8` in `c64babc:src/fsa/cspp_trie_concurrent.rs:3146-3185`).
+  4. **Disclose `test_s25_r1_lookup_multi_insert_near_pool_end` key count (`S28-R3`)**: Documented in §8.3 and §9.1 above that `test_s25_r1_lookup_multi_insert_near_pool_end` (`4929ccc:src/fsa/cspp_trie_concurrent.rs:3140-3169`) inserts `2` keys (`0..2u32`) per capacity across `277..=330` (reduced from up to `32` keys `0..32u32` in `c64babc:src/fsa/cspp_trie_concurrent.rs:3146-3185`).
 
 ### 10.2 `S28-R2` — Ledger & `scripts/audit_ledger.py` Generalization (`scripts/audit_ledger.py`, `scripts/tests/audit_ledger_adversarial.md`, `docs/review/thread_and_concurrency.md`, `docs/review/io.md`)
 - Removed all hardcoded test literals/numbers and non-repo token whitelists from `scripts/audit_ledger.py`, restricted the repository index strictly to committed git state (never indexing dirty working-tree or staged edits), and implemented general checks for:
@@ -563,4 +571,72 @@ S28-R1 self-deadlock when Tokio synchronously drops worker future during spawn: 
   6. Per-clause `Before`/`After` and single-citation `Ordering::*` verification (including `compare_exchange` success ordering and named atomic field ordering), loop iteration bounds (`N iterations`), and `A before B` statement order in cited snippets.
   7. Citation item-span start/end boundary checks, sub-span prose claim checks, standalone commit SHA file/message checks, and un-cited single-file identifier membership checks.
 - Added Round 4 (30 new cases, 79 total adversarial cases across Rounds 1–4) to `scripts/tests/audit_ledger_adversarial.md` and verified `0` errors on `docs/review/io.md` and `docs/review/thread_and_concurrency.md` and `102` errors across all `79/79` adversarial cases in `scripts/tests/audit_ledger_adversarial.md`.
+
+---
+
+## 11. Stage 11 Final Fix Round Remediation (`S29-R1..R3`: `c0a56de..fd1ec65`)
+
+### 11.1 `c0a56de` — `S29-R1` (`src/thread/mod.rs`, `src/concurrency/work_stealing.rs`, `scripts/verify_s29_r1_red.sh`, `scripts/gate_baseline.txt`)
+
+- **`S29-R1` (MEDIUM — `WorkStealingExecutor::submit` cached `LAST_RECORDED_EXECUTOR_ID` even when `Handle::try_current()` failed and never refreshed on runtime change)**:
+  - **Root cause**: `b18bad3:src/concurrency/work_stealing.rs:711-721` stored a single `executor_id: usize` in thread-local `LAST_RECORDED_EXECUTOR_ID` (`b18bad3:src/concurrency/work_stealing.rs:373`) unconditionally on the first `submit()` to an executor on a thread—even when `tokio::runtime::Handle::try_current()` returned `Err` (mode `b`: first submit from a plain OS thread, subsequent submits from a live Tokio runtime) or when the first submit came from a temporary runtime that was later dropped (mode `c`). When the worker runtime subsequently dropped with tasks queued in the backlog, `ActiveWorkerGuard::drop` found `None` or a dead `Handle` in `fallback_runtime` and left the backlog stranded.
+  - **Fix in `c0a56de`**:
+    1. Added `pub(crate) fn tokio_runtime_handle_id(handle: &tokio::runtime::Handle) -> usize` in `c0a56de:src/thread/mod.rs:65-78` with compile-time size/alignment assertions and a `// SAFETY:` block.
+    2. Replaced `LAST_RECORDED_EXECUTOR_ID: Cell<usize>` with `LAST_RECORDED_FALLBACK: Cell<Option<(usize, usize)>>` (`fd1ec65:src/concurrency/work_stealing.rs:373-374`).
+    3. Updated `WorkStealingExecutor::submit` (`fd1ec65:src/concurrency/work_stealing.rs:710-762`) to inspect `tokio::runtime::Handle::try_current()` first, compute `key = (self.executor_id, crate::thread::tokio_runtime_handle_id(&rt_handle))`, perform a single thread-local compare `last.get() != Some(key)`, and set `last.set(Some(key))` + store `Some(rt_handle)` in `self.fallback_runtime` only when a live handle is present and `(executor_id, runtime_id)` changed.
+  - **Regression tests & splice-and-run RED script**:
+    - `test_s29_r1_fallback_runtime_mode_b_plain_then_live_runtime` (`fd1ec65:src/concurrency/work_stealing.rs:1792-1794`)
+    - `test_s29_r1_fallback_runtime_mode_c_dropped_temp_then_live_runtime` (`fd1ec65:src/concurrency/work_stealing.rs:1797-1799`)
+    - `bench_s29_r1_executor_timings` (`fd1ec65:src/concurrency/work_stealing.rs:1803-1886`)
+    - Committed splice-and-run script `scripts/verify_s29_r1_red.sh` (`c0a56de:scripts/verify_s29_r1_red.sh:1-45`).
+
+Verbatim RED output from `scripts/verify_s29_r1_red.sh` on base commit:
+```text
+running 2 tests
+test concurrency::work_stealing::tests::test_s29_r1_fallback_runtime_mode_b_plain_then_live_runtime ... FAILED
+test concurrency::work_stealing::tests::test_s29_r1_fallback_runtime_mode_c_dropped_temp_then_live_runtime ... FAILED
+
+failures:
+
+---- concurrency::work_stealing::tests::test_s29_r1_fallback_runtime_mode_b_plain_then_live_runtime stdout ----
+
+thread '<unnamed>' (974822) panicked at src/concurrency/work_stealing.rs:1762:13:
+assertion `left == right` failed: S29-R1 mode 'b': queued backlog stranded after worker runtime drop (executed 0/100)
+  left: 0
+ right: 100
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- concurrency::work_stealing::tests::test_s29_r1_fallback_runtime_mode_c_dropped_temp_then_live_runtime stdout ----
+
+thread '<unnamed>' (974886) panicked at src/concurrency/work_stealing.rs:1762:13:
+assertion `left == right` failed: S29-R1 mode 'c': queued backlog stranded after worker runtime drop (executed 0/100)
+  left: 0
+ right: 100
+
+
+failures:
+    concurrency::work_stealing::tests::test_s29_r1_fallback_runtime_mode_b_plain_then_live_runtime
+    concurrency::work_stealing::tests::test_s29_r1_fallback_runtime_mode_c_dropped_temp_then_live_runtime
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 3180 filtered out; finished in 2.04s
+
+error: test failed, to rerun pass `--lib`
+exit_code=101
+```
+
+### 11.2 `fd1ec65` — `S29-R3` (`src/concurrency/work_stealing.rs`)
+
+- **Fixes in `fd1ec65:src/concurrency/work_stealing.rs`**:
+  1. **Release dead/consumed `fallback_runtime` handle (`fd1ec65:src/concurrency/work_stealing.rs:421-452, 814-836`)**: Changed `ActiveWorkerGuard::drop` from `.clone()` to `.take()` on `*self.fallback_runtime.lock()` and cleared `*self.fallback_runtime.lock() = None` in `WorkStealingExecutor::shutdown`, releasing the stored runtime `Handle` (+4 fds) as soon as fallback fires or the executor shuts down.
+  2. **Hold `Weak<WorkStealingExecutor>` in the fallback respawn task (`fd1ec65:src/concurrency/work_stealing.rs:433-450`)**: Dropped the upgraded `Arc<WorkStealingExecutor>` before calling `rt_handle.spawn` and captured `weak_exec: Weak<WorkStealingExecutor>` inside the spawned future so an unpolled fallback task queued on an undriven `current_thread` runtime never keeps `WorkStealingExecutor` alive after the caller drops its `Arc`.
+  3. **Yield instead of busy-spinning in `ensure_workers_running` (`fd1ec65:src/concurrency/work_stealing.rs:677-680`)**: Replaced `std::hint::spin_loop()` with `std::thread::yield_now()` in the `!progressed` window while holding `respawn_lock`.
+  4. **Document `test_s25_r6_is_idle_ordering_and_submit_shutdown_race` Part 2 single-line revert catch rate (`fd1ec65:src/concurrency/work_stealing.rs:1596-1603`)**: Documented that across `256` iterations on a multi-core Linux host, reverting the shutdown check in `try_push_local` fails in ~50–63% of test invocations per run (~60% observed at `4929ccc`).
+- **Before/After Executor Timings & Sanitizer Verification**:
+```text
+BEFORE (f37cf61): S29-R1 executor bench: 1t_100k=1152.9 ns/task | mp8_400k=313.8 ns/task
+AFTER  (fd1ec65): S29-R1 executor bench: 1t_100k=1095.0 ns/task | mp8_400k=314.5 ns/task
+```
+  - `make miri_thread`: `30 passed; 0 failed; 1 ignored` in both SIMD (`-C target-cpu=haswell`) and scalar (`MIRI_SCALAR=1`) builds.
+  - `make tsan_concurrency`: `31 passed; 0 failed` (`thread::`) + `87 passed; 0 failed; 1 ignored` (`concurrency::`).
+
 
