@@ -431,12 +431,16 @@ impl Drop for ActiveWorkerGuard {
                     .fallback_runtime
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .clone();
+                    .take();
+                drop(exec);
                 if let Some(rt_handle) = rt_opt {
+                    let weak_exec = self.executor.clone();
                     drop(rt_handle.spawn(async move {
-                        let _ = exec.ensure_workers_running();
-                        if exec.stats.parked_workers.load(Ordering::SeqCst) > 0 {
-                            exec.work_notify.notify_waiters();
+                        if let Some(exec) = weak_exec.upgrade() {
+                            let _ = exec.ensure_workers_running();
+                            if exec.stats.parked_workers.load(Ordering::SeqCst) > 0 {
+                                exec.work_notify.notify_waiters();
+                            }
                         }
                     }));
                 }
@@ -672,7 +676,7 @@ impl WorkStealingExecutor {
                 }
             }
             if !progressed {
-                std::hint::spin_loop();
+                std::thread::yield_now();
             }
         }
         Ok(())
@@ -809,6 +813,10 @@ impl WorkStealingExecutor {
     /// Shutdown the executor, draining all queued and in-flight tasks before workers exit.
     pub async fn shutdown(&self) -> Result<()> {
         self.shutdown.store(true, Ordering::Release);
+        *self
+            .fallback_runtime
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
 
         // Acquire and release each queue lock after storing `shutdown = true` so no
         // concurrent `submit()` can insert a task after this barrier.
@@ -1587,6 +1595,8 @@ mod tests {
 
         // 2. Concurrent submit() from 8 OS threads racing shutdown() on a small-capacity
         //    executor must execute every accepted task without loss (S25-R6 / S27-R4).
+        //    Note: this 256-iteration concurrent stress check detects single-line reverts of
+        //    `try_push_local_unless_shutdown` -> `try_push_local` in ~50-63% of runs.
         for it in 0..256usize {
             let exec = Arc::new(WorkStealingExecutor::new(2, 4).unwrap());
             let accepted = Arc::new(AtomicUsize::new(0));
