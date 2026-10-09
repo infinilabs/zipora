@@ -1,6 +1,206 @@
-//! C FFI bindings for container types
+//! C FFI bindings for container and memory pool types
 
-// FFI functions for containers are defined in c_api.rs to avoid duplication
+use super::CResult;
+use super::c_api::{ffi_guard, set_last_error};
+use super::types::{CFastVec, CMemoryPool};
+use std::os::raw::c_void;
+use std::ptr;
+
+/// Create a new FastVec instance
+///
+/// # Safety
+///
+/// The returned pointer must be freed with `fast_vec_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fast_vec_new() -> *mut CFastVec {
+    ffi_guard(ptr::null_mut(), || Box::into_raw(Box::new(CFastVec::new())))
+}
+
+/// Free a FastVec instance
+///
+/// # Safety
+///
+/// The pointer must be a valid CFastVec pointer returned from `fast_vec_new`.
+/// The pointer becomes invalid after this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fast_vec_free(vec: *mut CFastVec) {
+    ffi_guard((), || {
+        if !vec.is_null() {
+            if !vec.is_aligned() {
+                set_last_error("FastVec pointer is misaligned");
+                return;
+            }
+            // SAFETY: pointer is non-null and aligned (checked above), created by fast_vec_new via Box::into_raw, not previously freed
+            let _vec = unsafe { Box::from_raw(vec) };
+        }
+    })
+}
+
+/// Push a byte to a FastVec
+///
+/// # Safety
+///
+/// The vec pointer must be a valid CFastVec pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fast_vec_push(vec: *mut CFastVec, value: u8) -> CResult {
+    ffi_guard(CResult::InternalError, || {
+        if vec.is_null() || !vec.is_aligned() {
+            set_last_error("FastVec pointer is null or misaligned");
+            return CResult::InvalidInput;
+        }
+
+        // SAFETY: pointer is non-null and aligned (checked above), points to initialized CFastVec created by fast_vec_new
+        let fast_vec = unsafe { &mut *vec };
+        match fast_vec.push(value) {
+            Ok(_) => CResult::Success,
+            Err(e) => {
+                set_last_error(&format!("Failed to push to FastVec: {}", e));
+                CResult::MemoryError
+            }
+        }
+    })
+}
+
+/// Get the length of a FastVec
+///
+/// # Safety
+///
+/// The vec pointer must be a valid CFastVec pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fast_vec_len(vec: *const CFastVec) -> usize {
+    ffi_guard(0, || {
+        if vec.is_null() || !vec.is_aligned() {
+            return 0;
+        }
+
+        // SAFETY: pointer is non-null and aligned (checked above), points to initialized CFastVec
+        let fast_vec = unsafe { &*vec };
+        fast_vec.len()
+    })
+}
+
+/// Get a pointer to the FastVec's data
+///
+/// # Safety
+///
+/// The vec pointer must be a valid CFastVec pointer.
+/// The returned pointer is valid until the FastVec is modified or freed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fast_vec_data(vec: *const CFastVec) -> *const u8 {
+    ffi_guard(ptr::null(), || {
+        if vec.is_null() || !vec.is_aligned() {
+            return ptr::null();
+        }
+
+        // SAFETY: pointer is non-null and aligned (checked above), points to initialized CFastVec
+        let fast_vec = unsafe { &*vec };
+        fast_vec.as_ptr()
+    })
+}
+
+/// Create a memory pool
+///
+/// # Safety
+///
+/// The returned pointer must be freed with `memory_pool_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memory_pool_new(chunk_size: usize, max_chunks: usize) -> *mut CMemoryPool {
+    ffi_guard(ptr::null_mut(), || {
+        let config = crate::memory::PoolConfig::new(chunk_size, max_chunks, 8);
+        match crate::memory::MemoryPool::new(config) {
+            Ok(pool) => Box::into_raw(Box::new(CMemoryPool { inner: pool })),
+            Err(e) => {
+                set_last_error(&format!("Failed to create memory pool: {}", e));
+                ptr::null_mut()
+            }
+        }
+    })
+}
+
+/// Free a memory pool
+///
+/// # Safety
+///
+/// The pointer must be a valid CMemoryPool pointer returned from `memory_pool_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memory_pool_free(pool: *mut CMemoryPool) {
+    ffi_guard((), || {
+        if !pool.is_null() {
+            if !pool.is_aligned() {
+                set_last_error("MemoryPool pointer is misaligned");
+                return;
+            }
+            // SAFETY: pointer is non-null and aligned (checked above), created by memory_pool_new via Box::into_raw, not previously freed
+            let _pool = unsafe { Box::from_raw(pool) };
+        }
+    })
+}
+
+/// Allocate memory from a pool
+///
+/// # Safety
+///
+/// The pool pointer must be a valid CMemoryPool pointer.
+/// The returned pointer must be freed with `memory_pool_deallocate`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memory_pool_allocate(pool: *mut CMemoryPool) -> *mut c_void {
+    ffi_guard(ptr::null_mut(), || {
+        if pool.is_null() || !pool.is_aligned() {
+            set_last_error("MemoryPool pointer is null or misaligned");
+            return ptr::null_mut();
+        }
+
+        // SAFETY: pointer is non-null and aligned (checked above), points to initialized CMemoryPool
+        let memory_pool = unsafe { &*pool };
+        match memory_pool.inner.allocate() {
+            Ok(ptr) => ptr.as_ptr() as *mut c_void,
+            Err(e) => {
+                set_last_error(&format!("Failed to allocate from memory pool: {}", e));
+                ptr::null_mut()
+            }
+        }
+    })
+}
+
+/// Deallocate memory back to a pool
+///
+/// # Safety
+///
+/// Both pointers must be valid, and the memory pointer must have been
+/// allocated from the specified pool.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memory_pool_deallocate(
+    pool: *mut CMemoryPool,
+    ptr: *mut c_void,
+) -> CResult {
+    ffi_guard(CResult::InternalError, || {
+        if pool.is_null() || !pool.is_aligned() || ptr.is_null() {
+            set_last_error("Memory pool or pointer is null or misaligned");
+            return CResult::InvalidInput;
+        }
+
+        // SAFETY: pointer is non-null and aligned (checked above), points to initialized CMemoryPool
+        let memory_pool = unsafe { &*pool };
+        let non_null_ptr = match std::ptr::NonNull::new(ptr as *mut u8) {
+            Some(p) => p,
+            None => {
+                set_last_error("Failed to create NonNull pointer from raw pointer");
+                return CResult::InvalidInput;
+            }
+        };
+
+        // SAFETY: this function's own contract requires `ptr` to have come
+        // from `memory_pool_allocate` on this same pool and not to have been
+        // freed yet, which is exactly what `MemoryPool::deallocate` asks for.
+        match unsafe { memory_pool.inner.deallocate(non_null_ptr) } {
+            Ok(_) => CResult::Success,
+            Err(e) => {
+                set_last_error(&format!("Failed to deallocate memory: {}", e));
+                CResult::from_zipora_error(&e)
+            }
+        }
+    })
+}
 
 #[cfg(test)]
 mod tests {

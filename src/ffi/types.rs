@@ -8,7 +8,6 @@ use crate::blob_store::traits::BlobStore;
 use std::os::raw::{c_char, c_int};
 
 /// Opaque handle for FastVec
-#[repr(C)]
 pub struct CFastVec {
     inner: crate::containers::FastVec<u8>,
 }
@@ -45,6 +44,12 @@ impl CFastVec {
         self.inner.is_empty()
     }
 
+    /// Get a pointer to the contiguous byte slice backing this vector
+    #[inline]
+    pub fn as_ptr(&self) -> *const u8 {
+        self.inner.as_slice().as_ptr()
+    }
+
     /// Get a reference to the element at the given index
     #[inline]
     pub fn get(&self, index: usize) -> Option<&u8> {
@@ -53,13 +58,11 @@ impl CFastVec {
 }
 
 /// Opaque handle for MemoryPool
-#[repr(C)]
 pub struct CMemoryPool {
-    _private: [u8; 0],
+    pub(crate) inner: crate::memory::MemoryPool,
 }
 
 /// Opaque handle for BlobStore
-#[repr(C)]
 pub struct CBlobStore {
     inner: crate::blob_store::MemoryBlobStore,
 }
@@ -91,7 +94,6 @@ impl CBlobStore {
 }
 
 /// Opaque handle for SuffixArray
-#[repr(C)]
 pub struct CSuffixArray {
     inner: crate::algorithms::SuffixArray,
 }
@@ -102,6 +104,12 @@ impl CSuffixArray {
         Self { inner: sa }
     }
 
+    /// Length of indexed text in bytes
+    #[inline]
+    pub fn text_len(&self) -> usize {
+        self.inner.text_len()
+    }
+
     /// Search for a pattern in the text using the suffix array
     pub fn search(&self, text: &[u8], pattern: &[u8]) -> (usize, usize) {
         self.inner.search(text, pattern)
@@ -109,15 +117,13 @@ impl CSuffixArray {
 }
 
 /// Opaque handle for RadixSort
-#[repr(C)]
 pub struct CRadixSort {
-    _private: [u8; 0],
+    _private: (),
 }
 
 /// Opaque handle for MultiWayMerge
-#[repr(C)]
 pub struct CMultiWayMerge {
-    _private: [u8; 0],
+    _private: (),
 }
 
 /// Configuration structure for memory pools

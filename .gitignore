@@ -309,7 +309,8 @@ tramp
 *.private
 .local/
 
-include/
+include/*
+!include/zipora.h
 tmp
 
 GEMINI.md

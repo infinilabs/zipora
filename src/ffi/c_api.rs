@@ -3,15 +3,18 @@
 //! This module provides the primary C-compatible interface for the zipora library,
 //! allowing seamless integration with existing C/C++ codebases.
 
-use super::{CResult, types::*};
-use crate::blob_store::traits::BlobStore;
+use super::CResult;
+#[cfg(test)]
+use super::types::*;
 use std::cell::RefCell;
 #[cfg(test)]
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::os::raw::{c_char, c_int, c_void};
+use std::os::raw::{c_char, c_int};
 use std::ptr;
 use std::sync::Mutex;
+
+pub use super::{algorithms::*, blob_store::*, containers::*};
 
 // Thread-local storage for error messages
 thread_local! {
@@ -22,7 +25,7 @@ thread_local! {
 static ERROR_CALLBACK: Mutex<Option<unsafe extern "C" fn(*const c_char)>> = Mutex::new(None);
 
 /// Set the last error message for the current thread
-fn set_last_error(msg: &str) {
+pub(crate) fn set_last_error(msg: &str) {
     let cstring = match CString::new(msg) {
         Ok(c) => c,
         Err(_) => CString::new(msg.replace('\0', "\\0")).unwrap_or_default(),
@@ -53,7 +56,7 @@ fn set_last_error(msg: &str) {
 
 /// Clear the last error message for the current thread (for testing)
 #[cfg(test)]
-fn clear_last_error() {
+pub(crate) fn clear_last_error() {
     let _ = LAST_ERROR.try_with(|error| {
         *error.borrow_mut() = None;
     });
@@ -68,7 +71,7 @@ fn clear_last_error() {
 /// raw-pointer inputs from scratch, and objects reachable through those
 /// pointers are owned by the C caller, so no Rust-side invariant is silently
 /// carried across the catch.
-fn ffi_guard<T>(fallback: T, f: impl FnOnce() -> T) -> T {
+pub(crate) fn ffi_guard<T>(fallback: T, f: impl FnOnce() -> T) -> T {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(value) => value,
         Err(payload) => {
@@ -84,7 +87,6 @@ fn ffi_guard<T>(fallback: T, f: impl FnOnce() -> T) -> T {
         }
     }
 }
-
 
 /// Initialize the zipora library
 ///
@@ -124,522 +126,6 @@ pub unsafe extern "C" fn zipora_has_simd() -> c_int {
     })
 }
 
-/// Create a new FastVec instance
-///
-/// # Safety
-///
-/// The returned pointer must be freed with `fast_vec_free`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn fast_vec_new() -> *mut CFastVec {
-    ffi_guard(ptr::null_mut(), || {
-        let fast_vec = Box::new(crate::FastVec::<u8>::new());
-        Box::into_raw(fast_vec) as *mut CFastVec
-    })
-}
-
-/// Free a FastVec instance
-///
-/// # Safety
-///
-/// The pointer must be a valid CFastVec pointer returned from `fast_vec_new`.
-/// The pointer becomes invalid after this call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn fast_vec_free(vec: *mut CFastVec) {
-    ffi_guard((), || {
-        let raw = vec as *mut crate::FastVec<u8>;
-        if !raw.is_null() {
-            if !raw.is_aligned() {
-                set_last_error("FastVec pointer is misaligned");
-                return;
-            }
-            // SAFETY: pointer is non-null and aligned (checked above), created by fast_vec_new via Box::into_raw, not previously freed
-            let _vec = unsafe { Box::from_raw(raw) };
-            // Automatic cleanup when Box is dropped
-        }
-    })
-}
-
-/// Push a byte to a FastVec
-///
-/// # Safety
-///
-/// The vec pointer must be a valid CFastVec pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn fast_vec_push(vec: *mut CFastVec, value: u8) -> CResult {
-    ffi_guard(CResult::InternalError, || {
-        let raw = vec as *mut crate::FastVec<u8>;
-        if raw.is_null() || !raw.is_aligned() {
-            set_last_error("FastVec pointer is null or misaligned");
-            return CResult::InvalidInput;
-        }
-
-        // SAFETY: pointer is non-null and aligned (checked above), points to initialized FastVec created by fast_vec_new
-        let fast_vec = unsafe { &mut *raw };
-        match fast_vec.push(value) {
-            Ok(_) => CResult::Success,
-            Err(e) => {
-                set_last_error(&format!("Failed to push to FastVec: {}", e));
-                CResult::MemoryError
-            }
-        }
-    })
-}
-
-/// Get the length of a FastVec
-///
-/// # Safety
-///
-/// The vec pointer must be a valid CFastVec pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn fast_vec_len(vec: *const CFastVec) -> usize {
-    ffi_guard(0, || {
-        let raw = vec as *const crate::FastVec<u8>;
-        if raw.is_null() || !raw.is_aligned() {
-            return 0;
-        }
-
-        // SAFETY: pointer is non-null and aligned (checked above), points to initialized FastVec
-        let fast_vec = unsafe { &*raw };
-        fast_vec.len()
-    })
-}
-
-/// Get a pointer to the FastVec's data
-///
-/// # Safety
-///
-/// The vec pointer must be a valid CFastVec pointer.
-/// The returned pointer is valid until the FastVec is modified or freed.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn fast_vec_data(vec: *const CFastVec) -> *const u8 {
-    ffi_guard(ptr::null(), || {
-        let raw = vec as *const crate::FastVec<u8>;
-        if raw.is_null() || !raw.is_aligned() {
-            return ptr::null();
-        }
-
-        // SAFETY: pointer is non-null and aligned (checked above), points to initialized FastVec
-        let fast_vec = unsafe { &*raw };
-        fast_vec.as_ptr()
-    })
-}
-
-/// Create a memory pool
-///
-/// # Safety
-///
-/// The returned pointer must be freed with `memory_pool_free`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn memory_pool_new(chunk_size: usize, max_chunks: usize) -> *mut CMemoryPool {
-    ffi_guard(ptr::null_mut(), || {
-        let config = crate::memory::PoolConfig::new(chunk_size, max_chunks, 8);
-        match crate::memory::MemoryPool::new(config) {
-            Ok(pool) => Box::into_raw(Box::new(pool)) as *mut CMemoryPool,
-            Err(_) => ptr::null_mut(),
-        }
-    })
-}
-
-/// Free a memory pool
-///
-/// # Safety
-///
-/// The pointer must be a valid CMemoryPool pointer returned from `memory_pool_new`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn memory_pool_free(pool: *mut CMemoryPool) {
-    ffi_guard((), || {
-        let raw = pool as *mut crate::memory::MemoryPool;
-        if !raw.is_null() {
-            if !raw.is_aligned() {
-                set_last_error("MemoryPool pointer is misaligned");
-                return;
-            }
-            // SAFETY: pointer is non-null and aligned (checked above), created by memory_pool_new via Box::into_raw, not previously freed
-            let _pool = unsafe { Box::from_raw(raw) };
-            // Automatic cleanup when Box is dropped
-        }
-    })
-}
-
-/// Allocate memory from a pool
-///
-/// # Safety
-///
-/// The pool pointer must be a valid CMemoryPool pointer.
-/// The returned pointer must be freed with `memory_pool_deallocate`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn memory_pool_allocate(pool: *mut CMemoryPool) -> *mut c_void {
-    ffi_guard(ptr::null_mut(), || {
-        let raw = pool as *const crate::memory::MemoryPool;
-        if raw.is_null() || !raw.is_aligned() {
-            set_last_error("MemoryPool pointer is null or misaligned");
-            return ptr::null_mut();
-        }
-
-        // SAFETY: pointer is non-null and aligned (checked above), points to initialized MemoryPool
-        let memory_pool = unsafe { &*raw };
-        match memory_pool.allocate() {
-            Ok(ptr) => ptr.as_ptr() as *mut c_void,
-            Err(e) => {
-                set_last_error(&format!("Failed to allocate from memory pool: {}", e));
-                ptr::null_mut()
-            }
-        }
-    })
-}
-
-/// Deallocate memory back to a pool
-///
-/// # Safety
-///
-/// Both pointers must be valid, and the memory pointer must have been
-/// allocated from the specified pool.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn memory_pool_deallocate(
-    pool: *mut CMemoryPool,
-    ptr: *mut c_void,
-) -> CResult {
-    ffi_guard(CResult::InternalError, || {
-        let raw = pool as *const crate::memory::MemoryPool;
-        if raw.is_null() || !raw.is_aligned() || ptr.is_null() {
-            set_last_error("Memory pool or pointer is null or misaligned");
-            return CResult::InvalidInput;
-        }
-
-        // SAFETY: pointer is non-null and aligned (checked above), points to initialized MemoryPool
-        let memory_pool = unsafe { &*raw };
-        let non_null_ptr = match std::ptr::NonNull::new(ptr as *mut u8) {
-            Some(p) => p,
-            None => {
-                set_last_error("Failed to create NonNull pointer from raw pointer");
-                return CResult::InvalidInput;
-            }
-        };
-
-        // SAFETY: this function's own contract requires `ptr` to have come
-        // from `memory_pool_allocate` on this same pool and not to have been
-        // freed yet, which is exactly what `MemoryPool::deallocate` asks for.
-        match unsafe { memory_pool.deallocate(non_null_ptr) } {
-            Ok(_) => CResult::Success,
-            Err(e) => {
-                set_last_error(&format!("Failed to deallocate memory: {}", e));
-                CResult::from_zipora_error(&e)
-            }
-        }
-    })
-}
-
-/// Create a new blob store
-///
-/// # Safety
-///
-/// The returned pointer must be freed with `blob_store_free`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn blob_store_new() -> *mut CBlobStore {
-    ffi_guard(ptr::null_mut(), || {
-        let store = Box::new(crate::blob_store::MemoryBlobStore::new());
-        Box::into_raw(store) as *mut CBlobStore
-    })
-}
-
-/// Free a blob store
-///
-/// # Safety
-///
-/// The pointer must be a valid CBlobStore pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn blob_store_free(store: *mut CBlobStore) {
-    ffi_guard((), || {
-        let raw = store as *mut crate::blob_store::MemoryBlobStore;
-        if !raw.is_null() {
-            if !raw.is_aligned() {
-                set_last_error("BlobStore pointer is misaligned");
-                return;
-            }
-            // SAFETY: pointer is non-null and aligned (checked above), created by blob_store_new via Box::into_raw, not previously freed
-            let _store = unsafe { Box::from_raw(raw) };
-            // Automatic cleanup when Box is dropped
-        }
-    })
-}
-
-/// Put data into a blob store
-///
-/// # Safety
-///
-/// The store pointer must be valid, and data must point to a valid buffer of the specified size.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn blob_store_put(
-    store: *mut CBlobStore,
-    data: *const u8,
-    size: usize,
-    record_id: *mut u32,
-) -> CResult {
-    ffi_guard(CResult::InternalError, || {
-        let raw_store = store as *mut crate::blob_store::MemoryBlobStore;
-        if raw_store.is_null()
-            || !raw_store.is_aligned()
-            || record_id.is_null()
-            || !record_id.is_aligned()
-            || (data.is_null() && size > 0)
-            || size > isize::MAX as usize
-        {
-            set_last_error("Blob store, data, or record_id parameter is null, misaligned, or exceeds isize::MAX");
-            return CResult::InvalidInput;
-        }
-
-        // SAFETY: raw_store is non-null and aligned (checked above), points to initialized MemoryBlobStore
-        let blob_store = unsafe { &mut *raw_store };
-        let data_slice = if size == 0 {
-            &[][..]
-        } else {
-            // SAFETY: data pointer is non-null and size is in 1..=isize::MAX (checked above)
-            unsafe { std::slice::from_raw_parts(data, size) }
-        };
-
-        match blob_store.put(data_slice) {
-            Ok(id) => {
-                // SAFETY: record_id pointer is non-null and aligned (checked above), points to valid u32
-                unsafe {
-                    *record_id = id;
-                }
-                CResult::Success
-            }
-            Err(e) => {
-                set_last_error(&format!("Failed to put data in blob store: {}", e));
-                CResult::from_zipora_error(&e)
-            }
-        }
-    })
-}
-
-/// Get data from a blob store
-///
-/// # Safety
-///
-/// The store pointer must be valid. The data and size pointers will be set to
-/// point to allocated memory that must be freed with `zipora_free_blob_data`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn blob_store_get(
-    store: *const CBlobStore,
-    record_id: u32,
-    data: *mut *const u8,
-    size: *mut usize,
-) -> CResult {
-    ffi_guard(CResult::InternalError, || {
-        let raw_store = store as *const crate::blob_store::MemoryBlobStore;
-        if raw_store.is_null()
-            || !raw_store.is_aligned()
-            || data.is_null()
-            || !data.is_aligned()
-            || size.is_null()
-            || !size.is_aligned()
-        {
-            set_last_error("Blob store or output parameter is null or misaligned");
-            return CResult::InvalidInput;
-        }
-
-        // SAFETY: pointer is non-null and aligned (checked above), points to initialized MemoryBlobStore
-        let blob_store = unsafe { &*raw_store };
-
-        match blob_store.get(record_id) {
-            Ok(blob_data) => {
-                let data_len = blob_data.len();
-                let data_ptr = if data_len == 0 {
-                    std::ptr::NonNull::<u8>::dangling().as_ptr()
-                } else {
-                    // H14: validate the layout (rejects size > isize::MAX) instead
-                    // of from_size_align_unchecked.
-                    let layout = match std::alloc::Layout::from_size_align(data_len, 1) {
-                        Ok(layout) => layout,
-                        Err(_) => {
-                            set_last_error("blob size exceeds isize::MAX; cannot allocate");
-                            return CResult::MemoryError;
-                        }
-                    };
-                    // SAFETY: layout validated above, size is non-zero
-                    unsafe { std::alloc::alloc(layout) }
-                };
-
-                if data_len > 0 && data_ptr.is_null() {
-                    set_last_error("Failed to allocate memory for retrieved blob data");
-                    return CResult::MemoryError;
-                }
-
-                if data_len > 0 {
-                    // SAFETY: data_ptr is valid, blob_data is valid slice, non-overlapping
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(blob_data.as_ptr(), data_ptr, data_len);
-                    }
-                }
-
-                // SAFETY: data and size pointers are non-null and aligned (checked above), point to valid output parameters
-                unsafe {
-                    *data = data_ptr;
-                    *size = data_len;
-                }
-                CResult::Success
-            }
-            Err(e) => {
-                set_last_error(&format!("Failed to get data from blob store: {}", e));
-                CResult::from_zipora_error(&e)
-            }
-        }
-    })
-}
-
-/// Create a suffix array from text
-///
-/// # Safety
-///
-/// The text pointer must point to a valid buffer of the specified size.
-/// The returned pointer must be freed with `suffix_array_free`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn suffix_array_new(text: *const u8, size: usize) -> *mut CSuffixArray {
-    ffi_guard(ptr::null_mut(), || {
-        if text.is_null() || size == 0 || size > isize::MAX as usize {
-            set_last_error("SuffixArray input text is null, empty, or exceeds isize::MAX");
-            return ptr::null_mut();
-        }
-
-        // SAFETY: pointer is non-null and size is in 1..=isize::MAX (checked above)
-        let text_slice = unsafe { std::slice::from_raw_parts(text, size) };
-        match crate::algorithms::SuffixArray::new(text_slice) {
-            Ok(sa) => Box::into_raw(Box::new(sa)) as *mut CSuffixArray,
-            Err(e) => {
-                set_last_error(&format!("Failed to construct suffix array: {}", e));
-                ptr::null_mut()
-            }
-        }
-    })
-}
-
-/// Free a suffix array
-///
-/// # Safety
-///
-/// The pointer must be a valid CSuffixArray pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn suffix_array_free(sa: *mut CSuffixArray) {
-    ffi_guard((), || {
-        let raw = sa as *mut crate::algorithms::SuffixArray;
-        if !raw.is_null() {
-            if !raw.is_aligned() {
-                set_last_error("SuffixArray pointer is misaligned");
-                return;
-            }
-            // SAFETY: pointer is non-null and aligned (checked above), created by suffix_array_new via Box::into_raw, not previously freed
-            let _sa = unsafe { Box::from_raw(raw) };
-            // Automatic cleanup when Box is dropped
-        }
-    })
-}
-
-/// Get the length of a suffix array
-///
-/// # Safety
-///
-/// The sa pointer must be a valid CSuffixArray pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn suffix_array_len(sa: *const CSuffixArray) -> usize {
-    ffi_guard(0, || {
-        let raw = sa as *const crate::algorithms::SuffixArray;
-        if raw.is_null() || !raw.is_aligned() {
-            return 0;
-        }
-
-        // SAFETY: pointer is non-null and aligned (checked above), points to initialized SuffixArray
-        let suffix_array = unsafe { &*raw };
-        suffix_array.text_len()
-    })
-}
-
-/// Search for a pattern in the suffix array
-///
-/// # Safety
-///
-/// All pointers must be valid, and pattern must point to a buffer of the specified size.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn suffix_array_search(
-    sa: *const CSuffixArray,
-    text: *const u8,
-    text_size: usize,
-    pattern: *const u8,
-    pattern_size: usize,
-    start: *mut usize,
-    count: *mut usize,
-) -> CResult {
-    ffi_guard(CResult::InternalError, || {
-        let raw_sa = sa as *const crate::algorithms::SuffixArray;
-        if raw_sa.is_null()
-            || !raw_sa.is_aligned()
-            || (text.is_null() && text_size > 0)
-            || text_size > isize::MAX as usize
-            || (pattern.is_null() && pattern_size > 0)
-            || pattern_size > isize::MAX as usize
-            || start.is_null()
-            || !start.is_aligned()
-            || count.is_null()
-            || !count.is_aligned()
-        {
-            set_last_error("SuffixArray search parameter is null, misaligned, or exceeds isize::MAX");
-            return CResult::InvalidInput;
-        }
-
-        // SAFETY: raw_sa is non-null and aligned (checked above), points to initialized SuffixArray
-        let suffix_array = unsafe { &*raw_sa };
-        let text_slice = if text_size == 0 {
-            &[][..]
-        } else {
-            // SAFETY: text pointer is non-null and text_size is in 1..=isize::MAX (checked above)
-            unsafe { std::slice::from_raw_parts(text, text_size) }
-        };
-        let pattern_slice = if pattern_size == 0 {
-            &[][..]
-        } else {
-            // SAFETY: pattern pointer is non-null and pattern_size is in 1..=isize::MAX (checked above)
-            unsafe { std::slice::from_raw_parts(pattern, pattern_size) }
-        };
-
-        let (search_start, search_count) = suffix_array.search(text_slice, pattern_slice);
-        // SAFETY: start and count pointers are non-null and aligned (checked above), point to valid output parameters
-        unsafe {
-            *start = search_start;
-            *count = search_count;
-        }
-
-        CResult::Success
-    })
-}
-
-/// Sort an array of 32-bit unsigned integers using radix sort
-///
-/// # Safety
-///
-/// The data pointer must point to a valid array of the specified size.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult {
-    ffi_guard(CResult::InternalError, || {
-        const MAX_U32_LEN: usize = (isize::MAX as usize) / std::mem::size_of::<u32>();
-        if data.is_null() || !data.is_aligned() || size == 0 || size > MAX_U32_LEN {
-            set_last_error("radix_sort_u32 data pointer is null, misaligned, empty, or exceeds isize::MAX");
-            return CResult::InvalidInput;
-        }
-
-        // SAFETY: pointer is non-null and aligned (checked above), size is in 1..=MAX_U32_LEN (checked above)
-        let data_slice = unsafe { std::slice::from_raw_parts_mut(data, size) };
-        let mut sorter = crate::algorithms::RadixSort::new();
-
-        match sorter.sort_u32(data_slice) {
-            Ok(_) => CResult::Success,
-            Err(e) => {
-                set_last_error(&format!("radix_sort_u32 failed: {}", e));
-                CResult::from_zipora_error(&e)
-            }
-        }
-    })
-}
-
 /// Get last error message (thread-local)
 ///
 /// # Safety
@@ -673,37 +159,6 @@ pub unsafe extern "C" fn zipora_set_error_callback(
     ffi_guard((), || {
         let mut callback_guard = ERROR_CALLBACK.lock().unwrap_or_else(|e| e.into_inner());
         *callback_guard = callback;
-    })
-}
-
-/// Free blob data returned by blob_store_get
-///
-/// # Safety
-///
-/// - The data pointer must be a pointer returned by `blob_store_get`, and
-///   `size` must be the exact size returned alongside it.
-/// - This function must be called **exactly once** per pointer returned by
-///   `blob_store_get`. Calling it a second time is a double-free; calling it
-///   with a pointer not obtained from `blob_store_get` is undefined behavior.
-/// - The pointer becomes invalid after this call; any further read or write
-///   through it is undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn zipora_free_blob_data(data: *mut u8, size: usize) {
-    ffi_guard((), || {
-        if !data.is_null() && size > 0 {
-            // H14: a size that fails Layout validation (> isize::MAX) can never
-            // correspond to a live allocation from blob_store_get — refuse to
-            // dealloc with a bogus layout rather than invoke UB.
-            let Ok(layout) = std::alloc::Layout::from_size_align(size, 1) else {
-                return;
-            };
-            // SAFETY: layout validated above; per the contract, (data, size) came
-            // from blob_store_get's std::alloc::alloc with the identical layout
-            // and has not been freed yet.
-            unsafe {
-                std::alloc::dealloc(data, layout);
-            }
-        }
     })
 }
 

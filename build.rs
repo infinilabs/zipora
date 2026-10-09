@@ -30,7 +30,6 @@ fn main() {
     configure_optimization_flags();
 
     // Handle optional FFI bindings
-    #[cfg(feature = "ffi")]
     generate_ffi_bindings();
 }
 
@@ -330,7 +329,6 @@ fn configure_optimization_flags() {
 
 /// Generate FFI bindings if the ffi feature is enabled
 #[cfg(feature = "ffi")]
-#[allow(dead_code)]
 fn generate_ffi_bindings() {
     use std::env;
 
@@ -350,6 +348,58 @@ fn generate_ffi_bindings() {
         tab_width: 4,
         documentation: true,
         documentation_style: cbindgen::DocumentationStyle::Doxy,
+        export: cbindgen::ExportConfig {
+            include: vec![
+                "CResult".to_string(),
+                "CFastVec".to_string(),
+                "CMemoryPool".to_string(),
+                "CBlobStore".to_string(),
+                "CSuffixArray".to_string(),
+                "CRadixSort".to_string(),
+                "CMultiWayMerge".to_string(),
+                "CMemoryPoolConfig".to_string(),
+                "CMemoryPoolStats".to_string(),
+                "CRadixSortConfig".to_string(),
+                "CAlgorithmStats".to_string(),
+                "CBlobStoreStats".to_string(),
+                "CMemoryConfig".to_string(),
+                "CMemoryStats".to_string(),
+                "CBuffer".to_string(),
+                "CString".to_string(),
+                "zipora_version".to_string(),
+                "zipora_init".to_string(),
+                "zipora_has_simd".to_string(),
+                "fast_vec_new".to_string(),
+                "fast_vec_free".to_string(),
+                "fast_vec_push".to_string(),
+                "fast_vec_len".to_string(),
+                "fast_vec_data".to_string(),
+                "memory_pool_new".to_string(),
+                "memory_pool_free".to_string(),
+                "memory_pool_allocate".to_string(),
+                "memory_pool_deallocate".to_string(),
+                "blob_store_new".to_string(),
+                "blob_store_free".to_string(),
+                "blob_store_put".to_string(),
+                "blob_store_get".to_string(),
+                "suffix_array_new".to_string(),
+                "suffix_array_free".to_string(),
+                "suffix_array_len".to_string(),
+                "suffix_array_search".to_string(),
+                "radix_sort_u32".to_string(),
+                "zipora_last_error".to_string(),
+                "zipora_set_error_callback".to_string(),
+                "zipora_free_blob_data".to_string(),
+            ],
+            item_types: vec![
+                cbindgen::ItemType::Enums,
+                cbindgen::ItemType::Structs,
+                cbindgen::ItemType::OpaqueItems,
+                cbindgen::ItemType::Typedefs,
+                cbindgen::ItemType::Functions,
+            ],
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -367,7 +417,6 @@ fn generate_ffi_bindings() {
 }
 
 #[cfg(not(feature = "ffi"))]
-#[allow(dead_code)]
 fn generate_ffi_bindings() {
     // No-op when ffi feature is disabled
 }
