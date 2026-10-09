@@ -381,12 +381,13 @@ impl CBuffer {
     /// The buffer must have been created from a Vec<u8> and not modified
     /// in an incompatible way.
     pub unsafe fn into_vec(self) -> Vec<u8> {
-        if self.data.is_null() {
+        if self.data.is_null() || self.capacity == 0 || self.capacity > isize::MAX as usize {
             return Vec::new();
         }
 
-        // SAFETY: buffer was created via from_vec with valid Vec, data/size/capacity match original allocation
-        unsafe { Vec::from_raw_parts(self.data, self.size, self.capacity) }
+        let len = self.size.min(self.capacity);
+        // SAFETY: buffer was created via from_vec with valid Vec, data/len/capacity match original allocation
+        unsafe { Vec::from_raw_parts(self.data, len, self.capacity) }
     }
 
     /// Get the data as a slice
@@ -395,11 +396,16 @@ impl CBuffer {
     ///
     /// The buffer must contain valid data of the specified size.
     pub unsafe fn as_slice(&self) -> &[u8] {
-        if self.data.is_null() || self.size == 0 {
+        if self.data.is_null()
+            || self.size == 0
+            || self.capacity == 0
+            || self.size > self.capacity
+            || self.size > isize::MAX as usize
+        {
             return &[];
         }
 
-        // SAFETY: pointer is valid (null-checked at line 379), size matches initialized data
+        // SAFETY: pointer is non-null and size is in 1..=min(capacity, isize::MAX) (checked above)
         unsafe { std::slice::from_raw_parts(self.data, self.size) }
     }
 
@@ -409,11 +415,16 @@ impl CBuffer {
     ///
     /// The buffer must contain valid data of the specified size.
     pub unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
-        if self.data.is_null() || self.size == 0 {
+        if self.data.is_null()
+            || self.size == 0
+            || self.capacity == 0
+            || self.size > self.capacity
+            || self.size > isize::MAX as usize
+        {
             return &mut [];
         }
 
-        // SAFETY: pointer is valid (null-checked at line 392), size matches initialized data, exclusive mutable access
+        // SAFETY: pointer is non-null, size is in 1..=min(capacity, isize::MAX) (checked above), exclusive mutable access
         unsafe { std::slice::from_raw_parts_mut(self.data, self.size) }
     }
 }
@@ -458,15 +469,14 @@ impl CString {
     ///
     /// The data pointer must point to a valid null-terminated string.
     pub unsafe fn into_string(mut self) -> Result<String, std::str::Utf8Error> {
-        if self.data.is_null() {
+        let ptr = std::mem::replace(&mut self.data, std::ptr::null_mut());
+        if ptr.is_null() {
             return Ok(String::new());
         }
 
-        // SAFETY: pointer is valid (null-checked at line 440), created by from_string via CString::into_raw
-        let cstring = unsafe { std::ffi::CString::from_raw(self.data) };
-        // Prevent double-free by nulling the pointer
-        self.data = std::ptr::null_mut();
-        cstring.to_str().map(|s| s.to_owned())
+        // SAFETY: pointer is non-null (checked above), created by from_string via CString::into_raw, and self.data is already cleared
+        let cstring = unsafe { std::ffi::CString::from_raw(ptr) };
+        cstring.into_string().map_err(|e| e.utf8_error())
     }
 
     /// Get as a string slice
