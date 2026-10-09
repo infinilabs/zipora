@@ -12,7 +12,7 @@
 .PHONY: test test_debug test_release test_simd_base64
 .PHONY: bench bench_all bench_avx512 bench_fsa bench_io bench_serialization
 .PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
-.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_scalar
+.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_scalar
 .PHONY: tsan_cspp tsan_pool tsan_concurrency
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity
@@ -331,6 +331,13 @@ miri_io:
 # cleanup). Inline x86_64 assembly is skipped under cfg(miri).
 miri_thread:
 	$(CARGO_MIRI) test --lib thread:: -- --test-threads=1
+
+# src/ffi under Miri (plan.md C11). Checks all 30 FFI unit tests under Stacked
+# Borrows with leak checking enabled (null, misaligned, overflow length,
+# embedded-NUL error strings, re-entrant callback unregistration, CResult mapping,
+# CBuffer/CString lifecycle, FastVec/MemoryPool/BlobStore/SuffixArray/RadixSort).
+miri_ffi:
+	$(CARGO_MIRI) test --lib --features ffi ffi:: -- --test-threads=1
 
 # The suites whose #[target_feature] kernels differ between the two builds,
 # rebuilt with no target features (MIRI_SCALAR=1, target/miri-scalar), so the

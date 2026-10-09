@@ -53,6 +53,11 @@ jobs:
     - name: Test (doctests)
       run: cargo test --locked --doc
 
+    - name: Verify FFI cbindgen header sync & C smoke caller (C11 / F3)
+      run: |
+        cargo build --locked --lib --features ffi
+        cargo test --locked --test ffi_c_smoke --features ffi
+
   # The job above builds the committed Cargo.lock. This one runs
   # `cargo update` first, so it tests the newest versions Cargo.toml allows
   # and shows drift between lock refreshes (Makefile `update` target). It does
