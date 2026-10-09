@@ -6,7 +6,7 @@
 use super::CResult;
 #[cfg(test)]
 use super::types::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 #[cfg(test)]
 use std::ffi::CStr;
 use std::ffi::CString;
@@ -16,9 +16,18 @@ use std::sync::Mutex;
 
 pub use super::{algorithms::*, blob_store::*, containers::*};
 
-// Thread-local storage for error messages
+// Thread-local storage for error messages and callback re-entrancy guard
 thread_local! {
     static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
+    static IN_ERROR_CALLBACK: Cell<bool> = const { Cell::new(false) };
+}
+
+struct CallbackReentrancyGuard;
+
+impl Drop for CallbackReentrancyGuard {
+    fn drop(&mut self) {
+        let _ = IN_ERROR_CALLBACK.try_with(|in_cb| in_cb.set(false));
+    }
 }
 
 // Global error callback storage
@@ -35,9 +44,18 @@ pub(crate) fn set_last_error(msg: &str) {
         *error.borrow_mut() = Some(cstring.clone());
     });
 
+    // Skip invoking the registered error callback if this thread is already executing one
+    // so an error triggered inside the callback cannot infinitely recurse on the stack.
+    let already_in_callback = IN_ERROR_CALLBACK
+        .try_with(|in_cb| in_cb.replace(true))
+        .unwrap_or(true);
+    if already_in_callback {
+        return;
+    }
+    let _reentrancy_guard = CallbackReentrancyGuard;
+
     // Copy the callback function pointer and drop the mutex guard BEFORE invoking it
-    // so a re-entrant callback calling `zipora_set_error_callback` or generating an
-    // error cannot deadlock on `ERROR_CALLBACK`.
+    // so a re-entrant callback calling `zipora_set_error_callback` cannot deadlock on `ERROR_CALLBACK`.
     let callback = ERROR_CALLBACK
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -690,5 +708,32 @@ mod tests {
             rx.recv_timeout(std::time::Duration::from_millis(500)).is_ok(),
             "C11.2: re-entrant zipora_set_error_callback inside error callback deadlocked on ERROR_CALLBACK"
         );
+    }
+
+    #[test]
+    fn test_s31_r4_error_callback_triggering_error_does_not_recurse() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let _callback_serial = CALLBACK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+        CALL_COUNT.store(0, Ordering::SeqCst);
+
+        unsafe extern "C" fn error_generating_callback(_msg: *const c_char) {
+            CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+            // SAFETY: intentionally triggers nested FFI error inside callback; must not recurse.
+            unsafe {
+                let _ = fast_vec_push(ptr::null_mut(), 9);
+            }
+        }
+
+        // SAFETY: registers valid callback, triggers two top-level errors, and unregisters callback.
+        unsafe {
+            zipora_set_error_callback(Some(error_generating_callback));
+            assert_eq!(fast_vec_push(ptr::null_mut(), 1), CResult::InvalidInput);
+            assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 1);
+            assert_eq!(fast_vec_push(ptr::null_mut(), 2), CResult::InvalidInput);
+            assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 2);
+            zipora_set_error_callback(None);
+        }
     }
 }
