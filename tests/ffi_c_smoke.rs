@@ -334,3 +334,29 @@ fn test_s31_r2_cargo_toml_lib_crate_type_is_rlib_only() {
         "Cargo.toml [lib] crate-type must default to rlib only so non-FFI builds do not emit staticlib/cdylib"
     );
 }
+
+#[test]
+fn test_s31_r3_header_exports_only_types_used_by_c_functions() {
+    let header = fs::read_to_string(repo_root().join("include/zipora.h"))
+        .expect("include/zipora.h must exist in repository");
+    let dead_c_types = [
+        "CBuffer",
+        "CString",
+        "CMemoryPoolConfig",
+        "CMemoryPoolStats",
+        "CRadixSortConfig",
+        "CAlgorithmStats",
+        "CBlobStoreStats",
+        "CMemoryConfig",
+        "CMemoryStats",
+        "CRadixSort",
+        "CMultiWayMerge",
+    ];
+    for dead_ty in &dead_c_types {
+        assert!(
+            !header.contains(dead_ty),
+            "unused type `{}` must not be frozen into include/zipora.h ABI",
+            dead_ty
+        );
+    }
+}

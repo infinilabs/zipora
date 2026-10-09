@@ -116,16 +116,6 @@ impl CSuffixArray {
     }
 }
 
-/// Opaque handle for RadixSort
-pub struct CRadixSort {
-    _private: (),
-}
-
-/// Opaque handle for MultiWayMerge
-pub struct CMultiWayMerge {
-    _private: (),
-}
-
 /// Configuration structure for memory pools
 #[repr(C)]
 #[derive(Debug, Clone)]
