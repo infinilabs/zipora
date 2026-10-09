@@ -247,8 +247,7 @@ fn test_ffi_blob_store_get_missing() {
         let mut size: usize = 0;
 
         let result = blob_store_get(store, 9999, &mut data_ptr, &mut size);
-        // Should return error (InvalidInput based on c_api.rs line 372)
-        assert_eq!(result, CResult::InvalidInput);
+        assert_eq!(result, CResult::NotFound);
 
         blob_store_free(store);
     }

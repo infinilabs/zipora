@@ -44,15 +44,35 @@ pub enum CResult {
 }
 
 #[cfg(feature = "ffi")]
+impl CResult {
+    /// Convert a [`crate::ZiporaError`] reference into its corresponding [`CResult`] code.
+    pub(crate) fn from_zipora_error(err: &crate::ZiporaError) -> Self {
+        match err {
+            crate::ZiporaError::Io(io_err)
+                if io_err.kind() == std::io::ErrorKind::NotFound =>
+            {
+                CResult::NotFound
+            }
+            crate::ZiporaError::Io(_) => CResult::IoError,
+            crate::ZiporaError::InvalidData { .. }
+            | crate::ZiporaError::InvalidParameter { .. }
+            | crate::ZiporaError::OutOfBounds { .. }
+            | crate::ZiporaError::Misaligned { .. }
+            | crate::ZiporaError::Configuration { .. } => CResult::InvalidInput,
+            crate::ZiporaError::OutOfMemory { .. }
+            | crate::ZiporaError::ResourceExhausted { .. } => CResult::MemoryError,
+            crate::ZiporaError::NotSupported { .. } => CResult::UnsupportedOperation,
+            _ => CResult::InternalError,
+        }
+    }
+}
+
+#[cfg(feature = "ffi")]
 impl From<crate::Result<()>> for CResult {
     fn from(result: crate::Result<()>) -> Self {
         match result {
             Ok(_) => CResult::Success,
-            Err(crate::ZiporaError::InvalidData { message: _ }) => CResult::InvalidInput,
-            Err(crate::ZiporaError::OutOfMemory { .. }) => CResult::MemoryError,
-            Err(crate::ZiporaError::Io(_)) => CResult::IoError,
-            Err(crate::ZiporaError::NotSupported { .. }) => CResult::UnsupportedOperation,
-            _ => CResult::InternalError,
+            Err(ref err) => Self::from_zipora_error(err),
         }
     }
 }

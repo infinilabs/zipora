@@ -23,28 +23,38 @@ static ERROR_CALLBACK: Mutex<Option<unsafe extern "C" fn(*const c_char)>> = Mute
 
 /// Set the last error message for the current thread
 fn set_last_error(msg: &str) {
-    LAST_ERROR.with(|error| {
-        if let Ok(cstring) = CString::new(msg) {
-            // Store a clone for thread-local storage
-            *error.borrow_mut() = Some(cstring.clone());
+    let cstring = match CString::new(msg) {
+        Ok(c) => c,
+        Err(_) => CString::new(msg.replace('\0', "\\0")).unwrap_or_default(),
+    };
 
-            // Also call the error callback if one is set
-            if let Ok(callback_guard) = ERROR_CALLBACK.lock()
-                && let Some(callback) = *callback_guard
-            {
-                // SAFETY: callback function pointer is valid (set via zipora_set_error_callback), called with valid CString pointer
-                unsafe {
-                    callback(cstring.as_ptr());
-                }
-            }
-        }
+    let _ = LAST_ERROR.try_with(|error| {
+        *error.borrow_mut() = Some(cstring.clone());
     });
+
+    // Copy the callback function pointer and drop the mutex guard BEFORE invoking it
+    // so a re-entrant callback calling `zipora_set_error_callback` or generating an
+    // error cannot deadlock on `ERROR_CALLBACK`.
+    let callback = ERROR_CALLBACK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .copied();
+    if let Some(cb) = callback {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // SAFETY: callback function pointer was registered by the caller via
+            // `zipora_set_error_callback`, and `cstring` outlives this call.
+            unsafe {
+                cb(cstring.as_ptr());
+            }
+        }));
+    }
 }
 
 /// Clear the last error message for the current thread (for testing)
 #[cfg(test)]
 fn clear_last_error() {
-    LAST_ERROR.with(|error| {
+    let _ = LAST_ERROR.try_with(|error| {
         *error.borrow_mut() = None;
     });
 }
@@ -93,21 +103,12 @@ pub unsafe extern "C" fn zipora_init() -> CResult {
 ///
 /// # Safety
 ///
-/// The returned string is valid until the next call to this function.
-/// The caller should not free the returned pointer.
+/// The returned null-terminated string has static lifetime and is valid for the
+/// lifetime of the program. The caller must not free the returned pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_version() -> *const c_char {
     ffi_guard(ptr::null(), || {
-        use std::sync::OnceLock;
-        static VERSION_CSTRING: OnceLock<CString> = OnceLock::new();
-
-        let cstring = VERSION_CSTRING.get_or_init(|| {
-            CString::new(crate::VERSION).unwrap_or_else(|_| {
-                CString::new("unknown").expect("static string has no NUL bytes")
-            })
-        });
-
-        cstring.as_ptr()
+        concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
     })
 }
 
@@ -271,6 +272,7 @@ pub unsafe extern "C" fn memory_pool_allocate(pool: *mut CMemoryPool) -> *mut c_
     ffi_guard(ptr::null_mut(), || {
         let raw = pool as *const crate::memory::MemoryPool;
         if raw.is_null() || !raw.is_aligned() {
+            set_last_error("MemoryPool pointer is null or misaligned");
             return ptr::null_mut();
         }
 
@@ -278,7 +280,10 @@ pub unsafe extern "C" fn memory_pool_allocate(pool: *mut CMemoryPool) -> *mut c_
         let memory_pool = unsafe { &*raw };
         match memory_pool.allocate() {
             Ok(ptr) => ptr.as_ptr() as *mut c_void,
-            Err(_) => ptr::null_mut(),
+            Err(e) => {
+                set_last_error(&format!("Failed to allocate from memory pool: {}", e));
+                ptr::null_mut()
+            }
         }
     })
 }
@@ -318,7 +323,7 @@ pub unsafe extern "C" fn memory_pool_deallocate(
             Ok(_) => CResult::Success,
             Err(e) => {
                 set_last_error(&format!("Failed to deallocate memory: {}", e));
-                CResult::InternalError
+                CResult::from_zipora_error(&e)
             }
         }
     })
@@ -328,7 +333,7 @@ pub unsafe extern "C" fn memory_pool_deallocate(
 ///
 /// # Safety
 ///
-/// The returned pointer must be freed with `blob_store_new`.
+/// The returned pointer must be freed with `blob_store_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn blob_store_new() -> *mut CBlobStore {
     ffi_guard(ptr::null_mut(), || {
@@ -402,7 +407,7 @@ pub unsafe extern "C" fn blob_store_put(
             }
             Err(e) => {
                 set_last_error(&format!("Failed to put data in blob store: {}", e));
-                CResult::InternalError
+                CResult::from_zipora_error(&e)
             }
         }
     })
@@ -430,6 +435,7 @@ pub unsafe extern "C" fn blob_store_get(
             || size.is_null()
             || !size.is_aligned()
         {
+            set_last_error("Blob store or output parameter is null or misaligned");
             return CResult::InvalidInput;
         }
 
@@ -456,6 +462,7 @@ pub unsafe extern "C" fn blob_store_get(
                 };
 
                 if data_len > 0 && data_ptr.is_null() {
+                    set_last_error("Failed to allocate memory for retrieved blob data");
                     return CResult::MemoryError;
                 }
 
@@ -473,7 +480,10 @@ pub unsafe extern "C" fn blob_store_get(
                 }
                 CResult::Success
             }
-            Err(_) => CResult::InvalidInput,
+            Err(e) => {
+                set_last_error(&format!("Failed to get data from blob store: {}", e));
+                CResult::from_zipora_error(&e)
+            }
         }
     })
 }
@@ -488,6 +498,7 @@ pub unsafe extern "C" fn blob_store_get(
 pub unsafe extern "C" fn suffix_array_new(text: *const u8, size: usize) -> *mut CSuffixArray {
     ffi_guard(ptr::null_mut(), || {
         if text.is_null() || size == 0 || size > isize::MAX as usize {
+            set_last_error("SuffixArray input text is null, empty, or exceeds isize::MAX");
             return ptr::null_mut();
         }
 
@@ -495,7 +506,10 @@ pub unsafe extern "C" fn suffix_array_new(text: *const u8, size: usize) -> *mut 
         let text_slice = unsafe { std::slice::from_raw_parts(text, size) };
         match crate::algorithms::SuffixArray::new(text_slice) {
             Ok(sa) => Box::into_raw(Box::new(sa)) as *mut CSuffixArray,
-            Err(_) => ptr::null_mut(),
+            Err(e) => {
+                set_last_error(&format!("Failed to construct suffix array: {}", e));
+                ptr::null_mut()
+            }
         }
     })
 }
@@ -568,6 +582,7 @@ pub unsafe extern "C" fn suffix_array_search(
             || count.is_null()
             || !count.is_aligned()
         {
+            set_last_error("SuffixArray search parameter is null, misaligned, or exceeds isize::MAX");
             return CResult::InvalidInput;
         }
 
@@ -607,6 +622,7 @@ pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult 
     ffi_guard(CResult::InternalError, || {
         const MAX_U32_LEN: usize = (isize::MAX as usize) / std::mem::size_of::<u32>();
         if data.is_null() || !data.is_aligned() || size == 0 || size > MAX_U32_LEN {
+            set_last_error("radix_sort_u32 data pointer is null, misaligned, empty, or exceeds isize::MAX");
             return CResult::InvalidInput;
         }
 
@@ -616,7 +632,10 @@ pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult 
 
         match sorter.sort_u32(data_slice) {
             Ok(_) => CResult::Success,
-            Err(_) => CResult::InternalError,
+            Err(e) => {
+                set_last_error(&format!("radix_sort_u32 failed: {}", e));
+                CResult::from_zipora_error(&e)
+            }
         }
     })
 }
@@ -630,14 +649,14 @@ pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_last_error() -> *const c_char {
     static PANIC_MSG: &[u8] = b"panic caught at FFI boundary\0";
+    static NO_ERROR_MSG: &[u8] = b"No error information available\0";
     ffi_guard(PANIC_MSG.as_ptr() as *const c_char, || {
-        LAST_ERROR.with(|error| match error.borrow().as_ref() {
-            Some(cstring) => cstring.as_ptr(),
-            None => {
-                static NO_ERROR_MSG: &[u8] = b"No error information available\0";
-                NO_ERROR_MSG.as_ptr() as *const c_char
-            }
-        })
+        LAST_ERROR
+            .try_with(|error| match error.borrow().as_ref() {
+                Some(cstring) => cstring.as_ptr(),
+                None => NO_ERROR_MSG.as_ptr() as *const c_char,
+            })
+            .unwrap_or(NO_ERROR_MSG.as_ptr() as *const c_char)
     })
 }
 
@@ -652,9 +671,8 @@ pub unsafe extern "C" fn zipora_set_error_callback(
     callback: Option<unsafe extern "C" fn(*const c_char)>,
 ) {
     ffi_guard((), || {
-        if let Ok(mut callback_guard) = ERROR_CALLBACK.lock() {
-            *callback_guard = callback;
-        }
+        let mut callback_guard = ERROR_CALLBACK.lock().unwrap_or_else(|e| e.into_inner());
+        *callback_guard = callback;
     })
 }
 
@@ -853,8 +871,11 @@ mod tests {
         }
     }
 
+    static CALLBACK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_error_callback() {
+        let _callback_serial = CALLBACK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::Mutex;
         use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -1017,11 +1038,11 @@ mod tests {
 
     #[test]
     fn test_c11_1_misaligned_and_overflow_pointers_rejected_without_ub() {
-        let mut raw = [0u8; 64];
-        // SAFETY: `raw.as_mut_ptr().add(1)` is 1-byte offset inside a 64-byte stack array,
-        // so it is guaranteed misaligned for types with align >= 2 (`u32`, `usize`, handles).
+        let mut raw = [0u64; 8];
+        // SAFETY: `raw` is 8-byte aligned (`[u64; 8]`), so `(raw.as_mut_ptr() as *mut u8).add(1)`
+        // has `addr % 8 == 1` and is strictly misaligned for all types with align >= 2.
         unsafe {
-            let unaligned = raw.as_mut_ptr().add(1);
+            let unaligned = (raw.as_mut_ptr() as *mut u8).add(1);
 
             // 1. Misaligned u32 buffer and overflow length in radix_sort_u32
             assert_eq!(
@@ -1153,5 +1174,66 @@ mod tests {
             assert!(empty_buf.as_slice().is_empty());
             assert!(empty_buf.into_vec().is_empty());
         }
+    }
+
+    #[test]
+    fn test_c11_2a_cresult_not_found_mapping_and_blob_store_get() {
+        assert_eq!(
+            CResult::from(Err(crate::ZiporaError::not_found("missing item"))),
+            CResult::NotFound
+        );
+        assert_eq!(
+            CResult::from(Err(crate::ZiporaError::invalid_parameter("bad param"))),
+            CResult::InvalidInput
+        );
+
+        // SAFETY: store is freshly allocated and freed once; out pointers are stack-aligned.
+        unsafe {
+            let store = blob_store_new();
+            assert!(!store.is_null());
+            let mut out_ptr: *const u8 = ptr::null();
+            let mut out_len: usize = 0;
+            clear_last_error();
+            assert_eq!(
+                blob_store_get(store, 999_999, &mut out_ptr, &mut out_len),
+                CResult::NotFound
+            );
+            blob_store_free(store);
+        }
+    }
+
+    #[test]
+    fn test_c11_2b_set_last_error_preserves_embedded_nul_bytes() {
+        clear_last_error();
+        set_last_error("prefix\0suffix");
+        // SAFETY: zipora_last_error returns a valid NUL-terminated C string pointer on this thread.
+        let err_msg = unsafe { CStr::from_ptr(zipora_last_error()).to_str().unwrap() };
+        assert_eq!(err_msg, "prefix\\0suffix");
+    }
+
+    #[test]
+    fn test_c11_2c_error_callback_reentrant_unregister_does_not_deadlock() {
+        let _callback_serial = CALLBACK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        unsafe extern "C" fn oneshot_unsubscribing_callback(_msg: *const c_char) {
+            // SAFETY: re-entrant unregistration inside callback must not deadlock on ERROR_CALLBACK.
+            unsafe {
+                zipora_set_error_callback(None);
+            }
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // SAFETY: registers valid C callback and passes null handle to trigger set_last_error.
+            unsafe {
+                zipora_set_error_callback(Some(oneshot_unsubscribing_callback));
+                let _ = fast_vec_push(ptr::null_mut(), 7);
+            }
+            let _ = tx.send(());
+        });
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(500)).is_ok(),
+            "C11.2: re-entrant zipora_set_error_callback inside error callback deadlocked on ERROR_CALLBACK"
+        );
     }
 }
