@@ -1812,31 +1812,6 @@ mod tests {
             ex
         });
 
-        let mut best_1t = Duration::MAX;
-        for _ in 0..7 {
-            let done = Arc::new(AtomicUsize::new(0));
-            let t = std::time::Instant::now();
-            for _ in 0..100_000usize {
-                loop {
-                    let d = Arc::clone(&done);
-                    if ex
-                        .submit_closure(move || {
-                            d.fetch_add(1, Ordering::Relaxed);
-                            Box::pin(async { Ok(()) })
-                        })
-                        .is_ok()
-                    {
-                        break;
-                    }
-                    std::hint::spin_loop();
-                }
-            }
-            while done.load(Ordering::Relaxed) < 100_000 {
-                std::hint::spin_loop();
-            }
-            best_1t = best_1t.min(t.elapsed());
-        }
-
         let mut best_8t = Duration::MAX;
         for _ in 0..7 {
             let done = Arc::new(AtomicUsize::new(0));
@@ -1877,8 +1852,7 @@ mod tests {
             ex.shutdown().await.unwrap();
         });
         println!(
-            "S29-R1 executor bench: 1t_100k={:.1} ns/task | mp8_400k={:.1} ns/task",
-            best_1t.as_nanos() as f64 / 100_000.0,
+            "S29-R1 executor bench: mp8_400k={:.1} ns/task",
             best_8t.as_nanos() as f64 / 400_000.0,
         );
     }
