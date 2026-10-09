@@ -141,6 +141,12 @@ impl MemoryPool {
             ));
         }
 
+        if std::alloc::Layout::from_size_align(config.chunk_size, config.alignment).is_err() {
+            return Err(ZiporaError::invalid_data(
+                "chunk_size and alignment exceed Layout limits (isize::MAX)",
+            ));
+        }
+
         Ok(Self {
             config,
             free_chunks: Mutex::new(VecDeque::new()),

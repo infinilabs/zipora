@@ -100,6 +100,14 @@ pub unsafe extern "C" fn fast_vec_data(vec: *const CFastVec) -> *const u8 {
 
 /// Create a memory pool
 ///
+/// `chunk_size` must be non-zero and fit within a valid 8-byte aligned layout
+/// (`chunk_size <= INTPTR_MAX - 7`); otherwise `NULL` is returned and the error
+/// details are stored in `zipora_last_error`.
+///
+/// `max_chunks` limits only the cache of free chunks retained when blocks are
+/// returned via `memory_pool_deallocate`; it does not limit the number of
+/// concurrently live blocks returned by `memory_pool_allocate`.
+///
 /// # Safety
 ///
 /// The returned pointer must be freed with `memory_pool_free`.
@@ -268,6 +276,34 @@ mod tests {
                 assert_eq!(data[i as usize], i);
             }
             fast_vec_free(vec);
+        }
+    }
+
+    #[test]
+    fn test_s31_r5_memory_pool_new_rejects_invalid_layout_and_documents_max_chunks() {
+        // SAFETY: calls C FFI memory_pool functions with valid handles and frees every allocation.
+        unsafe {
+            assert!(
+                memory_pool_new(usize::MAX, 1).is_null(),
+                "memory_pool_new(usize::MAX, 1) must fail upfront on invalid Layout"
+            );
+            assert!(
+                memory_pool_new((isize::MAX as usize) - 6, 1).is_null(),
+                "memory_pool_new((isize::MAX as usize) - 6, 1) exceeds 8-byte aligned Layout limit"
+            );
+
+            let pool = memory_pool_new(64, 2);
+            assert!(!pool.is_null());
+            let mut blocks = Vec::new();
+            for _ in 0..8 {
+                let p = memory_pool_allocate(pool);
+                assert!(!p.is_null());
+                blocks.push(p);
+            }
+            for p in blocks {
+                assert_eq!(memory_pool_deallocate(pool, p), CResult::Success);
+            }
+            memory_pool_free(pool);
         }
     }
 }

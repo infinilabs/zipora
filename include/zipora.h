@@ -175,6 +175,14 @@ const uint8_t *fast_vec_data(const struct CFastVec *vec);
 /**
  * Create a memory pool
  *
+ * `chunk_size` must be non-zero and fit within a valid 8-byte aligned layout
+ * (`chunk_size <= INTPTR_MAX - 7`); otherwise `NULL` is returned and the error
+ * details are stored in `zipora_last_error`.
+ *
+ * `max_chunks` limits only the cache of free chunks retained when blocks are
+ * returned via `memory_pool_deallocate`; it does not limit the number of
+ * concurrently live blocks returned by `memory_pool_allocate`.
+ *
  * # Safety
  *
  * The returned pointer must be freed with `memory_pool_free`.

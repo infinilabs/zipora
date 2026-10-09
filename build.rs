@@ -402,6 +402,7 @@ fn generate_ffi_bindings() {
         .expect("Unable to generate bindings")
         .write_to_file(out_path);
 
+    println!("cargo:rerun-if-changed=src/ffi");
     println!("cargo:rustc-cfg=zipora_ffi_enabled");
 }
 
