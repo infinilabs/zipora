@@ -314,3 +314,23 @@ int main(void) {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+#[test]
+fn test_s31_r2_cargo_toml_lib_crate_type_is_rlib_only() {
+    let manifest = fs::read_to_string(repo_root().join("Cargo.toml"))
+        .expect("Cargo.toml must be readable");
+    let lib_section = manifest
+        .split("\n[lib]\n")
+        .nth(1)
+        .and_then(|s| s.split("\n[").next())
+        .expect("[lib] section must exist in Cargo.toml");
+    let crate_type_line = lib_section
+        .lines()
+        .find(|line| line.trim_start().starts_with("crate-type"))
+        .expect("crate-type key must exist in [lib]");
+    assert_eq!(
+        crate_type_line.trim(),
+        "crate-type = [\"rlib\"]",
+        "Cargo.toml [lib] crate-type must default to rlib only so non-FFI builds do not emit staticlib/cdylib"
+    );
+}
