@@ -17,29 +17,49 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn find_libzipora_a(root: &Path) -> PathBuf {
-    let candidates = [
-        root.join("target/debug/libzipora.a"),
-        root.join("target/release/libzipora.a"),
-    ];
-    for candidate in &candidates {
-        if candidate.exists() {
-            return candidate.clone();
-        }
-    }
+struct CleanupDir(PathBuf);
 
-    let status = Command::new("cargo")
+impl Drop for CleanupDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn build_fresh_staticlib(root: &Path, out_archive: &Path) {
+    let build_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("ffi_staticlib_target");
+    let _ = fs::remove_dir_all(&build_dir);
+    let _cleanup = CleanupDir(build_dir.clone());
+
+    let output = Command::new("cargo")
         .current_dir(root)
         .env_remove("RUSTFLAGS")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .args(["build", "--locked", "--lib", "--features", "ffi"])
-        .status()
-        .expect("failed to invoke cargo build --lib --features ffi");
-    assert!(status.success(), "cargo build --lib --features ffi failed");
-
-    let built = root.join("target/debug/libzipora.a");
-    assert!(built.exists(), "expected staticlib at {}", built.display());
-    built
+        .arg("rustc")
+        .args([
+            "--locked",
+            "--lib",
+            "--features",
+            "ffi",
+            "--crate-type",
+            "staticlib",
+            "--target-dir",
+        ])
+        .arg(&build_dir)
+        .output()
+        .expect("failed to invoke cargo rustc --lib --features ffi --crate-type staticlib");
+    assert!(
+        output.status.success(),
+        "cargo rustc --lib --features ffi --crate-type staticlib failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let built = build_dir.join("debug/libzipora.a");
+    assert!(
+        built.exists(),
+        "expected fresh staticlib at {}",
+        built.display()
+    );
+    fs::copy(&built, out_archive).expect("failed to copy fresh libzipora.a to smoke dir");
 }
 
 #[test]
@@ -265,7 +285,8 @@ int main(void) {
     )
     .expect("failed to write C smoke source");
 
-    let libzipora = find_libzipora_a(&root);
+    let libzipora = tmp.path().join("libzipora.a");
+    build_fresh_staticlib(&root, &libzipora);
     let compile = Command::new("gcc")
         .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-I"])
         .arg(root.join("include"))
