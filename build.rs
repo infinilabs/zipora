@@ -18,6 +18,7 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rustc-check-cfg=cfg(tokio_unstable)");
 
     // Detect and configure SIMD features
     detect_and_configure_simd();
