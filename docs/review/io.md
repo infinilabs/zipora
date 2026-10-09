@@ -5963,7 +5963,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3152 filtered out; f
 | `vec_u64_1M_de` (`ns/elem`, target `< 1.20`) | `0.99` | `1.10` | `0.949` | `1.048` |
 | `vec_vec_u32_1000x100_de` (`ns/inner Vec`) | `118.5` | `144.1` | `111.68` | `111.83` |
 | `vec_vec_u32_1000x100_ser` (`ns/inner Vec`, `82.2` at `4929ccc`) | `84.7` | — | `100.9` | `73.79` |
-| `vec_vec_u8_100kx3_de` (`ns/inner Vec`) | `26.3` | — | `20.54` | `20.54` |
-| `vec_box_u64_100k_de` (`ns/elem`) | `21.5` | — | `14.94` | `14.94` |
-| `vec_rc_u64_100k_de` unique (`ns/elem`) | — | `32.2` | `23.79` | `23.79` |
-| `hashmap_u32_u64_100k_de` (`ns/elem`) | — | — | `18.65` | `18.65` |
+| `vec_vec_u8_100kx3_de` (`ns/inner Vec`) | `26.3` | — | `20.54` | — |
+| `vec_box_u64_100k_de` (`ns/elem`) | `21.5` | — | `14.94` | — |
+| `vec_rc_u64_100k_de` unique (`ns/elem`) | — | `32.2` | `23.79` | — |
+| `hashmap_u32_u64_100k_de` (`ns/elem`) | — | — | `18.65` | — |
