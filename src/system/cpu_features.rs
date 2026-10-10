@@ -626,25 +626,25 @@ impl RuntimeCpuFeatures {
         }
     }
 
-    /// Enhanced ARM64 feature detection for CpuFeatures  
+    /// Enhanced ARM64 feature detection for CpuFeatures
     #[cfg(target_arch = "aarch64")]
     fn detect_arm_features(&self, features: &mut CpuFeatures) {
-        features.has_neon = true;
-        features.has_prefetch = true;
+        #[cfg(miri)]
+        let _ = features;
 
-        if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") {
-            let cpuinfo_lower = cpuinfo.to_lowercase();
-            features.has_crc32 = cpuinfo_lower.contains("crc32");
-            features.has_aes_arm = cpuinfo_lower.contains("aes");
-            features.has_sha1 = cpuinfo_lower.contains("sha1");
-            features.has_sha2 = cpuinfo_lower.contains("sha2");
-            features.has_sha3 = cpuinfo_lower.contains("sha3");
-            features.has_crypto = features.has_aes_arm
-                || features.has_sha1
-                || features.has_sha2
-                || cpuinfo_lower.contains("crypto");
-            features.has_sve = cpuinfo_lower.contains("sve");
-            features.has_sve2 = cpuinfo_lower.contains("sve2");
+        #[cfg(not(miri))]
+        {
+            features.has_neon = std::arch::is_aarch64_feature_detected!("neon");
+            features.has_prefetch = true;
+            features.has_crc32 = std::arch::is_aarch64_feature_detected!("crc");
+            features.has_aes_arm = std::arch::is_aarch64_feature_detected!("aes");
+            features.has_sha2 = std::arch::is_aarch64_feature_detected!("sha2");
+            features.has_sha3 = std::arch::is_aarch64_feature_detected!("sha3");
+            // In std::arch::is_aarch64_feature_detected!, "sha2" covers FEAT_SHA1 + FEAT_SHA256.
+            features.has_sha1 = features.has_sha2;
+            features.has_crypto = features.has_aes_arm && features.has_sha2;
+            features.has_sve = std::arch::is_aarch64_feature_detected!("sve");
+            features.has_sve2 = std::arch::is_aarch64_feature_detected!("sve2");
         }
     }
 
