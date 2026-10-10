@@ -80,14 +80,21 @@ pub enum CpuFeature {
 #[derive(Debug, Clone)]
 pub struct CpuFeatures {
     // x86_64 SSE/AVX features
+    pub has_sse2: bool,
+    pub has_sse3: bool,
+    pub has_ssse3: bool,
     pub has_sse41: bool,
     pub has_sse42: bool,
     pub has_avx: bool,
     pub has_avx2: bool,
     pub has_avx512f: bool,
-    pub has_avx512vl: bool,
+    pub has_avx512dq: bool,
+    pub has_avx512cd: bool,
     pub has_avx512bw: bool,
+    pub has_avx512vl: bool,
     pub has_avx512vpopcntdq: bool,
+    pub has_avx512vbmi: bool,
+    pub has_avx512ifma: bool,
 
     // x86_64 BMI and specialized instructions
     pub has_bmi1: bool,
@@ -97,12 +104,28 @@ pub struct CpuFeatures {
     pub has_tzcnt: bool,
     pub has_prefetchw: bool,
 
+    // x86_64 Crypto and RNG features
+    pub has_pclmulqdq: bool,
+    pub has_aes: bool,
+    pub has_rdrand: bool,
+    pub has_rdseed: bool,
+
     // ARM64 features
     pub has_neon: bool,
     pub has_crc32: bool,
+    pub has_aes_arm: bool,
+    pub has_sha1: bool,
+    pub has_sha2: bool,
+    pub has_sha3: bool,
     pub has_crypto: bool,
     pub has_sve: bool,
     pub has_sve2: bool,
+
+    // Universal and memory/cache features
+    pub has_unaligned_access: bool,
+    pub has_prefetch: bool,
+    pub has_clflushopt: bool,
+    pub has_clwb: bool,
 
     // Cache characteristics
     pub l1_cache_size: usize,
@@ -151,14 +174,21 @@ impl CpuFeatures {
     pub fn new() -> Self {
         Self {
             // x86_64 SSE/AVX features
+            has_sse2: false,
+            has_sse3: false,
+            has_ssse3: false,
             has_sse41: false,
             has_sse42: false,
             has_avx: false,
             has_avx2: false,
             has_avx512f: false,
-            has_avx512vl: false,
+            has_avx512dq: false,
+            has_avx512cd: false,
             has_avx512bw: false,
+            has_avx512vl: false,
             has_avx512vpopcntdq: false,
+            has_avx512vbmi: false,
+            has_avx512ifma: false,
 
             // x86_64 BMI and specialized instructions
             has_bmi1: false,
@@ -168,12 +198,28 @@ impl CpuFeatures {
             has_tzcnt: false,
             has_prefetchw: false,
 
+            // x86_64 Crypto and RNG features
+            has_pclmulqdq: false,
+            has_aes: false,
+            has_rdrand: false,
+            has_rdseed: false,
+
             // ARM64 features
             has_neon: false,
             has_crc32: false,
+            has_aes_arm: false,
+            has_sha1: false,
+            has_sha2: false,
+            has_sha3: false,
             has_crypto: false,
             has_sve: false,
             has_sve2: false,
+
+            // Universal and memory/cache features
+            has_unaligned_access: false,
+            has_prefetch: false,
+            has_clflushopt: false,
+            has_clwb: false,
 
             // Cache characteristics (default values)
             l1_cache_size: 32 * 1024,       // 32KB
@@ -328,9 +374,9 @@ impl CpuFeatures {
     pub fn has_feature(&self, feature: CpuFeature) -> bool {
         match feature {
             // x86_64 Basic SSE/AVX features
-            CpuFeature::SSE2 => true,  // Always available on x86_64
-            CpuFeature::SSE3 => true,  // Commonly available
-            CpuFeature::SSSE3 => true, // Commonly available
+            CpuFeature::SSE2 => self.has_sse2,
+            CpuFeature::SSE3 => self.has_sse3,
+            CpuFeature::SSSE3 => self.has_ssse3,
             CpuFeature::SSE4_1 => self.has_sse41,
             CpuFeature::SSE4_2 => self.has_sse42,
             CpuFeature::AVX => self.has_avx,
@@ -344,33 +390,40 @@ impl CpuFeatures {
             CpuFeature::TZCNT => self.has_tzcnt,
             CpuFeature::PREFETCHW => self.has_prefetchw,
 
+            // x86_64 Crypto and specialized features
+            CpuFeature::PCLMULQDQ => self.has_pclmulqdq,
+            CpuFeature::AES => self.has_aes,
+            CpuFeature::RDRAND => self.has_rdrand,
+            CpuFeature::RDSEED => self.has_rdseed,
+
             // x86_64 AVX-512 feature family
             CpuFeature::AVX512F => self.has_avx512f,
-            CpuFeature::AVX512VL => self.has_avx512vl,
+            CpuFeature::AVX512DQ => self.has_avx512dq,
+            CpuFeature::AVX512CD => self.has_avx512cd,
             CpuFeature::AVX512BW => self.has_avx512bw,
+            CpuFeature::AVX512VL => self.has_avx512vl,
             CpuFeature::AVX512VPOPCNTDQ => self.has_avx512vpopcntdq,
+            CpuFeature::AVX512VBMI => self.has_avx512vbmi,
+            CpuFeature::AVX512IFMA => self.has_avx512ifma,
 
             // ARM64 features
             CpuFeature::NEON => self.has_neon,
             CpuFeature::CRC32 => self.has_crc32,
+            CpuFeature::AesArm => self.has_aes_arm,
+            CpuFeature::SHA1 => self.has_sha1,
+            CpuFeature::SHA2 => self.has_sha2,
+            CpuFeature::SHA3 => self.has_sha3,
             CpuFeature::Crypto => self.has_crypto,
             CpuFeature::SVE => self.has_sve,
             CpuFeature::SVE2 => self.has_sve2,
 
             // Universal features
-            CpuFeature::UnalignedAccess => {
-                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                {
-                    true // x86_64 and aarch64 support unaligned access
-                }
-                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                {
-                    false
-                }
-            }
+            CpuFeature::UnalignedAccess => self.has_unaligned_access,
 
-            // Features not currently tracked in CpuFeatures struct
-            _ => false,
+            // Memory and cache features
+            CpuFeature::Prefetch => self.has_prefetch,
+            CpuFeature::ClflushOpt => self.has_clflushopt,
+            CpuFeature::Clwb => self.has_clwb,
         }
     }
 }
@@ -468,9 +521,23 @@ impl RuntimeCpuFeatures {
         Self
     }
 
+    /// Compute physical core count from logical core count and hyperthreading state,
+    /// guaranteeing at least 1 physical core even on 1-vCPU hyperthreaded VMs.
+    #[inline]
+    pub(crate) fn compute_physical_cores(logical_cores: usize, has_htt: bool) -> usize {
+        let logical = logical_cores.max(1);
+        if has_htt {
+            (logical / 2).max(1)
+        } else {
+            logical
+        }
+    }
+
     /// Detect all available CPU features
     pub fn detect_features(&self) -> CpuFeatures {
         let mut features = CpuFeatures::new();
+        features.has_unaligned_access =
+            cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
 
         // Detect CPU info
         let (vendor, model) = self.get_cpu_info();
@@ -518,76 +585,86 @@ impl RuntimeCpuFeatures {
     /// raises #UD and the process dies with SIGILL.
     ///
     /// `is_x86_feature_detected!` performs that XCR0 handshake, caches the
-    /// answer, and is already what the other 31 detection sites in this crate
+    /// answer, and is already what the other detection sites in this crate
     /// use, so delegate rather than keeping a second, laxer implementation.
     #[cfg(target_arch = "x86_64")]
     fn detect_x86_features(&self, features: &mut CpuFeatures) {
         #[cfg(miri)]
-        return;
+        let _ = features;
 
         #[cfg(not(miri))]
         {
-            // Basic features
+            // Basic SSE/AVX features
+            features.has_sse2 = is_x86_feature_detected!("sse2");
+            features.has_sse3 = is_x86_feature_detected!("sse3");
+            features.has_ssse3 = is_x86_feature_detected!("ssse3");
             features.has_sse41 = is_x86_feature_detected!("sse4.1");
             features.has_sse42 = is_x86_feature_detected!("sse4.2");
             features.has_avx = is_x86_feature_detected!("avx");
-            features.has_popcnt = is_x86_feature_detected!("popcnt");
-
-            // Extended features
             features.has_avx2 = is_x86_feature_detected!("avx2");
+
+            // BMI and bit manipulation instructions
             features.has_bmi1 = is_x86_feature_detected!("bmi1");
             features.has_bmi2 = is_x86_feature_detected!("bmi2");
-            // Note: prefetchw detection varies by CPU architecture
-            features.has_prefetchw = false; // Default to false for compatibility
-
-            // AVX-512 features
-            features.has_avx512f = is_x86_feature_detected!("avx512f");
-            features.has_avx512vl = is_x86_feature_detected!("avx512vl");
-            features.has_avx512bw = is_x86_feature_detected!("avx512bw");
-
-            // Check for AVX-512 VPOPCNTDQ through extended features
-            // This is a more advanced feature that might not be in basic detection
-            features.has_avx512vpopcntdq = false; // Default to false for compatibility
-
+            features.has_popcnt = is_x86_feature_detected!("popcnt");
             features.has_lzcnt = is_x86_feature_detected!("lzcnt");
-            // TZCNT is typically available with BMI1
             features.has_tzcnt = features.has_bmi1;
+
+            // Crypto and hardware RNG features
+            features.has_pclmulqdq = is_x86_feature_detected!("pclmulqdq");
+            features.has_aes = is_x86_feature_detected!("aes");
+            features.has_rdrand = is_x86_feature_detected!("rdrand");
+            features.has_rdseed = is_x86_feature_detected!("rdseed");
+
+            // AVX-512 feature family
+            features.has_avx512f = is_x86_feature_detected!("avx512f");
+            features.has_avx512dq = is_x86_feature_detected!("avx512dq");
+            features.has_avx512cd = is_x86_feature_detected!("avx512cd");
+            features.has_avx512bw = is_x86_feature_detected!("avx512bw");
+            features.has_avx512vl = is_x86_feature_detected!("avx512vl");
+            features.has_avx512vpopcntdq = is_x86_feature_detected!("avx512vpopcntdq");
+            features.has_avx512vbmi = is_x86_feature_detected!("avx512vbmi");
+            features.has_avx512ifma = is_x86_feature_detected!("avx512ifma");
+
+            // Memory and cache hints
+            features.has_prefetch = is_x86_feature_detected!("sse");
+            let cpuid = raw_cpuid::CpuId::new();
+            if let Some(ext) = cpuid.get_extended_feature_info() {
+                features.has_clflushopt = ext.has_clflushopt();
+                features.has_clwb = ext.has_clwb();
+            }
+            if let Some(ext_proc) = cpuid.get_extended_processor_and_feature_identifiers() {
+                features.has_prefetchw = ext_proc.has_prefetchw();
+            }
         }
     }
 
     /// Enhanced ARM64 feature detection for CpuFeatures  
     #[cfg(target_arch = "aarch64")]
     fn detect_arm_features(&self, features: &mut CpuFeatures) {
-        // Most AArch64 systems have NEON
         features.has_neon = true;
+        features.has_prefetch = true;
 
-        // Try to detect additional features through /proc/cpuinfo
         if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") {
             let cpuinfo_lower = cpuinfo.to_lowercase();
             features.has_crc32 = cpuinfo_lower.contains("crc32");
-            features.has_crypto = cpuinfo_lower.contains("aes") || cpuinfo_lower.contains("crypto");
+            features.has_aes_arm = cpuinfo_lower.contains("aes");
+            features.has_sha1 = cpuinfo_lower.contains("sha1");
+            features.has_sha2 = cpuinfo_lower.contains("sha2");
+            features.has_sha3 = cpuinfo_lower.contains("sha3");
+            features.has_crypto =
+                features.has_aes_arm || features.has_sha1 || features.has_sha2 || cpuinfo_lower.contains("crypto");
             features.has_sve = cpuinfo_lower.contains("sve");
             features.has_sve2 = cpuinfo_lower.contains("sve2");
         }
-
-        // Try runtime feature detection where available
-        #[cfg(target_os = "linux")]
-        {
-            // Use getauxval if available for more reliable detection
-            if let Ok(auxval) = self.get_auxval_features() {
-                features.has_crc32 = (auxval & (1 << 7)) != 0; // HWCAP_CRC32
-                features.has_crypto = (auxval & (1 << 4)) != 0; // HWCAP_AES
-                features.has_sve = (auxval & (1 << 22)) != 0; // HWCAP_SVE
-            }
-        }
     }
 
-    /// Enhanced cache detection with more accurate sizing
+    /// Enhanced cache detection with accurate sizing
     fn get_enhanced_cache_info(&self) -> (usize, usize, usize, usize) {
         let mut cache_line_size = 64; // Default assumption
-        let l1_size = 32 * 1024; // 32KB default
-        let l2_size = 256 * 1024; // 256KB default  
-        let l3_size = 8 * 1024 * 1024; // 8MB default
+        let mut l1_size = 32 * 1024; // 32KB default
+        let mut l2_size = 256 * 1024; // 256KB default  
+        let mut l3_size = 8 * 1024 * 1024; // 8MB default
 
         #[cfg(target_arch = "x86_64")]
         {
@@ -595,63 +672,81 @@ impl RuntimeCpuFeatures {
             {
                 let cpuid = raw_cpuid::CpuId::new();
 
-                // Enhanced cache line size detection
                 if let Some(cache_params) = cpuid.get_cache_parameters() {
                     for cache in cache_params {
-                        cache_line_size = cache.coherency_line_size();
+                        if !matches!(
+                            cache.cache_type(),
+                            raw_cpuid::CacheType::Data | raw_cpuid::CacheType::Unified
+                        ) {
+                            continue;
+                        }
+                        let line_size = cache.coherency_line_size();
+                        if line_size > 0 {
+                            cache_line_size = line_size;
+                        }
 
-                        // Calculate cache size using available methods
-                        // Note: exact calculation varies by raw_cpuid version
-                        let cache_size = cache.associativity()
-                            * cache.coherency_line_size()
-                            * cache.physical_line_partitions();
-
-                        // Cache level determination is simplified for compatibility
-                        // Use cache_size for future enhanced detection
-                        let _cache_size = cache_size; // Store for potential future use
+                        let cache_size = cache
+                            .associativity()
+                            .saturating_mul(line_size)
+                            .saturating_mul(cache.physical_line_partitions())
+                            .saturating_mul(cache.sets());
+                        if cache_size > 0 {
+                            match cache.level() {
+                                1 => l1_size = cache_size,
+                                2 => l2_size = cache_size,
+                                3 => l3_size = cache_size,
+                                _ => {}
+                            }
+                        }
                     }
                 }
-
-                // Use fallback cache detection for compatibility
-                // Cache line size is typically 64 bytes on modern x86_64
             }
+            #[cfg(miri)]
+            let _ = (&mut cache_line_size, &mut l1_size, &mut l2_size, &mut l3_size);
         }
 
         #[cfg(target_arch = "aarch64")]
         {
-            // Try to get cache info from /sys/devices/system/cpu/
             if let Ok(entries) = std::fs::read_dir("/sys/devices/system/cpu/cpu0/cache") {
                 for entry in entries.flatten() {
-                    // Try to get coherency line size
                     if let Ok(coherency_str) =
                         std::fs::read_to_string(entry.path().join("coherency_line_size"))
+                        && let Ok(coherency) = coherency_str.trim().parse::<usize>()
+                        && coherency > 0
                     {
-                        if let Ok(coherency) = coherency_str.trim().parse::<usize>() {
-                            cache_line_size = coherency;
-                        }
+                        cache_line_size = coherency;
                     }
 
-                    // Cache size detection is simplified for initial implementation
-                    // Enhanced detection can be added in future iterations
-                    if let Ok(_level_str) = std::fs::read_to_string(entry.path().join("level")) {
-                        if let Ok(_size_str) = std::fs::read_to_string(entry.path().join("size")) {
-                            // Cache size parsing available for future enhancement
+                    if let (Ok(level_str), Ok(size_str)) = (
+                        std::fs::read_to_string(entry.path().join("level")),
+                        std::fs::read_to_string(entry.path().join("size")),
+                    ) && let Ok(level) = level_str.trim().parse::<u8>()
+                    {
+                        let trimmed = size_str.trim();
+                        let parsed_bytes = if let Some(kb) = trimmed.strip_suffix('K') {
+                            kb.parse::<usize>().ok().map(|v| v * 1024)
+                        } else if let Some(mb) = trimmed.strip_suffix('M') {
+                            mb.parse::<usize>().ok().map(|v| v * 1024 * 1024)
+                        } else {
+                            trimmed.parse::<usize>().ok()
+                        };
+                        if let Some(bytes) = parsed_bytes.filter(|&b| b > 0) {
+                            match level {
+                                1 => l1_size = bytes,
+                                2 => l2_size = bytes,
+                                3 => l3_size = bytes,
+                                _ => {}
+                            }
                         }
                     }
                 }
             }
         }
 
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let _ = (&mut cache_line_size, &mut l1_size, &mut l2_size, &mut l3_size);
+
         (cache_line_size, l1_size, l2_size, l3_size)
-    }
-
-
-    /// Get auxiliary vector features on Linux ARM64
-    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    fn get_auxval_features(&self) -> Result<u64, std::io::Error> {
-        // This is a simplified version - in practice you'd use getauxval(AT_HWCAP)
-        // For now, return a default that indicates we couldn't detect
-        Ok(0)
     }
 
     /// Get CPU vendor and model information
@@ -675,9 +770,8 @@ impl RuntimeCpuFeatures {
             (vendor, model)
         }
 
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", not(miri)))]
         {
-            // Try to get ARM CPU info from /proc/cpuinfo
             if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") {
                 let mut vendor = "ARM".to_string();
                 let mut model = "Unknown".to_string();
@@ -689,17 +783,18 @@ impl RuntimeCpuFeatures {
                         } else if line.contains("0x51") {
                             vendor = "Qualcomm".to_string();
                         }
-                    } else if line.starts_with("model name") {
-                        if let Some(name) = line.split(':').nth(1) {
-                            model = name.trim().to_string();
-                        }
+                    } else if line.starts_with("model name")
+                        && let Some(name) = line.split(':').nth(1)
+                    {
+                        model = name.trim().to_string();
                     }
                 }
                 return (vendor, model);
             }
+            ("ARM".to_string(), "Unknown".to_string())
         }
 
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        #[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), not(miri)))]
         {
             ("Unknown".to_string(), "Unknown".to_string())
         }
@@ -711,26 +806,24 @@ impl RuntimeCpuFeatures {
             .map(|n| n.get())
             .unwrap_or(1);
 
-        // Try to determine physical cores (this is approximate)
-        let physical_cores = logical_cores; // Default assumption
-
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
-            #[cfg(not(miri))]
+            let cpuid = raw_cpuid::CpuId::new();
+            if let Some(feature_info) = cpuid.get_feature_info()
+                && feature_info.has_htt()
             {
-                let cpuid = raw_cpuid::CpuId::new();
-                if let Some(feature_info) = cpuid.get_feature_info()
-                    && feature_info.has_htt()
-                {
-                    // Hyperthreading is enabled, so physical cores = logical / 2
-                    return (logical_cores, logical_cores / 2);
-                }
+                return (
+                    logical_cores,
+                    Self::compute_physical_cores(logical_cores, true),
+                );
             }
         }
 
-        (logical_cores, physical_cores)
+        (
+            logical_cores,
+            Self::compute_physical_cores(logical_cores, false),
+        )
     }
-
 }
 
 // Global CPU feature detection
@@ -975,8 +1068,17 @@ mod tests {
         // Test optimization variant selection
         let rank_select_variant = features.optimal_rank_select_variant();
         assert!(
-            ["scalar", "popcnt", "avx2", "bmi2_avx2", "avx512", "neon"]
-                .contains(&rank_select_variant)
+            [
+                "scalar",
+                "popcnt",
+                "bmi2",
+                "avx2",
+                "bmi2_avx2",
+                "avx512",
+                "avx512_popcnt",
+                "neon",
+            ]
+            .contains(&rank_select_variant)
         );
 
         let base64_variant = features.optimal_base64_variant();
@@ -1032,4 +1134,78 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_c12_2_cpu_features_exhaustive_detection_and_single_core_htt() {
+        // 1. CpuFeatures::new() is documented as "all features disabled".
+        // Previously has_feature(SSE2 | SSE3 | SSSE3) unconditionally returned true.
+        let empty = CpuFeatures::new();
+        assert!(
+            !empty.has_feature(CpuFeature::SSE2),
+            "CpuFeatures::new() must have SSE2 disabled"
+        );
+        assert!(
+            !empty.has_feature(CpuFeature::SSE3),
+            "CpuFeatures::new() must have SSE3 disabled"
+        );
+        assert!(
+            !empty.has_feature(CpuFeature::SSSE3),
+            "CpuFeatures::new() must have SSSE3 disabled"
+        );
+        assert!(
+            !empty.has_feature(CpuFeature::UnalignedAccess),
+            "CpuFeatures::new() must have UnalignedAccess disabled"
+        );
+
+        // 2. Single-core hyperthreaded VM (logical_cores == 1, has_htt == true) must
+        // clamp physical_cores to >= 1 instead of truncating 1 / 2 == 0.
+        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(1, true), 1);
+        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(2, true), 1);
+        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(8, true), 4);
+        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(1, false), 1);
+
+        // 3. Under Miri, detect_x86_features is a no-op so all x86 features on get_cpu_features()
+        // must be false; on real x86_64 hardware, every CpuFeature variant must match
+        // std::is_x86_feature_detected! (previously AES, PCLMULQDQ, RDRAND, RDSEED,
+        // AVX512DQ, AVX512CD, AVX512VPOPCNTDQ, AVX512VBMI, AVX512IFMA always returned false).
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        {
+            for (name, feat, expected) in [
+                ("sse2", CpuFeature::SSE2, is_x86_feature_detected!("sse2")),
+                ("sse3", CpuFeature::SSE3, is_x86_feature_detected!("sse3")),
+                ("ssse3", CpuFeature::SSSE3, is_x86_feature_detected!("ssse3")),
+                ("sse4.1", CpuFeature::SSE4_1, is_x86_feature_detected!("sse4.1")),
+                ("sse4.2", CpuFeature::SSE4_2, is_x86_feature_detected!("sse4.2")),
+                ("avx", CpuFeature::AVX, is_x86_feature_detected!("avx")),
+                ("avx2", CpuFeature::AVX2, is_x86_feature_detected!("avx2")),
+                ("bmi1", CpuFeature::BMI1, is_x86_feature_detected!("bmi1")),
+                ("bmi2", CpuFeature::BMI2, is_x86_feature_detected!("bmi2")),
+                ("popcnt", CpuFeature::POPCNT, is_x86_feature_detected!("popcnt")),
+                ("lzcnt", CpuFeature::LZCNT, is_x86_feature_detected!("lzcnt")),
+                ("pclmulqdq", CpuFeature::PCLMULQDQ, is_x86_feature_detected!("pclmulqdq")),
+                ("aes", CpuFeature::AES, is_x86_feature_detected!("aes")),
+                ("rdrand", CpuFeature::RDRAND, is_x86_feature_detected!("rdrand")),
+                ("rdseed", CpuFeature::RDSEED, is_x86_feature_detected!("rdseed")),
+                ("avx512f", CpuFeature::AVX512F, is_x86_feature_detected!("avx512f")),
+                ("avx512dq", CpuFeature::AVX512DQ, is_x86_feature_detected!("avx512dq")),
+                ("avx512cd", CpuFeature::AVX512CD, is_x86_feature_detected!("avx512cd")),
+                ("avx512bw", CpuFeature::AVX512BW, is_x86_feature_detected!("avx512bw")),
+                ("avx512vl", CpuFeature::AVX512VL, is_x86_feature_detected!("avx512vl")),
+                (
+                    "avx512vpopcntdq",
+                    CpuFeature::AVX512VPOPCNTDQ,
+                    is_x86_feature_detected!("avx512vpopcntdq"),
+                ),
+                ("avx512vbmi", CpuFeature::AVX512VBMI, is_x86_feature_detected!("avx512vbmi")),
+                ("avx512ifma", CpuFeature::AVX512IFMA, is_x86_feature_detected!("avx512ifma")),
+            ] {
+                assert_eq!(
+                    has_cpu_feature(feat),
+                    expected,
+                    "has_cpu_feature({name}) disagreed with std::is_x86_feature_detected!"
+                );
+            }
+        }
+    }
 }
+

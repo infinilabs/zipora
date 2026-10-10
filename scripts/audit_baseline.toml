@@ -7,7 +7,7 @@ max_undocumented = 4
 max_precondition_violations = 0
 
 [api_honesty]
-max_markers = 25
+max_markers = 21
 
 [index_audit]
 entropy = 0
