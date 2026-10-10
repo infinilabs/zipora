@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Reproducible splice-and-run RED verification script for Stage 13 (`C12.1`..`C12.8`) on parent commit `52ae648`.
+# Reproducible splice-and-run RED verification script for Stage 13 (`C12.1`..`C12.8` on `52ae648`
+# and `S33-R1` on `7e85f36`).
 # Keeps all temporary worktrees inside `target/` (never `/tmp`) and cleans up on exit.
 set -euo pipefail
 
@@ -19,6 +20,20 @@ import os
 import sys
 
 repo_root, wt_dir = sys.argv[1], sys.argv[2]
+
+def extract_fn(text: str, marker: str) -> str:
+    start = text.index(marker)
+    fn_idx = text.index("fn ", start)
+    brace_start = text.index("{", fn_idx)
+    depth = 0
+    for i in range(brace_start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    raise RuntimeError(f"Unbalanced braces for {marker}")
 
 mod_tests_targets = [
     (
@@ -64,18 +79,18 @@ for rel_path, marker in mod_tests_targets:
     base_dst = os.path.join(wt_dir, rel_path)
     head_text = open(head_src, encoding="utf-8").read()
     base_text = open(base_dst, encoding="utf-8").read()
-    start = head_text.index(marker)
+    fn_src = extract_fn(head_text, marker)
     last_brace = base_text.rfind("}")
     with open(base_dst, "w", encoding="utf-8") as f:
-        f.write(base_text[:last_brace] + "\n" + head_text[start:])
+        f.write(base_text[:last_brace] + "\n" + fn_src + "\n}\n")
 
 cache_rel = "src/cache/simple_tests.rs"
 cache_marker = "#[test]\nfn test_c12_7_lru_page_cache_invalidation_recovery_eof_read_writeback_and_zero_shards()"
 head_cache = open(os.path.join(repo_root, cache_rel), encoding="utf-8").read()
 base_cache = open(os.path.join(wt_dir, cache_rel), encoding="utf-8").read()
-start_cache = head_cache.index(cache_marker)
+fn_cache = extract_fn(head_cache, cache_marker)
 with open(os.path.join(wt_dir, cache_rel), "w", encoding="utf-8") as f:
-    f.write(base_cache + "\n" + head_cache[start_cache:])
+    f.write(base_cache + "\n" + fn_cache + "\n")
 PY
 
 run_and_assert_red() {
@@ -108,7 +123,7 @@ run_and_assert_red() {
     fi
 }
 
-echo "=== Stage 13 (C12.1..C12.8) RED checks on 52ae648 ==="
+echo "=== Part 1: Stage 13 (C12.1..C12.8) RED checks on 52ae648 ==="
 run_and_assert_red "52ae648" \
     "test_c12_1_int_vec_from_slice_returns_err_instead_of_aborting_on_invalid_element_width" \
     "verify(mem::size_of::<T>() >= 1 && mem::size_of::<T>() <= 8) failed: element size 16 must be between 1 and 8 bytes !"
@@ -140,4 +155,25 @@ run_and_assert_red "52ae648" \
     "test_c12_8_statistics_memory_breakdown_overwrite_and_functional_accumulators" \
     "MemoryBreakdown::total must equal sum of components after overwriting key"
 
-echo "All 10 Stage 13 (C12) RED checks verified cleanly with expected runtime failure signatures!"
+echo "=== Part 2: Stage 13 (S33-R1) RED check on 7e85f36 ==="
+git -C "$WT_DIR" checkout --force 7e85f36 >/dev/null 2>&1
+
+python3 - "$REPO_ROOT" "$WT_DIR" <<'PY'
+import os
+import sys
+
+repo_root, wt_dir = sys.argv[1], sys.argv[2]
+cache_rel = "src/cache/simple_tests.rs"
+marker = "#[test]\nfn test_s33_r1_concurrent_writes_readonly_rejection_and_dirty_eviction_writeback()"
+head_cache = open(os.path.join(repo_root, cache_rel), encoding="utf-8").read()
+base_cache = open(os.path.join(wt_dir, cache_rel), encoding="utf-8").read()
+start = head_cache.index(marker)
+with open(os.path.join(wt_dir, cache_rel), "w", encoding="utf-8") as f:
+    f.write(base_cache + "\n" + head_cache[start:])
+PY
+
+run_and_assert_red "7e85f36" \
+    "test_s33_r1_concurrent_writes_readonly_rejection_and_dirty_eviction_writeback" \
+    "lost concurrent write"
+
+echo "All 11 Stage 13 (C12 + S33-R1) RED checks verified cleanly with expected runtime failure signatures!"

@@ -243,8 +243,9 @@ mod tests {
     #[test]
     fn test_monotonic_encoding() {
         // encode must be monotonically non-decreasing
+        let limit = if cfg!(miri) { 4_096u32 } else { 100_000u32 };
         let mut prev_byte = 0u8;
-        for i in 0..100_000u32 {
+        for i in 0..limit {
             let byte = FieldnormEncoder::encode(i);
             assert!(
                 byte >= prev_byte,
@@ -273,7 +274,8 @@ mod tests {
     #[test]
     fn test_roundtrip_lower_bound() {
         // decode(encode(x)) <= x for all x (decoded is the bucket's lower bound)
-        for i in 0..100_000u32 {
+        let limit = if cfg!(miri) { 4_096u32 } else { 100_000u32 };
+        for i in 0..limit {
             let decoded = FieldnormEncoder::decode(FieldnormEncoder::encode(i));
             assert!(
                 decoded <= i,
@@ -285,7 +287,8 @@ mod tests {
     #[test]
     fn test_quantization_error_bounded() {
         // Quantization error should not exceed ~12.5% for values >= 16
-        for i in 16..100_000u32 {
+        let limit = if cfg!(miri) { 4_096u32 } else { 100_000u32 };
+        for i in 16..limit {
             let error = FieldnormEncoder::quantization_error(i);
             assert!(
                 error < 0.15, // generous bound
@@ -299,8 +302,15 @@ mod tests {
         // Encoding should use a wide range of byte values
         // Max byte for u32::MAX is 239 (exponent=29, mantissa=7), so 240 distinct values
         let mut seen = [false; 256];
-        for i in 0..10_000_000u32 {
-            seen[FieldnormEncoder::encode(i) as usize] = true;
+        if cfg!(miri) {
+            for b in 0..240u8 {
+                let val = FieldnormEncoder::decode(b);
+                seen[FieldnormEncoder::encode(val) as usize] = true;
+            }
+        } else {
+            for i in 0..10_000_000u32 {
+                seen[FieldnormEncoder::encode(i) as usize] = true;
+            }
         }
         let used = seen.iter().filter(|&&s| s).count();
         assert!(
