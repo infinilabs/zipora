@@ -260,6 +260,8 @@ struct FileEntry {
     path: PathBuf,
     /// File size in bytes
     size: u64,
+    /// Whether the file handle was opened with write permission
+    writable: bool,
 }
 
 impl Default for FileManager {
@@ -280,14 +282,19 @@ impl FileManager {
     /// Open a file and register it with the manager
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<FileId> {
         let path = path.as_ref().to_path_buf();
-        let file = std::fs::OpenOptions::new()
+        let (file, writable) = match std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(&path)
-            .or_else(|_| File::open(&path))
-            .map_err(|e| {
-                ZiporaError::invalid_data(format!("Failed to open file {:?}: {}", path, e))
-            })?;
+        {
+            Ok(file) => (file, true),
+            Err(_) => {
+                let file = File::open(&path).map_err(|e| {
+                    ZiporaError::invalid_data(format!("Failed to open file {:?}: {}", path, e))
+                })?;
+                (file, false)
+            }
+        };
 
         let size = file
             .metadata()
@@ -303,6 +310,7 @@ impl FileManager {
             backing: FileBacking::Real(file),
             path,
             size,
+            writable,
         };
 
         let mut files = self
@@ -322,6 +330,7 @@ impl FileManager {
             backing: FileBacking::Virtual(Vec::new()),
             path: PathBuf::from(format!("<virtual:{}>", file_id)),
             size: 0,
+            writable: true,
         };
         let mut files = self
             .files
@@ -329,6 +338,27 @@ impl FileManager {
             .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
         files.insert(file_id, entry);
         Ok(file_id)
+    }
+
+    /// Ensure that a registered file is open with write permission
+    pub fn ensure_writable(&self, file_id: FileId) -> Result<()> {
+        let files = self
+            .files
+            .read()
+            .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
+
+        let entry = files
+            .get(&file_id)
+            .ok_or_else(|| ZiporaError::invalid_data(format!("File ID {} not found", file_id)))?;
+
+        if !entry.writable {
+            return Err(ZiporaError::invalid_data(format!(
+                "File {:?} (ID {}) is opened read-only",
+                entry.path, file_id
+            )));
+        }
+
+        Ok(())
     }
 
     /// Get file size
@@ -451,6 +481,13 @@ impl FileManager {
             .get_mut(&file_id)
             .ok_or_else(|| ZiporaError::invalid_data(format!("File ID {} not found", file_id)))?;
 
+        if !entry.writable {
+            return Err(ZiporaError::invalid_data(format!(
+                "File {:?} (ID {}) is opened read-only",
+                entry.path, file_id
+            )));
+        }
+
         let offset = Self::page_aligned_offset(page_id);
         let end_offset = offset + data.len() as u64;
 
@@ -469,7 +506,10 @@ impl FileManager {
                     ))
                 })?;
                 file.flush().map_err(|e| {
-                    ZiporaError::invalid_data(format!("Failed to flush file {:?}: {}", entry.path, e))
+                    ZiporaError::invalid_data(format!(
+                        "Failed to flush file {:?}: {}",
+                        entry.path, e
+                    ))
                 })?;
             }
             FileBacking::Virtual(buf) => {

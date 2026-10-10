@@ -180,8 +180,9 @@ impl LruPageCache {
 
     /// Write data into cache and mark affected pages as dirty for write-back
     pub fn write(&self, file_id: FileId, offset: u64, data: &[u8]) -> Result<()> {
+        self.file_manager.ensure_writable(file_id)?;
+
         if data.is_empty() {
-            let _ = self.file_manager.file_size(file_id)?;
             return Ok(());
         }
 
@@ -193,18 +194,12 @@ impl LruPageCache {
         let mut data_pos = 0usize;
 
         for page_id in start_page..=end_page {
-            let mut page_data = self.get_page(file_id, page_id)?;
             let page_start_offset = FileManager::page_aligned_offset(page_id);
             let offset_in_page = (current_offset - page_start_offset) as usize;
             let bytes_to_write = std::cmp::min(data.len() - data_pos, PAGE_SIZE - offset_in_page);
             let required_len = offset_in_page + bytes_to_write;
-            if page_data.len() < required_len {
-                page_data.resize(required_len, 0);
-            }
-            page_data[offset_in_page..required_len]
-                .copy_from_slice(&data[data_pos..data_pos + bytes_to_write]);
-
             let cache_key = (file_id, page_id);
+
             {
                 let mut inner = self
                     .inner
@@ -213,7 +208,15 @@ impl LruPageCache {
                 let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
                     ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
                 })?;
-                inner.insert(cache_key, page_data);
+
+                self.ensure_page_cached_locked(file_id, page_id, &mut inner, &mut tracker)?;
+
+                let page_data = inner.entry(cache_key).or_default();
+                if page_data.len() < required_len {
+                    page_data.resize(required_len, 0);
+                }
+                page_data[offset_in_page..required_len]
+                    .copy_from_slice(&data[data_pos..data_pos + bytes_to_write]);
                 tracker.mark_accessed(cache_key);
                 tracker.mark_dirty(cache_key);
             }
@@ -225,45 +228,27 @@ impl LruPageCache {
         Ok(())
     }
 
-    /// Get a page from cache or load it from file
-    fn get_page(&self, file_id: FileId, page_id: PageId) -> Result<Vec<u8>> {
+    /// Ensure `(file_id, page_id)` is loaded in `inner` while holding both `inner` and `tracker` locks
+    fn ensure_page_cached_locked(
+        &self,
+        file_id: FileId,
+        page_id: PageId,
+        inner: &mut PageCacheMap,
+        tracker: &mut InvalidationTracker,
+    ) -> Result<()> {
         let cache_key = (file_id, page_id);
 
-        // Consume pending invalidation if present and evict stale entry before reload
-        let was_invalidated = {
-            let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
-                ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
-            })?;
-            tracker.take_invalidated(&cache_key)
-        };
-        if was_invalidated {
-            self.remove_from_cache(cache_key)?;
+        if tracker.take_invalidated(&cache_key) {
+            inner.remove(&cache_key);
         }
 
-        // First, try to get from cache
-        let cached_result = {
-            let inner = self
-                .inner
-                .lock()
-                .map_err(|_| ZiporaError::invalid_data("Cache lock poisoned".to_string()))?;
-
-            inner.get(&cache_key).cloned()
-        };
-
-        if let Some(cached_page) = cached_result {
-            // Update access sequence
-            {
-                let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
-                    ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
-                })?;
-                tracker.mark_accessed(cache_key);
-            }
-
+        if inner.contains_key(&cache_key) {
+            tracker.mark_accessed(cache_key);
             self.stats.record_hit(CacheHitType::Hit);
-            return Ok(cached_page);
+            return Ok(());
         }
 
-        // Cache miss - load from file manager
+        // Cache miss - load from file manager while holding the cache lock
         self.stats.record_miss();
 
         let mut page_buffer = vec![0u8; PAGE_SIZE];
@@ -278,52 +263,50 @@ impl LruPageCache {
             }
         };
 
-        // If we read less than a full page, truncate to valid file bytes
         if bytes_read < PAGE_SIZE {
             page_buffer.truncate(bytes_read);
         }
 
-        // Insert into cache with LRU eviction
-        let mut dirty_writeback: Option<((FileId, PageId), Vec<u8>)> = None;
-        {
-            let mut inner = self
-                .inner
-                .lock()
-                .map_err(|_| ZiporaError::invalid_data("Cache lock poisoned".to_string()))?;
-            let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
-                ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
-            })?;
-
-            let max_pages = (self.config.capacity / self.config.page_size).max(1);
-            if inner.len() >= max_pages && !inner.contains_key(&cache_key) {
-                let victim_key = tracker
-                    .find_lru_page()
-                    .or_else(|| inner.keys().next().copied());
-                if let Some(lru_key) = victim_key {
-                    let evicted_data = inner.remove(&lru_key);
-                    if tracker.is_dirty(&lru_key)
-                        && let Some(data) = evicted_data
-                    {
-                        dirty_writeback = Some((lru_key, data));
-                    }
-                    tracker.evict(lru_key);
-                    self.stats.record_eviction();
-                    self.stats.record_hit(CacheHitType::EvictedOthers);
+        let max_pages = (self.config.capacity / self.config.page_size).max(1);
+        if inner.len() >= max_pages {
+            let victim_key = tracker
+                .find_lru_page()
+                .or_else(|| inner.keys().next().copied());
+            if let Some(lru_key) = victim_key {
+                if tracker.is_dirty(&lru_key)
+                    && let Some(dirty_data) = inner.get(&lru_key)
+                {
+                    self.file_manager
+                        .write_page(lru_key.0, lru_key.1, dirty_data)?;
                 }
+                inner.remove(&lru_key);
+                tracker.evict(lru_key);
+                self.stats.record_eviction();
+                self.stats.record_hit(CacheHitType::EvictedOthers);
             }
-
-            inner.insert(cache_key, page_buffer.clone());
-            tracker.mark_accessed(cache_key);
-            self.stats.record_bytes_cached(page_buffer.len() as u64);
-            self.stats.record_hit(CacheHitType::InitialFree);
         }
 
-        if let Some(((dirty_fid, dirty_pid), dirty_data)) = dirty_writeback {
-            self.file_manager
-                .write_page(dirty_fid, dirty_pid, &dirty_data)?;
-        }
+        self.stats.record_bytes_cached(page_buffer.len() as u64);
+        self.stats.record_hit(CacheHitType::InitialFree);
+        inner.insert(cache_key, page_buffer);
+        tracker.mark_accessed(cache_key);
+        Ok(())
+    }
 
-        Ok(page_buffer)
+    /// Get a page from cache or load it from file
+    fn get_page(&self, file_id: FileId, page_id: PageId) -> Result<Vec<u8>> {
+        let cache_key = (file_id, page_id);
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| ZiporaError::invalid_data("Cache lock poisoned".to_string()))?;
+        let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
+            ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
+        })?;
+
+        self.ensure_page_cached_locked(file_id, page_id, &mut inner, &mut tracker)?;
+
+        Ok(inner.get(&cache_key).cloned().unwrap_or_default())
     }
 
     /// Batch read operations for improved performance
@@ -381,15 +364,16 @@ impl LruPageCache {
     pub fn invalidate_page(&self, file_id: FileId, page_id: PageId) -> Result<()> {
         let cache_key = (file_id, page_id);
 
-        // Mark as invalidated and remove from active cache
-        {
-            let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
-                ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
-            })?;
-            tracker.invalidate(cache_key);
-        }
-
-        self.remove_from_cache(cache_key)
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| ZiporaError::invalid_data("Cache lock poisoned".to_string()))?;
+        let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
+            ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
+        })?;
+        inner.remove(&cache_key);
+        tracker.invalidate(cache_key);
+        Ok(())
     }
 
     /// Invalidate a range of pages
@@ -415,6 +399,8 @@ impl LruPageCache {
 
     /// Mark a page as dirty (needs write-back)
     pub fn mark_dirty(&self, file_id: FileId, page_id: PageId) -> Result<()> {
+        self.file_manager.ensure_writable(file_id)?;
+
         let cache_key = (file_id, page_id);
 
         let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
@@ -427,50 +413,30 @@ impl LruPageCache {
 
     /// Flush all dirty pages for a file to underlying storage
     pub fn flush_file(&self, file_id: FileId) -> Result<()> {
-        let dirty_pages: Vec<(FileId, PageId)> = {
-            let tracker = self.invalidation_tracker.lock().map_err(|_| {
-                ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
-            })?;
-
-            let mut pages: Vec<_> = tracker
-                .dirty_pages
-                .iter()
-                .filter(|(fid, _)| *fid == file_id)
-                .copied()
-                .collect();
-            pages.sort_unstable_by_key(|&(_, pid)| pid);
-            pages
-        };
-
-        for (fid, page_id) in dirty_pages {
-            let page_data = {
-                let inner = self
-                    .inner
-                    .lock()
-                    .map_err(|_| ZiporaError::invalid_data("Cache lock poisoned".to_string()))?;
-                inner.get(&(fid, page_id)).cloned()
-            };
-
-            if let Some(data) = page_data {
-                self.file_manager.write_page(fid, page_id, &data)?;
-            }
-
-            let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
-                ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
-            })?;
-            tracker.mark_clean((fid, page_id));
-        }
-
-        Ok(())
-    }
-
-    /// Remove a page from cache (internal helper)
-    fn remove_from_cache(&self, cache_key: (FileId, PageId)) -> Result<()> {
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| ZiporaError::invalid_data("Cache lock poisoned".to_string()))?;
-        inner.remove(&cache_key);
+        let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
+            ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
+        })?;
+
+        let mut dirty_pages: Vec<(FileId, PageId)> = tracker
+            .dirty_pages
+            .iter()
+            .filter(|(fid, _)| *fid == file_id)
+            .copied()
+            .collect();
+        dirty_pages.sort_unstable_by_key(|&(_, pid)| pid);
+
+        for (fid, page_id) in dirty_pages {
+            if let Some(data) = inner.get(&(fid, page_id)) {
+                self.file_manager.write_page(fid, page_id, data)?;
+            }
+            tracker.mark_clean((fid, page_id));
+        }
+        let _ = &mut inner;
+
         Ok(())
     }
 

@@ -300,8 +300,17 @@ fn test_c12_7_lru_page_cache_invalidation_recovery_eof_read_writeback_and_zero_s
     );
     assert_eq!(eof_buf.data(), &payload[..]);
 
-    // Flush file must succeed
+    // Dirty page write-back: overwrite backing file on disk, mark cached page 0 dirty,
+    // and verify flush_file writes cached page 0 back to disk.
+    std::fs::write(temp_file.path(), vec![0u8; payload.len()])?;
+    cache.mark_dirty(file_id, 0)?;
     cache.flush_file(file_id)?;
+    let flushed_disk = std::fs::read(temp_file.path())?;
+    assert_eq!(
+        &flushed_disk[..PAGE_SIZE],
+        &payload[..PAGE_SIZE],
+        "flush_file must write dirty cached page back to disk"
+    );
 
     // Unregistered FileId must return an error instead of silently caching empty pages
     assert!(cache.read(999_999, 0, 64).is_err());
@@ -331,5 +340,106 @@ fn test_c12_7_lru_page_cache_invalidation_recovery_eof_read_writeback_and_zero_s
     assert!(reserved_buf.capacity() >= cap_before);
 
     cache.close_file(file_id)?;
+    Ok(())
+}
+
+#[test]
+fn test_s33_r1_concurrent_writes_readonly_rejection_and_dirty_eviction_writeback() -> Result<()> {
+    use std::sync::{Arc, Barrier};
+
+    let mut temp_file = NamedTempFile::new()?;
+    temp_file.write_all(&vec![0u8; PAGE_SIZE])?;
+    temp_file.flush()?;
+
+    let cache = Arc::new(LruPageCache::new(PageCacheConfig::balanced())?);
+    let file_id = cache.open_file(temp_file.path())?;
+
+    let rounds = if cfg!(miri) { 4 } else { 150 };
+    for round in 0..rounds {
+        std::fs::write(temp_file.path(), vec![0u8; PAGE_SIZE])?;
+        cache.invalidate_page(file_id, 0)?;
+
+        let barrier = Arc::new(Barrier::new(2));
+        let c1 = Arc::clone(&cache);
+        let b1 = Arc::clone(&barrier);
+        let t1 = std::thread::spawn(move || {
+            b1.wait();
+            c1.write(file_id, 0, &[0xAA; 64]).unwrap();
+        });
+
+        let c2 = Arc::clone(&cache);
+        let b2 = Arc::clone(&barrier);
+        let t2 = std::thread::spawn(move || {
+            b2.wait();
+            c2.write(file_id, 64, &[0xBB; 64]).unwrap();
+        });
+
+        t1.join().unwrap();
+        t2.join().unwrap();
+
+        let buf = cache.read(file_id, 0, 128)?;
+        assert_eq!(
+            &buf.data()[..64],
+            &[0xAA; 64],
+            "lost concurrent write at 0..64 in round {round}"
+        );
+        assert_eq!(
+            &buf.data()[64..128],
+            &[0xBB; 64],
+            "lost concurrent write at 64..128 in round {round}"
+        );
+    }
+    cache.close_file(file_id)?;
+
+    // Read-only file must reject write() and mark_dirty() immediately (unless running as root where open(write) succeeds)
+    let mut ro_temp = NamedTempFile::new()?;
+    ro_temp.write_all(b"readonly data")?;
+    ro_temp.flush()?;
+    let mut perms = std::fs::metadata(ro_temp.path())?.permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(ro_temp.path(), perms.clone())?;
+
+    let ro_writable_by_os = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(ro_temp.path())
+        .is_ok();
+    let ro_fid = cache.open_file(ro_temp.path())?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut rw_perms = perms;
+        rw_perms.set_mode(0o644);
+        let _ = std::fs::set_permissions(ro_temp.path(), rw_perms);
+    }
+
+    if !ro_writable_by_os {
+        assert!(
+            cache.write(ro_fid, 0, b"nope").is_err(),
+            "write() to a read-only file must return Err immediately"
+        );
+        assert!(
+            cache.mark_dirty(ro_fid, 0).is_err(),
+            "mark_dirty() on a read-only file must return Err immediately"
+        );
+    }
+    cache.close_file(ro_fid)?;
+
+    // Dirty eviction write-back under 1-page capacity
+    let mut evict_temp = NamedTempFile::new()?;
+    evict_temp.write_all(&vec![0u8; PAGE_SIZE * 2])?;
+    evict_temp.flush()?;
+    let one_page_cfg = PageCacheConfig::balanced()
+        .with_capacity(PAGE_SIZE)
+        .with_shards(1);
+    let one_page_cache = LruPageCache::new(one_page_cfg)?;
+    let efid = one_page_cache.open_file(evict_temp.path())?;
+    one_page_cache.write(efid, 0, b"DIRTY_EVICT_OK")?;
+    let _ = one_page_cache.read(efid, PAGE_SIZE as u64, 16)?;
+    let reloaded = one_page_cache.read(efid, 0, 14)?;
+    assert_eq!(reloaded.data(), b"DIRTY_EVICT_OK");
+    one_page_cache.close_file(efid)?;
+
     Ok(())
 }
