@@ -43,14 +43,11 @@ static HUGEPAGE_ALLOCATIONS: Mutex<Vec<HugePageAllocation>> = Mutex::new(Vec::ne
 #[cfg(target_os = "linux")]
 struct HugePageAllocation {
     ptr: *mut u8,
-    size: usize,
-    page_size: usize,
 }
 
 // SAFETY: HugePageAllocation is Send because:
 // 1. `ptr: *mut u8` - Raw pointer to mmap'd hugepage memory. The allocation
 //    owns this memory exclusively. Hugepages are not thread-local.
-// 2. `size/page_size: usize` - Primitive fields, trivially Send.
 #[cfg(target_os = "linux")]
 unsafe impl Send for HugePageAllocation {}
 
@@ -194,11 +191,7 @@ impl HugePage {
         let ptr = unsafe { NonNull::new_unchecked(ptr as *mut u8) };
 
         // Track the allocation
-        let allocation = HugePageAllocation {
-            ptr: ptr.as_ptr(),
-            size: aligned_size,
-            page_size,
-        };
+        let allocation = HugePageAllocation { ptr: ptr.as_ptr() };
 
         HUGEPAGE_ALLOCATIONS
             .lock()
@@ -231,10 +224,7 @@ impl Drop for HugePage {
         let mut allocations = HUGEPAGE_ALLOCATIONS
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        allocations.retain(|alloc| {
-            (alloc.ptr, alloc.size, alloc.page_size)
-                != (self.ptr.as_ptr(), aligned_size, self.page_size)
-        });
+        allocations.retain(|alloc| alloc.ptr != self.ptr.as_ptr());
 
         HUGEPAGE_COUNT.fetch_sub(aligned_size / self.page_size, Ordering::Relaxed);
     }

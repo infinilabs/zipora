@@ -570,7 +570,7 @@ impl DictZipBlobStoreBuilder {
         let compressor = PaZipCompressor::new(
             dictionary.clone(),
             self.config.compressor_config.clone(),
-            memory_pool.clone(),
+            memory_pool,
         )?;
 
         // Initialize cache
@@ -596,7 +596,6 @@ impl DictZipBlobStoreBuilder {
             storage: HashMap::new(),
             cache: Arc::new(RwLock::new(cache)),
             stats: Arc::new(RwLock::new(stats)),
-            memory_pool: Some(memory_pool),
             next_id: 0,
             // Lazy-initialized entropy encoders/decoders
             huffman_encoder: RefCell::new(None),
@@ -643,8 +642,6 @@ pub struct DictZipBlobStore {
     cache: Arc<RwLock<LruMap<RecordId, Vec<u8>>>>,
     /// Statistics
     stats: Arc<RwLock<DictZipBlobStoreStats>>,
-    /// Memory pool
-    memory_pool: Option<Arc<SecureMemoryPool>>,
     /// Next record ID
     next_id: u64,
 
@@ -660,11 +657,6 @@ pub struct DictZipBlobStore {
 }
 
 impl DictZipBlobStore {
-    /// Get a reference to the backing secure memory pool, if configured.
-    #[inline]
-    pub fn memory_pool(&self) -> Option<&Arc<SecureMemoryPool>> {
-        self.memory_pool.as_ref()
-    }
     /// Build DictZipBlobStore from training samples with NestLoudsTrieConfig (matches C++ pattern)
     /// This follows the C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_training_samples(
@@ -856,7 +848,7 @@ impl DictZipBlobStore {
             let compressor = PaZipCompressor::new(
                 dictionary.clone(),
                 config.compressor_config.clone(),
-                memory_pool.clone(),
+                memory_pool,
             )?;
 
             // Initialize cache
@@ -876,7 +868,6 @@ impl DictZipBlobStore {
                 storage: HashMap::new(),
                 cache: Arc::new(RwLock::new(cache)),
                 stats: Arc::new(RwLock::new(stats)),
-                memory_pool: Some(memory_pool),
                 next_id: 0,
                 // Lazy-initialized entropy encoders/decoders
                 huffman_encoder: RefCell::new(None),
@@ -914,14 +905,15 @@ impl DictZipBlobStore {
         #[cfg(feature = "serde")]
         {
             let new_dictionary = SuffixArrayDictionary::load_from_file(_path)?;
-            let memory_pool = self
-                .memory_pool
-                .as_ref()
-                .ok_or_else(|| ZiporaError::invalid_data("Memory pool not initialized"))?;
+            let memory_pool = if let Some(pool_config) = &self.config.memory_pool_config {
+                SecureMemoryPool::new(pool_config.clone())?
+            } else {
+                SecureMemoryPool::new(SecurePoolConfig::new(4096, 1024, 8))?
+            };
             let new_compressor = PaZipCompressor::new(
                 new_dictionary.clone(),
                 self.config.compressor_config.clone(),
-                Arc::clone(memory_pool),
+                memory_pool,
             )?;
 
             // Replace dictionary and compressor
