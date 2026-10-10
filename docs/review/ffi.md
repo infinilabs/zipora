@@ -17,6 +17,9 @@
 | `b057974` | `fix(ffi): guard error callback against recursive error re-entrancy [S31-R4]` | `2 files changed, 52 insertions(+), 7 deletions(-)` |
 | `4d2855f` | `fix(ffi,memory): validate chunk layout in memory_pool_new and document max_chunks [S31-R5]` | `5 files changed, 54 insertions(+), 3 deletions(-)` |
 | `1cd1bb0` | `test(scripts): add reproducible C11 and S31 RED verification script [S31-R6]` | `1 file changed, 95 insertions(+)` |
+| `f1f923e` | `docs(review): fix S31-R6 ledger claims and document S31 remediation [S31-R6]` | `1 file changed, 76 insertions(+), 55 deletions(-)` |
+| `0d6402f` | `test(ffi): assert exact runtime failure signatures in verify_c11_red.sh [S32-R1]` | `1 file changed, 43 insertions(+), 30 deletions(-)` |
+| `52ae648` | `test(ffi): replace text grepping with cargo metadata and gcc syntax checks in ffi_c_smoke [S32-R2]` | `1 file changed, 95 insertions(+), 19 deletions(-)` |
 
 ---
 
@@ -32,8 +35,8 @@
 - Replaced repeated `f7e39ad` numbers under column `1141a79` (`vec_vec_u8_100kx3_de`, `vec_box_u64_100k_de`, `vec_rc_u64_100k_de`, `hashmap_u32_u64_100k_de`) with `—` in `docs/review/io.md` §12.4.
 - Credited the `313.8 ns/task` measurement from `bench_s29_r1_executor_timings` explicitly to `f37cf61` in `docs/review/thread_and_concurrency.md` (§1, §7.5, §9.1).
 
-### 2.3 `52b3d4d` — `S30-R3`: Drop Bimodal Single-Thread Metric from `bench_s29_r1_executor_timings`
-- Removed the single-thread `1t_100k` section from `bench_s29_r1_executor_timings` (`1cd1bb0:src/concurrency/work_stealing.rs:1803-1858`), leaving `mp8_400k` (`316.6 ns/task` 5-round min at `e91ef17`), and removed the `1t_100k` figures from `docs/review/thread_and_concurrency.md` §11.2.
+### 2.3 `52b3d4d` — `S30-R3` (`S32-R3`): Drop Bimodal Single-Thread Metric from `bench_s29_r1_executor_timings`
+- Removed the single-thread `1t_100k` section from `bench_s29_r1_executor_timings` (`1cd1bb0:src/concurrency/work_stealing.rs:1803-1858`), leaving `mp8_400k` (`316.6 ns/task` per the reviewer's S31 5-run minimum measurement at `e91ef17`), and removed the `1t_100k` figures from `docs/review/thread_and_concurrency.md` §11.2.
 
 ---
 
@@ -103,6 +106,11 @@ memory_pool_new(usize::MAX, 1) must fail upfront on invalid Layout
 RED check test_s31_r5_memory_pool_new_rejects_invalid_layout_and_documents_max_chunks on e91ef17: exit_code=101
 All 6 RED checks verified cleanly!
 ```
+
+### 4.7 `0d6402f..52ae648` — `S32-R1..R3`: Runtime Failure Assertions & Compiler-Driven Smoke Checks
+- **`S32-R1` (`0d6402f`)**: Hardened `run_and_assert_red` in `0d6402f:scripts/verify_c11_red.sh:33-107` to assert both `grep -Fq "Running unittests"` (proving compilation succeeded and the test binary executed) and each test's specific runtime failure substring (`slice::from_raw_parts_mut requires the pointer to be aligned and non-null`, `right: NotFound`, `No error information available`, `C11.2: re-entrant zipora_set_error_callback inside error callback deadlocked on ERROR_CALLBACK`, `overflowed its stack`, and `memory_pool_new(usize::MAX, 1) must fail upfront on invalid Layout`).
+- **`S32-R2` (`52ae648`)**: Replaced raw text scanning in `test_s31_r2_cargo_toml_lib_crate_type_is_rlib_only` (`52ae648:tests/ffi_c_smoke.rs:319-365`) with `cargo metadata --format-version 1 --no-deps --locked` JSON inspection (`targets[].crate_types == ["rlib"]`), and updated `test_s31_r3_header_exports_only_types_used_by_c_functions` (`52ae648:tests/ffi_c_smoke.rs:368-437`) to verify via `gcc -x c -std=c11 -fsyntax-only` that the 6 exported types compile while each of the 11 dropped types is rejected by the C compiler.
+- **`S32-R3`**: Updated §2.3 above to attribute the `316.6 ns/task` figure to the reviewer's S31 5-run minimum measurement.
 
 ---
 
