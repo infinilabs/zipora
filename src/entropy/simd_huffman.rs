@@ -454,8 +454,12 @@ impl SimdHuffmanEncoder {
     }
 
     /// Unsafe SSE4.2 + BMI2 implementation
+    ///
+    /// # Safety
+    /// Caller must ensure `sse4.2` and `bmi2` are supported on the current CPU.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "sse4.2,bmi2")]
+    // SAFETY: Caller verified `sse4.2` and `bmi2` runtime CPU feature support.
     unsafe fn encode_sse42_bmi2_impl(&self, data: &[u8]) -> Result<Vec<u8>> {
         // Similar to AVX2+BMI2 but using SSE4.2 16-byte operations
         // Implementation details similar to above but with SSE intrinsics

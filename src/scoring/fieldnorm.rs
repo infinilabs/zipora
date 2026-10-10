@@ -127,10 +127,19 @@ impl FieldnormEncoder {
     /// * `b` - BM25 length normalization parameter (typically 0.75)
     pub fn build_norm_table(avg_dl: f32, k1: f32, b: f32) -> [f32; 256] {
         let mut table = [0.0f32; 256];
-        let inv_avg_dl = if avg_dl > 0.0 { 1.0 / avg_dl } else { 0.0 };
+        let inv_avg_dl = if avg_dl > 0.0 && (1.0 / avg_dl).is_finite() {
+            1.0 / avg_dl
+        } else {
+            0.0
+        };
         for i in 0..256u16 {
             let dl = Self::decode(i as u8) as f32;
-            table[i as usize] = k1 * (1.0 - b + b * dl * inv_avg_dl);
+            let ratio = if dl == 0.0 || inv_avg_dl == 0.0 {
+                0.0
+            } else {
+                (dl * inv_avg_dl).min(f32::MAX / k1.max(1.0))
+            };
+            table[i as usize] = (k1 * (1.0 - b + b * ratio)).min(f32::MAX);
         }
         table
     }
@@ -164,7 +173,12 @@ impl FieldnormEncoder {
             let tf_f = tf as f32;
             for byte in 0..256usize {
                 let len_norm = norm_table[byte];
-                table[tf as usize][byte] = idf * tf_f * k1p1 / (tf_f + len_norm);
+                let denom = tf_f + len_norm;
+                table[tf as usize][byte] = if denom > 0.0 {
+                    idf * tf_f * k1p1 / denom
+                } else {
+                    0.0
+                };
             }
         }
         table

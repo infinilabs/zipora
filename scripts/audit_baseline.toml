@@ -3,7 +3,7 @@
 # Any increase causes the audit to fail. Reductions must update this file.
 
 [unsafe_audit]
-max_undocumented = 3
+max_undocumented = 0
 max_precondition_violations = 0
 
 [api_honesty]

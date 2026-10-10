@@ -70,7 +70,12 @@ impl<'a> Bm25BatchScorer<'a> {
     pub fn score(&self, fieldnorm_byte: u8, tf: u16) -> f32 {
         let tf_f = tf as f32;
         let len_norm = self.norm_table[fieldnorm_byte as usize];
-        self.idf_k1p1 * tf_f / (tf_f + len_norm)
+        let denom = tf_f + len_norm;
+        if denom > 0.0 {
+            self.idf_k1p1 * tf_f / denom
+        } else {
+            0.0
+        }
     }
 
     /// Batch-score a posting list.
@@ -103,7 +108,7 @@ impl<'a> Bm25BatchScorer<'a> {
             }
         }
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", feature = "simd"))]
         {
             if crate::algorithms::simd_search::has_avx2() {
                 // SAFETY: AVX2 support verified by runtime feature check.
@@ -135,13 +140,23 @@ impl<'a> Bm25BatchScorer<'a> {
         for i in 0..n {
             let tf_f = tfs[i] as f32;
             let len_norm = self.norm_table[fieldnorm_bytes[i] as usize];
-            scores[i] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+            let denom = tf_f + len_norm;
+            scores[i] = if denom > 0.0 {
+                self.idf_k1p1 * tf_f / denom
+            } else {
+                0.0
+            };
         }
     }
 
     /// AVX-512 batch scoring — 16 postings per iteration.
+    ///
+    /// # Safety
+    /// Caller must ensure `avx512f` is supported on the current CPU and that
+    /// `fieldnorm_bytes.len() >= n`, `tfs.len() >= n`, and `scores.len() >= n`.
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     #[target_feature(enable = "avx512f")]
+    // SAFETY: Caller verified `avx512f` runtime feature support and slice lengths `>= n`.
     unsafe fn batch_score_avx512(
         &self,
         fieldnorm_bytes: &[u8],
@@ -159,6 +174,7 @@ impl<'a> Bm25BatchScorer<'a> {
         // Gather indices are u8 values (0-255), table is [f32; 256], so always in bounds.
         unsafe {
             let idf_k1p1_vec = _mm512_set1_ps(self.idf_k1p1);
+            let zero_vec = _mm512_setzero_ps();
             let table = self.norm_table;
 
             for chunk in 0..chunks {
@@ -175,7 +191,8 @@ impl<'a> Bm25BatchScorer<'a> {
 
                 let denom = _mm512_add_ps(tfs_f32, norms);
                 let numer = _mm512_mul_ps(idf_k1p1_vec, tfs_f32);
-                let result = _mm512_div_ps(numer, denom);
+                let valid_mask = _mm512_cmp_ps_mask::<_CMP_GT_OQ>(denom, zero_vec);
+                let result = _mm512_maskz_div_ps(valid_mask, numer, denom);
 
                 _mm512_storeu_ps(scores.as_mut_ptr().add(base), result);
             }
@@ -190,7 +207,12 @@ impl<'a> Bm25BatchScorer<'a> {
             for i in 0..remainder {
                 let tf_f = rem_tfs[i] as f32;
                 let len_norm = self.norm_table[rem_fn[i] as usize];
-                rem_scores[i] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+                let denom = tf_f + len_norm;
+                rem_scores[i] = if denom > 0.0 {
+                    self.idf_k1p1 * tf_f / denom
+                } else {
+                    0.0
+                };
             }
         }
     }
@@ -199,8 +221,13 @@ impl<'a> Bm25BatchScorer<'a> {
     ///
     /// Gathers 8 norm factors from the L1-hot 1KB table with
     /// `_mm256_i32gather_ps`, then computes 8 BM25 scores using SIMD arithmetic.
-    #[cfg(target_arch = "x86_64")]
+    ///
+    /// # Safety
+    /// Caller must ensure `avx2` is supported on the current CPU and that
+    /// `fieldnorm_bytes.len() >= n`, `tfs.len() >= n`, and `scores.len() >= n`.
+    #[cfg(all(target_arch = "x86_64", feature = "simd"))]
     #[target_feature(enable = "avx2")]
+    // SAFETY: Caller verified `avx2` runtime feature support and slice lengths `>= n`.
     unsafe fn batch_score_avx2(
         &self,
         fieldnorm_bytes: &[u8],
@@ -215,6 +242,7 @@ impl<'a> Bm25BatchScorer<'a> {
         // scores.len() >= n (all asserted in caller). Each chunk accesses [base..base+8]
         // where base+8 <= n.
         let idf_k1p1_vec = _mm256_set1_ps(self.idf_k1p1);
+        let zero_vec = _mm256_setzero_ps();
         let table = self.norm_table;
 
         let chunks = n / 8;
@@ -238,10 +266,12 @@ impl<'a> Bm25BatchScorer<'a> {
                 let tfs_i32 = _mm256_cvtepu16_epi32(tfs_u16);
                 let tfs_f32 = _mm256_cvtepi32_ps(tfs_i32);
 
-                // BM25: idf_k1p1 * tf / (tf + norm)
+                // BM25: idf_k1p1 * tf / (tf + norm), zeroing lanes where denom <= 0.0
                 let denom = _mm256_add_ps(tfs_f32, norms);
                 let numer = _mm256_mul_ps(idf_k1p1_vec, tfs_f32);
-                let result = _mm256_div_ps(numer, denom);
+                let raw = _mm256_div_ps(numer, denom);
+                let valid_mask = _mm256_cmp_ps::<_CMP_GT_OQ>(denom, zero_vec);
+                let result = _mm256_and_ps(raw, valid_mask);
 
                 // Store 8 scores
                 _mm256_storeu_ps(scores.as_mut_ptr().add(base), result);
@@ -257,7 +287,12 @@ impl<'a> Bm25BatchScorer<'a> {
             for i in 0..remainder {
                 let tf_f = rem_tfs[i] as f32;
                 let len_norm = self.norm_table[rem_fn[i] as usize];
-                rem_scores[i] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+                let denom = tf_f + len_norm;
+                rem_scores[i] = if denom > 0.0 {
+                    self.idf_k1p1 * tf_f / denom
+                } else {
+                    0.0
+                };
             }
         }
     }
@@ -288,7 +323,12 @@ impl<'a> Bm25BatchScorer<'a> {
 
         let tf_f = tf as f32;
         let len_norm = self.norm_table[fieldnorm_bytes[doc_id as usize] as usize];
-        self.idf_k1p1 * tf_f / (tf_f + len_norm)
+        let denom = tf_f + len_norm;
+        if denom > 0.0 {
+            self.idf_k1p1 * tf_f / denom
+        } else {
+            0.0
+        }
     }
 
     /// Batch score with prefetch — scores `doc_ids` array with look-ahead prefetch.
@@ -326,7 +366,12 @@ impl<'a> Bm25BatchScorer<'a> {
 
             let tf_f = tfs[i] as f32;
             let len_norm = self.norm_table[fieldnorm_bytes[doc_ids[i] as usize] as usize];
-            scores[i] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+            let denom = tf_f + len_norm;
+            scores[i] = if denom > 0.0 {
+                self.idf_k1p1 * tf_f / denom
+            } else {
+                0.0
+            };
         }
     }
 }
@@ -671,5 +716,53 @@ mod tests {
         );
 
         assert!(scores.iter().all(|&s| s > 0.0));
+    }
+
+    #[test]
+    fn test_c12_5_bm25_zero_tf_zero_norm_and_subnormal_avg_dl_never_nan() {
+        // 1. When b = 1.0 (full length normalization) and doc length = 0 (fieldnorm_byte = 0),
+        // norm_table[0] == 0.0. Scoring a document with tf == 0 must return 0.0, not NaN (0.0 / 0.0).
+        let norm_table = FieldnormEncoder::build_norm_table(100.0, 1.2, 1.0);
+        assert_eq!(norm_table[0], 0.0);
+
+        let scorer = Bm25BatchScorer::new(&norm_table, 3.5, 1.2);
+        let single = scorer.score(0, 0);
+        assert!(
+            !single.is_nan() && single == 0.0,
+            "Bm25BatchScorer::score(0, 0) with b=1.0 must be 0.0, got {single}"
+        );
+
+        let fieldnorm_bytes = vec![0u8; 32];
+        let tfs = vec![0u16; 32];
+        let mut batch_scores = vec![-1.0f32; 32];
+        scorer.batch_score(&fieldnorm_bytes, &tfs, &mut batch_scores);
+        assert!(
+            batch_scores.iter().all(|&s| !s.is_nan() && s == 0.0),
+            "batch_score with tf=0 and norm=0 must be all 0.0, got {:?}",
+            &batch_scores[..8]
+        );
+
+        let mut scalar_scores = vec![-1.0f32; 32];
+        scorer.batch_score_scalar(&fieldnorm_bytes, &tfs, &mut scalar_scores, 32);
+        assert!(scalar_scores.iter().all(|&s| !s.is_nan() && s == 0.0));
+
+        let doc_ids: Vec<u32> = (0..32).collect();
+        let mut prefetch_scores = vec![-1.0f32; 32];
+        scorer.batch_score_with_prefetch(&fieldnorm_bytes, &doc_ids, &tfs, &mut prefetch_scores);
+        assert!(prefetch_scores.iter().all(|&s| !s.is_nan() && s == 0.0));
+        assert_eq!(scorer.score_with_prefetch(&fieldnorm_bytes, 0, 0, Some(1)), 0.0);
+
+        // 2. FieldnormEncoder::build_score_table with b = 1.0 must not have NaN at tf = 0, byte = 0.
+        let score_table = FieldnormEncoder::build_score_table(100.0, 1.2, 1.0, 3.5, 4);
+        assert_eq!(score_table[0][0], 0.0);
+
+        // 3. Subnormal avg_dl (1e-40) where 1.0 / avg_dl overflows f32::MAX must not produce NaN
+        // at byte = 0 (0.0 * INFINITY).
+        let subnormal_norms = FieldnormEncoder::build_norm_table(1e-40, 1.2, 0.75);
+        assert!(
+            subnormal_norms.iter().all(|v| v.is_finite()),
+            "subnormal avg_dl must produce finite norm_table entries, got norm[0]={}",
+            subnormal_norms[0]
+        );
     }
 }
