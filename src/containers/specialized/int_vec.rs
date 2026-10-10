@@ -7,8 +7,6 @@
 use crate::error::{Result, ZiporaError};
 use std::marker::PhantomData;
 use std::mem;
-// Import verification macros
-use crate::zipora_verify;
 
 #[cfg(not(debug_assertions))]
 mod performance_tests;
@@ -455,18 +453,18 @@ impl<T: PackedInt> IntVec<T> {
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     pub fn from_slice(values: &[T]) -> Result<Self> {
-        // Verify input parameters
-        crate::zipora_verify!(
-            values.len() <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
-            "input slice length {} too large for element size {}",
-            values.len(),
-            mem::size_of::<T>()
-        );
-        crate::zipora_verify!(
-            mem::size_of::<T>() >= 1 && mem::size_of::<T>() <= 8,
-            "element size {} must be between 1 and 8 bytes",
-            mem::size_of::<T>()
-        );
+        let elem_size = mem::size_of::<T>();
+        if !(1..=8).contains(&elem_size) {
+            return Err(ZiporaError::invalid_data(format!(
+                "element size {elem_size} must be between 1 and 8 bytes"
+            )));
+        }
+        if values.len() > (isize::MAX as usize) / elem_size {
+            return Err(ZiporaError::invalid_data(format!(
+                "input slice length {} too large for element size {elem_size}",
+                values.len()
+            )));
+        }
 
         let start_time = std::time::Instant::now();
 
@@ -519,24 +517,9 @@ impl<T: PackedInt> IntVec<T> {
     /// Uses BMI2 bit extraction when available, falls back to optimized
     /// bit manipulation for maximum performance across platforms.
     pub fn get(&self, index: usize) -> Option<T> {
-        // Verify data structure invariants
-        crate::zipora_verify!(
-            self.len <= (isize::MAX as usize),
-            "vector length {} exceeds maximum",
-            self.len
-        );
-        crate::zipora_verify!(
-            self.data.len() <= (isize::MAX as usize),
-            "data size {} exceeds maximum",
-            self.data.len()
-        );
-
         if index >= self.len {
             return None;
         }
-
-        // Verify index bounds with context
-        crate::zipora_verify_bounds!(index, self.len);
 
         let _ = self.stats.access_count.wrapping_add(1);
 
@@ -1542,4 +1525,41 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_c12_1_int_vec_from_slice_returns_err_instead_of_aborting_on_invalid_element_width() {
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+        struct Wide16([u64; 2]);
+
+        impl PackedInt for Wide16 {
+            fn to_u64(self) -> u64 {
+                self.0[0]
+            }
+            fn from_u64(val: u64) -> Self {
+                Self([val, 0])
+            }
+            fn max_value() -> Self {
+                Self([u64::MAX, u64::MAX])
+            }
+            fn min_value() -> Self {
+                Self([0, 0])
+            }
+            fn bit_width() -> u8 {
+                128
+            }
+            fn to_i64(self) -> i64 {
+                self.0[0] as i64
+            }
+            fn from_i64(val: i64) -> Self {
+                Self([val as u64, 0])
+            }
+        }
+
+        let res = IntVec::from_slice(&[Wide16([1, 2]), Wide16([3, 4])]);
+        assert!(
+            res.is_err(),
+            "IntVec::from_slice must return Err on >8-byte PackedInt rather than panicking/aborting via zipora_verify!"
+        );
+    }
 }
+

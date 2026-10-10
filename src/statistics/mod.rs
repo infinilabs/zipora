@@ -4,8 +4,8 @@
 //! preserve the public API for downstream compatibility. None of these types
 //! are used by the core library; they exist only as exported API surface.
 //!
-//! For actual profiling/timing, use `dev_infrastructure::debug` (StatsScopedTimer,
-//! HighPrecisionTimer, BenchmarkSuite).
+//! For hardware-assisted profiling/timing utilities, see `system::profiling`
+//! (`PerfTimer`, `HighPrecisionTimer`, `BenchmarkSuite`).
 
 use crate::error::ZiporaError;
 use std::collections::HashMap;
@@ -540,7 +540,7 @@ pub struct PoolStatistics;
 pub struct ScopedBuffer;
 
 // ============================================================================
-// Profiling stubs (from profiling.rs — not dev_infrastructure profiling)
+// Profiling types
 // ============================================================================
 
 #[derive(Clone)]

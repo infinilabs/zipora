@@ -89,10 +89,8 @@ pub mod compression;
 pub mod concurrency;
 pub mod config;
 pub mod containers;
-pub mod dev_infrastructure;
 pub mod entropy;
 pub mod error;
-pub mod error_recovery;
 pub mod fsa;
 pub mod hash_map;
 pub mod io;
@@ -140,10 +138,6 @@ pub use containers::{
     ZoSortedStrVecRange,
 };
 pub use error::{Result, ZiporaError};
-pub use error_recovery::{
-    verify_alignment, verify_allocation_success, verify_bounds_check, verify_power_of_2,
-    verify_range_check,
-};
 pub use string::{
     FastStr, LexIteratorBuilder, LexicographicIterator, LineProcessor, LineProcessorConfig,
     LineProcessorStats, LineSplitter, SortedVecLexIterator, StreamingLexIterator, UnicodeAnalysis,
@@ -326,36 +320,6 @@ pub use system::{
 #[cfg(feature = "async")]
 pub use system::{BidirectionalPipe, ProcessExecutor, ProcessManager, ProcessPool};
 
-// Re-export Development Infrastructure (Phase 10B)
-pub use dev_infrastructure::{
-    AccumulatorStats,
-    AutoRegister,
-    BenchmarkResult,
-    FactoryBuilder,
-    // Factory Pattern
-    FactoryRegistry,
-    Factoryable,
-    GlobalFactory,
-    GlobalStatsRegistry,
-    // Debugging Framework
-    // Statistical Analysis
-    Histogram,
-    HistogramStats,
-    MemoryDebugger,
-    MultiDimensionalStats,
-    PerformanceProfiler,
-    ScopedTimer,
-    StatAccumulator,
-    StatIndex,
-    U32Histogram,
-    U64Histogram,
-    format_duration,
-    global_factory,
-    global_memory_debugger,
-    global_profiler,
-    global_stats,
-};
-
 // Re-export Advanced Statistics and Monitoring Framework
 pub use statistics::{
     BufferMetadata,
@@ -475,8 +439,6 @@ pub use thread::x86_64_optimized;
 
 #[cfg(target_arch = "aarch64")]
 pub use thread::aarch64_optimized;
-
-// Macros are re-exported automatically from dev_infrastructure module
 
 #[cfg(feature = "zstd")]
 pub use blob_store::ZstdBlobStore;
