@@ -57,7 +57,7 @@ pub struct BidirectionalPipe {
     stdin_writer: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
     stdout_reader: Arc<Mutex<Option<AsyncBufReader<tokio::process::ChildStdout>>>>,
     stderr_reader: Arc<Mutex<Option<AsyncBufReader<tokio::process::ChildStderr>>>>,
-    _config: ProcessConfig,
+    config: ProcessConfig,
 }
 
 impl BidirectionalPipe {
@@ -68,6 +68,7 @@ impl BidirectionalPipe {
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
 
         // Set working directory if specified
         if let Some(ref dir) = config.working_dir {
@@ -98,13 +99,24 @@ impl BidirectionalPipe {
             .take()
             .ok_or_else(|| ZiporaError::invalid_data("Failed to get stderr pipe"))?;
 
+        let buf_cap = config.buffer_size.max(64);
         Ok(Self {
             process: Arc::new(Mutex::new(Some(child))),
             stdin_writer: Arc::new(Mutex::new(Some(stdin))),
-            stdout_reader: Arc::new(Mutex::new(Some(AsyncBufReader::new(stdout)))),
-            stderr_reader: Arc::new(Mutex::new(Some(AsyncBufReader::new(stderr)))),
-            _config: config,
+            stdout_reader: Arc::new(Mutex::new(Some(AsyncBufReader::with_capacity(
+                buf_cap, stdout,
+            )))),
+            stderr_reader: Arc::new(Mutex::new(Some(AsyncBufReader::with_capacity(
+                buf_cap, stderr,
+            )))),
+            config,
         })
+    }
+
+    /// Close the process stdin pipe to signal EOF to the child process.
+    pub async fn close_stdin(&self) {
+        let mut stdin_guard = self.stdin_writer.lock().await;
+        let _ = stdin_guard.take();
     }
 
     /// Write data to the process stdin
@@ -179,13 +191,30 @@ impl BidirectionalPipe {
         }
     }
 
-    /// Wait for the process to complete and get the exit status
+    /// Wait for the process to complete and get the exit status.
+    ///
+    /// Automatically closes the child's stdin pipe first so processes reading
+    /// until EOF can terminate cleanly.
     pub async fn wait(&self) -> Result<i32> {
+        self.close_stdin().await;
         let mut process_guard = self.process.lock().await;
         if let Some(mut child) = process_guard.take() {
-            let status = child.wait().await.map_err(|e| {
-                ZiporaError::invalid_data(format!("Failed to wait for process: {}", e))
-            })?;
+            let status = if let Some(timeout_ms) = self.config.timeout_ms {
+                let timeout_duration = std::time::Duration::from_millis(timeout_ms);
+                match tokio::time::timeout(timeout_duration, child.wait()).await {
+                    Ok(res) => res.map_err(|e| {
+                        ZiporaError::invalid_data(format!("Failed to wait for process: {}", e))
+                    })?,
+                    Err(_) => {
+                        let _ = child.kill().await;
+                        return Err(ZiporaError::invalid_data("Process wait timed out"));
+                    }
+                }
+            } else {
+                child.wait().await.map_err(|e| {
+                    ZiporaError::invalid_data(format!("Failed to wait for process: {}", e))
+                })?
+            };
             Ok(status.code().unwrap_or(-1))
         } else {
             Err(ZiporaError::invalid_data("Process is not available"))
@@ -194,6 +223,7 @@ impl BidirectionalPipe {
 
     /// Terminate the process forcefully
     pub async fn kill(&self) -> Result<()> {
+        self.close_stdin().await;
         let mut process_guard = self.process.lock().await;
         if let Some(ref mut child) = *process_guard {
             child
@@ -265,6 +295,7 @@ impl ProcessExecutor {
         cmd.args(args);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
 
         // Set working directory if specified
         if let Some(ref dir) = self.config.working_dir {
@@ -366,8 +397,9 @@ impl ProcessPool {
         args: &[&str],
         config: ProcessConfig,
     ) -> Result<u64> {
-        // Check capacity
-        if !self.has_capacity().await {
+        // Reserve capacity atomically under the write lock
+        let mut processes = self.active_processes.write().await;
+        if processes.len() >= self.max_concurrent {
             return Err(ZiporaError::invalid_data(
                 "Process pool at maximum capacity",
             ));
@@ -376,6 +408,7 @@ impl ProcessPool {
         // Create the command
         let mut cmd = AsyncCommand::new(command);
         cmd.args(args);
+        cmd.kill_on_drop(true);
 
         if let Some(ref dir) = config.working_dir {
             cmd.current_dir(dir);
@@ -396,7 +429,6 @@ impl ProcessPool {
         *id_guard += 1;
 
         // Add to active processes
-        let mut processes = self.active_processes.write().await;
         processes.insert(process_id, Arc::new(Mutex::new(child)));
 
         Ok(process_id)
@@ -412,11 +444,18 @@ impl ProcessPool {
                 .ok_or_else(|| ZiporaError::invalid_data("Process not found in pool"))?
         };
 
-        let mut child = process_arc.lock().await;
-        let status = child
-            .wait()
-            .await
-            .map_err(|e| ZiporaError::invalid_data(format!("Failed to wait for process: {}", e)))?;
+        let status = loop {
+            let try_status = {
+                let mut child = process_arc.lock().await;
+                child.try_wait().map_err(|e| {
+                    ZiporaError::invalid_data(format!("Failed to wait for process: {}", e))
+                })?
+            };
+            if let Some(status) = try_status {
+                break status;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        };
 
         // Remove from active processes
         let mut processes = self.active_processes.write().await;
@@ -575,4 +614,59 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("manager_test"));
     }
+
+    #[tokio::test]
+    async fn test_c12_3b_bidirectional_pipe_eof_and_pool_concurrent_kill_while_waiting() {
+        // 1. BidirectionalPipe with `cat`: writing a line, reading it back, and calling
+        // `pipe.wait()` must close stdin so `cat` sees EOF and exits instead of hanging forever.
+        let pipe = BidirectionalPipe::new("cat", &[], ProcessConfig::default())
+            .await
+            .expect("spawn cat must succeed");
+        pipe.write_line("hello_pipe").await.expect("write_line must succeed");
+        let echoed = pipe
+            .read_stdout_line()
+            .await
+            .expect("read_stdout_line must succeed");
+        assert_eq!(echoed.as_deref(), Some("hello_pipe"));
+
+        let wait_res = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            pipe.wait(),
+        )
+        .await
+        .expect("BidirectionalPipe::wait() hung because stdin was never closed!");
+        assert_eq!(wait_res.expect("wait must succeed"), 0);
+
+        // 2. ProcessPool: calling `kill_process(pid)` while another task is inside
+        // `wait_for_process(pid)` must not deadlock on `process_arc.lock().await`.
+        let pool = Arc::new(ProcessPool::new(2));
+        let pid = pool
+            .spawn_process("sleep", &["30"], ProcessConfig::default())
+            .await
+            .expect("spawn sleep must succeed");
+
+        let pool_waiter = Arc::clone(&pool);
+        let waiter_handle = tokio::spawn(async move { pool_waiter.wait_for_process(pid).await });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            pool.kill_process(pid),
+        )
+        .await
+        .expect("kill_process deadlocked while wait_for_process held process_arc lock!")
+        .expect("kill_process must succeed");
+
+        let waiter_exit = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            waiter_handle,
+        )
+        .await
+        .expect("wait_for_process did not finish after kill_process!")
+        .expect("waiter task panicked");
+        assert!(waiter_exit.is_ok());
+        assert_eq!(pool.active_count().await, 0);
+    }
 }
+
