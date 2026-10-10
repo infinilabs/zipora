@@ -6,15 +6,17 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-/// Cache invalidation tracking
+/// Cache invalidation and LRU access tracking
 #[derive(Debug, Clone)]
 struct InvalidationTracker {
-    /// Set of invalidated pages
+    /// Set of invalidated pages awaiting reload
     invalidated_pages: std::collections::HashSet<(FileId, PageId)>,
     /// Dirty pages that need write-back
     dirty_pages: std::collections::HashSet<(FileId, PageId)>,
-    /// Last access timestamp for each page
-    access_times: std::collections::HashMap<(FileId, PageId), std::time::Instant>,
+    /// Monotonic access sequence number for each cached page
+    access_seq: std::collections::HashMap<(FileId, PageId), u64>,
+    /// Next sequence number to assign on access
+    next_seq: u64,
 }
 
 type PageCacheMap = HashMap<(FileId, PageId), Vec<u8>>;
@@ -38,12 +40,15 @@ impl InvalidationTracker {
         Self {
             invalidated_pages: std::collections::HashSet::new(),
             dirty_pages: std::collections::HashSet::new(),
-            access_times: std::collections::HashMap::new(),
+            access_seq: std::collections::HashMap::new(),
+            next_seq: 1,
         }
     }
 
     fn mark_accessed(&mut self, key: (FileId, PageId)) {
-        self.access_times.insert(key, std::time::Instant::now());
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
+        self.access_seq.insert(key, seq);
     }
 
     fn mark_dirty(&mut self, key: (FileId, PageId)) {
@@ -57,11 +62,16 @@ impl InvalidationTracker {
     fn invalidate(&mut self, key: (FileId, PageId)) {
         self.invalidated_pages.insert(key);
         self.dirty_pages.remove(&key);
-        self.access_times.remove(&key);
+        self.access_seq.remove(&key);
     }
 
-    fn is_invalidated(&self, key: &(FileId, PageId)) -> bool {
-        self.invalidated_pages.contains(key)
+    fn take_invalidated(&mut self, key: &(FileId, PageId)) -> bool {
+        self.invalidated_pages.remove(key)
+    }
+
+    fn evict(&mut self, key: (FileId, PageId)) {
+        self.dirty_pages.remove(&key);
+        self.access_seq.remove(&key);
     }
 
     fn is_dirty(&self, key: &(FileId, PageId)) -> bool {
@@ -69,16 +79,16 @@ impl InvalidationTracker {
     }
 
     fn find_lru_page(&self) -> Option<(FileId, PageId)> {
-        self.access_times
+        self.access_seq
             .iter()
-            .min_by_key(|(_, time)| *time)
+            .min_by_key(|(_, seq)| *seq)
             .map(|(key, _)| *key)
     }
 
     fn cleanup_file(&mut self, file_id: FileId) {
         self.invalidated_pages.retain(|(fid, _)| *fid != file_id);
         self.dirty_pages.retain(|(fid, _)| *fid != file_id);
-        self.access_times.retain(|&(fid, _), _| fid != file_id);
+        self.access_seq.retain(|&(fid, _), _| fid != file_id);
     }
 }
 
@@ -101,28 +111,41 @@ impl LruPageCache {
         self.file_manager.open_file(path)
     }
 
-    /// Register a file by file descriptor (for compatibility)
+    /// Register a file by file descriptor (or `-1` for an in-memory virtual file)
     pub fn register_file(&self, fd: i32) -> Result<FileId> {
-        // For memory-based stores or special file descriptors, generate a virtual file ID
         if fd == -1 {
-            // Special case for memory-based blob stores - create a virtual file ID
-            let virtual_file_id = self
-                .file_manager
-                .next_file_id
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Ok(virtual_file_id);
+            return self.file_manager.register_virtual_file();
+        }
+        if fd < 0 {
+            return Err(ZiporaError::invalid_data(format!(
+                "Invalid file descriptor {} (expected >= 0 or -1 for virtual file)",
+                fd
+            )));
         }
 
-        // For actual file descriptors, we'd need to convert to file path
-        // This is a placeholder for future implementation
-        Err(ZiporaError::invalid_data("Real file descriptor support not yet implemented. Use open_file() for real files or fd=-1 for virtual files.".to_string()))
+        #[cfg(unix)]
+        {
+            let fd_path = format!("/dev/fd/{}", fd);
+            self.file_manager.open_file(fd_path)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(ZiporaError::invalid_data(
+                "File descriptor registration is only supported on Unix platforms; use open_file() or fd=-1".to_string(),
+            ))
+        }
     }
 
     /// Read data from cache or load it from file
     pub fn read(&self, file_id: FileId, offset: u64, length: usize) -> Result<CacheBuffer> {
+        if length == 0 {
+            let _ = self.file_manager.file_size(file_id)?;
+            return Ok(CacheBuffer::new());
+        }
+
         // Calculate which pages we need
         let start_page = FileManager::offset_to_page_id(offset);
-        let end_offset = offset + length as u64;
+        let end_offset = offset.saturating_add(length as u64);
         let end_page = FileManager::offset_to_page_id(end_offset.saturating_sub(1));
 
         let mut result_buffer = CacheBuffer::new();
@@ -135,40 +158,86 @@ impl LruPageCache {
             // Calculate how much data to copy from this page
             let page_start_offset = FileManager::page_aligned_offset(page_id);
             let offset_in_page = (current_offset - page_start_offset) as usize;
-            let bytes_to_copy = std::cmp::min(remaining_length, PAGE_SIZE - offset_in_page);
-
-            // Copy data from the page
-            let page_end = offset_in_page + bytes_to_copy;
-            if page_end <= page_data.len() {
-                result_buffer.extend_from_slice(&page_data[offset_in_page..page_end]);
+            if offset_in_page >= page_data.len() {
+                break;
             }
 
-            current_offset += bytes_to_copy as u64;
-            remaining_length -= bytes_to_copy;
+            let bytes_to_copy = std::cmp::min(remaining_length, PAGE_SIZE - offset_in_page);
+            let available = std::cmp::min(bytes_to_copy, page_data.len() - offset_in_page);
+            result_buffer.extend_from_slice(&page_data[offset_in_page..offset_in_page + available]);
 
-            if remaining_length == 0 {
+            current_offset += available as u64;
+            remaining_length -= available;
+
+            if remaining_length == 0 || available < bytes_to_copy {
                 break;
             }
         }
 
+        self.stats.record_bytes_read(result_buffer.len() as u64);
         Ok(result_buffer)
+    }
+
+    /// Write data into cache and mark affected pages as dirty for write-back
+    pub fn write(&self, file_id: FileId, offset: u64, data: &[u8]) -> Result<()> {
+        if data.is_empty() {
+            let _ = self.file_manager.file_size(file_id)?;
+            return Ok(());
+        }
+
+        let start_page = FileManager::offset_to_page_id(offset);
+        let end_offset = offset.saturating_add(data.len() as u64);
+        let end_page = FileManager::offset_to_page_id(end_offset.saturating_sub(1));
+
+        let mut current_offset = offset;
+        let mut data_pos = 0usize;
+
+        for page_id in start_page..=end_page {
+            let mut page_data = self.get_page(file_id, page_id)?;
+            let page_start_offset = FileManager::page_aligned_offset(page_id);
+            let offset_in_page = (current_offset - page_start_offset) as usize;
+            let bytes_to_write = std::cmp::min(data.len() - data_pos, PAGE_SIZE - offset_in_page);
+            let required_len = offset_in_page + bytes_to_write;
+            if page_data.len() < required_len {
+                page_data.resize(required_len, 0);
+            }
+            page_data[offset_in_page..required_len]
+                .copy_from_slice(&data[data_pos..data_pos + bytes_to_write]);
+
+            let cache_key = (file_id, page_id);
+            {
+                let mut inner = self
+                    .inner
+                    .lock()
+                    .map_err(|_| ZiporaError::invalid_data("Cache lock poisoned".to_string()))?;
+                let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
+                    ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
+                })?;
+                inner.insert(cache_key, page_data);
+                tracker.mark_accessed(cache_key);
+                tracker.mark_dirty(cache_key);
+            }
+
+            current_offset += bytes_to_write as u64;
+            data_pos += bytes_to_write;
+        }
+
+        Ok(())
     }
 
     /// Get a page from cache or load it from file
     fn get_page(&self, file_id: FileId, page_id: PageId) -> Result<Vec<u8>> {
         let cache_key = (file_id, page_id);
 
-        // Check if page is invalidated
-        {
-            let tracker = self.invalidation_tracker.lock().map_err(|_| {
+        // Consume pending invalidation if present and evict stale entry before reload
+        let was_invalidated = {
+            let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
                 ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
             })?;
-
-            if tracker.is_invalidated(&cache_key) {
-                // Page is invalidated, remove from cache and continue to reload
-                drop(tracker);
-                self.remove_from_cache(cache_key)?;
-            }
+            tracker.take_invalidated(&cache_key)
+        };
+        if was_invalidated {
+            self.remove_from_cache(cache_key)?;
         }
 
         // First, try to get from cache
@@ -182,7 +251,7 @@ impl LruPageCache {
         };
 
         if let Some(cached_page) = cached_result {
-            // Update access time
+            // Update access sequence
             {
                 let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
                     ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
@@ -194,30 +263,28 @@ impl LruPageCache {
             return Ok(cached_page);
         }
 
-        // Cache miss - need to load from file
+        // Cache miss - load from file manager
         self.stats.record_miss();
 
-        // Try to load page from file if it's a real file
         let mut page_buffer = vec![0u8; PAGE_SIZE];
         let bytes_read = match self
             .file_manager
             .read_page(file_id, page_id, &mut page_buffer)
         {
             Ok(bytes) => bytes,
-            Err(_) => {
-                // If file read fails (e.g., virtual file ID), return empty page
-                page_buffer.clear();
-                page_buffer.resize(PAGE_SIZE, 0);
-                0
+            Err(err) => {
+                self.stats.record_load_failure();
+                return Err(err);
             }
         };
 
-        // If we read less than a full page, it's still valid (end of file)
+        // If we read less than a full page, truncate to valid file bytes
         if bytes_read < PAGE_SIZE {
             page_buffer.truncate(bytes_read);
         }
 
         // Insert into cache with LRU eviction
+        let mut dirty_writeback: Option<((FileId, PageId), Vec<u8>)> = None;
         {
             let mut inner = self
                 .inner
@@ -227,31 +294,33 @@ impl LruPageCache {
                 ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
             })?;
 
-            // Check if we need to evict pages
-            if inner.len() >= self.config.capacity / PAGE_SIZE {
-                // Find LRU page to evict
-                if let Some(lru_key) = tracker.find_lru_page() {
-                    // Check if page is dirty and needs write-back
-                    if tracker.is_dirty(&lru_key) {
-                        // In a real implementation, we'd write the dirty page back
-                        // For now, just mark it as clean
-                        tracker.mark_clean(lru_key);
+            let max_pages = (self.config.capacity / self.config.page_size).max(1);
+            if inner.len() >= max_pages && !inner.contains_key(&cache_key) {
+                let victim_key = tracker
+                    .find_lru_page()
+                    .or_else(|| inner.keys().next().copied());
+                if let Some(lru_key) = victim_key {
+                    let evicted_data = inner.remove(&lru_key);
+                    if tracker.is_dirty(&lru_key)
+                        && let Some(data) = evicted_data
+                    {
+                        dirty_writeback = Some((lru_key, data));
                     }
-
-                    inner.remove(&lru_key);
-                    tracker.invalidate(lru_key);
-                    self.stats.record_hit(CacheHitType::EvictedOthers);
-                } else if let Some(key) = inner.keys().next().cloned() {
-                    // Fallback to simple eviction
-                    inner.remove(&key);
-                    tracker.invalidate(key);
+                    tracker.evict(lru_key);
+                    self.stats.record_eviction();
                     self.stats.record_hit(CacheHitType::EvictedOthers);
                 }
             }
 
             inner.insert(cache_key, page_buffer.clone());
             tracker.mark_accessed(cache_key);
+            self.stats.record_bytes_cached(page_buffer.len() as u64);
             self.stats.record_hit(CacheHitType::InitialFree);
+        }
+
+        if let Some(((dirty_fid, dirty_pid), dirty_data)) = dirty_writeback {
+            self.file_manager
+                .write_page(dirty_fid, dirty_pid, &dirty_data)?;
         }
 
         Ok(page_buffer)
@@ -270,9 +339,12 @@ impl LruPageCache {
 
     /// Prefetch pages for better performance
     pub fn prefetch(&self, file_id: FileId, offset: u64, length: usize) -> Result<()> {
+        if length == 0 {
+            return Ok(());
+        }
         // Calculate pages to prefetch
         let start_page = FileManager::offset_to_page_id(offset);
-        let end_offset = offset + length as u64;
+        let end_offset = offset.saturating_add(length as u64);
         let end_page = FileManager::offset_to_page_id(end_offset.saturating_sub(1));
 
         // Prefetch each page (load into cache without returning data)
@@ -283,7 +355,7 @@ impl LruPageCache {
         Ok(())
     }
 
-    /// Read data with prefetching hints
+    /// Read data with synchronous lookahead prefetching
     pub fn read_with_prefetch(
         &self,
         file_id: FileId,
@@ -291,9 +363,8 @@ impl LruPageCache {
         length: usize,
         prefetch_ahead: usize,
     ) -> Result<CacheBuffer> {
-        // Start prefetching in the background (simplified - would use async in real implementation)
         if prefetch_ahead > 0 {
-            let prefetch_offset = offset + length as u64;
+            let prefetch_offset = offset.saturating_add(length as u64);
             let _ = self.prefetch(file_id, prefetch_offset, prefetch_ahead);
         }
 
@@ -310,7 +381,7 @@ impl LruPageCache {
     pub fn invalidate_page(&self, file_id: FileId, page_id: PageId) -> Result<()> {
         let cache_key = (file_id, page_id);
 
-        // Mark as invalidated
+        // Mark as invalidated and remove from active cache
         {
             let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
                 ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
@@ -318,7 +389,6 @@ impl LruPageCache {
             tracker.invalidate(cache_key);
         }
 
-        // Remove from cache
         self.remove_from_cache(cache_key)
     }
 
@@ -329,8 +399,11 @@ impl LruPageCache {
         start_offset: u64,
         length: usize,
     ) -> Result<()> {
+        if length == 0 {
+            return Ok(());
+        }
         let start_page = FileManager::offset_to_page_id(start_offset);
-        let end_offset = start_offset + length as u64;
+        let end_offset = start_offset.saturating_add(length as u64);
         let end_page = FileManager::offset_to_page_id(end_offset.saturating_sub(1));
 
         for page_id in start_page..=end_page {
@@ -352,24 +425,36 @@ impl LruPageCache {
         Ok(())
     }
 
-    /// Flush all dirty pages for a file
+    /// Flush all dirty pages for a file to underlying storage
     pub fn flush_file(&self, file_id: FileId) -> Result<()> {
-        let tracker = self.invalidation_tracker.lock().map_err(|_| {
-            ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
-        })?;
+        let dirty_pages: Vec<(FileId, PageId)> = {
+            let tracker = self.invalidation_tracker.lock().map_err(|_| {
+                ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
+            })?;
 
-        let dirty_pages: Vec<_> = tracker
-            .dirty_pages
-            .iter()
-            .filter(|(fid, _)| *fid == file_id)
-            .cloned()
-            .collect();
-
-        drop(tracker);
+            let mut pages: Vec<_> = tracker
+                .dirty_pages
+                .iter()
+                .filter(|(fid, _)| *fid == file_id)
+                .copied()
+                .collect();
+            pages.sort_unstable_by_key(|&(_, pid)| pid);
+            pages
+        };
 
         for (fid, page_id) in dirty_pages {
-            // In a real implementation, we'd write the page back to storage
-            // For now, just mark it as clean
+            let page_data = {
+                let inner = self
+                    .inner
+                    .lock()
+                    .map_err(|_| ZiporaError::invalid_data("Cache lock poisoned".to_string()))?;
+                inner.get(&(fid, page_id)).cloned()
+            };
+
+            if let Some(data) = page_data {
+                self.file_manager.write_page(fid, page_id, &data)?;
+            }
+
             let mut tracker = self.invalidation_tracker.lock().map_err(|_| {
                 ZiporaError::invalid_data("Invalidation tracker lock poisoned".to_string())
             })?;
@@ -465,6 +550,11 @@ impl SingleLruPageCache {
     /// Read data and return new buffer
     pub fn read_new(&self, file_id: FileId, offset: u64, length: usize) -> Result<CacheBuffer> {
         self.cache.read(file_id, offset, length)
+    }
+
+    /// Write data into cache and mark affected pages dirty
+    pub fn write(&self, file_id: FileId, offset: u64, data: &[u8]) -> Result<()> {
+        self.cache.write(file_id, offset, data)
     }
 
     /// Prefetch data for better performance

@@ -11,9 +11,6 @@ pub struct CacheBuffer {
     /// Buffer type indicating source
     buffer_type: BufferType,
 
-    /// Owning cache reference
-    cache: Option<*const SingleLruPageCache>,
-
     /// Node indices for cleanup
     node_indices: Vec<NodeIndex>,
 
@@ -28,7 +25,6 @@ pub struct CacheBuffer {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BufferType {
     /// Multiple pages copied to buffer
-    #[cfg_attr(not(test), allow(dead_code))]
     MultiPage,
     /// Data copied to internal buffer
     Copied,
@@ -41,7 +37,6 @@ impl CacheBuffer {
     pub fn new() -> Self {
         Self {
             buffer_type: BufferType::Empty,
-            cache: None,
             node_indices: Vec::new(),
             data_buffer: Vec::new(),
             hit_type: CacheHitType::Hit,
@@ -49,30 +44,17 @@ impl CacheBuffer {
     }
 
     /// Setup buffer for multi-page operation
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn setup_multi_page(
+    pub fn setup_multi_page(
         &mut self,
-        cache: &SingleLruPageCache,
+        _cache: &SingleLruPageCache,
         node_indices: Vec<NodeIndex>,
-        offset: u64,
+        _offset: u64,
         length: usize,
     ) {
         self.cleanup();
         self.buffer_type = BufferType::MultiPage;
-        self.cache = Some(cache as *const _);
-
-        // Copy data from multiple pages
         self.data_buffer.clear();
-        self.data_buffer.reserve(length);
-
-        let _start_page = (offset / PAGE_SIZE as u64) as PageId;
-        let page_offset = (offset % PAGE_SIZE as u64) as usize;
-        let _remaining = length;
-        let _current_offset = page_offset;
-
-        // Simplified for basic implementation
         self.data_buffer.resize(length, 0);
-
         self.node_indices = node_indices;
         self.hit_type = CacheHitType::Mix;
     }
@@ -92,12 +74,13 @@ impl CacheBuffer {
             return;
         }
 
-        // Convert to copied buffer if not already
-        if !matches!(self.buffer_type, BufferType::Copied) {
-            let existing_data = self.data().to_vec();
+        // Convert to copied buffer if not already while preserving reserved capacity
+        if matches!(self.buffer_type, BufferType::Empty) {
             self.cleanup();
             self.buffer_type = BufferType::Copied;
-            self.data_buffer = existing_data;
+        } else if !matches!(self.buffer_type, BufferType::Copied) {
+            self.node_indices.clear();
+            self.buffer_type = BufferType::Copied;
         }
 
         self.data_buffer.extend_from_slice(data);
@@ -140,10 +123,8 @@ impl CacheBuffer {
         self.data_buffer.clear();
     }
 
-    /// Internal cleanup of cache references
+    /// Internal cleanup of tracked node indices
     fn cleanup(&mut self) {
-        // Simplified for basic implementation
-        self.cache = None;
         self.node_indices.clear();
     }
 
@@ -179,15 +160,6 @@ impl Drop for CacheBuffer {
     }
 }
 
-// SAFETY: CacheBuffer is Send because every field is Send except
-// `cache: Option<*const SingleLruPageCache>`, which blocks the auto impl.
-// That pointer is only stored for bookkeeping (set in setup_multi_page,
-// cleared in cleanup) and is never dereferenced, so moving the struct to
-// another thread cannot create a data race through it.
-// (The former `data_slice: Option<&'static [u8]>` self-referential field was
-// removed; `data()` now borrows `data_buffer` directly.)
-unsafe impl Send for CacheBuffer {}
-
 /// Buffer pool for reusing cache buffers
 pub struct BufferPool {
     /// Available buffers
@@ -218,16 +190,19 @@ impl BufferPool {
             && let Some(mut buffer) = buffers.pop()
         {
             buffer.clear();
+            // ORDERING: Relaxed is sufficient for telemetry reuse counter.
             self.reuses.fetch_add(1, Ordering::Relaxed);
             return buffer;
         }
 
+        // ORDERING: Relaxed is sufficient for telemetry allocation counter.
         self.allocations.fetch_add(1, Ordering::Relaxed);
         CacheBuffer::new()
     }
 
     /// Return buffer to pool
-    pub fn put(&self, buffer: CacheBuffer) {
+    pub fn put(&self, mut buffer: CacheBuffer) {
+        buffer.clear();
         if let Ok(mut buffers) = self.available.lock()
             && buffers.len() < self.max_size
         {
@@ -244,7 +219,9 @@ impl BufferPool {
             .unwrap_or(0);
 
         BufferPoolStats {
+            // ORDERING: Relaxed is sufficient for point-in-time telemetry snapshot.
             allocations: self.allocations.load(Ordering::Relaxed),
+            // ORDERING: Relaxed is sufficient for point-in-time telemetry snapshot.
             reuses: self.reuses.load(Ordering::Relaxed),
             available_count,
             max_size: self.max_size,
@@ -271,7 +248,11 @@ impl BufferPoolStats {
     }
 
     pub fn pool_utilization(&self) -> f64 {
-        self.available_count as f64 / self.max_size as f64
+        if self.max_size == 0 {
+            0.0
+        } else {
+            self.available_count as f64 / self.max_size as f64
+        }
     }
 }
 #[cfg(test)]

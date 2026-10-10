@@ -286,13 +286,13 @@ impl PageCacheConfig {
 
     /// Validate configuration parameters
     pub fn validate(&self) -> Result<()> {
-        // Validate capacity
-        if self.capacity == 0 {
+        // Validate page size (must be power of 2 and >= 1024)
+        if !self.page_size.is_power_of_two() || self.page_size < 1024 {
             return Err(CacheError::InvalidPageSize.into());
         }
 
-        // Validate page size (must be power of 2)
-        if !self.page_size.is_power_of_two() || self.page_size < 1024 {
+        // Validate capacity (must hold at least one page)
+        if self.capacity < self.page_size {
             return Err(CacheError::InvalidPageSize.into());
         }
 
@@ -302,13 +302,32 @@ impl PageCacheConfig {
         }
 
         // Validate load factor
-        if self.load_factor <= 0.0 || self.load_factor >= 1.0 {
+        if !self.load_factor.is_finite() || self.load_factor <= 0.0 || self.load_factor >= 1.0 {
             return Err(CacheError::InvalidShardConfig.into());
         }
 
         // Validate huge page usage
         if self.use_huge_pages && self.capacity < HUGE_PAGE_SIZE {
             return Err(CacheError::InvalidPageSize.into());
+        }
+
+        // Validate memory alignment
+        if !self.memory.alignment.is_power_of_two() || self.memory.alignment == 0 {
+            return Err(CacheError::InvalidPageSize.into());
+        }
+
+        // Validate performance batch size and eviction water marks
+        if self.performance.batch_size == 0 {
+            return Err(CacheError::InvalidShardConfig.into());
+        }
+        let ev = &self.performance.eviction;
+        if !ev.low_water_mark.is_finite()
+            || !ev.high_water_mark.is_finite()
+            || ev.low_water_mark <= 0.0
+            || ev.high_water_mark > 1.0
+            || ev.low_water_mark >= ev.high_water_mark
+        {
+            return Err(CacheError::InvalidShardConfig.into());
         }
 
         Ok(())

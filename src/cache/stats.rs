@@ -93,38 +93,46 @@ impl CacheStatistics {
 
     /// Record cache hit
     pub fn record_hit(&self, hit_type: CacheHitType) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.hit_counts[hit_type.as_index()].fetch_add(1, Ordering::Relaxed);
         self.total_hits.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record cache miss
     pub fn record_miss(&self) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
+        self.hit_counts[CacheHitType::Miss.as_index()].fetch_add(1, Ordering::Relaxed);
         self.total_misses.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record bytes read
     pub fn record_bytes_read(&self, bytes: u64) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.bytes_read.fetch_add(bytes, Ordering::Relaxed);
         self.total_reads.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record bytes cached
     pub fn record_bytes_cached(&self, bytes: u64) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.bytes_cached.fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Record eviction
     pub fn record_eviction(&self) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.evictions.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record hash collision
     pub fn record_hash_collision(&self) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.hash_collisions.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record probe distance
     pub fn record_probe_distance(&self, distance: u64) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.total_probe_distance
             .fetch_add(distance, Ordering::Relaxed);
         self.total_probes.fetch_add(1, Ordering::Relaxed);
@@ -132,52 +140,62 @@ impl CacheStatistics {
 
     /// Record read timing
     pub fn record_read_time(&self, duration: Duration) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.total_read_time_ns
             .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
     }
 
     /// Record memory usage
     pub fn record_memory_allocated(&self, bytes: u64) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.memory_allocated.fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Record memory usage change
     pub fn record_memory_used(&self, bytes: u64) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.memory_used.store(bytes, Ordering::Relaxed);
     }
 
     /// Record lock contention
     pub fn record_lock_contention(&self) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.lock_contentions.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record lock acquisition
     pub fn record_lock_acquisition(&self) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.lock_acquisitions.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record maintenance cycle
     pub fn record_maintenance_cycle(&self) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.maintenance_cycles.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record defragmentation
     pub fn record_defragmentation(&self) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.defragmentation_runs.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record allocation failure
     pub fn record_allocation_failure(&self) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.allocation_failures.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record load failure
     pub fn record_load_failure(&self) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
         self.load_failures.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get cache hit ratio
     pub fn hit_ratio(&self) -> f64 {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry ratios.
         let hits = self.total_hits.load(Ordering::Relaxed);
         let misses = self.total_misses.load(Ordering::Relaxed);
         let total = hits + misses;
@@ -191,11 +209,21 @@ impl CacheStatistics {
 
     /// Get cache miss ratio
     pub fn miss_ratio(&self) -> f64 {
-        1.0 - self.hit_ratio()
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry ratios.
+        let hits = self.total_hits.load(Ordering::Relaxed);
+        let misses = self.total_misses.load(Ordering::Relaxed);
+        let total = hits + misses;
+
+        if total == 0 {
+            0.0
+        } else {
+            misses as f64 / total as f64
+        }
     }
 
     /// Get average probe distance
     pub fn average_probe_distance(&self) -> f64 {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry ratios.
         let total_distance = self.total_probe_distance.load(Ordering::Relaxed);
         let total_probes = self.total_probes.load(Ordering::Relaxed);
 
@@ -208,6 +236,7 @@ impl CacheStatistics {
 
     /// Get average read time in nanoseconds
     pub fn average_read_time_ns(&self) -> f64 {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry ratios.
         let total_time = self.total_read_time_ns.load(Ordering::Relaxed);
         let total_reads = self.total_reads.load(Ordering::Relaxed);
 
@@ -220,6 +249,7 @@ impl CacheStatistics {
 
     /// Get read throughput in bytes per second
     pub fn read_throughput_bps(&self) -> f64 {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry ratios.
         let bytes = self.bytes_read.load(Ordering::Relaxed);
         let elapsed = self.start_time.elapsed().as_secs_f64();
 
@@ -232,6 +262,7 @@ impl CacheStatistics {
 
     /// Get read rate in operations per second
     pub fn read_rate_ops(&self) -> f64 {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry ratios.
         let reads = self.total_reads.load(Ordering::Relaxed);
         let elapsed = self.start_time.elapsed().as_secs_f64();
 
@@ -244,6 +275,7 @@ impl CacheStatistics {
 
     /// Get memory utilization ratio
     pub fn memory_utilization(&self) -> f64 {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry ratios.
         let allocated = self.memory_allocated.load(Ordering::Relaxed);
         let used = self.memory_used.load(Ordering::Relaxed);
 
@@ -256,6 +288,7 @@ impl CacheStatistics {
 
     /// Get lock contention ratio
     pub fn lock_contention_ratio(&self) -> f64 {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry ratios.
         let contentions = self.lock_contentions.load(Ordering::Relaxed);
         let acquisitions = self.lock_acquisitions.load(Ordering::Relaxed);
 
@@ -268,6 +301,7 @@ impl CacheStatistics {
 
     /// Get hit counts by type
     pub fn hit_counts(&self) -> [u64; 7] {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry snapshots.
         [
             self.hit_counts[0].load(Ordering::Relaxed),
             self.hit_counts[1].load(Ordering::Relaxed),
@@ -281,6 +315,7 @@ impl CacheStatistics {
 
     /// Get detailed statistics snapshot
     pub fn snapshot(&self) -> CacheStatsSnapshot {
+        // ORDERING: Relaxed is sufficient for point-in-time telemetry snapshots.
         CacheStatsSnapshot {
             hit_counts: self.hit_counts(),
             total_hits: self.total_hits.load(Ordering::Relaxed),
@@ -311,6 +346,7 @@ impl CacheStatistics {
 
     /// Reset all statistics
     pub fn reset(&self) {
+        // ORDERING: Relaxed is sufficient for resetting independent telemetry counters.
         for hit_count in &self.hit_counts {
             hit_count.store(0, Ordering::Relaxed);
         }
@@ -325,6 +361,8 @@ impl CacheStatistics {
         self.total_probes.store(0, Ordering::Relaxed);
         self.total_read_time_ns.store(0, Ordering::Relaxed);
         self.total_reads.store(0, Ordering::Relaxed);
+        self.memory_allocated.store(0, Ordering::Relaxed);
+        self.memory_used.store(0, Ordering::Relaxed);
         self.lock_contentions.store(0, Ordering::Relaxed);
         self.lock_acquisitions.store(0, Ordering::Relaxed);
         self.maintenance_cycles.store(0, Ordering::Relaxed);

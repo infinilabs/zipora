@@ -251,3 +251,84 @@ fn test_cache_buffer_extend_and_read() -> Result<()> {
     cache.close_file(file_id)?;
     Ok(())
 }
+
+#[test]
+fn test_c12_7_lru_page_cache_invalidation_recovery_eof_read_writeback_and_zero_shards() -> Result<()>
+{
+    let mut temp_file = NamedTempFile::new()?;
+    let payload = vec![0xABu8; PAGE_SIZE + 512];
+    temp_file.write_all(&payload)?;
+    temp_file.flush()?;
+
+    let config = PageCacheConfig::balanced();
+    let cache = LruPageCache::new(config)?;
+    let file_id = cache.open_file(temp_file.path())?;
+
+    // Populate page 0
+    let buf1 = cache.read(file_id, 0, 64)?;
+    assert_eq!(buf1.data(), &payload[..64]);
+    let misses_before_invalidate = cache.stats().total_misses;
+
+    // Invalidate page 0: next read must reload (1 miss), and the read after that MUST hit!
+    cache.invalidate_page(file_id, 0)?;
+    let _buf_reload = cache.read(file_id, 0, 64)?;
+    assert_eq!(
+        cache.stats().total_misses,
+        misses_before_invalidate + 1,
+        "first read after invalidate_page must miss and reload"
+    );
+
+    let _buf_hit = cache.read(file_id, 0, 64)?;
+    assert_eq!(
+        cache.stats().total_misses,
+        misses_before_invalidate + 1,
+        "second read after invalidate_page must hit cache instead of being permanently poisoned"
+    );
+
+    // Reading past EOF across a partial final page must still return the partial final page bytes
+    let eof_buf = cache.read(file_id, 0, PAGE_SIZE + 1024)?;
+    assert_eq!(
+        eof_buf.len(),
+        payload.len(),
+        "read past EOF must return all available bytes including the final partial page"
+    );
+    assert_eq!(eof_buf.data(), &payload[..]);
+
+    // Dirty page write-back via write() + flush_file() must persist to disk
+    let patch = b"WRITEBACK_HEADER";
+    cache.write(file_id, 0, patch)?;
+    cache.flush_file(file_id)?;
+    let disk_bytes = std::fs::read(temp_file.path())?;
+    assert_eq!(&disk_bytes[..patch.len()], patch);
+
+    // Unregistered FileId must return an error instead of silently caching empty pages
+    assert!(cache.read(999_999, 0, 64).is_err());
+
+    // Zero shards must not divide by zero
+    assert_eq!(get_shard_id(file_id, 0, 0), 0);
+
+    // Fresh CacheStatistics must have 0.0 miss_ratio, and zero-capacity BufferPool must have 0.0 utilization
+    let fresh_stats = CacheStatistics::new();
+    assert_eq!(fresh_stats.miss_ratio(), 0.0);
+    fresh_stats.record_miss();
+    assert_eq!(fresh_stats.hit_counts()[CacheHitType::Miss.as_index()], 1);
+    fresh_stats.record_memory_allocated(4096);
+    fresh_stats.record_memory_used(2048);
+    fresh_stats.reset();
+    assert_eq!(fresh_stats.snapshot().memory_allocated, 0);
+    assert_eq!(fresh_stats.snapshot().memory_used, 0);
+
+    let zero_pool = BufferPool::new(0);
+    assert_eq!(zero_pool.stats().pool_utilization(), 0.0);
+
+    // CacheBuffer::reserve followed by extend_from_slice on Empty buffer must preserve capacity
+    let mut reserved_buf = CacheBuffer::new();
+    reserved_buf.reserve(4096);
+    let cap_before = reserved_buf.capacity();
+    reserved_buf.extend_from_slice(b"hello");
+    assert!(reserved_buf.capacity() >= cap_before);
+
+    cache.close_file(file_id)?;
+    Ok(())
+}
+

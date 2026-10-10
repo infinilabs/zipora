@@ -205,6 +205,9 @@ pub fn hash_file_page(file_id: FileId, page_id: PageId) -> u64 {
 /// Get shard ID for given file-page combination
 #[inline]
 pub fn get_shard_id(file_id: FileId, page_id: PageId, num_shards: u32) -> u32 {
+    if num_shards <= 1 {
+        return 0;
+    }
     let hash = hash_file_page(file_id, page_id);
     (hash % (num_shards as u64)) as u32
 }
@@ -230,6 +233,15 @@ pub fn prefetch_hint(ptr: *const u8) {
     }
 }
 
+/// Backing storage for a managed cache file
+#[derive(Debug)]
+enum FileBacking {
+    /// OS file handle
+    Real(File),
+    /// Virtual in-memory backing buffer (registered with `fd == -1`)
+    Virtual(Vec<u8>),
+}
+
 /// File handle manager for efficient file operations
 #[derive(Debug)]
 pub struct FileManager {
@@ -242,8 +254,8 @@ pub struct FileManager {
 /// File entry containing file handle and metadata
 #[derive(Debug)]
 struct FileEntry {
-    /// File handle for I/O operations
-    file: File,
+    /// Backing storage for I/O operations
+    backing: FileBacking,
     /// File path for error reporting
     path: PathBuf,
     /// File size in bytes
@@ -268,9 +280,14 @@ impl FileManager {
     /// Open a file and register it with the manager
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<FileId> {
         let path = path.as_ref().to_path_buf();
-        let file = File::open(&path).map_err(|e| {
-            ZiporaError::invalid_data(format!("Failed to open file {:?}: {}", path, e))
-        })?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .or_else(|_| File::open(&path))
+            .map_err(|e| {
+                ZiporaError::invalid_data(format!("Failed to open file {:?}: {}", path, e))
+            })?;
 
         let size = file
             .metadata()
@@ -279,9 +296,14 @@ impl FileManager {
             })?
             .len();
 
+        // ORDERING: Relaxed is sufficient for unique monotonic FileId allocation.
         let file_id = self.next_file_id.fetch_add(1, Ordering::Relaxed);
 
-        let entry = FileEntry { file, path, size };
+        let entry = FileEntry {
+            backing: FileBacking::Real(file),
+            path,
+            size,
+        };
 
         let mut files = self
             .files
@@ -289,6 +311,23 @@ impl FileManager {
             .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
         files.insert(file_id, entry);
 
+        Ok(file_id)
+    }
+
+    /// Register an in-memory virtual file (for `fd == -1`)
+    pub fn register_virtual_file(&self) -> Result<FileId> {
+        // ORDERING: Relaxed is sufficient for unique monotonic FileId allocation.
+        let file_id = self.next_file_id.fetch_add(1, Ordering::Relaxed);
+        let entry = FileEntry {
+            backing: FileBacking::Virtual(Vec::new()),
+            path: PathBuf::from(format!("<virtual:{}>", file_id)),
+            size: 0,
+        };
+        let mut files = self
+            .files
+            .write()
+            .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
+        files.insert(file_id, entry);
         Ok(file_id)
     }
 
@@ -343,33 +382,45 @@ impl FileManager {
 
         // Check if offset is within file bounds
         if offset >= entry.size {
+            buffer.fill(0);
             return Ok(0); // End of file
         }
 
-        // Seek to the desired position
-        entry.file.seek(SeekFrom::Start(offset)).map_err(|e| {
-            ZiporaError::invalid_data(format!(
-                "Failed to seek to offset {} in file {:?}: {}",
-                offset, entry.path, e
-            ))
-        })?;
-
-        // Read the page data
         let bytes_to_read = std::cmp::min(PAGE_SIZE, (entry.size - offset) as usize);
-        let mut bytes_read = 0;
+        let bytes_read = match &mut entry.backing {
+            FileBacking::Real(file) => {
+                file.seek(SeekFrom::Start(offset)).map_err(|e| {
+                    ZiporaError::invalid_data(format!(
+                        "Failed to seek to offset {} in file {:?}: {}",
+                        offset, entry.path, e
+                    ))
+                })?;
 
-        while bytes_read < bytes_to_read {
-            match entry.file.read(&mut buffer[bytes_read..bytes_to_read]) {
-                Ok(0) => break, // EOF reached
-                Ok(n) => bytes_read += n,
-                Err(e) => {
-                    return Err(ZiporaError::invalid_data(format!(
-                        "Failed to read from file {:?} at offset {}: {}",
-                        entry.path, offset, e
-                    )));
+                let mut read_so_far = 0;
+                while read_so_far < bytes_to_read {
+                    match file.read(&mut buffer[read_so_far..bytes_to_read]) {
+                        Ok(0) => break,
+                        Ok(n) => read_so_far += n,
+                        Err(e) => {
+                            return Err(ZiporaError::invalid_data(format!(
+                                "Failed to read from file {:?} at offset {}: {}",
+                                entry.path, offset, e
+                            )));
+                        }
+                    }
                 }
+                read_so_far
             }
-        }
+            FileBacking::Virtual(data) => {
+                let start = offset as usize;
+                let end = (start + bytes_to_read).min(data.len());
+                let count = end.saturating_sub(start);
+                if count > 0 {
+                    buffer[..count].copy_from_slice(&data[start..end]);
+                }
+                count
+            }
+        };
 
         // Zero-fill remaining buffer if we read less than a full page
         if bytes_read < PAGE_SIZE {
@@ -377,6 +428,65 @@ impl FileManager {
         }
 
         Ok(bytes_read)
+    }
+
+    /// Write a page back to the underlying file or virtual buffer
+    pub fn write_page(&self, file_id: FileId, page_id: PageId, data: &[u8]) -> Result<()> {
+        use std::io::Write;
+
+        if data.len() > PAGE_SIZE {
+            return Err(ZiporaError::invalid_data(format!(
+                "Page data length {} exceeds PAGE_SIZE {}",
+                data.len(),
+                PAGE_SIZE
+            )));
+        }
+
+        let mut files = self
+            .files
+            .write()
+            .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
+
+        let entry = files
+            .get_mut(&file_id)
+            .ok_or_else(|| ZiporaError::invalid_data(format!("File ID {} not found", file_id)))?;
+
+        let offset = Self::page_aligned_offset(page_id);
+        let end_offset = offset + data.len() as u64;
+
+        match &mut entry.backing {
+            FileBacking::Real(file) => {
+                file.seek(SeekFrom::Start(offset)).map_err(|e| {
+                    ZiporaError::invalid_data(format!(
+                        "Failed to seek to offset {} in file {:?}: {}",
+                        offset, entry.path, e
+                    ))
+                })?;
+                file.write_all(data).map_err(|e| {
+                    ZiporaError::invalid_data(format!(
+                        "Failed to write to file {:?} at offset {}: {}",
+                        entry.path, offset, e
+                    ))
+                })?;
+                file.flush().map_err(|e| {
+                    ZiporaError::invalid_data(format!("Failed to flush file {:?}: {}", entry.path, e))
+                })?;
+            }
+            FileBacking::Virtual(buf) => {
+                let end = end_offset as usize;
+                if buf.len() < end {
+                    buf.resize(end, 0);
+                }
+                let start = offset as usize;
+                buf[start..end].copy_from_slice(data);
+            }
+        }
+
+        if end_offset > entry.size {
+            entry.size = end_offset;
+        }
+
+        Ok(())
     }
 
     /// Read partial data that may span multiple pages
@@ -395,25 +505,6 @@ impl FileManager {
             )));
         }
 
-        let files = self
-            .files
-            .read()
-            .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
-
-        let entry = files
-            .get(&file_id)
-            .ok_or_else(|| ZiporaError::invalid_data(format!("File ID {} not found", file_id)))?;
-
-        // Check bounds
-        if offset >= entry.size {
-            return Ok(0);
-        }
-
-        let bytes_to_read = std::cmp::min(length, (entry.size - offset) as usize);
-
-        drop(files); // Release read lock before potentially long I/O operation
-
-        // Re-acquire write lock for file operations
         let mut files = self
             .files
             .write()
@@ -423,29 +514,48 @@ impl FileManager {
             .get_mut(&file_id)
             .ok_or_else(|| ZiporaError::invalid_data(format!("File ID {} not found", file_id)))?;
 
-        // Seek and read
-        entry.file.seek(SeekFrom::Start(offset)).map_err(|e| {
-            ZiporaError::invalid_data(format!(
-                "Failed to seek to offset {} in file {:?}: {}",
-                offset, entry.path, e
-            ))
-        })?;
-
-        let mut bytes_read = 0;
-        while bytes_read < bytes_to_read {
-            match entry.file.read(&mut buffer[bytes_read..bytes_to_read]) {
-                Ok(0) => break,
-                Ok(n) => bytes_read += n,
-                Err(e) => {
-                    return Err(ZiporaError::invalid_data(format!(
-                        "Failed to read from file {:?} at offset {}: {}",
-                        entry.path, offset, e
-                    )));
-                }
-            }
+        // Check bounds
+        if offset >= entry.size {
+            return Ok(0);
         }
 
-        Ok(bytes_read)
+        let bytes_to_read = std::cmp::min(length, (entry.size - offset) as usize);
+
+        match &mut entry.backing {
+            FileBacking::Real(file) => {
+                file.seek(SeekFrom::Start(offset)).map_err(|e| {
+                    ZiporaError::invalid_data(format!(
+                        "Failed to seek to offset {} in file {:?}: {}",
+                        offset, entry.path, e
+                    ))
+                })?;
+
+                let mut bytes_read = 0;
+                while bytes_read < bytes_to_read {
+                    match file.read(&mut buffer[bytes_read..bytes_to_read]) {
+                        Ok(0) => break,
+                        Ok(n) => bytes_read += n,
+                        Err(e) => {
+                            return Err(ZiporaError::invalid_data(format!(
+                                "Failed to read from file {:?} at offset {}: {}",
+                                entry.path, offset, e
+                            )));
+                        }
+                    }
+                }
+
+                Ok(bytes_read)
+            }
+            FileBacking::Virtual(data) => {
+                let start = offset as usize;
+                let end = (start + bytes_to_read).min(data.len());
+                let count = end.saturating_sub(start);
+                if count > 0 {
+                    buffer[..count].copy_from_slice(&data[start..end]);
+                }
+                Ok(count)
+            }
+        }
     }
 
     /// Close a file and remove it from management
