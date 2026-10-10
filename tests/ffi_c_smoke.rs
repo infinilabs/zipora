@@ -317,28 +317,91 @@ int main(void) {
 
 #[test]
 fn test_s31_r2_cargo_toml_lib_crate_type_is_rlib_only() {
-    let manifest = fs::read_to_string(repo_root().join("Cargo.toml"))
-        .expect("Cargo.toml must be readable");
-    let lib_section = manifest
-        .split("\n[lib]\n")
-        .nth(1)
-        .and_then(|s| s.split("\n[").next())
-        .expect("[lib] section must exist in Cargo.toml");
-    let crate_type_line = lib_section
-        .lines()
-        .find(|line| line.trim_start().starts_with("crate-type"))
-        .expect("crate-type key must exist in [lib]");
+    let root = repo_root();
+    let cargo_bin = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let output = Command::new(cargo_bin)
+        .current_dir(&root)
+        .args(["metadata", "--format-version", "1", "--no-deps", "--locked"])
+        .output()
+        .expect("cargo metadata must succeed");
+    assert!(
+        output.status.success(),
+        "cargo metadata failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("cargo metadata output must be valid JSON");
+    let packages = metadata["packages"]
+        .as_array()
+        .expect("packages array must exist in cargo metadata");
+    let zipora_pkg = packages
+        .iter()
+        .find(|pkg| pkg["name"].as_str() == Some("zipora"))
+        .expect("zipora package must exist in cargo metadata");
+    let targets = zipora_pkg["targets"]
+        .as_array()
+        .expect("targets array must exist in zipora package metadata");
+    let lib_target = targets
+        .iter()
+        .find(|t| {
+            t["src_path"]
+                .as_str()
+                .map(|p| p.ends_with("src/lib.rs") || p.ends_with(r"src\lib.rs"))
+                .unwrap_or(false)
+        })
+        .expect("src/lib.rs target must exist in zipora package metadata");
+
     assert_eq!(
-        crate_type_line.trim(),
-        "crate-type = [\"rlib\"]",
-        "Cargo.toml [lib] crate-type must default to rlib only so non-FFI builds do not emit staticlib/cdylib"
+        lib_target["crate_types"],
+        serde_json::json!(["rlib"]),
+        "zipora lib target crate_types must be [\"rlib\"] only so non-FFI builds do not emit staticlib/cdylib"
+    );
+    assert_eq!(
+        lib_target["kind"],
+        serde_json::json!(["rlib"]),
+        "zipora lib target kind must be [\"rlib\"] only"
     );
 }
 
 #[test]
 fn test_s31_r3_header_exports_only_types_used_by_c_functions() {
-    let header = fs::read_to_string(repo_root().join("include/zipora.h"))
-        .expect("include/zipora.h must exist in repository");
+    let root = repo_root();
+    let include_dir = root.join("include");
+    let tmp = tempfile::tempdir().expect("failed to create tempdir for header syntax check");
+
+    // 1. Verify all active C ABI types compile cleanly with gcc -fsyntax-only.
+    let active_src = tmp.path().join("active_types.c");
+    fs::write(
+        &active_src,
+        r#"
+#include "zipora.h"
+void check_active_types(
+    CFastVec *v,
+    CMemoryPool *mp,
+    CSuffixArray *sa,
+    CBlobStore *bs,
+    CResult res
+) {
+    (void)v; (void)mp; (void)sa; (void)bs; (void)res;
+}
+"#,
+    )
+    .expect("failed to write active_types.c");
+
+    let ok_check = Command::new("gcc")
+        .args(["-std=c11", "-fsyntax-only", "-Wall", "-Wextra", "-Werror", "-I"])
+        .arg(&include_dir)
+        .arg(&active_src)
+        .output()
+        .expect("failed to invoke gcc for active types syntax check");
+    assert!(
+        ok_check.status.success(),
+        "active C ABI types failed gcc -fsyntax-only:\n{}",
+        String::from_utf8_lossy(&ok_check.stderr)
+    );
+
+    // 2. Verify each of the 11 removed dead types is rejected by the C compiler.
     let dead_c_types = [
         "CBuffer",
         "CString",
@@ -353,10 +416,23 @@ fn test_s31_r3_header_exports_only_types_used_by_c_functions() {
         "CMultiWayMerge",
     ];
     for dead_ty in &dead_c_types {
+        let probe_src = tmp.path().join(format!("dead_{dead_ty}.c"));
+        fs::write(
+            &probe_src,
+            format!("#include \"zipora.h\"\nvoid probe({dead_ty} *p) {{ (void)p; }}\n"),
+        )
+        .expect("failed to write dead type probe source");
+
+        let check = Command::new("gcc")
+            .args(["-std=c11", "-fsyntax-only", "-I"])
+            .arg(&include_dir)
+            .arg(&probe_src)
+            .output()
+            .expect("failed to invoke gcc for dead type check");
         assert!(
-            !header.contains(dead_ty),
-            "unused type `{}` must not be frozen into include/zipora.h ABI",
-            dead_ty
+            !check.status.success(),
+            "unused type `{dead_ty}` must not be declared in include/zipora.h (gcc -fsyntax-only unexpectedly succeeded)"
         );
     }
 }
+
