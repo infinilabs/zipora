@@ -799,6 +799,16 @@ impl RuntimeCpuFeatures {
         }
     }
 
+    /// Compute physical core count from logical core count and hyperthreading flag,
+    /// clamping to at least 1 physical core even on 1-vCPU hyperthreaded VMs.
+    pub(crate) fn compute_physical_cores(logical_cores: usize, has_htt: bool) -> usize {
+        if has_htt {
+            (logical_cores / 2).max(1)
+        } else {
+            logical_cores.max(1)
+        }
+    }
+
     /// Get logical and physical core counts
     fn get_core_count(&self) -> (usize, usize) {
         let logical_cores = std::thread::available_parallelism()
@@ -809,14 +819,18 @@ impl RuntimeCpuFeatures {
         #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             let cpuid = raw_cpuid::CpuId::new();
-            if let Some(feature_info) = cpuid.get_feature_info()
-                && feature_info.has_htt()
-            {
-                return (logical_cores, (logical_cores / 2).max(1));
+            if let Some(feature_info) = cpuid.get_feature_info() {
+                return (
+                    logical_cores,
+                    Self::compute_physical_cores(logical_cores, feature_info.has_htt()),
+                );
             }
         }
 
-        (logical_cores, logical_cores)
+        (
+            logical_cores,
+            Self::compute_physical_cores(logical_cores, false),
+        )
     }
 }
 
@@ -1286,5 +1300,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_s33_r3_compute_physical_cores_clamps_single_core_htt() {
+        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(1, true), 1);
+        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(1, false), 1);
+        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(2, true), 1);
+        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(2, false), 2);
+        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(8, true), 4);
+        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(0, true), 1);
     }
 }
