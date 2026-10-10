@@ -623,7 +623,7 @@ mod benches {
     /// Benchmark configuration creation
     #[test]
     fn bench_config_creation() {
-        let iterations = 10000;
+        let iterations = if cfg!(miri) { 4 } else { 10000 };
 
         // Benchmark default creation
         let start = Instant::now();
@@ -667,7 +667,7 @@ mod benches {
     #[test]
     fn bench_config_validation() {
         let config = NestLoudsTrieConfig::default();
-        let iterations = 100000;
+        let iterations = if cfg!(miri) { 4 } else { 100000 };
 
         let start = Instant::now();
         for _ in 0..iterations {
@@ -684,7 +684,7 @@ mod benches {
     #[test]
     fn bench_config_serialization() -> Result<()> {
         let config = NestLoudsTrieConfig::performance_preset();
-        let iterations = 1000;
+        let iterations = if cfg!(miri) { 4 } else { 1000 };
 
         // Benchmark JSON serialization
         let start = Instant::now();
@@ -727,7 +727,7 @@ mod benches {
             env::set_var("BENCH_TRIE_ENABLE_STATISTICS", "true");
         }
 
-        let iterations = 1000;
+        let iterations = if cfg!(miri) { 4 } else { 1000 };
         let start = Instant::now();
         for _ in 0..iterations {
             let _config = NestLoudsTrieConfig::from_env_with_prefix("BENCH_")?;

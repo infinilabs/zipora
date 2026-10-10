@@ -12,7 +12,7 @@
 .PHONY: test test_debug test_release test_simd_base64
 .PHONY: bench bench_all bench_avx512 bench_fsa bench_io bench_serialization
 .PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
-.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_scalar
+.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_c12 miri_scalar
 .PHONY: tsan_cspp tsan_pool tsan_concurrency
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity
@@ -339,6 +339,23 @@ miri_thread:
 miri_ffi:
 	$(CARGO_MIRI) test --lib --features ffi ffi:: -- --test-threads=1
 
+# Stage 13 (plan.md C12) subsystems under Miri: system:: (excluding process::,
+# which spawns OS subprocesses), simd::, scoring:: (runs batch_score_avx2 in the
+# default SIMD build and batch_score_scalar under MIRI_SCALAR=1), config::,
+# cache::, statistics::, and the C12.1 IntVec width-validation test.
+# -Zmiri-disable-isolation is enabled because cache::simple_tests and
+# config::tests write temporary files and read environment variables.
+miri_c12:
+	MIRIFLAGS="-Zmiri-disable-isolation" \
+	$(CARGO_MIRI) test --lib -- --test-threads=1 \
+		--skip system::process:: \
+		--skip succinct:: \
+		system:: simd:: scoring:: \
+		config::memory:: config::nest_louds_trie:: config::tests:: \
+		cache::buffer:: cache::simple_tests:: \
+		statistics:: \
+		containers::specialized::int_vec::tests::test_c12_1_int_vec_from_slice_returns_err_instead_of_aborting_on_invalid_element_width
+
 # The suites whose #[target_feature] kernels differ between the two builds,
 # rebuilt with no target features (MIRI_SCALAR=1, target/miri-scalar), so the
 # scalar code those kernels replace is Miri-checked too. miri_core, miri_pool
@@ -346,7 +363,7 @@ miri_ffi:
 # not repeated. Which kernels miri_tests and miri_full run in each build has
 # not been fully measured.
 miri_scalar:
-	$(MAKE) --no-print-directory MIRI_SCALAR=1 miri_cspp miri_string miri_io miri_algorithms
+	$(MAKE) --no-print-directory MIRI_SCALAR=1 miri_cspp miri_string miri_io miri_algorithms miri_c12
 
 # =============================================================================
 # FUZZING (plan.md 6.1) — requires: cargo install cargo-fuzz; nightly toolchain

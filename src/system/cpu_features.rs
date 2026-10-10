@@ -521,23 +521,10 @@ impl RuntimeCpuFeatures {
         Self
     }
 
-    /// Compute physical core count from logical core count and hyperthreading state,
-    /// guaranteeing at least 1 physical core even on 1-vCPU hyperthreaded VMs.
-    #[inline]
-    pub(crate) fn compute_physical_cores(logical_cores: usize, has_htt: bool) -> usize {
-        let logical = logical_cores.max(1);
-        if has_htt {
-            (logical / 2).max(1)
-        } else {
-            logical
-        }
-    }
-
     /// Detect all available CPU features
     pub fn detect_features(&self) -> CpuFeatures {
         let mut features = CpuFeatures::new();
-        features.has_unaligned_access =
-            cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
+        features.has_unaligned_access = cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
 
         // Detect CPU info
         let (vendor, model) = self.get_cpu_info();
@@ -652,8 +639,10 @@ impl RuntimeCpuFeatures {
             features.has_sha1 = cpuinfo_lower.contains("sha1");
             features.has_sha2 = cpuinfo_lower.contains("sha2");
             features.has_sha3 = cpuinfo_lower.contains("sha3");
-            features.has_crypto =
-                features.has_aes_arm || features.has_sha1 || features.has_sha2 || cpuinfo_lower.contains("crypto");
+            features.has_crypto = features.has_aes_arm
+                || features.has_sha1
+                || features.has_sha2
+                || cpuinfo_lower.contains("crypto");
             features.has_sve = cpuinfo_lower.contains("sve");
             features.has_sve2 = cpuinfo_lower.contains("sve2");
         }
@@ -702,7 +691,12 @@ impl RuntimeCpuFeatures {
                 }
             }
             #[cfg(miri)]
-            let _ = (&mut cache_line_size, &mut l1_size, &mut l2_size, &mut l3_size);
+            let _ = (
+                &mut cache_line_size,
+                &mut l1_size,
+                &mut l2_size,
+                &mut l3_size,
+            );
         }
 
         #[cfg(target_arch = "aarch64")]
@@ -744,7 +738,12 @@ impl RuntimeCpuFeatures {
         }
 
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let _ = (&mut cache_line_size, &mut l1_size, &mut l2_size, &mut l3_size);
+        let _ = (
+            &mut cache_line_size,
+            &mut l1_size,
+            &mut l2_size,
+            &mut l3_size,
+        );
 
         (cache_line_size, l1_size, l2_size, l3_size)
     }
@@ -804,7 +803,8 @@ impl RuntimeCpuFeatures {
     fn get_core_count(&self) -> (usize, usize) {
         let logical_cores = std::thread::available_parallelism()
             .map(|n| n.get())
-            .unwrap_or(1);
+            .unwrap_or(1)
+            .max(1);
 
         #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
@@ -812,17 +812,11 @@ impl RuntimeCpuFeatures {
             if let Some(feature_info) = cpuid.get_feature_info()
                 && feature_info.has_htt()
             {
-                return (
-                    logical_cores,
-                    Self::compute_physical_cores(logical_cores, true),
-                );
+                return (logical_cores, (logical_cores / 2).max(1));
             }
         }
 
-        (
-            logical_cores,
-            Self::compute_physical_cores(logical_cores, false),
-        )
+        (logical_cores, logical_cores)
     }
 }
 
@@ -1116,17 +1110,45 @@ mod tests {
         let features = get_cpu_features();
 
         for (name, reported, usable) in [
-            ("sse4.1", features.has_sse41, is_x86_feature_detected!("sse4.1")),
-            ("sse4.2", features.has_sse42, is_x86_feature_detected!("sse4.2")),
+            (
+                "sse4.1",
+                features.has_sse41,
+                is_x86_feature_detected!("sse4.1"),
+            ),
+            (
+                "sse4.2",
+                features.has_sse42,
+                is_x86_feature_detected!("sse4.2"),
+            ),
             ("avx", features.has_avx, is_x86_feature_detected!("avx")),
             ("avx2", features.has_avx2, is_x86_feature_detected!("avx2")),
             ("bmi1", features.has_bmi1, is_x86_feature_detected!("bmi1")),
             ("bmi2", features.has_bmi2, is_x86_feature_detected!("bmi2")),
-            ("popcnt", features.has_popcnt, is_x86_feature_detected!("popcnt")),
-            ("lzcnt", features.has_lzcnt, is_x86_feature_detected!("lzcnt")),
-            ("avx512f", features.has_avx512f, is_x86_feature_detected!("avx512f")),
-            ("avx512vl", features.has_avx512vl, is_x86_feature_detected!("avx512vl")),
-            ("avx512bw", features.has_avx512bw, is_x86_feature_detected!("avx512bw")),
+            (
+                "popcnt",
+                features.has_popcnt,
+                is_x86_feature_detected!("popcnt"),
+            ),
+            (
+                "lzcnt",
+                features.has_lzcnt,
+                is_x86_feature_detected!("lzcnt"),
+            ),
+            (
+                "avx512f",
+                features.has_avx512f,
+                is_x86_feature_detected!("avx512f"),
+            ),
+            (
+                "avx512vl",
+                features.has_avx512vl,
+                is_x86_feature_detected!("avx512vl"),
+            ),
+            (
+                "avx512bw",
+                features.has_avx512bw,
+                is_x86_feature_detected!("avx512bw"),
+            ),
         ] {
             assert_eq!(
                 reported, usable,
@@ -1157,12 +1179,10 @@ mod tests {
             "CpuFeatures::new() must have UnalignedAccess disabled"
         );
 
-        // 2. Single-core hyperthreaded VM (logical_cores == 1, has_htt == true) must
-        // clamp physical_cores to >= 1 instead of truncating 1 / 2 == 0.
-        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(1, true), 1);
-        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(2, true), 1);
-        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(8, true), 4);
-        assert_eq!(RuntimeCpuFeatures::compute_physical_cores(1, false), 1);
+        // 2. Detected physical_cores must always be >= 1.
+        let detected = get_cpu_features();
+        assert!(detected.logical_cores >= 1);
+        assert!(detected.physical_cores >= 1);
 
         // 3. Under Miri, detect_x86_features is a no-op so all x86 features on get_cpu_features()
         // must be false; on real x86_64 hardware, every CpuFeature variant must match
@@ -1173,31 +1193,91 @@ mod tests {
             for (name, feat, expected) in [
                 ("sse2", CpuFeature::SSE2, is_x86_feature_detected!("sse2")),
                 ("sse3", CpuFeature::SSE3, is_x86_feature_detected!("sse3")),
-                ("ssse3", CpuFeature::SSSE3, is_x86_feature_detected!("ssse3")),
-                ("sse4.1", CpuFeature::SSE4_1, is_x86_feature_detected!("sse4.1")),
-                ("sse4.2", CpuFeature::SSE4_2, is_x86_feature_detected!("sse4.2")),
+                (
+                    "ssse3",
+                    CpuFeature::SSSE3,
+                    is_x86_feature_detected!("ssse3"),
+                ),
+                (
+                    "sse4.1",
+                    CpuFeature::SSE4_1,
+                    is_x86_feature_detected!("sse4.1"),
+                ),
+                (
+                    "sse4.2",
+                    CpuFeature::SSE4_2,
+                    is_x86_feature_detected!("sse4.2"),
+                ),
                 ("avx", CpuFeature::AVX, is_x86_feature_detected!("avx")),
                 ("avx2", CpuFeature::AVX2, is_x86_feature_detected!("avx2")),
                 ("bmi1", CpuFeature::BMI1, is_x86_feature_detected!("bmi1")),
                 ("bmi2", CpuFeature::BMI2, is_x86_feature_detected!("bmi2")),
-                ("popcnt", CpuFeature::POPCNT, is_x86_feature_detected!("popcnt")),
-                ("lzcnt", CpuFeature::LZCNT, is_x86_feature_detected!("lzcnt")),
-                ("pclmulqdq", CpuFeature::PCLMULQDQ, is_x86_feature_detected!("pclmulqdq")),
+                (
+                    "popcnt",
+                    CpuFeature::POPCNT,
+                    is_x86_feature_detected!("popcnt"),
+                ),
+                (
+                    "lzcnt",
+                    CpuFeature::LZCNT,
+                    is_x86_feature_detected!("lzcnt"),
+                ),
+                (
+                    "pclmulqdq",
+                    CpuFeature::PCLMULQDQ,
+                    is_x86_feature_detected!("pclmulqdq"),
+                ),
                 ("aes", CpuFeature::AES, is_x86_feature_detected!("aes")),
-                ("rdrand", CpuFeature::RDRAND, is_x86_feature_detected!("rdrand")),
-                ("rdseed", CpuFeature::RDSEED, is_x86_feature_detected!("rdseed")),
-                ("avx512f", CpuFeature::AVX512F, is_x86_feature_detected!("avx512f")),
-                ("avx512dq", CpuFeature::AVX512DQ, is_x86_feature_detected!("avx512dq")),
-                ("avx512cd", CpuFeature::AVX512CD, is_x86_feature_detected!("avx512cd")),
-                ("avx512bw", CpuFeature::AVX512BW, is_x86_feature_detected!("avx512bw")),
-                ("avx512vl", CpuFeature::AVX512VL, is_x86_feature_detected!("avx512vl")),
+                (
+                    "rdrand",
+                    CpuFeature::RDRAND,
+                    is_x86_feature_detected!("rdrand"),
+                ),
+                (
+                    "rdseed",
+                    CpuFeature::RDSEED,
+                    is_x86_feature_detected!("rdseed"),
+                ),
+                (
+                    "avx512f",
+                    CpuFeature::AVX512F,
+                    is_x86_feature_detected!("avx512f"),
+                ),
+                (
+                    "avx512dq",
+                    CpuFeature::AVX512DQ,
+                    is_x86_feature_detected!("avx512dq"),
+                ),
+                (
+                    "avx512cd",
+                    CpuFeature::AVX512CD,
+                    is_x86_feature_detected!("avx512cd"),
+                ),
+                (
+                    "avx512bw",
+                    CpuFeature::AVX512BW,
+                    is_x86_feature_detected!("avx512bw"),
+                ),
+                (
+                    "avx512vl",
+                    CpuFeature::AVX512VL,
+                    is_x86_feature_detected!("avx512vl"),
+                ),
                 (
                     "avx512vpopcntdq",
                     CpuFeature::AVX512VPOPCNTDQ,
                     is_x86_feature_detected!("avx512vpopcntdq"),
                 ),
-                ("avx512vbmi", CpuFeature::AVX512VBMI, is_x86_feature_detected!("avx512vbmi")),
-                ("avx512ifma", CpuFeature::AVX512IFMA, is_x86_feature_detected!("avx512ifma")),
+                (
+                    "avx512vbmi",
+                    CpuFeature::AVX512VBMI,
+                    is_x86_feature_detected!("avx512vbmi"),
+                ),
+                (
+                    "avx512ifma",
+                    CpuFeature::AVX512IFMA,
+                    is_x86_feature_detected!("avx512ifma"),
+                ),
             ] {
                 assert_eq!(
                     has_cpu_feature(feat),
@@ -1208,4 +1288,3 @@ mod tests {
         }
     }
 }
-

@@ -15,9 +15,15 @@ use std::time::{Duration, Instant};
 #[inline]
 fn atomic_saturating_sub(target: &AtomicUsize, delta: usize) {
     // ORDERING: Relaxed is sufficient for independent telemetry counters.
-    let _ = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
-        Some(cur.saturating_sub(delta))
-    });
+    let mut cur = target.load(Ordering::Relaxed);
+    while let Err(actual) = target.compare_exchange_weak(
+        cur,
+        cur.saturating_sub(delta),
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    ) {
+        cur = actual;
+    }
 }
 
 // ============================================================================
@@ -470,7 +476,10 @@ impl ErrorStats {
     }
     pub fn report(&self) -> String {
         // ORDERING: Relaxed is sufficient for point-in-time telemetry formatting.
-        format!("Errors: total={}", self.total_errors.load(Ordering::Relaxed))
+        format!(
+            "Errors: total={}",
+            self.total_errors.load(Ordering::Relaxed)
+        )
     }
 }
 
@@ -893,7 +902,10 @@ mod tests {
         stats.performance.record_delete();
         assert_eq!(stats.performance.cache_hits.load(Ordering::Relaxed), 1);
         assert_eq!(stats.performance.cache_misses.load(Ordering::Relaxed), 1);
-        assert_eq!(stats.performance.total_operations.load(Ordering::Relaxed), 4);
+        assert_eq!(
+            stats.performance.total_operations.load(Ordering::Relaxed),
+            4
+        );
 
         // 4. TrieStatistics::merge, generate_report, and reset must function
         let other = TrieStatistics::new();
@@ -910,7 +922,10 @@ mod tests {
         assert_eq!(stats.memory.total_allocated.load(Ordering::Relaxed), 0);
         assert_eq!(stats.memory.nodes_memory.load(Ordering::Relaxed), 0);
         assert_eq!(stats.memory.peak_memory.load(Ordering::Relaxed), 0);
-        assert_eq!(stats.performance.total_operations.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            stats.performance.total_operations.load(Ordering::Relaxed),
+            0
+        );
         assert_eq!(stats.errors.total_errors.load(Ordering::Relaxed), 0);
     }
 }

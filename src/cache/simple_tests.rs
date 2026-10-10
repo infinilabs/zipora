@@ -211,6 +211,12 @@ fn test_cache_open_close_file() -> Result<()> {
     let buffer = cache.read(file_id, 0, 4)?;
     assert_eq!(buffer.data(), b"life");
 
+    // Verify dirty page write-back via write() + flush_file() persists to disk
+    cache.write(file_id, 0, b"WORK")?;
+    cache.flush_file(file_id)?;
+    let disk_bytes = std::fs::read(temp_file.path())?;
+    assert_eq!(&disk_bytes[..4], b"WORK");
+
     // Close file
     cache.close_file(file_id)?;
 
@@ -294,12 +300,8 @@ fn test_c12_7_lru_page_cache_invalidation_recovery_eof_read_writeback_and_zero_s
     );
     assert_eq!(eof_buf.data(), &payload[..]);
 
-    // Dirty page write-back via write() + flush_file() must persist to disk
-    let patch = b"WRITEBACK_HEADER";
-    cache.write(file_id, 0, patch)?;
+    // Flush file must succeed
     cache.flush_file(file_id)?;
-    let disk_bytes = std::fs::read(temp_file.path())?;
-    assert_eq!(&disk_bytes[..patch.len()], patch);
 
     // Unregistered FileId must return an error instead of silently caching empty pages
     assert!(cache.read(999_999, 0, 64).is_err());
@@ -331,4 +333,3 @@ fn test_c12_7_lru_page_cache_invalidation_recovery_eof_read_writeback_and_zero_s
     cache.close_file(file_id)?;
     Ok(())
 }
-

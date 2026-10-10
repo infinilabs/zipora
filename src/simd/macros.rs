@@ -406,6 +406,7 @@ mod tests {
         fn scalar_impl() -> i32 {
             42
         }
+        #[cfg(not(miri))]
         fn avx2_impl() -> i32 {
             84
         }
@@ -424,9 +425,11 @@ mod tests {
         fn scalar_impl() -> i32 {
             1
         }
+        #[cfg(not(miri))]
         fn sse2_impl() -> i32 {
             2
         }
+        #[cfg(not(miri))]
         fn avx2_impl() -> i32 {
             3
         }
