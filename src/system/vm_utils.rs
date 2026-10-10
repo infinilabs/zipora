@@ -61,12 +61,17 @@ impl KernelInfo {
 
     /// Get system page size
     fn get_page_size() -> usize {
-        #[cfg(unix)]
+        #[cfg(all(unix, not(miri)))]
         {
             // SAFETY: sysconf with _SC_PAGESIZE is always safe to call, returns valid page size or -1 on error
-            unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
+            let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+            if ps > 0 {
+                ps as usize
+            } else {
+                4096
+            }
         }
-        #[cfg(windows)]
+        #[cfg(all(windows, not(miri)))]
         {
             use std::mem;
             use winapi::um::sysinfoapi::{GetSystemInfo, SYSTEM_INFO};
@@ -76,18 +81,23 @@ impl KernelInfo {
             unsafe {
                 let mut system_info: SYSTEM_INFO = mem::zeroed();
                 GetSystemInfo(&mut system_info);
-                system_info.dwPageSize as usize
+                (system_info.dwPageSize as usize).max(4096)
             }
         }
-        #[cfg(not(any(unix, windows)))]
+        #[cfg(any(miri, not(any(unix, windows))))]
         {
-            4096 // Reasonable default
+            4096 // Standard page size under Miri and fallback platforms
         }
     }
 
     /// Get Linux kernel version
     #[cfg(target_os = "linux")]
     fn get_linux_kernel_version() -> String {
+        #[cfg(miri)]
+        {
+            return "Unknown".to_string();
+        }
+        #[cfg(not(miri))]
         if let Ok(uname_output) = std::process::Command::new("uname").arg("-r").output() {
             String::from_utf8_lossy(&uname_output.stdout)
                 .trim()
@@ -115,13 +125,27 @@ impl KernelInfo {
     /// Check if transparent huge pages are supported
     #[cfg(target_os = "linux")]
     fn check_thp_support() -> bool {
-        std::path::Path::new("/sys/kernel/mm/transparent_hugepage").exists()
+        #[cfg(miri)]
+        {
+            false
+        }
+        #[cfg(not(miri))]
+        {
+            std::path::Path::new("/sys/kernel/mm/transparent_hugepage").exists()
+        }
     }
 
     /// Check if NUMA is supported
     #[cfg(target_os = "linux")]
     fn check_numa_support() -> bool {
-        std::path::Path::new("/sys/devices/system/node").exists()
+        #[cfg(miri)]
+        {
+            false
+        }
+        #[cfg(not(miri))]
+        {
+            std::path::Path::new("/sys/devices/system/node").exists()
+        }
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -156,6 +180,22 @@ impl VmManager {
         self.kernel_info
     }
 
+    /// Compute the page-aligned `[aligned_addr, aligned_addr + aligned_len)` span covering `data`.
+    #[cfg(not(miri))]
+    #[inline]
+    fn page_aligned_range(&self, data: &[u8]) -> Result<(*const u8, usize)> {
+        let page_size = self.kernel_info.page_size.max(4096);
+        let addr = data.as_ptr() as usize;
+        let aligned_addr = (addr / page_size) * page_size;
+        let end = addr
+            .checked_add(data.len())
+            .ok_or_else(|| ZiporaError::invalid_data("memory range address overflow"))?;
+        let aligned_end = end
+            .checked_next_multiple_of(page_size)
+            .ok_or_else(|| ZiporaError::invalid_data("page-aligned range end overflow"))?;
+        Ok((aligned_addr as *const u8, aligned_end - aligned_addr))
+    }
+
     /// Prefetch memory pages with optimal strategy
     ///
     /// # Safety
@@ -175,70 +215,83 @@ impl VmManager {
             return Ok(());
         }
 
-        let addr = data.as_ptr();
-        let len = data.len();
+        if matches!(strategy, PrefetchStrategy::Manual) {
+            return self.manual_prefetch(data);
+        }
 
-        // Align to page boundaries
-        let page_size = self.kernel_info.page_size;
-        let aligned_addr = ((addr as usize) / page_size) * page_size;
-        let aligned_end = ((addr as usize) + len).div_ceil(page_size) * page_size;
-        let aligned_len = aligned_end - aligned_addr;
+        #[cfg(miri)]
+        {
+            return match strategy {
+                PrefetchStrategy::Populate => Err(ZiporaError::invalid_data(
+                    "MADV_POPULATE_READ not supported under Miri",
+                )),
+                PrefetchStrategy::Auto | PrefetchStrategy::WillNeed | PrefetchStrategy::Manual => {
+                    self.manual_prefetch(data)
+                }
+            };
+        }
 
-        match strategy {
-            PrefetchStrategy::Auto => {
-                #[cfg(target_os = "linux")]
-                {
-                    if self.kernel_info.has_madv_populate {
-                        self.madv_populate_read(aligned_addr as *const u8, aligned_len)
-                    } else {
-                        self.madv_willneed(aligned_addr as *const u8, aligned_len)
+        #[cfg(not(miri))]
+        {
+            let (aligned_addr, aligned_len) = self.page_aligned_range(data)?;
+
+            match strategy {
+                PrefetchStrategy::Auto => {
+                    #[cfg(target_os = "linux")]
+                    {
+                        if self.kernel_info.has_madv_populate {
+                            self.madv_populate_read(aligned_addr, aligned_len)
+                        } else {
+                            self.madv_willneed(aligned_addr, aligned_len)
+                        }
+                    }
+                    #[cfg(target_os = "windows")]
+                    {
+                        self.prefetch_virtual_memory(aligned_addr, aligned_len)
+                    }
+                    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+                    {
+                        let _ = (aligned_addr, aligned_len);
+                        self.manual_prefetch(data)
                     }
                 }
-                #[cfg(target_os = "windows")]
-                {
-                    self.prefetch_virtual_memory(aligned_addr as *const u8, aligned_len)
-                }
-                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-                {
-                    self.manual_prefetch(aligned_addr as *const u8, aligned_len)
-                }
-            }
-            PrefetchStrategy::Populate => {
-                #[cfg(target_os = "linux")]
-                {
-                    if self.kernel_info.has_madv_populate {
-                        self.madv_populate_read(aligned_addr as *const u8, aligned_len)
-                    } else {
+                PrefetchStrategy::Populate => {
+                    #[cfg(target_os = "linux")]
+                    {
+                        if self.kernel_info.has_madv_populate {
+                            self.madv_populate_read(aligned_addr, aligned_len)
+                        } else {
+                            Err(ZiporaError::invalid_data(
+                                "MADV_POPULATE_READ not supported",
+                            ))
+                        }
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        let _ = (aligned_addr, aligned_len);
                         Err(ZiporaError::invalid_data(
-                            "MADV_POPULATE_READ not supported",
+                            "MADV_POPULATE_READ only available on Linux",
                         ))
                     }
                 }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    Err(ZiporaError::invalid_data(
-                        "MADV_POPULATE_READ only available on Linux",
-                    ))
+                PrefetchStrategy::WillNeed => {
+                    #[cfg(unix)]
+                    {
+                        self.madv_willneed(aligned_addr, aligned_len)
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = (aligned_addr, aligned_len);
+                        self.manual_prefetch(data)
+                    }
                 }
-            }
-            PrefetchStrategy::WillNeed => {
-                #[cfg(unix)]
-                {
-                    self.madv_willneed(aligned_addr as *const u8, aligned_len)
-                }
-                #[cfg(not(unix))]
-                {
-                    self.manual_prefetch(aligned_addr as *const u8, aligned_len)
-                }
-            }
-            PrefetchStrategy::Manual => {
-                self.manual_prefetch(aligned_addr as *const u8, aligned_len)
+                PrefetchStrategy::Manual => self.manual_prefetch(data),
             }
         }
     }
 
     /// Use MADV_POPULATE_READ for prefetching (Linux 5.14+)
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(miri)))]
     fn madv_populate_read(&self, addr: *const u8, len: usize) -> Result<()> {
         const MADV_POPULATE_READ: libc::c_int = 22;
 
@@ -256,7 +309,7 @@ impl VmManager {
     }
 
     /// Use MADV_WILLNEED for prefetching
-    #[cfg(unix)]
+    #[cfg(all(unix, not(miri)))]
     fn madv_willneed(&self, addr: *const u8, len: usize) -> Result<()> {
         // SAFETY: pointer and length derived from valid slice (page-aligned), madvise returns error code (not UB)
         let result = unsafe { libc::madvise(addr as *mut libc::c_void, len, libc::MADV_WILLNEED) };
@@ -272,7 +325,7 @@ impl VmManager {
     }
 
     /// Use PrefetchVirtualMemory on Windows
-    #[cfg(target_os = "windows")]
+    #[cfg(all(target_os = "windows", not(miri)))]
     fn prefetch_virtual_memory(&self, addr: *const u8, len: usize) -> Result<()> {
         use winapi::um::memoryapi::PrefetchVirtualMemory;
         use winapi::um::processthreadsapi::GetCurrentProcess;
@@ -293,19 +346,25 @@ impl VmManager {
         }
     }
 
-    /// Manual prefetch by touching pages
-    fn manual_prefetch(&self, addr: *const u8, len: usize) -> Result<()> {
-        let page_size = self.kernel_info.page_size;
-        let mut current = addr as usize;
-        let end = current + len;
+    /// Manual prefetch by touching pages strictly within `data` while preserving slice provenance.
+    fn manual_prefetch(&self, data: &[u8]) -> Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
 
-        while current < end {
-            // SAFETY: pointer is within valid range derived from slice, read is aligned to page boundary
+        let page_size = self.kernel_info.page_size.max(4096);
+        let mut offset = 0usize;
+        while offset < data.len() {
+            // SAFETY: `offset < data.len()`, so `&data[offset]` is an in-bounds, initialized byte with full slice provenance.
             unsafe {
-                // Touch the page to bring it into memory
-                let _touch = *(current as *const u8);
+                let _touch = std::ptr::read_volatile(&data[offset]);
             }
-            current += page_size;
+            offset = offset.saturating_add(page_size);
+        }
+        // Touch the final byte so the last page spanned by `data` is also paged in.
+        // SAFETY: `!data.is_empty()`, so `data.len() - 1` is in bounds.
+        unsafe {
+            let _touch_last = std::ptr::read_volatile(&data[data.len() - 1]);
         }
 
         Ok(())
@@ -321,28 +380,63 @@ impl VmManager {
             return Ok(());
         }
 
-        let addr = data.as_ptr();
-        let len = data.len();
+        #[cfg(not(target_os = "linux"))]
+        if matches!(advice, MemoryAdvice::HugePage) {
+            return Err(ZiporaError::invalid_data(
+                "MADV_HUGEPAGE only available on Linux",
+            ));
+        }
 
-        #[cfg(unix)]
+        #[cfg(miri)]
         {
+            let _ = advice;
+            return Ok(());
+        }
+
+        #[cfg(all(unix, not(miri)))]
+        {
+            let (aligned_addr, aligned_len) = self.page_aligned_range(data)?;
+
+            // On Linux, `MADV_DONTNEED` on anonymous private memory destructively zeroes pages,
+            // which would mutate `data: &[u8]` behind a shared reference and corrupt adjacent
+            // heap allocations on boundary pages. Use non-destructive `posix_madvise` with
+            // `POSIX_MADV_DONTNEED` for `MemoryAdvice::DontNeed`.
+            if matches!(advice, MemoryAdvice::DontNeed) {
+                // SAFETY: `aligned_addr` and `aligned_len` cover the page-aligned span of `data`,
+                // and `posix_madvise(..., POSIX_MADV_DONTNEED)` is a non-destructive paging hint.
+                let rc = unsafe {
+                    libc::posix_madvise(
+                        aligned_addr as *mut libc::c_void,
+                        aligned_len,
+                        libc::POSIX_MADV_DONTNEED,
+                    )
+                };
+                return if rc == 0 {
+                    Ok(())
+                } else {
+                    Err(ZiporaError::invalid_data(format!(
+                        "posix_madvise failed: {}",
+                        std::io::Error::from_raw_os_error(rc)
+                    )))
+                };
+            }
+
             let madvise_flag = match advice {
                 MemoryAdvice::Sequential => libc::MADV_SEQUENTIAL,
                 MemoryAdvice::Random => libc::MADV_RANDOM,
                 MemoryAdvice::WillNeed => libc::MADV_WILLNEED,
-                MemoryAdvice::DontNeed => libc::MADV_DONTNEED,
+                MemoryAdvice::DontNeed => unreachable!("handled above"),
                 #[cfg(target_os = "linux")]
                 MemoryAdvice::HugePage => libc::MADV_HUGEPAGE,
                 #[cfg(not(target_os = "linux"))]
-                MemoryAdvice::HugePage => {
-                    return Err(ZiporaError::invalid_data(
-                        "MADV_HUGEPAGE only available on Linux",
-                    ));
-                }
+                MemoryAdvice::HugePage => unreachable!("handled above"),
             };
 
-            // SAFETY: pointer and length derived from valid slice, madvise returns error code (not UB)
-            let result = unsafe { libc::madvise(addr as *mut libc::c_void, len, madvise_flag) };
+            // SAFETY: `aligned_addr` and `aligned_len` are page-aligned and cover `data`;
+            // non-destructive `madvise` hints only advise the VM subsystem and return an error code on failure.
+            let result = unsafe {
+                libc::madvise(aligned_addr as *mut libc::c_void, aligned_len, madvise_flag)
+            };
 
             if result == 0 {
                 Ok(())
@@ -354,12 +448,11 @@ impl VmManager {
             }
         }
 
-        #[cfg(not(unix))]
+        #[cfg(all(not(unix), not(miri)))]
         {
-            // Limited support on non-Unix platforms
             match advice {
                 MemoryAdvice::WillNeed => self.prefetch(data),
-                _ => Ok(()), // Ignore other advice on unsupported platforms
+                _ => Ok(()),
             }
         }
     }
@@ -512,75 +605,42 @@ impl PageAlignedAlloc {
         }
     }
 
-    /// Allocate page-aligned memory
+    /// Allocate zero-initialized, page-aligned memory.
     pub fn allocate(&self, size: usize) -> Result<PageAlignedBuffer> {
-        let page_size = self.vm_manager.kernel_info().page_size;
-        let aligned_size = size.div_ceil(page_size) * page_size;
-
-        #[cfg(unix)]
-        {
-            // SAFETY: page_size is power-of-two alignment, aligned_size is multiple of page_size, returns null on failure
-            let ptr = unsafe { libc::aligned_alloc(page_size, aligned_size) };
-
-            if ptr.is_null() {
-                Err(ZiporaError::invalid_data(
-                    "Failed to allocate page-aligned memory",
-                ))
-            } else {
-                Ok(PageAlignedBuffer {
-                    ptr: ptr as *mut u8,
-                    size: aligned_size,
-                    actual_size: size,
-                })
-            }
+        let page_size = self.vm_manager.kernel_info().page_size.max(4096);
+        if !page_size.is_power_of_two() {
+            return Err(ZiporaError::invalid_data(
+                "System page size is not a power of two",
+            ));
+        }
+        if size > isize::MAX as usize {
+            return Err(ZiporaError::invalid_data(
+                "Requested allocation size exceeds isize::MAX",
+            ));
         }
 
-        #[cfg(target_os = "windows")]
-        {
-            use winapi::um::memoryapi::VirtualAlloc;
-            use winapi::um::winnt::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE};
+        let aligned_size = size
+            .max(1)
+            .checked_next_multiple_of(page_size)
+            .ok_or_else(|| ZiporaError::invalid_data("Page-aligned allocation size overflow"))?;
 
-            // SAFETY: VirtualAlloc with null base address allocates new memory, size and flags are valid, returns null on failure
-            let ptr = unsafe {
-                VirtualAlloc(
-                    std::ptr::null_mut(),
-                    aligned_size,
-                    MEM_COMMIT | MEM_RESERVE,
-                    PAGE_READWRITE,
-                )
-            };
+        let layout = std::alloc::Layout::from_size_align(aligned_size, page_size)
+            .map_err(|_| ZiporaError::invalid_data("Invalid page-aligned allocation layout"))?;
 
-            if ptr.is_null() {
-                Err(ZiporaError::invalid_data(
-                    "Failed to allocate page-aligned memory",
-                ))
-            } else {
-                Ok(PageAlignedBuffer {
-                    ptr: ptr as *mut u8,
-                    size: aligned_size,
-                    actual_size: size,
-                })
-            }
-        }
-
-        #[cfg(not(any(unix, target_os = "windows")))]
-        {
-            // Fallback using standard allocation with manual alignment
-            let layout = std::alloc::Layout::from_size_align(aligned_size + page_size, page_size)
-                .map_err(|_| ZiporaError::invalid_data("Invalid layout"))?;
-
-            // SAFETY: layout is valid (checked above), alloc returns null on failure
-            let ptr = unsafe { std::alloc::alloc(layout) };
-            if ptr.is_null() {
-                Err(ZiporaError::invalid_data("Failed to allocate memory"))
-            } else {
-                let aligned_ptr = ((ptr as usize + page_size - 1) / page_size) * page_size;
-                Ok(PageAlignedBuffer {
-                    ptr: aligned_ptr as *mut u8,
-                    size: aligned_size,
-                    actual_size: size,
-                })
-            }
+        // SAFETY: `layout` has non-zero `aligned_size >= page_size` and power-of-two `page_size` alignment.
+        // `alloc_zeroed` returns zero-initialized memory so `as_slice()` never exposes uninitialized bytes.
+        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        if ptr.is_null() {
+            Err(ZiporaError::invalid_data(
+                "Failed to allocate page-aligned memory",
+            ))
+        } else {
+            Ok(PageAlignedBuffer {
+                ptr,
+                size: aligned_size,
+                actual_size: size,
+                layout,
+            })
         }
     }
 }
@@ -596,6 +656,7 @@ pub struct PageAlignedBuffer {
     ptr: *mut u8,
     size: usize,
     actual_size: usize,
+    layout: std::alloc::Layout,
 }
 
 impl PageAlignedBuffer {
@@ -624,14 +685,16 @@ impl PageAlignedBuffer {
     /// Get a slice view of the buffer
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        // SAFETY: ptr is valid allocation with size >= actual_size, lifetime tied to self
+        // SAFETY: `self.ptr` was allocated via `alloc_zeroed` with `self.size >= self.actual_size`
+        // initialized bytes, aligned to `page_size >= 1`, and is valid for the lifetime of `self`.
         unsafe { std::slice::from_raw_parts(self.ptr, self.actual_size) }
     }
 
     /// Get a mutable slice view of the buffer
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        // SAFETY: ptr is valid allocation with size >= actual_size, lifetime tied to self, exclusive access via &mut
+        // SAFETY: `self.ptr` was allocated via `alloc_zeroed` with `self.size >= self.actual_size`
+        // initialized bytes, and `&mut self` guarantees exclusive access.
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.actual_size) }
     }
 }
@@ -639,24 +702,10 @@ impl PageAlignedBuffer {
 impl Drop for PageAlignedBuffer {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            #[cfg(unix)]
-            {
-                // SAFETY: ptr was allocated by aligned_alloc, free is the matching deallocation function
-                unsafe { libc::free(self.ptr as *mut libc::c_void) };
-            }
-            #[cfg(target_os = "windows")]
-            {
-                use winapi::um::memoryapi::VirtualFree;
-                use winapi::um::winnt::MEM_RELEASE;
-                // SAFETY: ptr was allocated by VirtualAlloc, VirtualFree with MEM_RELEASE deallocates it
-                unsafe {
-                    VirtualFree(self.ptr as *mut std::ffi::c_void, 0, MEM_RELEASE);
-                }
-            }
-            #[cfg(not(any(unix, target_os = "windows")))]
-            {
-                // For the fallback implementation, we can't safely free
-                // since we don't store the original pointer
+            // SAFETY: `self.ptr` was allocated with `std::alloc::alloc_zeroed(self.layout)` in
+            // `PageAlignedAlloc::allocate` and is deallocated once with the exact same `self.layout`.
+            unsafe {
+                std::alloc::dealloc(self.ptr, self.layout);
             }
         }
     }
@@ -784,4 +833,51 @@ mod tests {
         let result = vm_prefetch_min_pages(&buffer[..100], 10);
         assert!(result.is_ok()); // Should always succeed (skipped)
     }
+
+    #[test]
+    fn test_c12_3a_vm_utils_prefetch_provenance_zeroed_alloc_and_advice() {
+        let vm_manager = VmManager::new();
+        let alloc = PageAlignedAlloc::new();
+
+        // 1. PageAlignedAlloc::allocate(usize::MAX) must return Err instead of overflowing div_ceil * page_size.
+        assert!(
+            alloc.allocate(usize::MAX).is_err(),
+            "PageAlignedAlloc::allocate(usize::MAX) must reject overflow size"
+        );
+
+        // 2. PageAlignedAlloc::allocate must return zero-initialized memory so reading as_slice()
+        // is not UB under Miri or on reused heap blocks.
+        let mut buf = alloc.allocate(512).expect("allocate(512) must succeed");
+        buf.as_mut_slice().fill(0xAA);
+        drop(buf);
+        let buf2 = alloc.allocate(512).expect("second allocate(512) must succeed");
+        assert!(
+            buf2.as_slice().iter().all(|&b| b == 0),
+            "PageAlignedAlloc::allocate must zero-initialize the buffer"
+        );
+
+        // 3. Manual prefetch on an unaligned subslice must not dereference before data.as_ptr()
+        // or lose pointer provenance (flagged by Miri).
+        let raw = vec![0x5Au8; 8192];
+        let unaligned_subslice = &raw[17..4113];
+        vm_manager
+            .prefetch_with_strategy(unaligned_subslice, PrefetchStrategy::Manual)
+            .expect("manual prefetch on unaligned subslice must succeed");
+
+        // 4. advise_memory_usage on an unaligned Vec slice must page-align and succeed,
+        // and MemoryAdvice::DontNeed must not zero shared &[u8] contents.
+        let mut data = vec![0x77u8; 8192];
+        data[0] = 0x42;
+        vm_manager
+            .advise_memory_usage(&data[3..4100], MemoryAdvice::Sequential)
+            .expect("advise_memory_usage(Sequential) on unaligned slice must succeed");
+        vm_manager
+            .advise_memory_usage(&data, MemoryAdvice::DontNeed)
+            .expect("advise_memory_usage(DontNeed) must succeed");
+        assert!(
+            data.iter().skip(1).all(|&b| b == 0x77) && data[0] == 0x42,
+            "MemoryAdvice::DontNeed on &[u8] must not zero caller's memory behind a shared reference"
+        );
+    }
 }
+
