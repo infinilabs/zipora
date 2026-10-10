@@ -4,7 +4,7 @@ use super::{Config, parse_env_bool, parse_env_var};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
 
-/// Cache configuration placeholder.
+/// Cache configuration settings for size, line alignment, and prefetching.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CacheConfig {
@@ -31,6 +31,11 @@ impl Config for CacheConfig {
         if self.size == 0 {
             return Err(ZiporaError::configuration(
                 "size must be greater than 0".to_string(),
+            ));
+        }
+        if !self.line_size.is_power_of_two() {
+            return Err(ZiporaError::configuration(
+                "line_size must be a non-zero power of 2".to_string(),
             ));
         }
         Ok(())

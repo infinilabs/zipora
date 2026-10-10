@@ -4,7 +4,7 @@ use super::{Config, parse_env_bool};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
 
-/// SIMD configuration placeholder.
+/// SIMD acceleration configuration settings.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SIMDConfig {
@@ -28,15 +28,20 @@ impl Default for SIMDConfig {
 
 impl Config for SIMDConfig {
     fn validate(&self) -> Result<()> {
-        // SIMD configuration is always valid
+        if !self.enable_simd && (self.enable_avx2 || self.enable_bmi2) {
+            return Err(ZiporaError::configuration(
+                "enable_avx2 and enable_bmi2 must be false when enable_simd is false".to_string(),
+            ));
+        }
         Ok(())
     }
 
     fn from_env_with_prefix(prefix: &str) -> Result<Self> {
         let mut config = Self::default();
         config.enable_simd = parse_env_bool(&format!("{}SIMD_ENABLE", prefix), config.enable_simd);
-        config.enable_avx2 = parse_env_bool(&format!("{}SIMD_AVX2", prefix), config.enable_avx2);
-        config.enable_bmi2 = parse_env_bool(&format!("{}SIMD_BMI2", prefix), config.enable_bmi2);
+        let default_sub = config.enable_simd;
+        config.enable_avx2 = parse_env_bool(&format!("{}SIMD_AVX2", prefix), default_sub);
+        config.enable_bmi2 = parse_env_bool(&format!("{}SIMD_BMI2", prefix), default_sub);
         config.validate()?;
         Ok(config)
     }

@@ -33,6 +33,11 @@ impl Config for CompressionConfig {
                 "level must be between 0 and 22".to_string(),
             ));
         }
+        if self.enable_dictionary && self.dictionary_size == 0 {
+            return Err(ZiporaError::configuration(
+                "dictionary_size must be greater than 0 when enable_dictionary is true".to_string(),
+            ));
+        }
         Ok(())
     }
 

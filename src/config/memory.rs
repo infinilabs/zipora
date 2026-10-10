@@ -221,8 +221,11 @@ impl Config for MemoryConfig {
             ));
         }
 
-        // Validate growth factor
-        if self.growth_factor < 1.0 || self.growth_factor > 4.0 {
+        // Validate growth factor (guard NaN / Inf)
+        if !self.growth_factor.is_finite()
+            || self.growth_factor < 1.0
+            || self.growth_factor > 4.0
+        {
             errors.push(
                 ValidationError::new(
                     "growth_factor",
@@ -234,7 +237,7 @@ impl Config for MemoryConfig {
         }
 
         // Validate alignment
-        if self.alignment == 0 || (self.alignment & (self.alignment - 1)) != 0 {
+        if !self.alignment.is_power_of_two() {
             errors.push(
                 ValidationError::new(
                     "alignment",
@@ -245,8 +248,39 @@ impl Config for MemoryConfig {
             );
         }
 
-        // Validate compaction threshold
-        if self.compaction_threshold < 0.0 || self.compaction_threshold > 1.0 {
+        // Validate cache_line_size when explicitly set
+        if self.cache_line_size != 0 && !self.cache_line_size.is_power_of_two() {
+            errors.push(ValidationError::new(
+                "cache_line_size",
+                &self.cache_line_size.to_string(),
+                "cache line size must be 0 (auto) or a power of 2",
+            ));
+        }
+
+        // Validate NUMA preferred_node
+        if self.numa_config.preferred_node < -1 {
+            errors.push(ValidationError::new(
+                "numa_config.preferred_node",
+                &self.numa_config.preferred_node.to_string(),
+                "preferred NUMA node must be -1 (auto) or >= 0",
+            ));
+        }
+
+        // Validate huge page size when explicitly set
+        if self.huge_page_config.page_size != 0 && !self.huge_page_config.page_size.is_power_of_two()
+        {
+            errors.push(ValidationError::new(
+                "huge_page_config.page_size",
+                &self.huge_page_config.page_size.to_string(),
+                "huge page size must be 0 (auto) or a power of 2",
+            ));
+        }
+
+        // Validate compaction threshold (guard NaN / Inf)
+        if !self.compaction_threshold.is_finite()
+            || self.compaction_threshold < 0.0
+            || self.compaction_threshold > 1.0
+        {
             errors.push(ValidationError::new(
                 "compaction_threshold",
                 &self.compaction_threshold.to_string(),
@@ -254,8 +288,11 @@ impl Config for MemoryConfig {
             ));
         }
 
-        // Validate fragmentation ratio
-        if self.max_fragmentation_ratio < 0.0 || self.max_fragmentation_ratio > 1.0 {
+        // Validate fragmentation ratio (guard NaN / Inf)
+        if !self.max_fragmentation_ratio.is_finite()
+            || self.max_fragmentation_ratio < 0.0
+            || self.max_fragmentation_ratio > 1.0
+        {
             errors.push(ValidationError::new(
                 "max_fragmentation_ratio",
                 &self.max_fragmentation_ratio.to_string(),

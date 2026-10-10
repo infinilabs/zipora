@@ -157,6 +157,7 @@ pub enum TempLevel {
 
 /// Compression algorithm selection for core string compression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CompressionAlgorithm {
     /// No compression (fastest)
     None,
@@ -181,7 +182,7 @@ impl Default for CompressionAlgorithm {
 /// This configuration provides fine-grained control over all aspects of
 /// Nested LOUDS Trie behavior, including construction parameters, optimization
 /// settings, memory management, and performance characteristics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NestLoudsTrieConfig {
     // Build-time parameters
     /// Nesting level for the trie (1-16)
@@ -401,22 +402,36 @@ impl Config for NestLoudsTrieConfig {
             );
         }
 
-        // Validate fragment lengths
-        if self.min_fragment_length == 0 {
+        // Validate fragment lengths (avoid i32 wraparound on min_fragment_length > i32::MAX as u32)
+        if self.min_fragment_length == 0 || self.min_fragment_length > 1024 {
             errors.push(ValidationError::new(
                 "min_fragment_length",
                 &self.min_fragment_length.to_string(),
-                "minimum fragment length must be at least 1",
+                "minimum fragment length must be between 1 and 1024",
             ));
         }
 
-        if self.max_fragment_length > 0
-            && self.max_fragment_length < self.min_fragment_length as i32
+        if self.max_fragment_length == 0 || self.max_fragment_length < -1 {
+            errors.push(ValidationError::new(
+                "max_fragment_length",
+                &self.max_fragment_length.to_string(),
+                "maximum fragment length must be -1 (unlimited) or a positive integer",
+            ));
+        } else if self.max_fragment_length > 0
+            && (self.max_fragment_length as i64) < (self.min_fragment_length as i64)
         {
             errors.push(ValidationError::new(
                 "max_fragment_length",
                 &self.max_fragment_length.to_string(),
-                "maximum fragment length must be greater than minimum fragment length",
+                "maximum fragment length must be greater than or equal to minimum fragment length",
+            ));
+        }
+
+        if self.min_link_str_length == 0 {
+            errors.push(ValidationError::new(
+                "min_link_str_length",
+                &self.min_link_str_length.to_string(),
+                "minimum link string length must be at least 1",
             ));
         }
 
@@ -434,8 +449,34 @@ impl Config for NestLoudsTrieConfig {
             );
         }
 
-        // Validate load factor
-        if self.load_factor <= 0.0 || self.load_factor >= 1.0 {
+        if let CompressionAlgorithm::Zstd(level) = self.compression_algorithm
+            && (level == 0 || level > 22)
+        {
+            errors.push(ValidationError::new(
+                "compression_algorithm",
+                &format!("Zstd({})", level),
+                "Zstd compression level must be between 1 and 22",
+            ));
+        }
+
+        if self.sa_fragment_min_freq == 0 {
+            errors.push(ValidationError::new(
+                "sa_fragment_min_freq",
+                &self.sa_fragment_min_freq.to_string(),
+                "SA fragment minimum frequency must be at least 1",
+            ));
+        }
+
+        if self.compression_min_length == 0 {
+            errors.push(ValidationError::new(
+                "compression_min_length",
+                &self.compression_min_length.to_string(),
+                "compression minimum length must be at least 1",
+            ));
+        }
+
+        // Validate load factor (guard NaN / Inf)
+        if !self.load_factor.is_finite() || self.load_factor <= 0.0 || self.load_factor >= 1.0 {
             errors.push(
                 ValidationError::new(
                     "load_factor",
@@ -456,6 +497,14 @@ impl Config for NestLoudsTrieConfig {
                 )
                 .with_suggestion("1 = disable nesting, 8 = default, 255 = maximum nesting"),
             );
+        }
+
+        if self.debug_level > 3 {
+            errors.push(ValidationError::new(
+                "debug_level",
+                &self.debug_level.to_string(),
+                "debug level must be between 0 and 3",
+            ));
         }
 
         // Validate memory sizes
@@ -744,7 +793,7 @@ impl NestLoudsTrieConfig {
     }
     /// Set parallel threads.
     pub fn parallel_threads(mut self, v: usize) -> Self {
-        self.parallel_threads = v as u32;
+        self.parallel_threads = v.min(u32::MAX as usize) as u32;
         self
     }
     /// Set optimization flags.
@@ -807,7 +856,7 @@ impl serde::Serialize for NestLoudsTrieConfig {
         #[cfg(feature = "serde")]
         use serde::ser::SerializeStruct;
 
-        let mut state = serializer.serialize_struct("NestLoudsTrieConfig", 25)?;
+        let mut state = serializer.serialize_struct("NestLoudsTrieConfig", 29)?;
         state.serialize_field("nest_level", &self.nest_level)?;
         state.serialize_field("max_fragment_length", &self.max_fragment_length)?;
         state.serialize_field("min_fragment_length", &self.min_fragment_length)?;
@@ -818,6 +867,7 @@ impl serde::Serialize for NestLoudsTrieConfig {
         )?;
         state.serialize_field("sa_fragment_min_freq", &self.sa_fragment_min_freq)?;
         state.serialize_field("compression_min_length", &self.compression_min_length)?;
+        state.serialize_field("compression_algorithm", &self.compression_algorithm)?;
         state.serialize_field("optimization_flags", &self.optimization_flags.bits())?;
         state.serialize_field(
             "best_delimiters",
@@ -886,6 +936,9 @@ impl<'de> serde::Deserialize<'de> for NestLoudsTrieConfig {
                         "sa_fragment_min_freq" => config.sa_fragment_min_freq = map.next_value()?,
                         "compression_min_length" => {
                             config.compression_min_length = map.next_value()?
+                        }
+                        "compression_algorithm" => {
+                            config.compression_algorithm = map.next_value()?
                         }
                         "optimization_flags" => {
                             let bits: u64 = map.next_value()?;
@@ -1044,5 +1097,60 @@ mod tests {
         assert_eq!(config.nest_level, deserialized.nest_level);
         assert_eq!(config.max_fragment_length, deserialized.max_fragment_length);
         assert_eq!(config.optimization_flags, deserialized.optimization_flags);
+    }
+
+    #[test]
+    fn test_c12_6_nest_louds_trie_config_serde_preserves_compression_and_validators_reject_invalid() {
+        // 1. Serde roundtrip of NestLoudsTrieConfig must preserve `compression_algorithm`.
+        let config = NestLoudsTrieConfig::builder()
+            .compression_algorithm(CompressionAlgorithm::Lz4)
+            .build()
+            .expect("valid Lz4 config must build");
+        let json = serde_json::to_string(&config).expect("serialize must succeed");
+        let roundtripped: NestLoudsTrieConfig =
+            serde_json::from_str(&json).expect("deserialize must succeed");
+        assert_eq!(
+            roundtripped.compression_algorithm,
+            CompressionAlgorithm::Lz4,
+            "serde roundtrip dropped compression_algorithm"
+        );
+
+        // 2. min_fragment_length = u32::MAX must not bypass max_fragment_length check via i32 wraparound.
+        let overflow_frag = NestLoudsTrieConfig {
+            min_fragment_length: u32::MAX,
+            max_fragment_length: 1024,
+            ..NestLoudsTrieConfig::default()
+        };
+        assert!(
+            overflow_frag.validate().is_err(),
+            "min_fragment_length = u32::MAX must fail validation"
+        );
+
+        // 3. NaN floats in NestLoudsTrieConfig and MemoryConfig must fail validation.
+        let nan_load = NestLoudsTrieConfig {
+            load_factor: f64::NAN,
+            ..NestLoudsTrieConfig::default()
+        };
+        assert!(nan_load.validate().is_err(), "NaN load_factor must fail validation");
+
+        let nan_growth = crate::config::MemoryConfig {
+            growth_factor: f64::NAN,
+            ..crate::config::MemoryConfig::default()
+        };
+        assert!(
+            nan_growth.validate().is_err(),
+            "NaN growth_factor must fail validation"
+        );
+
+        // 4. CacheConfig with line_size = 0 or non-power-of-two must fail validation.
+        let bad_cache = crate::config::CacheConfig {
+            size: 4096,
+            enable_prefetching: true,
+            line_size: 0,
+        };
+        assert!(
+            bad_cache.validate().is_err(),
+            "CacheConfig with line_size = 0 must fail validation"
+        );
     }
 }
