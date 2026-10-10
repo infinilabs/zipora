@@ -41,7 +41,6 @@ static HUGEPAGE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static HUGEPAGE_ALLOCATIONS: Mutex<Vec<HugePageAllocation>> = Mutex::new(Vec::new());
 
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // hugepage global tracking bookkeeping
 struct HugePageAllocation {
     ptr: *mut u8,
     size: usize,
@@ -232,7 +231,10 @@ impl Drop for HugePage {
         let mut allocations = HUGEPAGE_ALLOCATIONS
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        allocations.retain(|alloc| alloc.ptr != self.ptr.as_ptr());
+        allocations.retain(|alloc| {
+            (alloc.ptr, alloc.size, alloc.page_size)
+                != (self.ptr.as_ptr(), aligned_size, self.page_size)
+        });
 
         HUGEPAGE_COUNT.fetch_sub(aligned_size / self.page_size, Ordering::Relaxed);
     }

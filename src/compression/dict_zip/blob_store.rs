@@ -643,8 +643,7 @@ pub struct DictZipBlobStore {
     cache: Arc<RwLock<LruMap<RecordId, Vec<u8>>>>,
     /// Statistics
     stats: Arc<RwLock<DictZipBlobStoreStats>>,
-    /// Memory pool (only read by serde-gated `load_dictionary`)
-    #[cfg_attr(not(feature = "serde"), allow(dead_code))]
+    /// Memory pool
     memory_pool: Option<Arc<SecureMemoryPool>>,
     /// Next record ID
     next_id: u64,
@@ -661,6 +660,11 @@ pub struct DictZipBlobStore {
 }
 
 impl DictZipBlobStore {
+    /// Get a reference to the backing secure memory pool, if configured.
+    #[inline]
+    pub fn memory_pool(&self) -> Option<&Arc<SecureMemoryPool>> {
+        self.memory_pool.as_ref()
+    }
     /// Build DictZipBlobStore from training samples with NestLoudsTrieConfig (matches C++ pattern)
     /// This follows the C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_training_samples(

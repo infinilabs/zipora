@@ -809,9 +809,13 @@ mod tests {
     fn test_bitstream_reader_basic() {
         let data = vec![0b10101010];
         let mut reader = BitStreamReader::new(&data);
+        assert!(reader.has_bits());
+        assert_eq!(reader.remaining_bits(), 8);
 
         let bits = reader.read(8);
         assert_eq!(bits, 0b10101010);
+        assert!(!reader.has_bits());
+        assert_eq!(reader.remaining_bits(), 0);
     }
 
     #[test]

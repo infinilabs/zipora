@@ -1,11 +1,11 @@
 //! Probe and CRUD internals for [`ZiporaHashMap`](super::ZiporaHashMap).
 
+use super::ZiporaHashMap;
 use crate::containers::FastVec;
 use crate::error::Result;
 use crate::hash_map::storage::*;
 use std::borrow::Borrow;
 use std::hash::{BuildHasher, Hash};
-use super::ZiporaHashMap;
 
 impl<K, V, S> ZiporaHashMap<K, V, S>
 where
@@ -166,9 +166,11 @@ where
                     &mut self.occupied,
                     &mut self.stats.rehashes,
                 ),
-                HashMapStorage::SmallInline { .. } => Err(crate::error::ZiporaError::invalid_state(
-                    "Nested SmallInline fallback storage is invalid",
-                )),
+                HashMapStorage::SmallInline { .. } => {
+                    Err(crate::error::ZiporaError::invalid_state(
+                        "Nested SmallInline fallback storage is invalid",
+                    ))
+                }
             },
             HashMapStorage::SmallInline { fallback: None, .. } => {
                 // Before migration a SmallInline map has only its 16 fixed
@@ -273,7 +275,7 @@ where
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // internal inline-storage probe helper; destructured fields avoid self borrow split
     pub(super) fn insert_small_inline(
         inline_data: &mut InlineStorage<K, V>,
         fallback: &mut Option<Box<HashMapStorage<K, V>>>,
@@ -299,7 +301,14 @@ where
             };
             let limit = (capacity as f64 * load_factor) as usize;
             if capacity > 0 && *occupied >= limit {
-                Self::resize_standard_entries(entries, mask, *len, load_factor, occupied, rehashes)?;
+                Self::resize_standard_entries(
+                    entries,
+                    mask,
+                    *len,
+                    load_factor,
+                    occupied,
+                    rehashes,
+                )?;
             }
             let result = match Self::insert_standard(hash_builder, entries, mask, key, value, hash)
             {
@@ -315,10 +324,10 @@ where
                     )?;
                     Self::insert_standard(hash_builder, entries, mask, retry_key, retry_val, hash)
                         .map_err(|_| {
-                            crate::error::ZiporaError::invalid_state(
-                                "Hash table full in SmallInline fallback storage after resize",
-                            )
-                        })?
+                        crate::error::ZiporaError::invalid_state(
+                            "Hash table full in SmallInline fallback storage after resize",
+                        )
+                    })?
                 }
             };
             if result.is_none() {
@@ -389,36 +398,19 @@ where
                 } else {
                     raw_h
                 };
-                let _ = Self::insert_standard(
-                    hash_builder,
-                    &mut entries,
-                    &mut mask,
-                    k,
-                    v,
-                    h,
-                );
+                let _ = Self::insert_standard(hash_builder, &mut entries, &mut mask, k, v, h);
             }
         }
         inline_data.occupied = 0;
 
         // Insert the new key-value pair
-        let result = Self::insert_standard(
-            hash_builder,
-            &mut entries,
-            &mut mask,
-            key,
-            value,
-            hash,
-        );
+        let result = Self::insert_standard(hash_builder, &mut entries, &mut mask, key, value, hash);
         let result = result.map_err(|_| {
             crate::error::ZiporaError::invalid_state("Hash table full after SmallInline migration")
         })?;
 
         // Store the migrated storage as fallback
-        *fallback = Some(Box::new(HashMapStorage::Standard {
-            entries,
-            mask,
-        }));
+        *fallback = Some(Box::new(HashMapStorage::Standard { entries, mask }));
         // From here on the fallback's load check reads `occupied`, which the
         // inline slots did not keep in step (they leave no tombstones, and
         // inline removals do not subtract). Like a rehash, the migration
@@ -486,10 +478,7 @@ where
     {
         // Check fallback first (migrated data)
         if let Some(fb) = fallback
-            && let HashMapStorage::Standard {
-                entries,
-                mask,
-            } = fb.as_ref()
+            && let HashMapStorage::Standard { entries, mask } = fb.as_ref()
         {
             let hash = self.hash_key_borrowed(key);
             return self.get_standard(entries, mask, key, hash);
@@ -578,10 +567,7 @@ where
         Q: Hash + Eq + ?Sized,
     {
         if let Some(fb) = fallback.as_mut()
-            && let HashMapStorage::Standard {
-                entries,
-                mask,
-            } = fb.as_mut()
+            && let HashMapStorage::Standard { entries, mask } = fb.as_mut()
         {
             return Self::get_mut_standard(hash_builder, entries, mask, key);
         }
@@ -660,8 +646,11 @@ where
 
     /// Backward shift deletion to maintain linear probing invariant
     #[cfg(test)]
-    pub(super) fn backward_shift_delete(entries: &mut FastVec<HashEntry<K, V>>, mask: usize, mut pos: usize)
-    where
+    pub(super) fn backward_shift_delete(
+        entries: &mut FastVec<HashEntry<K, V>>,
+        mask: usize,
+        mut pos: usize,
+    ) where
         K: Clone,
         V: Clone,
     {
@@ -730,10 +719,7 @@ where
         Q: Hash + Eq + ?Sized,
     {
         if let Some(fb) = fallback.as_mut()
-            && let HashMapStorage::Standard {
-                entries,
-                mask,
-            } = fb.as_mut()
+            && let HashMapStorage::Standard { entries, mask } = fb.as_mut()
         {
             let result = Self::remove_standard(hash_builder, entries, mask, key);
             if result.is_some() {
@@ -763,10 +749,7 @@ where
     }
 
     // clear implementation methods
-    pub(super) fn clear_standard(
-        entries: &mut FastVec<HashEntry<K, V>>,
-        mask: &mut usize,
-    ) {
+    pub(super) fn clear_standard(entries: &mut FastVec<HashEntry<K, V>>, mask: &mut usize) {
         entries.clear();
         *mask = 0;
     }

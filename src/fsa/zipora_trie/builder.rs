@@ -65,7 +65,7 @@ where
     // The arguments are the destructured fields of `TrieStorage::DoubleArray`
     // plus the two counters the caller owns; grouping them behind a struct
     // would only move the same borrow split somewhere else.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // internal double-array builder helper; destructured TrieStorage fields avoid borrow split
     pub(super) fn insert_double_array(
         base: &mut FastVec<u32>,
         check: &mut FastVec<u32>,
@@ -153,7 +153,11 @@ where
     /// above which every slot is free by construction (growing the array if
     /// it does not reach that far). Without that cap a wide node in a
     /// fragmented array would walk every hole, which is O(n) again.
-    pub(super) fn find_free_base(check: &FastVec<u32>, free_list: &DaFreeList, symbols: &[u8]) -> u32 {
+    pub(super) fn find_free_base(
+        check: &FastVec<u32>,
+        free_list: &DaFreeList,
+        symbols: &[u8],
+    ) -> u32 {
         const MAX_TRIALS: u32 = 256;
 
         let min_symbol = symbols.iter().copied().min().map_or(0, u32::from);
@@ -235,7 +239,12 @@ where
         symbols.push(new_symbol);
         let new_base = Self::find_free_base(check, free_list, &symbols);
         let max_symbol = symbols.iter().copied().max().unwrap_or(new_symbol);
-        Self::ensure_da_capacity(base, check, free_list, (new_base + max_symbol as u32) as usize + 1)?;
+        Self::ensure_da_capacity(
+            base,
+            check,
+            free_list,
+            (new_base + max_symbol as u32) as usize + 1,
+        )?;
 
         // The new slots were all free when chosen and the old slots are still
         // occupied, so the two sets are disjoint: claim first, release after.
@@ -290,7 +299,12 @@ where
         }
     }
 
-    pub(super) fn contains_double_array(&self, base: &FastVec<u32>, check: &FastVec<u32>, key: &[u8]) -> bool {
+    pub(super) fn contains_double_array(
+        &self,
+        base: &FastVec<u32>,
+        check: &FastVec<u32>,
+        key: &[u8],
+    ) -> bool {
         // Following referenced project's double array trie lookup (line 100-110)
         const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal states
         const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for actual values
@@ -336,7 +350,6 @@ where
             }
 
             current_state = next_state;
-
         }
 
         // Check if the final state is marked as terminal (check terminal bit in base)

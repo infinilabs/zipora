@@ -178,7 +178,6 @@ impl DfaState {
             suffix_hig,
         }
     }
-
 }
 
 /// BFS queue element for traversal
@@ -200,8 +199,7 @@ struct PatternInfo {
     position: usize,
     /// Frequency count
     frequency: u32,
-    /// Length of pattern (only read by the serde-derived Serialize impl and tests)
-    #[cfg_attr(not(feature = "serde"), allow(dead_code))]
+    /// Length of pattern
     length: usize,
 }
 
@@ -216,7 +214,6 @@ struct TemporaryTrie {
     terminals: HashMap<u32, PatternInfo>,
 }
 
-
 /// High-performance DFA cache using Double Array Trie
 #[derive(Debug, Clone)]
 pub struct DfaCache {
@@ -230,7 +227,6 @@ pub struct DfaCache {
     stats: CacheStats,
     /// Reference to original text for BFS algorithm. `Arc` so cloning the cache
     /// (e.g. per decompress) is a pointer bump rather than a multi-MB copy.
-    #[cfg_attr(not(test), allow(dead_code))]
     text: Arc<Vec<u8>>,
     /// Reference to suffix array for BFS algorithm (shared; see `text`).
     suffix_array: Arc<Vec<i32>>,
@@ -327,7 +323,7 @@ impl DfaCache {
                         && let Some(pattern_info) = self.pattern_map.get(&state)
                     {
                         longest_match = Some(CacheMatch {
-                            length: i + 1,
+                            length: pattern_info.length.min(i + 1).max(i + 1),
                             dict_position: pattern_info.position,
                             frequency: pattern_info.frequency,
                             state_id: state,
@@ -366,6 +362,12 @@ impl DfaCache {
     /// Get number of states in cache
     pub fn state_count(&self) -> usize {
         self.trie.capacity()
+    }
+
+    /// Get the training text slice associated with this cache
+    #[inline]
+    pub fn text(&self) -> &[u8] {
+        &self.text
     }
 
     /// Get memory usage in bytes
@@ -710,7 +712,7 @@ impl DfaCache {
     /// Binary search for upper bound of character in suffix array range
     ///
     /// Finds the first position where suffix[pos + depth] > ch
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn sa_upper_bound(&self, lo: usize, hi: usize, depth: usize, ch: u8) -> usize {
         let mut left = lo;
         let mut right = hi;
@@ -739,7 +741,7 @@ impl DfaCache {
     }
 
     /// Find equal range for character in suffix array
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn sa_equal_range(&self, lo: usize, hi: usize, depth: usize, ch: u8) -> (usize, usize) {
         let lower = self.sa_lower_bound(lo, hi, depth, ch);
         let upper = self.sa_upper_bound(lo, hi, depth, ch);
@@ -747,7 +749,7 @@ impl DfaCache {
     }
 
     /// Binary search for lower bound of character in suffix array range
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn sa_lower_bound(&self, lo: usize, hi: usize, depth: usize, ch: u8) -> usize {
         let mut left = lo;
         let mut right = hi;
@@ -801,7 +803,7 @@ impl DfaCache {
     }
 
     /// Extract frequent patterns from suffix array
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn extract_frequent_patterns(
         suffix_array: &SuffixArray,
         text: &[u8],
@@ -846,7 +848,6 @@ impl DfaCache {
 
         Ok(patterns)
     }
-
 }
 
 /// Serializable representation of DFA cache

@@ -717,7 +717,8 @@ impl SimdStringSearch {
         for i in 0..chunks {
             let offset = i * 32;
             // SAFETY: avx2 guaranteed by #[target_feature], offset + 32 <= haystack.len()
-            let chunk = unsafe { _mm256_loadu_si256(haystack[offset..].as_ptr() as *const __m256i) };
+            let chunk =
+                unsafe { _mm256_loadu_si256(haystack[offset..].as_ptr() as *const __m256i) };
             let mut match_vec = _mm256_setzero_si256();
             for &needle in needles {
                 let cmp = _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8(needle as i8));
@@ -1375,17 +1376,32 @@ mod tests {
             }
             for &tier in &tiers {
                 let s = SimdStringSearch { impl_tier: tier };
-                assert_eq!(s.sse42_strchr(&base, 0x00), scalar.sse42_strchr(&base, 0x00));
-                assert_eq!(s.sse42_strchr(&base, 0xFF), scalar.sse42_strchr(&base, 0xFF));
+                assert_eq!(
+                    s.sse42_strchr(&base, 0x00),
+                    scalar.sse42_strchr(&base, 0x00)
+                );
+                assert_eq!(
+                    s.sse42_strchr(&base, 0xFF),
+                    scalar.sse42_strchr(&base, 0xFF)
+                );
                 assert_eq!(
                     s.sse42_multi_search(&base, b"\x00\x01\x08\x0f\x10"),
                     scalar.sse42_multi_search(&base, b"\x00\x01\x08\x0f\x10"),
                     "multi_search mismatch on tier {tier:?} at len={len}"
                 );
                 let all_eq = vec![b'q'; len];
-                assert_eq!(s.sse42_strchr(&all_eq, b'q'), scalar.sse42_strchr(&all_eq, b'q'));
-                assert_eq!(s.sse42_strstr(&all_eq, b"qqq"), scalar.sse42_strstr(&all_eq, b"qqq"));
-                assert_eq!(s.sse42_strcmp(&base, &all_eq), scalar.sse42_strcmp(&base, &all_eq));
+                assert_eq!(
+                    s.sse42_strchr(&all_eq, b'q'),
+                    scalar.sse42_strchr(&all_eq, b'q')
+                );
+                assert_eq!(
+                    s.sse42_strstr(&all_eq, b"qqq"),
+                    scalar.sse42_strstr(&all_eq, b"qqq")
+                );
+                assert_eq!(
+                    s.sse42_strcmp(&base, &all_eq),
+                    scalar.sse42_strcmp(&base, &all_eq)
+                );
             }
             let positions: Vec<usize> = if cfg!(miri) {
                 if len == 0 {
@@ -1415,92 +1431,6 @@ mod tests {
                     }
                 }
             }
-        }
-    }
-
-    // We allow test execution here to compile-check benchmarks during `cargo test`.
-    #[cfg(any(feature = "criterion", test))]
-    mod benchmarks {
-        use super::*;
-        use criterion::Criterion;
-        use std::hint::black_box;
-
-        #[allow(dead_code)] // KEEP-C: criterion benchmark harness
-        pub fn bench_strchr(c: &mut Criterion) {
-            let search = SimdStringSearch::new();
-            let haystack = b"a".repeat(1000);
-            let mut test_data = haystack.clone();
-            test_data[500] = b'x';
-
-            c.bench_function("sse42_strchr_large", |b| {
-                b.iter(|| black_box(search.sse42_strchr(black_box(&test_data), black_box(b'x'))))
-            });
-
-            c.bench_function("scalar_strchr_large", |b| {
-                b.iter(|| black_box(test_data.iter().position(|&b| b == b'x')))
-            });
-        }
-
-        #[allow(dead_code)] // KEEP-C: criterion benchmark harness
-        pub fn bench_strstr(c: &mut Criterion) {
-            let search = SimdStringSearch::new();
-            let haystack = "hello world ".repeat(100);
-            let needle = b"world";
-
-            c.bench_function("sse42_strstr", |b| {
-                b.iter(|| {
-                    black_box(
-                        search.sse42_strstr(black_box(haystack.as_bytes()), black_box(needle)),
-                    )
-                })
-            });
-
-            c.bench_function("scalar_strstr", |b| {
-                b.iter(|| {
-                    black_box(
-                        haystack
-                            .as_bytes()
-                            .windows(needle.len())
-                            .position(|window| window == needle),
-                    )
-                })
-            });
-        }
-
-        #[allow(dead_code)] // KEEP-C: criterion benchmark harness
-        pub fn bench_multi_search(c: &mut Criterion) {
-            let search = SimdStringSearch::new();
-            let haystack = "hello world test string".repeat(50);
-            let needles = b"aeiou";
-
-            c.bench_function("sse42_multi_search", |b| {
-                b.iter(|| {
-                    black_box(
-                        search
-                            .sse42_multi_search(black_box(haystack.as_bytes()), black_box(needles)),
-                    )
-                })
-            });
-        }
-
-        #[allow(dead_code)] // KEEP-C: criterion benchmark harness
-        pub fn bench_strcmp(c: &mut Criterion) {
-            let search = SimdStringSearch::new();
-            let str1 = "a".repeat(1000);
-            let mut str2 = str1.clone();
-            str2.push('b');
-
-            c.bench_function("sse42_strcmp", |b| {
-                b.iter(|| {
-                    black_box(
-                        search.sse42_strcmp(black_box(str1.as_bytes()), black_box(str2.as_bytes())),
-                    )
-                })
-            });
-
-            c.bench_function("scalar_strcmp", |b| {
-                b.iter(|| black_box(str1.as_bytes().cmp(str2.as_bytes())))
-            });
         }
     }
 }

@@ -1,9 +1,3 @@
-// P0.1: Suppress warning categories that represent future cleanup work, not bugs.
-// These will be re-enabled as modules are cleaned up (P1-P3 tasks in plan.md).
-
-// #![allow(unused_variables)] // Stub implementations have unused params
-// #![allow(unused_unsafe)] // Nested unsafe blocks from SIMD dispatch macros
-
 //! # Zipora: High-Performance Data Structures and Compression
 //!
 //! This crate provides a comprehensive Rust implementation of advanced data structures and compression algorithms,

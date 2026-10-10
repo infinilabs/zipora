@@ -573,7 +573,6 @@ impl<T> Drop for PooledVec<T> {
 pub struct PooledBuffer {
     ptr: NonNull<u8>,
     len: usize,
-    #[allow(dead_code)] // pool chunk capacity bookkeeping
     capacity: usize,
     pool: Arc<MemoryPool>,
 }
@@ -626,6 +625,12 @@ impl PooledBuffer {
     #[inline]
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    /// Get the underlying pool chunk capacity of the buffer
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 
     /// Check if the buffer is empty

@@ -174,7 +174,7 @@ impl FileHeader {
     }
 
     /// Extract checksum type
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn checksum_type(&self) -> u8 {
         ((self.records_checksum_version >> 40) & 0xFF) as u8
     }
@@ -185,13 +185,13 @@ impl FileHeader {
     }
 
     /// Get file size (safe for packed struct)
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn file_size(&self) -> u64 {
         self.file_size
     }
 
     /// Get uncompressed size (safe for packed struct)
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn unzip_size(&self) -> u64 {
         self.unzip_size
     }
@@ -448,7 +448,9 @@ impl ZipOffsetBlobStore {
         let mut take_content = reader.by_ref().take(header.content_bytes);
         take_content.read_to_end(&mut content_bytes)?;
         if content_bytes.len() != content_len {
-            return Err(ZiporaError::invalid_data("Unexpected EOF reading content bytes"));
+            return Err(ZiporaError::invalid_data(
+                "Unexpected EOF reading content bytes",
+            ));
         }
 
         // Use SIMD-optimized extend for large content
@@ -690,7 +692,7 @@ impl ZipOffsetBlobStore {
     }
 
     /// SIMD-optimized memory copy with fallback
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn simd_copy(&self, src: &[u8], dst: &mut [u8]) -> Result<()> {
         if self.should_use_simd(src.len()) {
             fast_copy(src, dst)
@@ -736,7 +738,6 @@ impl ZipOffsetBlobStore {
             slice.fill(value);
         }
     }
-
 }
 
 impl BlobStore for ZipOffsetBlobStore {
@@ -943,7 +944,6 @@ mod tests {
         assert_eq!(store.size(0).unwrap(), None);
     }
 
-
     #[test]
     fn test_save_and_load_round_trip_preserves_records() {
         use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
@@ -985,7 +985,10 @@ mod tests {
         use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
 
         let config = ZipOffsetBlobStoreConfig::performance_optimized();
-        assert_eq!((config.compress_level > 0, config.checksum_level), (true, 1));
+        assert_eq!(
+            (config.compress_level > 0, config.checksum_level),
+            (true, 1)
+        );
         let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
         builder.add_record(b"data1").unwrap();
         let store = builder.finish().unwrap();
@@ -998,7 +1001,8 @@ mod tests {
     fn test_size_reports_uncompressed_length_for_compressed_records() {
         use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
 
-        let mut builder = ZipOffsetBlobStoreBuilder::with_config(ZipOffsetBlobStoreConfig::default()).unwrap();
+        let mut builder =
+            ZipOffsetBlobStoreBuilder::with_config(ZipOffsetBlobStoreConfig::default()).unwrap();
         builder.add_record(&[b'x'; 4096]).unwrap();
         let store = builder.finish().unwrap();
 
@@ -1023,7 +1027,10 @@ mod tests {
 
         let (start, end) = store.offsets.get2(0).unwrap();
         let frame = &store.content.as_slice()[start as usize..end as usize];
-        assert_eq!(zstd::zstd_safe::get_frame_content_size(frame).ok(), Some(Some(4096)));
+        assert_eq!(
+            zstd::zstd_safe::get_frame_content_size(frame).ok(),
+            Some(Some(4096))
+        );
     }
 
     /// Frames written by the streaming encoder (pre-fix builders, or any
@@ -1033,7 +1040,10 @@ mod tests {
         use crate::blob_store::sorted_uint_vec::SortedUintVecBuilder;
 
         let frame = zstd::encode_all(&[b'x'; 4096][..], 3).unwrap();
-        assert_eq!(zstd::zstd_safe::get_frame_content_size(&frame).ok(), Some(None));
+        assert_eq!(
+            zstd::zstd_safe::get_frame_content_size(&frame).ok(),
+            Some(None)
+        );
 
         let mut offsets = SortedUintVecBuilder::with_config(SortedUintVecConfig::default());
         offsets.push(0).unwrap();
@@ -1218,7 +1228,9 @@ mod tests {
             Err(e) => {
                 let err = e.to_string();
                 assert!(
-                    err.contains("usize::MAX") || err.contains("Invalid data") || err.contains("overflow"),
+                    err.contains("usize::MAX")
+                        || err.contains("Invalid data")
+                        || err.contains("overflow"),
                     "unexpected error message: {}",
                     err
                 );
@@ -1234,7 +1246,10 @@ mod tests {
             ..Default::default()
         };
         let mut store = ZipOffsetBlobStore::with_config(config).unwrap();
-        store.content.extend(b"hello world content".to_vec()).unwrap();
+        store
+            .content
+            .extend(b"hello world content".to_vec())
+            .unwrap();
 
         let mut buffer = Vec::new();
         store.save_to_writer(&mut buffer).unwrap();

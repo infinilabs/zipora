@@ -16,7 +16,7 @@
 .PHONY: tsan_cspp tsan_pool tsan_concurrency
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity
-.PHONY: unsafe_audit api_honesty index_audit unwrap_audit
+.PHONY: unsafe_audit api_honesty index_audit unwrap_audit hygiene_audit
 .PHONY: clean update outdated audit help
 
 CARGO := cargo
@@ -416,6 +416,9 @@ index_audit:
 unwrap_audit:
 	python3 scripts/unwrap_audit.py
 
+hygiene_audit:
+	python3 scripts/hygiene_audit.py
+
 # Sanity check: clippy gate + audits + tests + drift guard (Rule B8)
 # Every cargo command uses --locked: the gate runs against the committed
 # Cargo.lock and fails if Cargo.toml no longer matches it, instead of
@@ -431,6 +434,8 @@ sanity:
 	python3 scripts/index_audit.py
 	@echo "=== Production Unwrap Audit (Rule D10 / S2-R1) ==="
 	python3 scripts/unwrap_audit.py
+	@echo "=== Phase D Hygiene Audit (Rules D6 / D7 / D11) ==="
+	python3 scripts/hygiene_audit.py
 	@echo "=== No default features (guard feature-gated cfg attrs) ==="
 	$(CARGO) clippy --locked --no-default-features -- -D unused_variables -D unused_imports
 	@mkdir -p target/sanity

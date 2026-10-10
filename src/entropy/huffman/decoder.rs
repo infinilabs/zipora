@@ -53,7 +53,7 @@ impl<'a> BitStreamReader<'a> {
 
     /// Read `count` bits
     #[inline]
-    #[allow(dead_code)] // KEEP-B: bitstream reader test helpers
+    #[cfg(test)]
     pub(crate) fn read(&mut self, count: usize) -> u64 {
         if count > self.bit_count {
             self.refill();
@@ -65,14 +65,14 @@ impl<'a> BitStreamReader<'a> {
 
     /// Check if there are more bits available
     #[inline]
-    #[allow(dead_code)] // KEEP-B: bitstream reader test helpers
+    #[cfg(test)]
     pub(crate) fn has_bits(&self) -> bool {
         self.bit_count > 0 || self.byte_pos < self.data.len()
     }
 
     /// Get remaining bits
     #[inline]
-    #[allow(dead_code)] // KEEP-B: bitstream reader test helpers
+    #[cfg(test)]
     pub(crate) fn remaining_bits(&self) -> usize {
         self.bit_count + (self.data.len() - self.byte_pos) * 8
     }
@@ -185,6 +185,10 @@ mod tests {
         // Claiming 1_000_000 output_length for an 11-byte input should be rejected by plausibility check
         let res = decoder.decode(&encoded, 1_000_000);
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("Implausible output length"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Implausible output length")
+        );
     }
 }

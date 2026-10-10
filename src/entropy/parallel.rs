@@ -150,7 +150,7 @@ impl<P: ParallelVariant> ParallelHuffmanEncoder<P> {
             let entropy = EntropyStats::calculate_entropy(data);
             self.stats = EntropyStats::new(data.len(), compressed.len(), entropy);
 
-            println!(
+            log::debug!(
                 "Parallel Huffman ({}) - Encoded {} bytes to {} bytes in {:.2}ms (single stream)",
                 P::NAME,
                 data.len(),
@@ -172,7 +172,7 @@ impl<P: ParallelVariant> ParallelHuffmanEncoder<P> {
         let entropy = EntropyStats::calculate_entropy(data);
         self.stats = EntropyStats::new(data.len(), compressed.len(), entropy);
 
-        println!(
+        log::debug!(
             "Parallel Huffman ({}) - Encoded {} bytes to {} bytes in {:.2}ms",
             P::NAME,
             data.len(),
@@ -184,7 +184,7 @@ impl<P: ParallelVariant> ParallelHuffmanEncoder<P> {
     }
 
     /// Split data into blocks for parallel processing
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn split_data_into_blocks<'a>(&self, data: &'a [u8]) -> Vec<&'a [u8]> {
         let block_size = if self.config.adaptive_blocks {
             // Adaptive block sizing based on data size and number of streams
@@ -382,8 +382,12 @@ impl AdaptiveParallelEncoder {
 
         match result {
             Ok(compressed) => {
-                let ratio = data.len() as f64 / compressed.len() as f64;
-                println!(
+                let ratio = if compressed.is_empty() {
+                    0.0
+                } else {
+                    data.len() as f64 / compressed.len() as f64
+                };
+                log::debug!(
                     "Adaptive encoding: {} {} - {:.2}x compression in {:.2}ms",
                     algorithm,
                     variant,
@@ -439,8 +443,8 @@ impl ParallelBenchmark {
 
     /// Run comprehensive benchmark of all parallel variants
     pub fn run_comprehensive_benchmark(&mut self) -> Result<()> {
-        println!("Running comprehensive parallel encoding benchmark...");
-        println!("Test data size: {} bytes", self.test_data.len());
+        log::debug!("Running comprehensive parallel encoding benchmark...");
+        log::debug!("Test data size: {} bytes", self.test_data.len());
 
         // Benchmark Huffman variants
         self.benchmark_huffman_variants()?;
@@ -544,9 +548,17 @@ impl ParallelBenchmark {
         elapsed: std::time::Duration,
     ) {
         let key = format!("{}_{}", algorithm, variant);
-        let compression_ratio = self.test_data.len() as f64 / output_size as f64;
-        let throughput_mbps =
-            (self.test_data.len() as f64 / 1024.0 / 1024.0) / elapsed.as_secs_f64();
+        let compression_ratio = if output_size == 0 {
+            0.0
+        } else {
+            self.test_data.len() as f64 / output_size as f64
+        };
+        let secs = elapsed.as_secs_f64();
+        let throughput_mbps = if secs > 0.0 {
+            (self.test_data.len() as f64 / 1024.0 / 1024.0) / secs
+        } else {
+            0.0
+        };
 
         let result = BenchmarkResult {
             algorithm: algorithm.to_string(),
@@ -563,22 +575,27 @@ impl ParallelBenchmark {
 
     /// Print benchmark summary
     fn print_benchmark_summary(&self) {
-        println!("\n=== Parallel Encoding Benchmark Results ===");
-        println!(
+        log::debug!("=== Parallel Encoding Benchmark Results ===");
+        log::debug!(
             "{:<15} {:<8} {:<12} {:<12} {:<10} {:<10}",
-            "Algorithm", "Variant", "Input (KB)", "Output (KB)", "Ratio", "Speed (MB/s)"
+            "Algorithm",
+            "Variant",
+            "Input (KB)",
+            "Output (KB)",
+            "Ratio",
+            "Speed (MB/s)"
         );
-        println!("{}", "-".repeat(75));
+        log::debug!("{}", "-".repeat(75));
 
         let mut sorted_results: Vec<_> = self.results.values().collect();
         sorted_results.sort_by(|a, b| {
             b.throughput_mbps
                 .partial_cmp(&a.throughput_mbps)
-                .expect("throughput is not NaN")
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         for result in sorted_results {
-            println!(
+            log::debug!(
                 "{:<15} {:<8} {:<12} {:<12} {:<10.2} {:<10.2}",
                 result.algorithm,
                 result.variant,
@@ -595,7 +612,7 @@ impl ParallelBenchmark {
         self.results.values().max_by(|a, b| {
             a.throughput_mbps
                 .partial_cmp(&b.throughput_mbps)
-                .expect("throughput is not NaN")
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
     }
 
@@ -604,7 +621,7 @@ impl ParallelBenchmark {
         self.results.values().max_by(|a, b| {
             a.compression_ratio
                 .partial_cmp(&b.compression_ratio)
-                .expect("ratio is not NaN")
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
     }
 }
