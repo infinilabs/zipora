@@ -68,11 +68,11 @@ impl HighPrecisionTimer {
         self.start.elapsed()
     }
 
-    /// Print elapsed time with automatic unit selection
+    /// Log elapsed time with automatic unit selection
     pub fn print_elapsed(&self) {
         let elapsed_ns = self.elapsed_ns();
         let formatted = format_duration_auto(elapsed_ns);
-        println!("[{}] Elapsed: {}", self.name, formatted);
+        log::info!("[{}] Elapsed: {}", self.name, formatted);
     }
 }
 
@@ -224,8 +224,8 @@ impl BenchmarkSuite {
 
     /// Run all benchmarks
     pub fn run_all(&self) {
-        println!("Running benchmark suite: {}", self.name);
-        println!("{:=^60}", "");
+        log::info!("Running benchmark suite: {}", self.name);
+        log::info!("{:=^60}", "");
 
         for benchmark in &self.benchmarks {
             let result = self.run_single_benchmark(benchmark);
@@ -239,12 +239,24 @@ impl BenchmarkSuite {
             self.print_benchmark_result(&result);
         }
 
-        println!("{:=^60}", "");
-        println!("Benchmark suite completed: {}", self.name);
+        log::info!("{:=^60}", "");
+        log::info!("Benchmark suite completed: {}", self.name);
     }
 
     /// Run a single benchmark
     fn run_single_benchmark(&self, benchmark: &BenchmarkCase) -> BenchmarkResult {
+        if benchmark.iterations == 0 {
+            return BenchmarkResult {
+                name: benchmark.name.clone(),
+                iterations: 0,
+                total_time: Duration::ZERO,
+                avg_time: Duration::ZERO,
+                min_time: Duration::ZERO,
+                max_time: Duration::ZERO,
+                ops_per_sec: 0.0,
+            };
+        }
+
         // Warmup phase
         for _ in 0..benchmark.warmup_iterations {
             (benchmark.func)();
@@ -258,16 +270,19 @@ impl BenchmarkSuite {
             durations.push(timer.elapsed());
         }
 
-        // Calculate statistics
+        // Calculate statistics using u128 nanoseconds to avoid u32 truncation/div-by-zero
         let total_time: Duration = durations.iter().sum();
-        let avg_time = total_time / benchmark.iterations as u32;
+        let avg_nanos = (total_time.as_nanos() / benchmark.iterations as u128).min(u64::MAX as u128) as u64;
+        let avg_time = Duration::from_nanos(avg_nanos);
         let min_time = durations.iter().min().copied().unwrap_or(Duration::ZERO);
         let max_time = durations.iter().max().copied().unwrap_or(Duration::ZERO);
 
-        let ops_per_sec = if avg_time.as_nanos() > 0 {
-            1_000_000_000.0 / avg_time.as_nanos() as f64
+        let ops_per_sec = if avg_nanos > 0 {
+            1_000_000_000.0 / avg_nanos as f64
+        } else if total_time.as_nanos() > 0 {
+            benchmark.iterations as f64 / total_time.as_secs_f64()
         } else {
-            f64::INFINITY
+            0.0
         };
 
         BenchmarkResult {
@@ -281,9 +296,9 @@ impl BenchmarkSuite {
         }
     }
 
-    /// Print benchmark result
+    /// Log benchmark result
     fn print_benchmark_result(&self, result: &BenchmarkResult) {
-        println!(
+        log::info!(
             "{:<30} | {:>12} | {:>12} | {:>15}",
             result.name,
             format_duration_auto(result.avg_time.as_nanos() as u64),
@@ -453,5 +468,27 @@ mod tests {
         time_block!("test_block", {
             let _ = 1 + 1;
         });
+    }
+
+    #[test]
+    fn test_c12_3c_benchmark_suite_zero_iterations_does_not_divide_by_zero() {
+        let mut suite = BenchmarkSuite::new("c12_3c_zero_iter_suite");
+        suite.add_benchmark("zero_iter", 0, || {});
+        suite.run_all();
+
+        let res = suite
+            .get_result("zero_iter")
+            .expect("zero_iter result must be recorded");
+        assert_eq!(res.iterations, 0);
+        assert_eq!(res.total_time, Duration::ZERO);
+        assert_eq!(res.avg_time, Duration::ZERO);
+        assert_eq!(res.min_time, Duration::ZERO);
+        assert_eq!(res.max_time, Duration::ZERO);
+        assert!(
+            res.ops_per_sec.is_finite(),
+            "ops_per_sec must be finite for zero-duration benchmark, got {}",
+            res.ops_per_sec
+        );
+        assert_eq!(res.ops_per_sec, 0.0);
     }
 }
