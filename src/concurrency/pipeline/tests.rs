@@ -327,25 +327,46 @@ async fn test_batch_collector_background_timeout_checker() {
     let collector = BatchCollector::new(10, Duration::from_millis(30));
     let received_batches = Arc::new(Mutex::new(Vec::new()));
     let received_clone = received_batches.clone();
+    let batch_notify = Arc::new(tokio::sync::Notify::new());
+    let notify_clone = batch_notify.clone();
 
     // Start the background timeout checker
     let handle = collector.start_timeout_checker(move |batch| {
         let received = received_clone.clone();
+        let notify = notify_clone.clone();
         Box::pin(async move {
             received.lock().await.push(batch);
+            notify.notify_waiters();
         })
     });
 
-    // Add items over multiple timeout periods
+    let wait_for_batch_count = |expected: usize| {
+        let received = received_batches.clone();
+        let notify = batch_notify.clone();
+        async move {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let notified = notify.notified();
+                    if received.lock().await.len() >= expected {
+                        break;
+                    }
+                    notified.await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+    };
+
+    // Add items for the first timeout period and wait for the background flush
     collector.add(1).await.unwrap();
     collector.add(2).await.unwrap();
+    wait_for_batch_count(1).await;
 
-    tokio::time::sleep(Duration::from_millis(40)).await;
-
+    // Add items for the second timeout period and wait for the background flush
     collector.add(3).await.unwrap();
     collector.add(4).await.unwrap();
-
-    tokio::time::sleep(Duration::from_millis(40)).await;
+    wait_for_batch_count(2).await;
 
     // Stop the background checker
     handle.abort();
@@ -733,33 +754,24 @@ async fn test_s25_r7_multithreaded_execute_stream_payload_writes_and_concurrent_
     drop(in_tx);
 
     let stages = vec![
-        Box::new(MapStage::new(
-            "s0".to_string(),
-            |mut b: Box<[u64; 8]>| {
-                for slot in b.iter_mut() {
-                    *slot = slot.wrapping_add(3);
-                }
-                Ok(b)
-            },
-        )) as Box<dyn PipelineStage<_, _>>,
-        Box::new(MapStage::new(
-            "s1".to_string(),
-            |mut b: Box<[u64; 8]>| {
-                for slot in b.iter_mut() {
-                    *slot = slot.wrapping_mul(2);
-                }
-                Ok(b)
-            },
-        )),
-        Box::new(MapStage::new(
-            "s2".to_string(),
-            |mut b: Box<[u64; 8]>| {
-                for slot in b.iter_mut() {
-                    *slot ^= 0x55AA;
-                }
-                Ok(b)
-            },
-        )),
+        Box::new(MapStage::new("s0".to_string(), |mut b: Box<[u64; 8]>| {
+            for slot in b.iter_mut() {
+                *slot = slot.wrapping_add(3);
+            }
+            Ok(b)
+        })) as Box<dyn PipelineStage<_, _>>,
+        Box::new(MapStage::new("s1".to_string(), |mut b: Box<[u64; 8]>| {
+            for slot in b.iter_mut() {
+                *slot = slot.wrapping_mul(2);
+            }
+            Ok(b)
+        })),
+        Box::new(MapStage::new("s2".to_string(), |mut b: Box<[u64; 8]>| {
+            for slot in b.iter_mut() {
+                *slot ^= 0x55AA;
+            }
+            Ok(b)
+        })),
     ];
     pipeline
         .execute_stream(stages, in_rx, out_tx)
