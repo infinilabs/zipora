@@ -173,12 +173,8 @@ impl FieldnormEncoder {
             let tf_f = tf as f32;
             for byte in 0..256usize {
                 let len_norm = norm_table[byte];
-                let denom = tf_f + len_norm;
-                table[tf as usize][byte] = if denom > 0.0 {
-                    idf * tf_f * k1p1 / denom
-                } else {
-                    0.0
-                };
+                let denom = (tf_f + len_norm).max(f32::MIN_POSITIVE);
+                table[tf as usize][byte] = idf * tf_f * k1p1 / denom;
             }
         }
         table
