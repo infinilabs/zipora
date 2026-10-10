@@ -113,15 +113,31 @@ impl PerformanceHistory {
         expected_throughput: f64,
         trigger_count: u32,
     ) -> bool {
-        if expected_throughput <= 0.0 || self.total_operations == 0 {
+        // Default threshold: 90% of expected performance
+        const DEGRADATION_THRESHOLD: f64 = 0.9;
+        self.check_performance_degradation_with_threshold(
+            expected_throughput,
+            DEGRADATION_THRESHOLD,
+            trigger_count,
+        )
+    }
+
+    /// Check for sustained performance degradation using a custom threshold ratio (e.g., `0.9` for 90%).
+    pub fn check_performance_degradation_with_threshold(
+        &mut self,
+        expected_throughput: f64,
+        threshold: f64,
+        trigger_count: u32,
+    ) -> bool {
+        if expected_throughput <= 0.0
+            || self.total_operations == 0
+            || threshold.is_nan()
+            || threshold <= 0.0
+        {
             return false;
         }
 
-        // Check if current EMA is significantly below expected throughput
-        // Default threshold: 90% of expected performance
-        const DEGRADATION_THRESHOLD: f64 = 0.9;
-
-        if self.ema_throughput < expected_throughput * DEGRADATION_THRESHOLD {
+        if self.ema_throughput < expected_throughput * threshold {
             self.degradation_counter += 1;
 
             // Trigger re-benchmarking after sustained degradation
@@ -211,16 +227,20 @@ impl PerformanceHistory {
         self.recent_variance().sqrt()
     }
 
-    /// Get percentile from recent samples
+    /// Get percentile from recent samples (`percentile` is clamped to `0.0..=100.0`; `NaN` returns `None`).
     pub fn recent_percentile(&self, percentile: f64) -> Option<f64> {
-        if self.recent_samples.is_empty() {
+        if self.recent_samples.is_empty() || percentile.is_nan() {
             return None;
         }
 
         let mut throughputs: Vec<f64> = self.recent_samples.iter().map(|s| s.throughput).collect();
         throughputs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-        let index = ((percentile / 100.0) * (throughputs.len() - 1) as f64).round() as usize;
+        let clamped = percentile.clamp(0.0, 100.0);
+        let max_idx = throughputs.len() - 1;
+        let index = ((clamped / 100.0) * max_idx as f64)
+            .round()
+            .clamp(0.0, max_idx as f64) as usize;
         Some(throughputs[index])
     }
 }

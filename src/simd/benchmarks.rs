@@ -48,10 +48,16 @@ impl BenchmarkResults {
 
     /// Calculate statistics from latency samples
     pub fn from_samples(latencies: &mut [Duration]) -> Self {
-        assert!(
-            !latencies.is_empty(),
-            "Cannot create benchmark results from empty samples"
-        );
+        if latencies.is_empty() {
+            return BenchmarkResults {
+                median_latency: Duration::ZERO,
+                p95_latency: Duration::ZERO,
+                p99_latency: Duration::ZERO,
+                throughput: 0.0,
+                samples: 0,
+                last_update: Instant::now(),
+            };
+        }
 
         latencies.sort();
 
@@ -61,7 +67,11 @@ impl BenchmarkResults {
         let p99 = latencies[(samples * 99) / 100];
 
         let total_duration: Duration = latencies.iter().sum();
-        let throughput = samples as f64 / total_duration.as_secs_f64();
+        let throughput = if total_duration.as_nanos() > 0 {
+            samples as f64 / total_duration.as_secs_f64()
+        } else {
+            0.0
+        };
 
         BenchmarkResults {
             median_latency: median,

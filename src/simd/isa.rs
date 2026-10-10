@@ -20,6 +20,7 @@
 /// Implementor contract: a value may only be constructed after
 /// `is_enabled()` returned `true`. [`detect`] enforces this; implementors
 /// must not offer any other public constructor.
+// SAFETY: Trait contract requires implementors to only construct token values after `is_enabled()` returns true.
 pub unsafe trait Isa: Copy + 'static {
     fn is_enabled() -> bool;
 
@@ -39,9 +40,7 @@ pub fn detect<S: Isa>() -> Option<S> {
 macro_rules! isa_token {
     ($(#[$doc:meta])* $name:ident => $enabled:expr) => {
         $(#[$doc])*
-        // dead_code: tokens are the sanctioned dispatch pattern for future
-        // SIMD modules; only some have production consumers yet.
-        #[allow(dead_code)]
+        #[allow(dead_code)] // ISA tokens are the sanctioned dispatch pattern; only some tiers have production consumers yet.
         #[derive(Debug, Clone, Copy)]
         pub struct $name(());
 

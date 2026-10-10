@@ -90,10 +90,6 @@ macro_rules! simd_dispatch {
                 return $sse2;
             }
         }
-        #[cfg(target_arch = "aarch64")]
-        {
-            return $fallback;
-        }
         $fallback
     }};
 
@@ -107,10 +103,6 @@ macro_rules! simd_dispatch {
             if ::std::is_x86_feature_detected!("sse2") {
                 return $sse2;
             }
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            return $fallback;
         }
         $fallback
     }};
@@ -269,12 +261,46 @@ macro_rules! simd_feature_check {
 /// ```
 #[macro_export]
 macro_rules! simd_select {
+    // AVX-512 + fallback (expression, no return)
+    (avx512 => $avx512:expr, _ => $fallback:expr) => {{
+        #[cfg(all(target_arch = "x86_64", feature = "avx512", not(miri)))]
+        {
+            if ::std::is_x86_feature_detected!("avx512f")
+                && ::std::is_x86_feature_detected!("avx512bw")
+            {
+                $avx512
+            } else {
+                $fallback
+            }
+        }
+        #[cfg(any(not(target_arch = "x86_64"), not(feature = "avx512"), miri))]
+        {
+            $fallback
+        }
+    }};
+
     // AVX2 + fallback (expression, no return)
     (avx2 => $avx2:expr, _ => $fallback:expr) => {{
         #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!("avx2") {
                 $avx2
+            } else {
+                $fallback
+            }
+        }
+        #[cfg(any(not(target_arch = "x86_64"), miri))]
+        {
+            $fallback
+        }
+    }};
+
+    // SSE4.2 + fallback (expression, no return)
+    (sse42 => $sse42:expr, _ => $fallback:expr) => {{
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        {
+            if ::std::is_x86_feature_detected!("sse4.2") {
+                $sse42
             } else {
                 $fallback
             }

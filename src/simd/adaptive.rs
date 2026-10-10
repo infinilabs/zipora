@@ -76,17 +76,22 @@ pub struct SelectionKey {
 impl SelectionKey {
     /// Create new selection key with bucketing for cache efficiency
     pub fn new(operation: Operation, data_size: usize, data_density: Option<f64>) -> Self {
-        // Bucket sizes: <64, 64-256, 256-1024, 1024-4096, >4096
+        // Bucket sizes aligned with SIMD threshold boundaries:
+        // <8, 8-15, 16-31, 32-63, 64-255, 256-1023, 1024-4095, >=4096
         let size_bucket = match data_size {
-            0..=63 => 0,
-            64..=255 => 1,
-            256..=1023 => 2,
-            1024..=4095 => 3,
-            _ => 4,
+            0..=7 => 0,
+            8..=15 => 1,
+            16..=31 => 2,
+            32..=63 => 3,
+            64..=255 => 4,
+            256..=1023 => 5,
+            1024..=4095 => 6,
+            _ => 7,
         };
 
         // Bucket density to 0-255 range
         let density_bucket = data_density
+            .filter(|d| !d.is_nan())
             .map(|d| (d * 255.0).clamp(0.0, 255.0) as u8)
             .unwrap_or(128); // Default to medium density
 
@@ -238,14 +243,15 @@ impl AdaptiveSimdSelector {
         data_size: usize,
         data_density: Option<f64>,
     ) -> SimdImpl {
-        // Check cache first
+        // Check cache first when caching is enabled
         let key = SelectionKey::new(operation, data_size, data_density);
 
-        if let Some(&impl_type) = self
-            .selection_cache
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&key)
+        if self.config.max_cache_entries > 0
+            && let Some(&impl_type) = self
+                .selection_cache
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key)
         {
             return impl_type;
         }
@@ -253,18 +259,20 @@ impl AdaptiveSimdSelector {
         // Perform selection
         let selected = self.select_impl_internal(operation, data_size, data_density);
 
-        // Cache the result
-        let mut cache = self
-            .selection_cache
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
-        if cache.len() >= self.config.max_cache_entries {
-            // Simple eviction: remove an arbitrary entry
-            if let Some(&first_key) = cache.keys().next() {
-                cache.remove(&first_key);
+        // Cache the result when max_cache_entries > 0
+        if self.config.max_cache_entries > 0 {
+            let mut cache = self
+                .selection_cache
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            if cache.len() >= self.config.max_cache_entries {
+                // Simple eviction: remove an arbitrary entry
+                if let Some(&first_key) = cache.keys().next() {
+                    cache.remove(&first_key);
+                }
             }
+            cache.insert(key, selected);
         }
-        cache.insert(key, selected);
         selected
     }
 
@@ -356,8 +364,9 @@ impl AdaptiveSimdSelector {
             if self.config.enable_adaptation
                 && let Ok(benchmarks) = self.operation_benchmarks.read()
                 && let Some(benchmark) = benchmarks.get(&operation)
-                && history.check_performance_degradation(
+                && history.check_performance_degradation_with_threshold(
                     benchmark.throughput,
+                    self.config.performance_threshold,
                     self.config.degradation_trigger_count,
                 )
             {
@@ -815,5 +824,44 @@ mod tests {
                 assert!(!results.is_stale(Duration::from_secs(60)));
             }
         }
+    }
+
+    #[test]
+    fn test_c12_4_adaptive_simd_cache_bucket_poisoning_percentile_bounds_and_zero_duration() {
+        // 1. Sub-64 size bucket poisoning: size 8 (< sse2_min_size 16) selects Scalar,
+        // which must NOT poison the cache for size 32 (>= sse2_min_size 16).
+        let selector = AdaptiveSimdSelector::new();
+        let small = selector.select_optimal_impl(Operation::Rank, 8, None);
+        assert_eq!(small, SimdImpl::Scalar);
+
+        if selector.hardware_tier() >= SimdTier::Tier2Popcnt {
+            let medium_small = selector.select_optimal_impl(Operation::Rank, 32, None);
+            assert_eq!(
+                medium_small,
+                SimdImpl::Sse2,
+                "size 8 Scalar selection must not poison cache for size 32 (>= sse2_min_size 16)"
+            );
+        }
+
+        // 2. PerformanceHistory::recent_percentile with out-of-range or NaN percentiles
+        // must not panic with index out of bounds.
+        let mut history = PerformanceHistory::new();
+        history.record_sample(Duration::from_millis(10), 100);
+        history.record_sample(Duration::from_millis(10), 200);
+        assert_eq!(history.recent_percentile(150.0), Some(20_000.0));
+        assert_eq!(history.recent_percentile(-25.0), Some(10_000.0));
+        assert_eq!(history.recent_percentile(f64::NAN), None);
+
+        // 3. MicroBenchmark with 0 measurement iterations and BenchmarkResults::from_samples
+        // with zero-duration samples must not panic or produce f64::INFINITY throughput.
+        let zero_bench = crate::simd::benchmarks::MicroBenchmark::new(0, 0);
+        let empty_res = zero_bench.run(|| {});
+        assert_eq!(empty_res.samples, 0);
+        assert_eq!(empty_res.throughput, 0.0);
+
+        let mut zero_samples = [Duration::ZERO, Duration::ZERO];
+        let zero_res = BenchmarkResults::from_samples(&mut zero_samples);
+        assert!(zero_res.throughput.is_finite());
+        assert_eq!(zero_res.throughput, 0.0);
     }
 }
