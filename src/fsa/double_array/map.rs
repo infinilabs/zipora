@@ -108,6 +108,27 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
         self.trie.is_empty()
     }
 
+    /// Total number of allocated states in the underlying double-array trie.
+    #[inline]
+    pub fn total_states(&self) -> usize {
+        self.trie.total_states()
+    }
+
+    /// Memory usage in bytes (`DoubleArrayTrie` arrays plus the sentinel-indexed value array).
+    #[inline]
+    pub fn mem_size(&self) -> usize {
+        self.trie.mem_size() + self.values.len() * std::mem::size_of::<V>()
+    }
+
+    /// Shrink the underlying double-array trie and value table to fit allocated states.
+    pub fn shrink_to_fit(&mut self) {
+        self.trie.shrink_to_fit();
+        if self.values.len() > self.trie.total_states() {
+            self.values.truncate(self.trie.total_states());
+        }
+        self.values.shrink_to_fit();
+    }
+
     /// Return all keys in the map.
     pub fn keys(&self) -> Vec<Vec<u8>> {
         self.trie.keys()
