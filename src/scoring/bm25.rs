@@ -41,8 +41,8 @@
 
 /// BM25 batch scorer with SIMD acceleration.
 ///
-/// Holds references to the norm table and pre-computed constants for
-/// efficient batch scoring of posting lists.
+/// Holds an owned clamped copy of the 256-entry norm table (every entry clamped
+/// to `>= f32::MIN_POSITIVE`) and pre-computed constants for batch scoring.
 pub struct Bm25BatchScorer<'a> {
     norm_table: [f32; 256],
     idf_k1p1: f32, // idf * (k1 + 1.0) — pre-multiplied
@@ -50,10 +50,10 @@ pub struct Bm25BatchScorer<'a> {
 }
 
 impl<'a> Bm25BatchScorer<'a> {
-    /// Create a new batch scorer.
+    /// Create a new batch scorer, copying `norm_table` and clamping any entry `<= 0.0` or `NaN` to `f32::MIN_POSITIVE`.
     ///
     /// # Arguments
-    /// * `norm_table` - Pre-computed BM25 norm table from `FieldnormEncoder::build_norm_table`
+    /// * `norm_table` - Pre-computed BM25 norm table from `FieldnormEncoder::build_norm_table` (entries `<= 0.0` or `NaN` are clamped to `f32::MIN_POSITIVE`)
     /// * `idf` - Inverse document frequency for this term
     /// * `k1` - BM25 k1 parameter (typically 1.2)
     #[inline]

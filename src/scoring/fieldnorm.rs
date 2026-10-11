@@ -119,6 +119,7 @@ impl FieldnormEncoder {
     /// ```
     ///
     /// This eliminates the per-posting float division for length normalization.
+    /// Every entry in the returned table is clamped to `[f32::MIN_POSITIVE, f32::MAX]`.
     ///
     /// # Arguments
     ///
@@ -132,19 +133,12 @@ impl FieldnormEncoder {
         } else {
             0.0
         };
-        for i in 0..256u16 {
+        let max_ratio = f32::MAX / k1.max(1.0);
+        for (i, dst) in table.iter_mut().enumerate() {
             let dl = Self::decode(i as u8) as f32;
-            let ratio = if dl == 0.0 || inv_avg_dl == 0.0 {
-                0.0
-            } else {
-                (dl * inv_avg_dl).min(f32::MAX / k1.max(1.0))
-            };
+            let ratio = (dl * inv_avg_dl).min(max_ratio);
             let raw = (k1 * (1.0 - b + b * ratio)).min(f32::MAX);
-            table[i as usize] = if raw >= f32::MIN_POSITIVE {
-                raw
-            } else {
-                f32::MIN_POSITIVE
-            };
+            *dst = raw.max(f32::MIN_POSITIVE);
         }
         table
     }
@@ -172,13 +166,14 @@ impl FieldnormEncoder {
         max_tf: u16,
     ) -> Vec<[f32; 256]> {
         let norm_table = Self::build_norm_table(avg_dl, k1, b);
-        let k1p1 = k1 + 1.0;
+        let idf_k1p1 = idf * (k1 + 1.0);
         let mut table = vec![[0.0f32; 256]; max_tf as usize + 1];
-        for tf in 0..=max_tf {
+        let start_tf = usize::from(idf_k1p1.is_finite());
+        for (tf, row) in table.iter_mut().enumerate().skip(start_tf) {
             let tf_f = tf as f32;
-            for byte in 0..256usize {
-                let len_norm = norm_table[byte];
-                table[tf as usize][byte] = idf * tf_f * k1p1 / (tf_f + len_norm);
+            let numer = idf_k1p1 * tf_f;
+            for (dst, &len_norm) in row.iter_mut().zip(norm_table.iter()) {
+                *dst = numer / (tf_f + len_norm);
             }
         }
         table
