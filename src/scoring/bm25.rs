@@ -46,6 +46,7 @@
 pub struct Bm25BatchScorer<'a> {
     norm_table: &'a [f32; 256],
     idf_k1p1: f32, // idf * (k1 + 1.0) — pre-multiplied
+    has_non_positive_norm: bool,
 }
 
 impl<'a> Bm25BatchScorer<'a> {
@@ -57,9 +58,11 @@ impl<'a> Bm25BatchScorer<'a> {
     /// * `k1` - BM25 k1 parameter (typically 1.2)
     #[inline]
     pub fn new(norm_table: &'a [f32; 256], idf: f32, k1: f32) -> Self {
+        let has_non_positive_norm = norm_table.iter().any(|&v| v <= 0.0 || v.is_nan());
         Self {
             norm_table,
             idf_k1p1: idf * (k1 + 1.0),
+            has_non_positive_norm,
         }
     }
 
@@ -70,7 +73,11 @@ impl<'a> Bm25BatchScorer<'a> {
     pub fn score(&self, fieldnorm_byte: u8, tf: u16) -> f32 {
         let tf_f = tf as f32;
         let len_norm = self.norm_table[fieldnorm_byte as usize];
-        let denom = (tf_f + len_norm).max(f32::MIN_POSITIVE);
+        let denom = if self.has_non_positive_norm {
+            (tf_f + len_norm).max(f32::MIN_POSITIVE)
+        } else {
+            tf_f + len_norm
+        };
         self.idf_k1p1 * tf_f / denom
     }
 
@@ -133,11 +140,19 @@ impl<'a> Bm25BatchScorer<'a> {
         let tfs = &tfs[..n];
         let scores = &mut scores[..n];
 
-        for i in 0..n {
-            let tf_f = tfs[i] as f32;
-            let len_norm = self.norm_table[fieldnorm_bytes[i] as usize];
-            let denom = (tf_f + len_norm).max(f32::MIN_POSITIVE);
-            scores[i] = self.idf_k1p1 * tf_f / denom;
+        if self.has_non_positive_norm {
+            for i in 0..n {
+                let tf_f = tfs[i] as f32;
+                let len_norm = self.norm_table[fieldnorm_bytes[i] as usize];
+                let denom = (tf_f + len_norm).max(f32::MIN_POSITIVE);
+                scores[i] = self.idf_k1p1 * tf_f / denom;
+            }
+        } else {
+            for i in 0..n {
+                let tf_f = tfs[i] as f32;
+                let len_norm = self.norm_table[fieldnorm_bytes[i] as usize];
+                scores[i] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+            }
         }
     }
 
@@ -166,41 +181,59 @@ impl<'a> Bm25BatchScorer<'a> {
         // Gather indices are u8 values (0-255), table is [f32; 256], so always in bounds.
         unsafe {
             let idf_k1p1_vec = _mm512_set1_ps(self.idf_k1p1);
-            let min_pos_vec = _mm512_set1_ps(f32::MIN_POSITIVE);
             let table = self.norm_table;
 
-            for chunk in 0..chunks {
-                let base = chunk * 16;
-                let fn_slice = &fieldnorm_bytes[base..base + 16];
+            if self.has_non_positive_norm {
+                let min_pos_vec = _mm512_set1_ps(f32::MIN_POSITIVE);
+                for chunk in 0..chunks {
+                    let base = chunk * 16;
+                    let fn_slice = &fieldnorm_bytes[base..base + 16];
 
-                let fn_u8 = _mm_loadu_si128(fn_slice.as_ptr() as *const __m128i);
-                let fn_i32 = _mm512_cvtepu8_epi32(fn_u8);
-                let norms = _mm512_i32gather_ps::<4>(fn_i32, table.as_ptr());
+                    let fn_u8 = _mm_loadu_si128(fn_slice.as_ptr() as *const __m128i);
+                    let fn_i32 = _mm512_cvtepu8_epi32(fn_u8);
+                    let norms = _mm512_i32gather_ps::<4>(fn_i32, table.as_ptr());
 
-                let tfs_u16 = _mm256_loadu_si256(tfs.as_ptr().add(base) as *const __m256i);
-                let tfs_i32 = _mm512_cvtepu16_epi32(tfs_u16);
-                let tfs_f32 = _mm512_cvtepi32_ps(tfs_i32);
+                    let tfs_u16 = _mm256_loadu_si256(tfs.as_ptr().add(base) as *const __m256i);
+                    let tfs_i32 = _mm512_cvtepu16_epi32(tfs_u16);
+                    let tfs_f32 = _mm512_cvtepi32_ps(tfs_i32);
 
-                let denom = _mm512_max_ps(_mm512_add_ps(tfs_f32, norms), min_pos_vec);
-                let numer = _mm512_mul_ps(idf_k1p1_vec, tfs_f32);
-                let result = _mm512_div_ps(numer, denom);
+                    let denom = _mm512_max_ps(_mm512_add_ps(tfs_f32, norms), min_pos_vec);
+                    let numer = _mm512_mul_ps(idf_k1p1_vec, tfs_f32);
+                    let result = _mm512_div_ps(numer, denom);
 
-                _mm512_storeu_ps(scores.as_mut_ptr().add(base), result);
+                    _mm512_storeu_ps(scores.as_mut_ptr().add(base), result);
+                }
+            } else {
+                for chunk in 0..chunks {
+                    let base = chunk * 16;
+                    let fn_slice = &fieldnorm_bytes[base..base + 16];
+
+                    let fn_u8 = _mm_loadu_si128(fn_slice.as_ptr() as *const __m128i);
+                    let fn_i32 = _mm512_cvtepu8_epi32(fn_u8);
+                    let norms = _mm512_i32gather_ps::<4>(fn_i32, table.as_ptr());
+
+                    let tfs_u16 = _mm256_loadu_si256(tfs.as_ptr().add(base) as *const __m256i);
+                    let tfs_i32 = _mm512_cvtepu16_epi32(tfs_u16);
+                    let tfs_f32 = _mm512_cvtepi32_ps(tfs_i32);
+
+                    let denom = _mm512_add_ps(tfs_f32, norms);
+                    let numer = _mm512_mul_ps(idf_k1p1_vec, tfs_f32);
+                    let result = _mm512_div_ps(numer, denom);
+
+                    _mm512_storeu_ps(scores.as_mut_ptr().add(base), result);
+                }
             }
         }
 
         // Handle remainder with scalar
         if remainder > 0 {
             let rem_base = chunks * 16;
-            let rem_fn = &fieldnorm_bytes[rem_base..n];
-            let rem_tfs = &tfs[rem_base..n];
-            let rem_scores = &mut scores[rem_base..n];
-            for i in 0..remainder {
-                let tf_f = rem_tfs[i] as f32;
-                let len_norm = self.norm_table[rem_fn[i] as usize];
-                let denom = (tf_f + len_norm).max(f32::MIN_POSITIVE);
-                rem_scores[i] = self.idf_k1p1 * tf_f / denom;
-            }
+            self.batch_score_scalar(
+                &fieldnorm_bytes[rem_base..n],
+                &tfs[rem_base..n],
+                &mut scores[rem_base..n],
+                remainder,
+            );
         }
     }
 
@@ -229,52 +262,67 @@ impl<'a> Bm25BatchScorer<'a> {
         // scores.len() >= n (all asserted in caller). Each chunk accesses [base..base+8]
         // where base+8 <= n.
         let idf_k1p1_vec = _mm256_set1_ps(self.idf_k1p1);
-        let min_pos_vec = _mm256_set1_ps(f32::MIN_POSITIVE);
         let table = self.norm_table;
 
         let chunks = n / 8;
         let remainder = n % 8;
 
-        for chunk in 0..chunks {
-            let base = chunk * 8;
-            let fn_slice = &fieldnorm_bytes[base..base + 8];
+        if self.has_non_positive_norm {
+            let min_pos_vec = _mm256_set1_ps(f32::MIN_POSITIVE);
+            for chunk in 0..chunks {
+                let base = chunk * 8;
+                let fn_slice = &fieldnorm_bytes[base..base + 8];
 
-            // SAFETY: AVX2 guaranteed by #[target_feature(enable = "avx2")], all slice accesses bounds-checked above, table has 256 floats
-            unsafe {
-                // Gather 8 norm values from 1KB table via AVX2 gather instruction
-                // Expand 8 u8s to 8 i32s for gather indices
-                let fn_u8 = _mm_loadl_epi64(fn_slice.as_ptr() as *const __m128i);
-                let fn_i32 = _mm256_cvtepu8_epi32(fn_u8);
-                // Gather 8 floats from table using the 8 indices
-                let norms = _mm256_i32gather_ps(table.as_ptr(), fn_i32, 4);
+                // SAFETY: AVX2 guaranteed by #[target_feature(enable = "avx2")], all slice accesses bounds-checked above, table has 256 floats
+                unsafe {
+                    let fn_u8 = _mm_loadl_epi64(fn_slice.as_ptr() as *const __m128i);
+                    let fn_i32 = _mm256_cvtepu8_epi32(fn_u8);
+                    let norms = _mm256_i32gather_ps(table.as_ptr(), fn_i32, 4);
 
-                // Load 8 TFs (u16 → i32 → f32)
-                let tfs_u16 = _mm_loadu_si128(tfs.as_ptr().add(base) as *const __m128i);
-                let tfs_i32 = _mm256_cvtepu16_epi32(tfs_u16);
-                let tfs_f32 = _mm256_cvtepi32_ps(tfs_i32);
+                    let tfs_u16 = _mm_loadu_si128(tfs.as_ptr().add(base) as *const __m128i);
+                    let tfs_i32 = _mm256_cvtepu16_epi32(tfs_u16);
+                    let tfs_f32 = _mm256_cvtepi32_ps(tfs_i32);
 
-                // BM25: idf_k1p1 * tf / max(tf + norm, f32::MIN_POSITIVE)
-                let denom = _mm256_max_ps(_mm256_add_ps(tfs_f32, norms), min_pos_vec);
-                let numer = _mm256_mul_ps(idf_k1p1_vec, tfs_f32);
-                let result = _mm256_div_ps(numer, denom);
+                    let denom = _mm256_max_ps(_mm256_add_ps(tfs_f32, norms), min_pos_vec);
+                    let numer = _mm256_mul_ps(idf_k1p1_vec, tfs_f32);
+                    let result = _mm256_div_ps(numer, denom);
 
-                // Store 8 scores
-                _mm256_storeu_ps(scores.as_mut_ptr().add(base), result);
+                    _mm256_storeu_ps(scores.as_mut_ptr().add(base), result);
+                }
+            }
+        } else {
+            for chunk in 0..chunks {
+                let base = chunk * 8;
+                let fn_slice = &fieldnorm_bytes[base..base + 8];
+
+                // SAFETY: AVX2 guaranteed by #[target_feature(enable = "avx2")], all slice accesses bounds-checked above, table has 256 floats
+                unsafe {
+                    let fn_u8 = _mm_loadl_epi64(fn_slice.as_ptr() as *const __m128i);
+                    let fn_i32 = _mm256_cvtepu8_epi32(fn_u8);
+                    let norms = _mm256_i32gather_ps(table.as_ptr(), fn_i32, 4);
+
+                    let tfs_u16 = _mm_loadu_si128(tfs.as_ptr().add(base) as *const __m128i);
+                    let tfs_i32 = _mm256_cvtepu16_epi32(tfs_u16);
+                    let tfs_f32 = _mm256_cvtepi32_ps(tfs_i32);
+
+                    let denom = _mm256_add_ps(tfs_f32, norms);
+                    let numer = _mm256_mul_ps(idf_k1p1_vec, tfs_f32);
+                    let result = _mm256_div_ps(numer, denom);
+
+                    _mm256_storeu_ps(scores.as_mut_ptr().add(base), result);
+                }
             }
         }
 
         // Handle remainder with scalar
         if remainder > 0 {
             let rem_base = chunks * 8;
-            let rem_fn = &fieldnorm_bytes[rem_base..n];
-            let rem_tfs = &tfs[rem_base..n];
-            let rem_scores = &mut scores[rem_base..n];
-            for i in 0..remainder {
-                let tf_f = rem_tfs[i] as f32;
-                let len_norm = self.norm_table[rem_fn[i] as usize];
-                let denom = (tf_f + len_norm).max(f32::MIN_POSITIVE);
-                rem_scores[i] = self.idf_k1p1 * tf_f / denom;
-            }
+            self.batch_score_scalar(
+                &fieldnorm_bytes[rem_base..n],
+                &tfs[rem_base..n],
+                &mut scores[rem_base..n],
+                remainder,
+            );
         }
     }
 
@@ -302,10 +350,7 @@ impl<'a> Bm25BatchScorer<'a> {
             prefetch_fieldnorm(fieldnorm_bytes, next);
         }
 
-        let tf_f = tf as f32;
-        let len_norm = self.norm_table[fieldnorm_bytes[doc_id as usize] as usize];
-        let denom = (tf_f + len_norm).max(f32::MIN_POSITIVE);
-        self.idf_k1p1 * tf_f / denom
+        self.score(fieldnorm_bytes[doc_id as usize], tf)
     }
 
     /// Batch score with prefetch — scores `doc_ids` array with look-ahead prefetch.
@@ -336,15 +381,27 @@ impl<'a> Bm25BatchScorer<'a> {
 
         const PREFETCH_DISTANCE: usize = 4;
 
-        for i in 0..n {
-            if i + PREFETCH_DISTANCE < n {
-                prefetch_fieldnorm(fieldnorm_bytes, doc_ids[i + PREFETCH_DISTANCE]);
-            }
+        if self.has_non_positive_norm {
+            for i in 0..n {
+                if i + PREFETCH_DISTANCE < n {
+                    prefetch_fieldnorm(fieldnorm_bytes, doc_ids[i + PREFETCH_DISTANCE]);
+                }
 
-            let tf_f = tfs[i] as f32;
-            let len_norm = self.norm_table[fieldnorm_bytes[doc_ids[i] as usize] as usize];
-            let denom = (tf_f + len_norm).max(f32::MIN_POSITIVE);
-            scores[i] = self.idf_k1p1 * tf_f / denom;
+                let tf_f = tfs[i] as f32;
+                let len_norm = self.norm_table[fieldnorm_bytes[doc_ids[i] as usize] as usize];
+                let denom = (tf_f + len_norm).max(f32::MIN_POSITIVE);
+                scores[i] = self.idf_k1p1 * tf_f / denom;
+            }
+        } else {
+            for i in 0..n {
+                if i + PREFETCH_DISTANCE < n {
+                    prefetch_fieldnorm(fieldnorm_bytes, doc_ids[i + PREFETCH_DISTANCE]);
+                }
+
+                let tf_f = tfs[i] as f32;
+                let len_norm = self.norm_table[fieldnorm_bytes[doc_ids[i] as usize] as usize];
+                scores[i] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+            }
         }
     }
 }
@@ -694,39 +751,54 @@ mod tests {
     #[test]
     fn test_c12_5_bm25_zero_tf_zero_norm_and_subnormal_avg_dl_never_nan() {
         // 1. When b = 1.0 (full length normalization) and doc length = 0 (fieldnorm_byte = 0),
-        // norm_table[0] == 0.0. Scoring a document with tf == 0 must return 0.0, not NaN (0.0 / 0.0).
+        // scoring a document with tf == 0 must return 0.0, not NaN (0.0 / 0.0).
         let norm_table = FieldnormEncoder::build_norm_table(100.0, 1.2, 1.0);
-        assert_eq!(norm_table[0], 0.0);
-
         let scorer = Bm25BatchScorer::new(&norm_table, 3.5, 1.2);
         let single = scorer.score(0, 0);
         assert!(
             !single.is_nan() && single == 0.0,
             "Bm25BatchScorer::score(0, 0) with b=1.0 must be 0.0, got {single}"
         );
-
-        let fieldnorm_bytes = vec![0u8; 32];
-        let tfs = vec![0u16; 32];
-        let mut batch_scores = vec![-1.0f32; 32];
-        scorer.batch_score(&fieldnorm_bytes, &tfs, &mut batch_scores);
         assert!(
-            batch_scores.iter().all(|&s| !s.is_nan() && s == 0.0),
-            "batch_score with tf=0 and norm=0 must be all 0.0, got {:?}",
-            &batch_scores[..8]
+            norm_table[0] >= f32::MIN_POSITIVE,
+            "build_norm_table must clamp entries to >= f32::MIN_POSITIVE, got {}",
+            norm_table[0]
         );
 
-        let mut scalar_scores = vec![-1.0f32; 32];
-        scorer.batch_score_scalar(&fieldnorm_bytes, &tfs, &mut scalar_scores, 32);
-        assert!(scalar_scores.iter().all(|&s| !s.is_nan() && s == 0.0));
+        // Also test a caller-provided raw [0.0; 256] table (exercising the guarded fallback path).
+        let zero_norms = [0.0f32; 256];
+        for table in [&norm_table, &zero_norms] {
+            let scorer = Bm25BatchScorer::new(table, 3.5, 1.2);
+            assert_eq!(scorer.score(0, 0), 0.0);
 
-        let doc_ids: Vec<u32> = (0..32).collect();
-        let mut prefetch_scores = vec![-1.0f32; 32];
-        scorer.batch_score_with_prefetch(&fieldnorm_bytes, &doc_ids, &tfs, &mut prefetch_scores);
-        assert!(prefetch_scores.iter().all(|&s| !s.is_nan() && s == 0.0));
-        assert_eq!(
-            scorer.score_with_prefetch(&fieldnorm_bytes, 0, 0, Some(1)),
-            0.0
-        );
+            let fieldnorm_bytes = vec![0u8; 32];
+            let tfs = vec![0u16; 32];
+            let mut batch_scores = vec![-1.0f32; 32];
+            scorer.batch_score(&fieldnorm_bytes, &tfs, &mut batch_scores);
+            assert!(
+                batch_scores.iter().all(|&s| !s.is_nan() && s == 0.0),
+                "batch_score with tf=0 and norm=0 must be all 0.0, got {:?}",
+                &batch_scores[..8]
+            );
+
+            let mut scalar_scores = vec![-1.0f32; 32];
+            scorer.batch_score_scalar(&fieldnorm_bytes, &tfs, &mut scalar_scores, 32);
+            assert!(scalar_scores.iter().all(|&s| !s.is_nan() && s == 0.0));
+
+            let doc_ids: Vec<u32> = (0..32).collect();
+            let mut prefetch_scores = vec![-1.0f32; 32];
+            scorer.batch_score_with_prefetch(
+                &fieldnorm_bytes,
+                &doc_ids,
+                &tfs,
+                &mut prefetch_scores,
+            );
+            assert!(prefetch_scores.iter().all(|&s| !s.is_nan() && s == 0.0));
+            assert_eq!(
+                scorer.score_with_prefetch(&fieldnorm_bytes, 0, 0, Some(1)),
+                0.0
+            );
+        }
 
         // 2. FieldnormEncoder::build_score_table with b = 1.0 must not have NaN at tf = 0, byte = 0.
         let score_table = FieldnormEncoder::build_score_table(100.0, 1.2, 1.0, 3.5, 4);
@@ -816,4 +888,72 @@ mod tests {
             min_prefetch.as_nanos() as f64 / n as f64,
         );
     }
+
+    #[test]
+    fn bench_s34_r1_bm25_stride3_probe() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        if std::env::var_os("S33_BM25").is_none() {
+            return;
+        }
+
+        fn min_ns<F: FnMut()>(reps: usize, per: f64, mut f: F) -> f64 {
+            (0..reps)
+                .map(|_| {
+                    let t = Instant::now();
+                    f();
+                    t.elapsed().as_nanos() as f64 / per
+                })
+                .fold(f64::INFINITY, f64::min)
+        }
+
+        let n = 1usize << 20;
+        let norm = FieldnormEncoder::build_norm_table(120.0, 1.2, 0.75);
+        let s = Bm25BatchScorer::new(&norm, 2.3, 1.2);
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut rnd = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let fb: Vec<u8> = (0..n).map(|_| rnd() as u8).collect();
+        let tfs: Vec<u16> = (0..n).map(|_| (rnd() % 20) as u16).collect();
+        let ids: Vec<u32> = (0..n as u32).step_by(3).collect();
+        let tfs_ids: Vec<u16> = ids.iter().map(|&i| tfs[i as usize]).collect();
+        let mut out = vec![0f32; n];
+        let a = min_ns(15, n as f64, || {
+            s.batch_score(black_box(&fb), black_box(&tfs), black_box(&mut out))
+        });
+        let b = min_ns(15, n as f64, || {
+            let mut acc = 0f32;
+            for i in 0..n {
+                acc += s.score(black_box(fb[i]), tfs[i]);
+            }
+            black_box(acc);
+        });
+        let mut out2 = vec![0f32; ids.len()];
+        let c = min_ns(15, ids.len() as f64, || {
+            s.batch_score_with_prefetch(
+                black_box(&fb),
+                black_box(&ids),
+                black_box(&tfs_ids),
+                black_box(&mut out2),
+            )
+        });
+        let d = min_ns(7, 256.0 * 20.0, || {
+            black_box(FieldnormEncoder::build_score_table(
+                black_box(120.0),
+                1.2,
+                0.75,
+                2.3,
+                20,
+            ));
+        });
+        println!(
+            "TIMING batch_score {a:.4} ns/doc\nTIMING score_loop {b:.4} ns/doc\nTIMING batch_prefetch {c:.4} ns/doc\nTIMING build_score_table {d:.4} ns/cell"
+        );
+    }
 }
+

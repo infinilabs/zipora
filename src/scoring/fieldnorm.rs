@@ -126,7 +126,7 @@ impl FieldnormEncoder {
     /// * `k1` - BM25 term frequency saturation parameter (typically 1.2)
     /// * `b` - BM25 length normalization parameter (typically 0.75)
     pub fn build_norm_table(avg_dl: f32, k1: f32, b: f32) -> [f32; 256] {
-        let mut table = [0.0f32; 256];
+        let mut table = [f32::MIN_POSITIVE; 256];
         let inv_avg_dl = if avg_dl > 0.0 && (1.0 / avg_dl).is_finite() {
             1.0 / avg_dl
         } else {
@@ -139,7 +139,12 @@ impl FieldnormEncoder {
             } else {
                 (dl * inv_avg_dl).min(f32::MAX / k1.max(1.0))
             };
-            table[i as usize] = (k1 * (1.0 - b + b * ratio)).min(f32::MAX);
+            let raw = (k1 * (1.0 - b + b * ratio)).min(f32::MAX);
+            table[i as usize] = if raw >= f32::MIN_POSITIVE {
+                raw
+            } else {
+                f32::MIN_POSITIVE
+            };
         }
         table
     }
@@ -173,8 +178,7 @@ impl FieldnormEncoder {
             let tf_f = tf as f32;
             for byte in 0..256usize {
                 let len_norm = norm_table[byte];
-                let denom = (tf_f + len_norm).max(f32::MIN_POSITIVE);
-                table[tf as usize][byte] = idf * tf_f * k1p1 / denom;
+                table[tf as usize][byte] = idf * tf_f * k1p1 / (tf_f + len_norm);
             }
         }
         table
