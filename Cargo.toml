@@ -265,3 +265,7 @@ harness = false
 [[bench]]
 name = "version_sync_bench"
 harness = false
+
+[[bench]]
+name = "core_bench"
+harness = false
