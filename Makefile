@@ -10,7 +10,7 @@
 
 .PHONY: all build build_debug build_release
 .PHONY: test test_debug test_release test_simd_base64
-.PHONY: bench bench_all bench_core bench_compare bench_avx512 bench_fsa bench_io bench_serialization
+.PHONY: bench bench_all bench_core bench_e2e_search bench_compare bench_avx512 bench_fsa bench_io bench_serialization
 .PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
 .PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_c12 miri_scalar
 .PHONY: tsan_cspp tsan_pool tsan_concurrency
@@ -105,6 +105,16 @@ bench_core:
 
 bench_compare:
 	python3 scripts/bench_compare.py --suite core_bench
+
+# Systemic end-to-end search benchmark (plan.md §1.6 E1.1 / G15).
+# Combines DoubleArrayTrieMap<u32> + HybridPostingList + FieldnormEncoder +
+# bench-local Block-Max WAND (simd_gallop_to, simd_block_filter, Bm25BatchScorer)
+# on 10k Zipf queries (1-4 terms, fixed seed) vs uncompressed baseline, writes
+# target/bench/e2e_search.json (and benches/baselines/<host>/e2e_search.json),
+# and checks for >5% median regression.
+bench_e2e_search:
+	$(CARGO) bench --locked --bench e2e_search_bench
+	python3 scripts/bench_compare.py --suite e2e_search
 
 bench_avx512:
 	$(CARGO) bench --release --bench avx512_bench

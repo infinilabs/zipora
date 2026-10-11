@@ -1,0 +1,171 @@
+{
+  "suite": "e2e_search",
+  "seed": 6491672857861810732,
+  "host_metadata": {
+    "host": "bindiego",
+    "cpu_model": "AMD EPYC 7B13",
+    "logical_cores": 64,
+    "governor": "unknown (virtualized/host-managed)",
+    "git_commit": "7267d2f",
+    "timestamp_utc": "2026-10-11T13:31:44Z"
+  },
+  "summary": {
+    "num_docs": 20000,
+    "vocab_size": 4096,
+    "total_postings": 854058,
+    "num_queries": 10000,
+    "top_k": 10,
+    "zipora_qps_top10": 37045.0443919843,
+    "zipora_p50_us": 16.22,
+    "zipora_p99_us": 154.25,
+    "zipora_vm_hwm_kib": 26976,
+    "zipora_bytes_per_posting": 1.4243388622318391,
+    "zipora_total_index_bytes_per_posting": 3.1329090061799083,
+    "zipora_dict_bytes": 462848,
+    "zipora_fieldnorm_bytes": 20000,
+    "zipora_postings_bytes": 1216468,
+    "zipora_bmw_metadata_bytes": 976370,
+    "baseline_qps_top10": 29029.644422620346,
+    "baseline_p50_us": 22.71,
+    "baseline_p99_us": 135.071,
+    "baseline_bytes_per_posting": 6.0,
+    "qps_speedup_vs_baseline": 1.2761108559469034,
+    "top10_recall_vs_exhaustive": 1.0,
+    "competitor_note": "In-process uncompressed inverted-index baseline (HashMap<String, u32> + Vec<u32> doc_ids + Vec<u16> tfs + full BM25 scan); Cargo.lock is frozen under --locked in make sanity (S21-R1) so external tantivy crate is deferred to E2."
+  },
+  "encoding_distribution": {
+    "Clustered": 8,
+    "Dense": 2688,
+    "EliasFano": 1024,
+    "Optimal": 24,
+    "Partitioned": 352
+  },
+  "benchmarks": [
+    {
+      "category": "e2e_search",
+      "name": "e2e_search/zipora_bmw/all_10k_queries",
+      "unit": "ns/query",
+      "ops_per_trial": 10000,
+      "trials": 9,
+      "min_ns_per_op": 26721.2529,
+      "median_ns_per_op": 26994.1639,
+      "p95_ns_per_op": 27185.7668,
+      "samples_ns_per_op": [
+        27132.348,
+        26941.6049,
+        26982.4228,
+        26994.1639,
+        26721.2529,
+        26728.3949,
+        27185.7668,
+        27036.5619,
+        27165.4249
+      ]
+    },
+    {
+      "category": "e2e_search",
+      "name": "e2e_search/zipora_bmw/1_term_queries",
+      "unit": "ns/query",
+      "ops_per_trial": 2500,
+      "trials": 9,
+      "min_ns_per_op": 6851.4676,
+      "median_ns_per_op": 6971.528,
+      "p95_ns_per_op": 7103.2356,
+      "samples_ns_per_op": [
+        6851.4676,
+        7103.2356,
+        6970.772,
+        6971.528,
+        7019.288,
+        6915.8716,
+        7076.412,
+        6972.5196,
+        6912.676
+      ]
+    },
+    {
+      "category": "e2e_search",
+      "name": "e2e_search/zipora_bmw/2_term_queries",
+      "unit": "ns/query",
+      "ops_per_trial": 2500,
+      "trials": 9,
+      "min_ns_per_op": 18940.2512,
+      "median_ns_per_op": 19020.8792,
+      "p95_ns_per_op": 19536.3112,
+      "samples_ns_per_op": [
+        19486.3952,
+        19025.8472,
+        18968.5032,
+        18967.6312,
+        19020.8792,
+        19133.7232,
+        19536.3112,
+        18940.2512,
+        19007.0512
+      ]
+    },
+    {
+      "category": "e2e_search",
+      "name": "e2e_search/zipora_bmw/3_term_queries",
+      "unit": "ns/query",
+      "ops_per_trial": 2500,
+      "trials": 9,
+      "min_ns_per_op": 30427.8428,
+      "median_ns_per_op": 30627.2944,
+      "p95_ns_per_op": 31251.1104,
+      "samples_ns_per_op": [
+        31251.1104,
+        30529.4904,
+        30427.8428,
+        31068.1228,
+        30516.0108,
+        30627.2944,
+        30504.7708,
+        30994.6388,
+        30867.9028
+      ]
+    },
+    {
+      "category": "e2e_search",
+      "name": "e2e_search/zipora_bmw/4_term_queries",
+      "unit": "ns/query",
+      "ops_per_trial": 2500,
+      "trials": 9,
+      "min_ns_per_op": 50432.738,
+      "median_ns_per_op": 50747.5656,
+      "p95_ns_per_op": 51821.886,
+      "samples_ns_per_op": [
+        51168.9056,
+        50576.762,
+        50650.274,
+        51821.886,
+        50747.5656,
+        50432.738,
+        51172.2536,
+        50580.274,
+        50822.962
+      ]
+    },
+    {
+      "category": "e2e_search",
+      "name": "e2e_search/uncompressed_baseline/all_10k_queries",
+      "unit": "ns/query",
+      "ops_per_trial": 10000,
+      "trials": 9,
+      "min_ns_per_op": 33975.7016,
+      "median_ns_per_op": 34447.5456,
+      "p95_ns_per_op": 34910.7655,
+      "samples_ns_per_op": [
+        34011.4816,
+        34447.5456,
+        33975.7016,
+        34157.3656,
+        34479.8925,
+        34323.2646,
+        34508.6836,
+        34571.9846,
+        34910.7655
+      ]
+    }
+  ]
+}

@@ -269,3 +269,7 @@ harness = false
 [[bench]]
 name = "core_bench"
 harness = false
+
+[[bench]]
+name = "e2e_search_bench"
+harness = false
