@@ -88,37 +88,50 @@ test_simd_base64:
 # =============================================================================
 # BENCHMARK
 # =============================================================================
+#
+# Benchmark runner configuration (S37-R2 / Rule B3):
+# - Reference host: `bindiego` (AMD EPYC 7763 64-Core Processor, 128 logical cores)
+# - Pinned CPU core: 23 (`select_primary_core(64) = 23` on CCD 16, override via `ZIPORA_BENCH_PIN_CORE`)
+# - Compiler flags: `BENCH_RUSTFLAGS` pins `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt`,
+#   `-C codegen-units=1`, and `-C llvm-args=-align-loops=32` so unrelated code motion or CGU
+#   re-partitioning does not shift tight-loop alignment or cross-CGU inlining.
+# - Baselines under `benches/baselines/<host>/` are never auto-written by the gate;
+#   pass `UPDATE_BASELINE=1` explicitly to record or refresh a baseline.
+ifeq ($(shell uname -m),x86_64)
+BENCH_RUSTFLAGS := -C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32
+else
+BENCH_RUSTFLAGS := -C target-cpu=native -C codegen-units=1 -C llvm-args=-align-loops=32
+endif
 
 bench:
-	$(CARGO) bench
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench
 
 bench_all:
-	$(CARGO) bench --release
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --release
 
 # Canonical Phase E core benchmark suite (plan.md §1.6 E1 + B3).
-# Runs deterministic fixed-seed benchmarks at spec sizes across all 10 core
-# subsystems, writes target/bench/core_bench.json (and updates
-# benches/baselines/<host>/core_bench.json when UPDATE_BASELINE=1), and checks
-# for regressions against the baseline.
+# Exact command:
+#   RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32" \
+#     cargo bench --locked --bench core_bench
+#   python3 scripts/bench_compare.py --suite core_bench
 bench_core:
-	$(CARGO) bench --locked --bench core_bench
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench core_bench
 	python3 scripts/bench_compare.py --suite core_bench
 
 # Fast smoke tier of the core benchmark suite (~2s, reduced dataset sizes).
 bench_smoke:
-	$(CARGO) bench --locked --bench core_bench -- --smoke
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench core_bench -- --smoke
 
 bench_compare:
 	python3 scripts/bench_compare.py --suite core_bench
 
 # Systemic end-to-end search benchmark (plan.md §1.6 E1.1 / G15).
-# Combines DoubleArrayTrieMap<u32> + HybridPostingList + FieldnormEncoder +
-# bench-local Block-Max WAND (simd_gallop_to, simd_block_filter, Bm25BatchScorer)
-# on 10k Zipf queries (1-4 terms, fixed seed) vs uncompressed baseline, writes
-# target/bench/e2e_search.json (and benches/baselines/<host>/e2e_search.json),
-# and checks for >5% median regression.
+# Exact command:
+#   RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C llvm-args=-align-loops=32" \
+#     cargo bench --locked --bench e2e_search_bench
+#   python3 scripts/bench_compare.py --suite e2e_search
 bench_e2e_search:
-	$(CARGO) bench --locked --bench e2e_search_bench
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench e2e_search_bench
 	python3 scripts/bench_compare.py --suite e2e_search
 
 bench_avx512:

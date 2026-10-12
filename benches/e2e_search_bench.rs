@@ -1691,11 +1691,11 @@ fn main() {
     let latest_out = custom_out.unwrap_or_else(|| PathBuf::from("target/bench/e2e_search.json"));
     write_json(&latest_out, &report);
 
-    let baseline_path = PathBuf::from(format!(
-        "benches/baselines/{}/e2e_search.json",
-        host_metadata.host
-    ));
-    if save_baseline || !baseline_path.exists() {
+    if save_baseline {
+        let baseline_path = PathBuf::from(format!(
+            "benches/baselines/{}/e2e_search.json",
+            host_metadata.host
+        ));
         write_json(&baseline_path, &report);
     }
 }
