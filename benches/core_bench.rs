@@ -1,25 +1,36 @@
-//! Canonical Phase E Core Benchmark Suite (`plan.md` §1.6 `E1` + `S36-R2`).
+//! Canonical Phase E Core Benchmark Suite (`plan.md` §1.6 `E1` + `S36-R2` + `S37-R1`).
 //!
-//! Runs a deterministic, fixed-seed benchmark suite covering all 10 core subsystems:
-//! 1. Rank/Select (`Rank9`, `RankSelectInterleaved256`, `RankSelectSE256` `rank1`/`select1`/`select0`)
-//! 2. Elias-Fano (`EliasFano`, `PartitionedEliasFano`, `OptimalPartitionedEliasFano`,
-//!    `ClusteredEliasFano` `next_geq`, `advance_to_geq`, `advance_to_index`, and `bits_per_element`)
-//! 3. Tries (`DoubleArrayTrie` lookup/insert across 3 distributions, `CsppTrie` lookup/insert,
-//!    `ZiporaTrie` DoubleArray build/lookup)
-//! 4. Hash Maps (`ZiporaHashMap` and `GoldHashMap` get/insert on `u64` and 16-byte string keys)
-//! 5. Memory Pools (`LockFreeMemoryPool` and `SecureMemoryPool` alloc+free on 1 and 4 threads)
-//! 6. Entropy Coding (`HuffmanEncoder` O0, `ContextualHuffmanEncoder` O1/O2, `FseEncoder`,
-//!    `Rans64Encoder` X1/X4 encode+decode on deterministic 64 KiB blocks)
-//! 7. Integer Codecs (`StreamVByte` and `GroupVarint` encode/decode deltas)
-//! 8. Radix Sort (`RadixSort` `u32`, `u64`, and `KeyValueRadixSort<u64, u64>` `(u64, u64)`)
-//! 9. Suffix Array (`SuffixArray` construction + substring search)
-//! 10. String Search & BM25 Scoring (`SimdStringSearch` `strchr`/`strstr`, `Bm25BatchScorer`
-//!     `score`/`batch_score`/`batch_score_with_prefetch`, and `FieldnormEncoder::build_score_table`
-//!     for `S36-R2`).
+//! Runs a deterministic, fixed-seed benchmark suite at canonical specification sizes
+//! across all 10 core subsystems:
+//! 1. Rank/Select (`1 Gbit` = `1,073,741,824` bits: `Rank9`, `RankSelectInterleaved256`,
+//!    `RankSelectSE256` `rank1`/`select1`/`select0`)
+//! 2. Elias-Fano (`100,000` elements across uniform, Zipf-clustered, and dense distributions:
+//!    `EliasFano`, `PartitionedEliasFano`, `OptimalPartitionedEliasFano`, `ClusteredEliasFano`
+//!    `next_geq`, `advance_to_geq`, `advance_to_index`, and `bits_per_element` incl. `HybridPostingList`)
+//! 3. Tries (`1,000,000` keys across 3 distributions `url_paths`, `random_16b`, `shared_prefix`:
+//!    `DoubleArrayTrie` `build_from_sorted` + `lookup`, `CsppTrie` `build` + `lookup`,
+//!    and `ZiporaTrie` DoubleArray `build` + `lookup`)
+//! 4. Hash Maps (`1,000,000` `u64` keys and `1,000,000` 16-byte string keys:
+//!    `ZiporaHashMap` and `GoldHashMap` `insert_u64`, `insert_str16`, `get_u64`, `get_str16`)
+//! 5. Memory Pools (`10,000` ops: `LockFreeMemoryPool` and `SecureMemoryPool` alloc+free on 1 and 4 threads)
+//! 6. Entropy Coding (`65,536` bytes = `64 KiB` deterministic synthetic `enwik8`-like block:
+//!    `HuffmanEncoder` O0, `ContextualHuffmanEncoder` O1/O2, `FseEncoder`, `Rans64Encoder` X1/X4
+//!    encode+decode)
+//! 7. Integer Codecs (`100,000` contiguous integers: `StreamVByte` and `GroupVarint` encode/decode deltas)
+//! 8. Radix Sort (`10,000,000` = `10^7` elements: `RadixSort` `u32`, `u64`, and
+//!    `KeyValueRadixSort<u64, u64>` `(u64, u64)`)
+//! 9. Suffix Array (`10,000,000` = `10^7` bytes: `SuffixArray` construction + substring search)
+//! 10. String Search & BM25 Scoring (`64 KiB` `SimdStringSearch` `strchr`/`strstr`, `100,000`-doc
+//!     `Bm25BatchScorer` `score`/`batch_score`/`batch_score_with_prefetch`, and
+//!     `FieldnormEncoder::build_score_table` for `S36-R2`).
 //!
-//! Emits structured JSON to `target/bench/core_bench.json` (and optionally
-//! `benches/baselines/<host>/core_bench.json` when `--save-baseline` or
-//! `ZIPORA_BENCH_SAVE_BASELINE=1` is set, or when the host baseline does not yet exist).
+//! A separate smaller smoke tier is available via `--smoke` or `ZIPORA_BENCH_SMOKE=1`
+//! (`make bench_smoke`), which writes to `target/bench/smoke_bench.json` and never
+//! overwrites `core_bench.json` or any committed baseline.
+//!
+//! Emits structured JSON to `target/bench/core_bench.json`, and writes
+//! `benches/baselines/<host>/core_bench.json` **only** when `UPDATE_BASELINE=1`,
+//! `ZIPORA_BENCH_SAVE_BASELINE=1`, or `--save-baseline` is explicitly provided.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -49,9 +60,7 @@ use zipora::fsa::{DoubleArrayTrie, TrieStrategy, ZiporaTrie, ZiporaTrieConfig};
 use zipora::hash_map::{
     GoldHashMap, GoldHashMapConfig, HashStorageStrategy, ZiporaHashMap, ZiporaHashMapConfig,
 };
-use zipora::memory::{
-    LockFreeMemoryPool, LockFreePoolConfig, SecureMemoryPool, SecurePoolConfig,
-};
+use zipora::memory::{LockFreeMemoryPool, LockFreePoolConfig, SecureMemoryPool, SecurePoolConfig};
 use zipora::scoring::{Bm25BatchScorer, FieldnormEncoder};
 use zipora::string::SimdStringSearch;
 use zipora::succinct::BitVector;
@@ -64,8 +73,7 @@ use zipora::succinct::rank_select::{
 };
 
 const SEED_BASE: u64 = 0xE1C0_5EBE_4C00_2026;
-const DEFAULT_TRIALS: usize = 3;
-const SUITE_PASSES: usize = 3;
+const ENTROPY_BLOCK_SOURCE: &str = "synthetic_enwik8_like_64kib (deterministic Zipf-skewed English/Wiki markup token stream, seed = 0xE1C0_5EBE_4C00_2021)";
 
 #[cfg(target_os = "linux")]
 fn pin_current_thread_to_core(core_id: usize) {
@@ -82,22 +90,6 @@ fn pin_current_thread_to_core(core_id: usize) {
 #[cfg(not(target_os = "linux"))]
 fn pin_current_thread_to_core(_core_id: usize) {}
 
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn configure_allocator_for_benchmarks() {
-    const M_TRIM_THRESHOLD: libc::c_int = -1;
-    const M_MMAP_THRESHOLD: libc::c_int = -3;
-    // SAFETY: mallopt adjusts process-wide glibc malloc thresholds so temporary
-    // allocations up to 64 MiB stay in user-space heap instead of hitting kernel
-    // mmap/munmap page faults on every benchmark iteration.
-    unsafe {
-        libc::mallopt(M_TRIM_THRESHOLD, -1);
-        libc::mallopt(M_MMAP_THRESHOLD, 64 * 1024 * 1024);
-    }
-}
-
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-fn configure_allocator_for_benchmarks() {}
-
 fn select_primary_core(logical_cores: usize) -> usize {
     if let Ok(val) = std::env::var("ZIPORA_BENCH_PIN_CORE")
         && let Ok(parsed) = val.parse::<usize>()
@@ -112,6 +104,100 @@ fn select_primary_core(logical_cores: usize) -> usize {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SuiteSizes {
+    rank_select_bits: usize,
+    elias_fano_elements: usize,
+    trie_keys: usize,
+    hash_map_keys: usize,
+    memory_pool_ops: usize,
+    entropy_block_bytes: usize,
+    int_codec_elements: usize,
+    radix_sort_elements: usize,
+    suffix_array_bytes: usize,
+    bm25_docs: usize,
+}
+
+impl SuiteSizes {
+    fn spec() -> Self {
+        Self {
+            rank_select_bits: std::env::var("ZIPORA_BENCH_RANK_BITS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1_073_741_824), // 1 Gbit (2^30 bits)
+            elias_fano_elements: std::env::var("ZIPORA_BENCH_EF_LEN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100_000),
+            trie_keys: std::env::var("ZIPORA_BENCH_TRIE_KEYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1_000_000), // 1 M keys
+            hash_map_keys: std::env::var("ZIPORA_BENCH_MAP_KEYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1_000_000), // 1 M keys
+            memory_pool_ops: 10_000,
+            entropy_block_bytes: 65_536, // 64 KiB
+            int_codec_elements: 100_000,
+            radix_sort_elements: std::env::var("ZIPORA_BENCH_SORT_LEN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10_000_000), // 10^7 elements
+            suffix_array_bytes: std::env::var("ZIPORA_BENCH_SA_LEN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10_000_000), // 10^7 bytes
+            bm25_docs: 100_000,
+        }
+    }
+
+    fn smoke() -> Self {
+        Self {
+            rank_select_bits: 1 << 20, // 1 Mbit
+            elias_fano_elements: 10_000,
+            trie_keys: 25_000,
+            hash_map_keys: 25_000,
+            memory_pool_ops: 2_000,
+            entropy_block_bytes: 65_536,
+            int_codec_elements: 10_000,
+            radix_sort_elements: 100_000,
+            suffix_array_bytes: 100_000,
+            bm25_docs: 10_000,
+        }
+    }
+
+    fn to_map(self) -> BTreeMap<String, u64> {
+        let mut map = BTreeMap::new();
+        map.insert("rank_select_bits".to_string(), self.rank_select_bits as u64);
+        map.insert(
+            "elias_fano_elements".to_string(),
+            self.elias_fano_elements as u64,
+        );
+        map.insert("trie_keys".to_string(), self.trie_keys as u64);
+        map.insert("hash_map_keys".to_string(), self.hash_map_keys as u64);
+        map.insert("memory_pool_ops".to_string(), self.memory_pool_ops as u64);
+        map.insert(
+            "entropy_block_bytes".to_string(),
+            self.entropy_block_bytes as u64,
+        );
+        map.insert(
+            "int_codec_elements".to_string(),
+            self.int_codec_elements as u64,
+        );
+        map.insert(
+            "radix_sort_elements".to_string(),
+            self.radix_sort_elements as u64,
+        );
+        map.insert(
+            "suffix_array_bytes".to_string(),
+            self.suffix_array_bytes as u64,
+        );
+        map.insert("bm25_docs".to_string(), self.bm25_docs as u64);
+        map
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HostMetadata {
     host: String,
@@ -120,6 +206,7 @@ struct HostMetadata {
     cpu_mhz: String,
     cache_size: String,
     logical_cores: usize,
+    pinned_core: usize,
     cpu_governor: String,
     git_commit: String,
 }
@@ -129,20 +216,25 @@ struct BenchRecord {
     name: String,
     category: String,
     unit: String,
+    dataset_size: u64,
     ops_per_iter: u64,
     trials: usize,
     min_ns_per_op: f64,
     median_ns_per_op: f64,
     p95_ns_per_op: f64,
-    #[serde(skip)]
+    spread_pct: f64,
+    max_regression_pct: f64,
     samples: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CoreBenchReport {
     suite: String,
+    tier: String,
     seed: u64,
+    entropy_block_source: String,
     host_metadata: HostMetadata,
+    dataset_sizes: BTreeMap<String, u64>,
     space_metrics: BTreeMap<String, f64>,
     benchmarks: Vec<BenchRecord>,
 }
@@ -151,7 +243,7 @@ fn read_trimmed(path: &str) -> Option<String> {
     fs::read_to_string(path).ok().map(|s| s.trim().to_string())
 }
 
-fn collect_host_metadata() -> HostMetadata {
+fn collect_host_metadata(pinned_core: usize) -> HostMetadata {
     let host_raw = read_trimmed("/etc/hostname")
         .or_else(|| std::env::var("HOSTNAME").ok())
         .unwrap_or_else(|| "unknown".to_string());
@@ -204,9 +296,100 @@ fn collect_host_metadata() -> HostMetadata {
         cpu_mhz,
         cache_size,
         logical_cores,
+        pinned_core,
         cpu_governor,
         git_commit,
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BenchParams {
+    dataset_size: u64,
+    ops_per_iter: u64,
+    warmup_calls: usize,
+    trials: usize,
+    bursts_per_trial: usize,
+    max_regression_pct: f64,
+}
+
+impl BenchParams {
+    const fn fast(dataset_size: u64, ops_per_iter: u64) -> Self {
+        Self {
+            dataset_size,
+            ops_per_iter,
+            warmup_calls: 4,
+            trials: 5,
+            bursts_per_trial: 4,
+            max_regression_pct: 5.0,
+        }
+    }
+
+    const fn medium(dataset_size: u64, ops_per_iter: u64) -> Self {
+        Self {
+            dataset_size,
+            ops_per_iter,
+            warmup_calls: 4,
+            trials: 5,
+            bursts_per_trial: 3,
+            max_regression_pct: 5.0,
+        }
+    }
+
+    const fn heavy(dataset_size: u64, ops_per_iter: u64, trials: usize) -> Self {
+        Self {
+            dataset_size,
+            ops_per_iter,
+            warmup_calls: 1,
+            trials,
+            bursts_per_trial: 1,
+            max_regression_pct: 5.0,
+        }
+    }
+}
+
+fn round4(val: f64) -> f64 {
+    (val * 10_000.0).round() / 10_000.0
+}
+
+fn round2(val: f64) -> f64 {
+    (val * 100.0).round() / 100.0
+}
+
+fn record_samples(
+    records: &mut Vec<BenchRecord>,
+    category: &str,
+    name: &str,
+    unit: &str,
+    params: BenchParams,
+    mut samples: Vec<f64>,
+) {
+    samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let total_trials = samples.len();
+    let min_ns = samples[0];
+    let median_ns = samples[total_trials / 2];
+    let p95_idx = ((total_trials as f64 * 0.95).floor() as usize).min(total_trials - 1);
+    let p95_ns = samples[p95_idx];
+    let spread_pct = if min_ns > 0.0 {
+        ((p95_ns - min_ns) / min_ns) * 100.0
+    } else {
+        0.0
+    };
+    let rounded_samples = samples.into_iter().map(round4).collect();
+
+    records.push(BenchRecord {
+        name: name.to_string(),
+        category: category.to_string(),
+        unit: unit.to_string(),
+        dataset_size: params.dataset_size,
+        ops_per_iter: params.ops_per_iter,
+        trials: total_trials,
+        min_ns_per_op: round4(min_ns),
+        median_ns_per_op: round4(median_ns),
+        p95_ns_per_op: round4(p95_ns),
+        spread_pct: round2(spread_pct),
+        max_regression_pct: params.max_regression_pct,
+        samples: rounded_samples,
+    });
 }
 
 fn measure_bench<F>(
@@ -214,257 +397,230 @@ fn measure_bench<F>(
     category: &str,
     name: &str,
     unit: &str,
-    ops_per_iter: u64,
-    trials: usize,
+    params: BenchParams,
     mut f: F,
 ) where
     F: FnMut(),
 {
-    assert!(ops_per_iter > 0, "ops_per_iter must be > 0 for {name}");
-    assert!(trials > 0, "trials must be > 0 for {name}");
+    measure_bench_with_setup(
+        records,
+        category,
+        name,
+        unit,
+        params,
+        &mut (),
+        |()| {},
+        |()| f(),
+    );
+}
 
-    // Warmup for at least 5 ms and at least 6 calls per pass so CPU boost clock, branch
-    // predictors, L1/L2 caches, and allocator bins reach steady state without perturbation.
-    let warmup_start = Instant::now();
-    let mut warmup_calls = 0usize;
-    while warmup_calls < 6 || warmup_start.elapsed().as_nanos() < 5_000_000 {
-        f();
-        warmup_calls += 1;
-        if warmup_calls >= 32 {
-            break;
-        }
+#[allow(clippy::too_many_arguments)]
+fn measure_bench_with_setup<T, S, F>(
+    records: &mut Vec<BenchRecord>,
+    category: &str,
+    name: &str,
+    unit: &str,
+    params: BenchParams,
+    state: &mut T,
+    mut setup: S,
+    mut f: F,
+) where
+    S: FnMut(&mut T),
+    F: FnMut(&mut T),
+{
+    assert!(
+        params.ops_per_iter > 0,
+        "ops_per_iter must be > 0 for {name}"
+    );
+    assert!(params.trials > 0, "trials must be > 0 for {name}");
+    assert!(
+        params.bursts_per_trial > 0,
+        "bursts_per_trial must be > 0 for {name}"
+    );
+
+    for _ in 0..params.warmup_calls {
+        setup(state);
+        f(state);
     }
 
-    // Choose batch_calls deterministically from ops_per_iter (never from runtime timings).
-    let batch_calls: usize = if ops_per_iter <= 16_384 { 4 } else { 1 };
-    let total_ops_per_batch = (ops_per_iter as f64) * (batch_calls as f64);
-
-    let mut pass_samples = Vec::with_capacity(trials);
-    for _ in 0..trials {
-        // Take the best of 8 uninterrupted bursts per trial.
+    let mut samples = Vec::with_capacity(params.trials);
+    for _ in 0..params.trials {
         let mut best_burst_ns = f64::MAX;
-        for _ in 0..8 {
+        for _ in 0..params.bursts_per_trial {
+            setup(state);
             let start = Instant::now();
-            for _ in 0..batch_calls {
-                f();
-            }
+            f(state);
             let elapsed_ns = start.elapsed().as_nanos() as f64;
             if elapsed_ns < best_burst_ns {
                 best_burst_ns = elapsed_ns;
             }
         }
-        pass_samples.push(best_burst_ns / total_ops_per_batch);
+        samples.push(best_burst_ns / (params.ops_per_iter as f64));
     }
 
-    if let Some(existing) = records.iter_mut().find(|r| r.name == name) {
-        existing.samples.extend_from_slice(&pass_samples);
-        existing
-            .samples
-            .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let total_trials = existing.samples.len();
-        let min_ns = existing.samples[0];
-        let median_ns = existing.samples[total_trials / 2];
-        let p95_idx = ((total_trials as f64 * 0.95).floor() as usize).min(total_trials - 1);
-        let p95_ns = existing.samples[p95_idx];
-        existing.trials = total_trials;
-        existing.min_ns_per_op = (min_ns * 10_000.0).round() / 10_000.0;
-        existing.median_ns_per_op = (median_ns * 10_000.0).round() / 10_000.0;
-        existing.p95_ns_per_op = (p95_ns * 10_000.0).round() / 10_000.0;
-    } else {
-        pass_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let min_ns = pass_samples[0];
-        let median_ns = pass_samples[trials / 2];
-        let p95_idx = ((trials as f64 * 0.95).floor() as usize).min(trials - 1);
-        let p95_ns = pass_samples[p95_idx];
-        records.push(BenchRecord {
-            name: name.to_string(),
-            category: category.to_string(),
-            unit: unit.to_string(),
-            ops_per_iter,
-            trials,
-            min_ns_per_op: (min_ns * 10_000.0).round() / 10_000.0,
-            median_ns_per_op: (median_ns * 10_000.0).round() / 10_000.0,
-            p95_ns_per_op: (p95_ns * 10_000.0).round() / 10_000.0,
-            samples: pass_samples,
-        });
-    }
+    record_samples(records, category, name, unit, params, samples);
 }
 
 // ---------------------------------------------------------------------------
-// 1. Rank / Select
+// 1. Rank / Select (1 Gbit = 1,073,741,824 bits by default)
 // ---------------------------------------------------------------------------
 
-fn bench_rank_select(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String, f64>) {
-    // Default 128 Kbit (16 KiB bitvector, ~24 KiB with rank/select directory) + 8 KiB query
-    // slice so the entire working set fits inside the 32 KiB L1D cache and 64-entry L1 DTLB;
-    // setting ZIPORA_BENCH_RANK_BITS=1073741824 scales to 1 Gbit.
-    let num_bits: usize = std::env::var("ZIPORA_BENCH_RANK_BITS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(128 * 1024);
+fn bench_rank_select(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    sizes: SuiteSizes,
+) {
+    let num_bits = sizes.rank_select_bits;
     let num_words = num_bits / 64;
 
     let mut rng = StdRng::seed_from_u64(SEED_BASE ^ 0x01);
     let words: Vec<u64> = (0..num_words).map(|_| rng.random::<u64>()).collect();
     let bv = BitVector::from_blocks(words, num_bits);
 
-    let r9 = Rank9::new(bv.clone()).unwrap();
-    let rsi = RankSelectInterleaved256::new(bv.clone()).unwrap();
-    let rs_se = RankSelectSE256::new(bv).unwrap();
-
-    space.insert(
-        "rank_select/rank9_overhead_pct".to_string(),
-        r9.space_overhead_percent(),
-    );
-    space.insert(
-        "rank_select/se256_overhead_pct".to_string(),
-        rs_se.space_overhead_percent(),
-    );
-
-    let num_queries = 1_024usize;
-    let query_passes = 4usize;
-    let total_queries = (num_queries * query_passes) as u64;
+    let num_queries = 65_536usize;
     let rank_queries: Vec<usize> = (0..num_queries)
         .map(|_| rng.random_range(0..num_bits))
         .collect();
-    let max_ones = rsi.count_ones().max(1);
-    let max_zeros = rsi.count_zeros().max(1);
-    let select1_queries: Vec<usize> = (0..num_queries)
-        .map(|_| rng.random_range(0..max_ones))
-        .collect();
-    let select0_queries: Vec<usize> = (0..num_queries)
-        .map(|_| rng.random_range(0..max_zeros))
-        .collect();
+    let params = BenchParams::medium(num_bits as u64, num_queries as u64);
 
-    measure_bench(
-        records,
-        "rank_select",
-        "rank_select/rank9/rank1",
-        "ns/op",
-        total_queries,
-        DEFAULT_TRIALS,
-        || {
-            let mut acc = 0usize;
-            for _ in 0..query_passes {
+    // Build and benchmark one 1-Gbit Rank/Select structure at a time so peak RSS stays bounded.
+    {
+        let r9 = Rank9::new(bv.clone()).unwrap();
+        space.insert(
+            "rank_select/rank9_overhead_pct".to_string(),
+            r9.space_overhead_percent(),
+        );
+        measure_bench(
+            records,
+            "rank_select",
+            "rank_select/rank9/rank1",
+            "ns/op",
+            params,
+            || {
+                let mut acc = 0usize;
                 for &q in &rank_queries {
                     acc = acc.wrapping_add(r9.rank1(black_box(q)));
                 }
-            }
-            black_box(acc);
-        },
-    );
+                black_box(acc);
+            },
+        );
+    }
 
-    measure_bench(
-        records,
-        "rank_select",
-        "rank_select/interleaved256/rank1",
-        "ns/op",
-        total_queries,
-        DEFAULT_TRIALS,
-        || {
-            let mut acc = 0usize;
-            for _ in 0..query_passes {
+    let (select1_queries, select0_queries) = {
+        let rsi = RankSelectInterleaved256::new(bv.clone()).unwrap();
+        let max_ones = rsi.count_ones().max(1);
+        let max_zeros = rsi.count_zeros().max(1);
+        let s1: Vec<usize> = (0..num_queries)
+            .map(|_| rng.random_range(0..max_ones))
+            .collect();
+        let s0: Vec<usize> = (0..num_queries)
+            .map(|_| rng.random_range(0..max_zeros))
+            .collect();
+
+        measure_bench(
+            records,
+            "rank_select",
+            "rank_select/interleaved256/rank1",
+            "ns/op",
+            params,
+            || {
+                let mut acc = 0usize;
                 for &q in &rank_queries {
                     acc = acc.wrapping_add(rsi.rank1(black_box(q)));
                 }
-            }
-            black_box(acc);
-        },
-    );
+                black_box(acc);
+            },
+        );
 
-    measure_bench(
-        records,
-        "rank_select",
-        "rank_select/interleaved256/select1",
-        "ns/op",
-        total_queries,
-        DEFAULT_TRIALS,
-        || {
-            let mut acc = 0usize;
-            for _ in 0..query_passes {
-                for &q in &select1_queries {
+        measure_bench(
+            records,
+            "rank_select",
+            "rank_select/interleaved256/select1",
+            "ns/op",
+            params,
+            || {
+                let mut acc = 0usize;
+                for &q in &s1 {
                     acc = acc.wrapping_add(rsi.select1(black_box(q)).unwrap_or(0));
                 }
-            }
-            black_box(acc);
-        },
-    );
+                black_box(acc);
+            },
+        );
 
-    measure_bench(
-        records,
-        "rank_select",
-        "rank_select/interleaved256/select0",
-        "ns/op",
-        total_queries,
-        DEFAULT_TRIALS,
-        || {
-            let mut acc = 0usize;
-            for _ in 0..query_passes {
-                for &q in &select0_queries {
+        measure_bench(
+            records,
+            "rank_select",
+            "rank_select/interleaved256/select0",
+            "ns/op",
+            params,
+            || {
+                let mut acc = 0usize;
+                for &q in &s0 {
                     acc = acc.wrapping_add(rsi.select0(black_box(q)).unwrap_or(0));
                 }
-            }
-            black_box(acc);
-        },
-    );
+                black_box(acc);
+            },
+        );
 
-    measure_bench(
-        records,
-        "rank_select",
-        "rank_select/se256/rank1",
-        "ns/op",
-        total_queries,
-        DEFAULT_TRIALS,
-        || {
-            let mut acc = 0usize;
-            for _ in 0..query_passes {
+        (s1, s0)
+    };
+
+    {
+        let rs_se = RankSelectSE256::new(bv).unwrap();
+        space.insert(
+            "rank_select/se256_overhead_pct".to_string(),
+            rs_se.space_overhead_percent(),
+        );
+
+        measure_bench(
+            records,
+            "rank_select",
+            "rank_select/se256/rank1",
+            "ns/op",
+            params,
+            || {
+                let mut acc = 0usize;
                 for &q in &rank_queries {
                     acc = acc.wrapping_add(rs_se.rank1(black_box(q)));
                 }
-            }
-            black_box(acc);
-        },
-    );
+                black_box(acc);
+            },
+        );
 
-    measure_bench(
-        records,
-        "rank_select",
-        "rank_select/se256/select1",
-        "ns/op",
-        total_queries,
-        DEFAULT_TRIALS,
-        || {
-            let mut acc = 0usize;
-            for _ in 0..query_passes {
+        measure_bench(
+            records,
+            "rank_select",
+            "rank_select/se256/select1",
+            "ns/op",
+            params,
+            || {
+                let mut acc = 0usize;
                 for &q in &select1_queries {
                     acc = acc.wrapping_add(rs_se.select1(black_box(q)).unwrap_or(0));
                 }
-            }
-            black_box(acc);
-        },
-    );
+                black_box(acc);
+            },
+        );
 
-    measure_bench(
-        records,
-        "rank_select",
-        "rank_select/se256/select0",
-        "ns/op",
-        total_queries,
-        DEFAULT_TRIALS,
-        || {
-            let mut acc = 0usize;
-            for _ in 0..query_passes {
+        measure_bench(
+            records,
+            "rank_select",
+            "rank_select/se256/select0",
+            "ns/op",
+            params,
+            || {
+                let mut acc = 0usize;
                 for &q in &select0_queries {
                     acc = acc.wrapping_add(rs_se.select0(black_box(q)).unwrap_or(0));
                 }
-            }
-            black_box(acc);
-        },
-    );
+                black_box(acc);
+            },
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
-// 2. Elias-Fano Posting Lists
+// 2. Elias-Fano Posting Lists (100,000 elements by default)
 // ---------------------------------------------------------------------------
 
 fn gen_uniform_sparse(n: usize, avg_gap: u32, seed: u64) -> Vec<u32> {
@@ -493,14 +649,14 @@ fn gen_zipf_clustered(n: usize, seed: u64) -> Vec<u32> {
     out
 }
 
-fn bench_elias_fano(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String, f64>) {
-    let n: usize = std::env::var("ZIPORA_BENCH_EF_LEN")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8_192);
-    let num_queries = 1_024usize;
-    let query_passes = 4usize;
-    let total_queries = (num_queries * query_passes) as u64;
+fn bench_elias_fano(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    sizes: SuiteSizes,
+) {
+    let n = sizes.elias_fano_elements;
+    let num_queries = 4_096usize;
+    let params = BenchParams::fast(n as u64, num_queries as u64);
 
     let uniform = gen_uniform_sparse(n, 50, SEED_BASE ^ 0x02);
     let clustered = gen_zipf_clustered(n, SEED_BASE ^ 0x03);
@@ -553,15 +709,12 @@ fn bench_elias_fano(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String,
             "elias_fano",
             &format!("elias_fano/{dist_name}/ef_next_geq"),
             "ns/op",
-            total_queries,
-            DEFAULT_TRIALS,
+            params,
             || {
                 let mut acc = 0u64;
-                for _ in 0..query_passes {
-                    for &t in &targets {
-                        if let Some((_, v)) = ef.next_geq(black_box(t)) {
-                            acc = acc.wrapping_add(v);
-                        }
+                for &t in &targets {
+                    if let Some((_, v)) = ef.next_geq(black_box(t)) {
+                        acc = acc.wrapping_add(v);
                     }
                 }
                 black_box(acc);
@@ -573,15 +726,12 @@ fn bench_elias_fano(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String,
             "elias_fano",
             &format!("elias_fano/{dist_name}/pef_next_geq"),
             "ns/op",
-            total_queries,
-            DEFAULT_TRIALS,
+            params,
             || {
                 let mut acc = 0u64;
-                for _ in 0..query_passes {
-                    for &t in &targets {
-                        if let Some((_, v)) = pef.next_geq(black_box(t)) {
-                            acc = acc.wrapping_add(v);
-                        }
+                for &t in &targets {
+                    if let Some((_, v)) = pef.next_geq(black_box(t)) {
+                        acc = acc.wrapping_add(v);
                     }
                 }
                 black_box(acc);
@@ -593,15 +743,12 @@ fn bench_elias_fano(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String,
             "elias_fano",
             &format!("elias_fano/{dist_name}/opef_next_geq"),
             "ns/op",
-            total_queries,
-            DEFAULT_TRIALS,
+            params,
             || {
                 let mut acc = 0u64;
-                for _ in 0..query_passes {
-                    for &t in &targets {
-                        if let Some((_, v)) = opef.next_geq(black_box(t)) {
-                            acc = acc.wrapping_add(v);
-                        }
+                for &t in &targets {
+                    if let Some((_, v)) = opef.next_geq(black_box(t)) {
+                        acc = acc.wrapping_add(v);
                     }
                 }
                 black_box(acc);
@@ -613,15 +760,12 @@ fn bench_elias_fano(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String,
             "elias_fano",
             &format!("elias_fano/{dist_name}/cef_next_geq"),
             "ns/op",
-            total_queries,
-            DEFAULT_TRIALS,
+            params,
             || {
                 let mut acc = 0u64;
-                for _ in 0..query_passes {
-                    for &t in &targets {
-                        if let Some((_, v)) = cef.next_geq(black_box(t)) {
-                            acc = acc.wrapping_add(v);
-                        }
+                for &t in &targets {
+                    if let Some((_, v)) = cef.next_geq(black_box(t)) {
+                        acc = acc.wrapping_add(v);
                     }
                 }
                 black_box(acc);
@@ -633,18 +777,15 @@ fn bench_elias_fano(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String,
             "elias_fano",
             &format!("elias_fano/{dist_name}/pef_cursor_advance_to_geq"),
             "ns/op",
-            total_queries,
-            DEFAULT_TRIALS,
+            params,
             || {
                 let mut acc = 0u64;
-                for _ in 0..query_passes {
-                    let mut cursor = pef.cursor();
-                    for &t in &sorted_targets {
-                        if cursor.advance_to_geq(black_box(t))
-                            && let Some(v) = cursor.current()
-                        {
-                            acc = acc.wrapping_add(v);
-                        }
+                let mut cursor = pef.cursor();
+                for &t in &sorted_targets {
+                    if cursor.advance_to_geq(black_box(t))
+                        && let Some(v) = cursor.current()
+                    {
+                        acc = acc.wrapping_add(v);
                     }
                 }
                 black_box(acc);
@@ -656,18 +797,15 @@ fn bench_elias_fano(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String,
             "elias_fano",
             &format!("elias_fano/{dist_name}/opef_cursor_advance_to_index"),
             "ns/op",
-            total_queries,
-            DEFAULT_TRIALS,
+            params,
             || {
                 let mut acc = 0u64;
-                for _ in 0..query_passes {
-                    let mut cursor = opef.cursor();
-                    for &idx in &indices {
-                        if cursor.advance_to_index(black_box(idx))
-                            && let Some(v) = cursor.current()
-                        {
-                            acc = acc.wrapping_add(v);
-                        }
+                let mut cursor = opef.cursor();
+                for &idx in &indices {
+                    if cursor.advance_to_index(black_box(idx))
+                        && let Some(v) = cursor.current()
+                    {
+                        acc = acc.wrapping_add(v);
                     }
                 }
                 black_box(acc);
@@ -677,7 +815,7 @@ fn bench_elias_fano(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String,
 }
 
 // ---------------------------------------------------------------------------
-// 3. Tries (DoubleArrayTrie, CsppTrie, ZiporaTrie)
+// 3. Tries (1,000,000 keys across 3 distributions by default)
 // ---------------------------------------------------------------------------
 
 fn gen_trie_distributions(n: usize, seed: u64) -> Vec<(&'static str, Vec<Vec<u8>>)> {
@@ -687,7 +825,7 @@ fn gen_trie_distributions(n: usize, seed: u64) -> Vec<(&'static str, Vec<Vec<u8>
     let mut paths: Vec<Vec<u8>> = (0..n)
         .map(|i| {
             format!(
-                "org/infinilabs/mod_{:02}/sub_{:03}/item_{:06}",
+                "org/infinilabs/mod_{:02}/sub_{:03}/item_{:07}",
                 i % 32,
                 (i / 32) % 256,
                 i
@@ -698,13 +836,17 @@ fn gen_trie_distributions(n: usize, seed: u64) -> Vec<(&'static str, Vec<Vec<u8>
     paths.sort();
     paths.dedup();
 
-    // 2. Random 16-byte ASCII keys
+    // 2. Random 16-byte ASCII keys (append unique index suffix to guarantee exactly n unique keys)
     let alphabet = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut random_16b: Vec<Vec<u8>> = (0..n)
-        .map(|_| {
-            (0..16)
-                .map(|_| alphabet[rng.random_range(0..alphabet.len())])
-                .collect()
+        .map(|i| {
+            let mut key = Vec::with_capacity(16);
+            for _ in 0..10 {
+                key.push(alphabet[rng.random_range(0..alphabet.len())]);
+            }
+            let suffix = format!("{:06x}", i);
+            key.extend_from_slice(suffix.as_bytes());
+            key
         })
         .collect();
     random_16b.sort();
@@ -724,35 +866,58 @@ fn gen_trie_distributions(n: usize, seed: u64) -> Vec<(&'static str, Vec<Vec<u8>
     ]
 }
 
-fn bench_tries(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String, f64>) {
-    let n: usize = std::env::var("ZIPORA_BENCH_TRIE_KEYS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(50_000);
+fn bench_tries(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    sizes: SuiteSizes,
+) {
+    let n = sizes.trie_keys;
     let dists = gen_trie_distributions(n, SEED_BASE ^ 0x05);
 
     for (dist_name, keys) in &dists {
         let key_slices: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
-        let mut dat = DoubleArrayTrie::build_from_sorted(&key_slices).unwrap();
-        dat.shrink_to_fit();
+        let num_keys = key_slices.len() as u64;
 
+        // 1. DoubleArrayTrie build_from_sorted on all 1M keys + lookup on all 1M keys
+        let mut built_dat: Option<DoubleArrayTrie> = None;
+        measure_bench_with_setup(
+            records,
+            "tries",
+            &format!("tries/dat/{dist_name}/build_sorted"),
+            "ns/key",
+            BenchParams::heavy(num_keys, num_keys, 3),
+            &mut built_dat,
+            |slot| {
+                *slot = None;
+            },
+            |slot| {
+                let dat = DoubleArrayTrie::build_from_sorted(black_box(&key_slices)).unwrap();
+                black_box(dat.len());
+                *slot = Some(dat);
+            },
+        );
+
+        let mut dat = built_dat.unwrap();
+        dat.shrink_to_fit();
         let bytes_per_state = dat.mem_size() as f64 / dat.total_states().max(1) as f64;
         space.insert(
             format!("tries/dat_{dist_name}_bytes_per_state"),
             bytes_per_state,
         );
 
-        let lookup_sample = &key_slices[..key_slices.len().min(5_000)];
+        let lookup_step = (key_slices.len() / 200_000).max(1);
+        let lookup_sample: Vec<&[u8]> = key_slices.iter().copied().step_by(lookup_step).collect();
+        let lookup_params = BenchParams::medium(num_keys, lookup_sample.len() as u64);
+
         measure_bench(
             records,
             "tries",
             &format!("tries/dat/{dist_name}/lookup"),
             "ns/op",
-            lookup_sample.len() as u64,
-            DEFAULT_TRIALS,
+            lookup_params,
             || {
                 let mut found = 0usize;
-                for &k in lookup_sample {
+                for &k in &lookup_sample {
                     if dat.contains(black_box(k)) {
                         found += 1;
                     }
@@ -760,25 +925,31 @@ fn bench_tries(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String, f64>
                 black_box(found);
             },
         );
+        drop(dat);
 
-        let build_sample = &key_slices[..key_slices.len().min(2_500)];
-        measure_bench(
+        // 2. CsppTrie build on all 1M keys + lookup on the 1M-key trie
+        let mut built_cspp: Option<CsppTrie> = None;
+        measure_bench_with_setup(
             records,
             "tries",
-            &format!("tries/dat/{dist_name}/build_sorted"),
+            &format!("tries/cspp/{dist_name}/build"),
             "ns/key",
-            build_sample.len() as u64,
-            DEFAULT_TRIALS,
-            || {
-                let built = DoubleArrayTrie::build_from_sorted(black_box(build_sample)).unwrap();
-                black_box(built.len());
+            BenchParams::heavy(num_keys, num_keys, 3),
+            &mut built_cspp,
+            |slot| {
+                *slot = None;
+            },
+            |slot| {
+                let mut cspp = CsppTrie::new(0);
+                for &k in &key_slices {
+                    cspp.insert(black_box(k));
+                }
+                black_box(cspp.num_words());
+                *slot = Some(cspp);
             },
         );
 
-        let mut cspp = CsppTrie::new(0);
-        for k in keys {
-            cspp.insert(k);
-        }
+        let cspp = built_cspp.unwrap();
         let stat = cspp.mem_get_stat();
         let active_bytes = stat.used_size.saturating_sub(stat.frag_size);
         space.insert(
@@ -791,11 +962,10 @@ fn bench_tries(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String, f64>
             "tries",
             &format!("tries/cspp/{dist_name}/lookup"),
             "ns/op",
-            lookup_sample.len() as u64,
-            DEFAULT_TRIALS,
+            lookup_params,
             || {
                 let mut found = 0usize;
-                for &k in lookup_sample {
+                for &k in &lookup_sample {
                     if cspp.contains(black_box(k)) {
                         found += 1;
                     }
@@ -805,33 +975,58 @@ fn bench_tries(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String, f64>
         );
     }
 
-    // ZiporaTrie (DoubleArray strategy) build + lookup
-    let zipora_keys = &dists[0].1[..dists[0].1.len().min(2_500)];
+    // 3. ZiporaTrie (DoubleArray strategy) build + lookup on 1M keys
+    let zipora_keys = &dists[0].1;
+    let num_zipora_keys = zipora_keys.len() as u64;
     let config = ZiporaTrieConfig {
         trie_strategy: TrieStrategy::DoubleArray {
-            initial_capacity: 8192,
+            initial_capacity: (zipora_keys.len() * 4).next_power_of_two(),
             growth_factor: 2.0,
             free_list_management: true,
             auto_shrink: false,
         },
         ..ZiporaTrieConfig::default()
     };
-    let mut ztrie: ZiporaTrie<RankSelectInterleaved256> = ZiporaTrie::with_config(config);
-    for k in zipora_keys {
-        ztrie.insert(k).unwrap();
-    }
 
+    let mut built_ztrie: Option<ZiporaTrie<RankSelectInterleaved256>> = None;
+    measure_bench_with_setup(
+        records,
+        "tries",
+        "tries/zipora_trie_da/build",
+        "ns/key",
+        BenchParams::heavy(num_zipora_keys, num_zipora_keys, 3),
+        &mut built_ztrie,
+        |slot| {
+            *slot = None;
+        },
+        |slot| {
+            let mut ztrie: ZiporaTrie<RankSelectInterleaved256> =
+                ZiporaTrie::with_config(config.clone());
+            for k in zipora_keys {
+                ztrie.insert(black_box(k)).unwrap();
+            }
+            black_box(ztrie.len());
+            *slot = Some(ztrie);
+        },
+    );
+
+    let ztrie = built_ztrie.unwrap();
+    let zlookup_step = (zipora_keys.len() / 200_000).max(1);
+    let zlookup_sample: Vec<&[u8]> = zipora_keys
+        .iter()
+        .map(|k| k.as_slice())
+        .step_by(zlookup_step)
+        .collect();
     measure_bench(
         records,
         "tries",
         "tries/zipora_trie_da/lookup",
         "ns/op",
-        zipora_keys.len() as u64,
-        DEFAULT_TRIALS,
+        BenchParams::medium(num_zipora_keys, zlookup_sample.len() as u64),
         || {
             let mut found = 0usize;
-            for k in zipora_keys {
-                if ztrie.contains(black_box(k.as_slice())) {
+            for &k in &zlookup_sample {
+                if ztrie.contains(black_box(k)) {
                     found += 1;
                 }
             }
@@ -841,18 +1036,12 @@ fn bench_tries(records: &mut Vec<BenchRecord>, space: &mut BTreeMap<String, f64>
 }
 
 // ---------------------------------------------------------------------------
-// 4. Hash Maps (ZiporaHashMap & GoldHashMap)
+// 4. Hash Maps (1,000,000 u64 keys & 1,000,000 16-byte string keys by default)
 // ---------------------------------------------------------------------------
 
-fn bench_hash_maps(records: &mut Vec<BenchRecord>) {
-    // Default 350 keys in a 512-slot table (load factor 0.68 < 0.75) keeps each table
-    // <= 28 KiB, fitting completely inside the 32 KiB Zen 3 L1 data cache.
-    let n: usize = std::env::var("ZIPORA_BENCH_MAP_KEYS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(350);
-    let cap = (n * 2).next_power_of_two().max(512);
-    let lookup_passes = 4usize;
+fn bench_hash_maps(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
+    let n = sizes.hash_map_keys;
+    let cap = (n * 2).next_power_of_two();
     let mut rng = StdRng::seed_from_u64(SEED_BASE ^ 0x06);
 
     let u64_keys: Vec<u64> = (0..n).map(|_| rng.random::<u64>()).collect();
@@ -881,145 +1070,178 @@ fn bench_hash_maps(records: &mut Vec<BenchRecord>) {
             0x94d0_49bb_1331_11eb,
         )
     };
-
-    // Pre-build all four maps with deterministic hash seeds before any insert churn.
-    let mut zmap_u64: ZiporaHashMap<u64, u64> =
-        ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap();
-    for (i, &k) in u64_keys.iter().enumerate() {
-        zmap_u64.insert(k, i as u64).unwrap();
-    }
-
-    let mut zmap_str16: ZiporaHashMap<[u8; 16], u64> =
-        ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap();
-    for (i, k) in str16_keys.iter().enumerate() {
-        zmap_str16.insert(*k, i as u64).unwrap();
-    }
-
+    // GoldHashMap rounds initial_capacity up to the next prime (for n = 1,000,000,
+    // (n * 3) / 2 = 1,500,000 -> prime 1,982,627 buckets, max_load = 1,387,838 > 1,000,000).
     let gconfig = GoldHashMapConfig {
-        initial_capacity: cap,
+        initial_capacity: (n * 3) / 2,
         ..GoldHashMapConfig::default()
     };
-    let mut gmap_u64: GoldHashMap<u64, u64> = GoldHashMap::with_config(gconfig.clone());
-    for (i, &k) in u64_keys.iter().enumerate() {
-        let _ = gmap_u64.insert(k, i as u64);
-    }
 
-    let mut gmap_str16: GoldHashMap<[u8; 16], u64> = GoldHashMap::with_config(gconfig.clone());
-    for (i, k) in str16_keys.iter().enumerate() {
-        let _ = gmap_str16.insert(*k, i as u64);
-    }
+    let insert_params = BenchParams::heavy(n as u64, n as u64, 5);
+    let get_params = BenchParams::medium(n as u64, n as u64);
 
-    measure_bench(
-        records,
-        "hash_maps",
-        "hash_maps/zipora_hash_map/get_u64",
-        "ns/op",
-        (n * lookup_passes) as u64,
-        DEFAULT_TRIALS,
-        || {
-            let mut sum = 0u64;
-            for _ in 0..lookup_passes {
-                for &k in &u64_keys {
-                    if let Some(&v) = zmap_u64.get(black_box(&k)) {
-                        sum = sum.wrapping_add(v);
-                    }
-                }
-            }
-            black_box(sum);
-        },
-    );
-
-    measure_bench(
-        records,
-        "hash_maps",
-        "hash_maps/zipora_hash_map/get_str16",
-        "ns/op",
-        (n * lookup_passes) as u64,
-        DEFAULT_TRIALS,
-        || {
-            let mut sum = 0u64;
-            for _ in 0..lookup_passes {
-                for k in &str16_keys {
-                    if let Some(&v) = zmap_str16.get(black_box(k)) {
-                        sum = sum.wrapping_add(v);
-                    }
-                }
-            }
-            black_box(sum);
-        },
-    );
-
-    measure_bench(
-        records,
-        "hash_maps",
-        "hash_maps/gold_hash_map/get_u64",
-        "ns/op",
-        (n * lookup_passes) as u64,
-        DEFAULT_TRIALS,
-        || {
-            let mut sum = 0u64;
-            for _ in 0..lookup_passes {
-                for &k in &u64_keys {
-                    if let Some(&v) = gmap_u64.get(black_box(&k)) {
-                        sum = sum.wrapping_add(v);
-                    }
-                }
-            }
-            black_box(sum);
-        },
-    );
-
-    measure_bench(
-        records,
-        "hash_maps",
-        "hash_maps/gold_hash_map/get_str16",
-        "ns/op",
-        (n * lookup_passes) as u64,
-        DEFAULT_TRIALS,
-        || {
-            let mut sum = 0u64;
-            for _ in 0..lookup_passes {
-                for k in &str16_keys {
-                    if let Some(&v) = gmap_str16.get(black_box(k)) {
-                        sum = sum.wrapping_add(v);
-                    }
-                }
-            }
-            black_box(sum);
-        },
-    );
-
-    let insert_n = n.min(350);
-    measure_bench(
+    // 1. ZiporaHashMap<u64, u64> insert + get (1M keys)
+    let mut built_zmap_u64: Option<ZiporaHashMap<u64, u64>> = None;
+    measure_bench_with_setup(
         records,
         "hash_maps",
         "hash_maps/zipora_hash_map/insert_u64",
         "ns/op",
-        insert_n as u64,
-        DEFAULT_TRIALS,
-        || {
-            let mut m: ZiporaHashMap<u64, u64> =
-                ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap();
-            for (i, &k) in u64_keys[..insert_n].iter().enumerate() {
+        insert_params,
+        &mut built_zmap_u64,
+        |slot| {
+            *slot = None;
+            *slot =
+                Some(ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap());
+        },
+        |slot| {
+            let m = slot.as_mut().unwrap();
+            for (i, &k) in u64_keys.iter().enumerate() {
                 m.insert(black_box(k), i as u64).unwrap();
             }
             black_box(m.len());
         },
     );
 
+    let zmap_u64 = built_zmap_u64.unwrap();
     measure_bench(
+        records,
+        "hash_maps",
+        "hash_maps/zipora_hash_map/get_u64",
+        "ns/op",
+        get_params,
+        || {
+            let mut sum = 0u64;
+            for &k in &u64_keys {
+                if let Some(&v) = zmap_u64.get(black_box(&k)) {
+                    sum = sum.wrapping_add(v);
+                }
+            }
+            black_box(sum);
+        },
+    );
+    drop(zmap_u64);
+
+    // 2. ZiporaHashMap<[u8; 16], u64> insert + get (1M keys)
+    let mut built_zmap_str16: Option<ZiporaHashMap<[u8; 16], u64>> = None;
+    measure_bench_with_setup(
+        records,
+        "hash_maps",
+        "hash_maps/zipora_hash_map/insert_str16",
+        "ns/op",
+        insert_params,
+        &mut built_zmap_str16,
+        |slot| {
+            *slot = None;
+            *slot =
+                Some(ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap());
+        },
+        |slot| {
+            let m = slot.as_mut().unwrap();
+            for (i, k) in str16_keys.iter().enumerate() {
+                m.insert(black_box(*k), i as u64).unwrap();
+            }
+            black_box(m.len());
+        },
+    );
+
+    let zmap_str16 = built_zmap_str16.unwrap();
+    measure_bench(
+        records,
+        "hash_maps",
+        "hash_maps/zipora_hash_map/get_str16",
+        "ns/op",
+        get_params,
+        || {
+            let mut sum = 0u64;
+            for k in &str16_keys {
+                if let Some(&v) = zmap_str16.get(black_box(k)) {
+                    sum = sum.wrapping_add(v);
+                }
+            }
+            black_box(sum);
+        },
+    );
+    drop(zmap_str16);
+
+    // 3. GoldHashMap<u64, u64> insert + get (1M keys)
+    let mut built_gmap_u64: Option<GoldHashMap<u64, u64>> = None;
+    measure_bench_with_setup(
         records,
         "hash_maps",
         "hash_maps/gold_hash_map/insert_u64",
         "ns/op",
-        insert_n as u64,
-        DEFAULT_TRIALS,
-        || {
-            let mut m: GoldHashMap<u64, u64> = GoldHashMap::with_config(gconfig.clone());
-            for (i, &k) in u64_keys[..insert_n].iter().enumerate() {
+        insert_params,
+        &mut built_gmap_u64,
+        |slot| {
+            *slot = None;
+            *slot = Some(GoldHashMap::with_config(gconfig.clone()));
+        },
+        |slot| {
+            let m = slot.as_mut().unwrap();
+            for (i, &k) in u64_keys.iter().enumerate() {
                 let _ = m.insert(black_box(k), i as u64);
             }
             black_box(m.len());
+        },
+    );
+
+    let gmap_u64 = built_gmap_u64.unwrap();
+    measure_bench(
+        records,
+        "hash_maps",
+        "hash_maps/gold_hash_map/get_u64",
+        "ns/op",
+        get_params,
+        || {
+            let mut sum = 0u64;
+            for &k in &u64_keys {
+                if let Some(&v) = gmap_u64.get(black_box(&k)) {
+                    sum = sum.wrapping_add(v);
+                }
+            }
+            black_box(sum);
+        },
+    );
+    drop(gmap_u64);
+
+    // 4. GoldHashMap<[u8; 16], u64> insert + get (1M keys)
+    let mut built_gmap_str16: Option<GoldHashMap<[u8; 16], u64>> = None;
+    measure_bench_with_setup(
+        records,
+        "hash_maps",
+        "hash_maps/gold_hash_map/insert_str16",
+        "ns/op",
+        insert_params,
+        &mut built_gmap_str16,
+        |slot| {
+            *slot = None;
+            *slot = Some(GoldHashMap::with_config(gconfig.clone()));
+        },
+        |slot| {
+            let m = slot.as_mut().unwrap();
+            for (i, k) in str16_keys.iter().enumerate() {
+                let _ = m.insert(black_box(*k), i as u64);
+            }
+            black_box(m.len());
+        },
+    );
+
+    let gmap_str16 = built_gmap_str16.unwrap();
+    measure_bench(
+        records,
+        "hash_maps",
+        "hash_maps/gold_hash_map/get_str16",
+        "ns/op",
+        get_params,
+        || {
+            let mut sum = 0u64;
+            for k in &str16_keys {
+                if let Some(&v) = gmap_str16.get(black_box(k)) {
+                    sum = sum.wrapping_add(v);
+                }
+            }
+            black_box(sum);
         },
     );
 }
@@ -1028,12 +1250,10 @@ fn bench_hash_maps(records: &mut Vec<BenchRecord>) {
 // 5. Memory Pools (LockFreeMemoryPool & SecureMemoryPool, 1T & 4T)
 // ---------------------------------------------------------------------------
 
-fn bench_memory_pools(records: &mut Vec<BenchRecord>, logical_cores: usize) {
-    let ops_lf_1t = 2_000usize;
-    let ops_lf_4t = 1_000usize;
-    let ops_sec = 500usize;
+fn bench_memory_pools(records: &mut Vec<BenchRecord>, logical_cores: usize, sizes: SuiteSizes) {
+    let ops = sizes.memory_pool_ops;
     let alloc_size = 256usize;
-    let _primary_core = select_primary_core(logical_cores);
+    let params = BenchParams::fast(ops as u64, ops as u64);
 
     // LockFreeMemoryPool 1T
     let lf_pool_1t =
@@ -1043,10 +1263,9 @@ fn bench_memory_pools(records: &mut Vec<BenchRecord>, logical_cores: usize) {
         "memory_pools",
         "memory_pools/lockfree_pool/alloc_free_1t",
         "ns/op",
-        ops_lf_1t as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
-            for _ in 0..ops_lf_1t {
+            for _ in 0..ops {
                 let ptr = lf_pool_1t.allocate(black_box(alloc_size)).unwrap();
                 black_box(ptr);
                 lf_pool_1t.deallocate(ptr, alloc_size).unwrap();
@@ -1054,13 +1273,10 @@ fn bench_memory_pools(records: &mut Vec<BenchRecord>, logical_cores: usize) {
         },
     );
 
-    // LockFreeMemoryPool 4T (3 helper threads on distant CCX cores 8, 16, 24 + main thread on
-    // core 62, operating concurrently on disjoint CachePadded fast bins of the shared pool)
+    // LockFreeMemoryPool 4T
     const POOL_SIZES: [usize; 4] = [128, 256, 512, 1024];
     let lf_pool_4t =
         Arc::new(LockFreeMemoryPool::new(LockFreePoolConfig::high_performance()).unwrap());
-    // Pre-seed one recycled block per size class separated by a 384B spacer so each
-    // thread's free-list header resides on an independent cache line.
     for &sz in &POOL_SIZES {
         let block = lf_pool_4t.allocate(sz).unwrap();
         let _spacer = lf_pool_4t.allocate(384).unwrap();
@@ -1099,11 +1315,10 @@ fn bench_memory_pools(records: &mut Vec<BenchRecord>, logical_cores: usize) {
             "memory_pools",
             "memory_pools/lockfree_pool/alloc_free_4t",
             "ns/op",
-            ops_lf_4t as u64,
-            DEFAULT_TRIALS,
+            params,
             || {
                 active_flag.store(true, Ordering::Relaxed);
-                for _ in 0..ops_lf_4t {
+                for _ in 0..ops {
                     let ptr = lf_pool_4t.allocate(black_box(main_sz)).unwrap();
                     black_box(ptr);
                     lf_pool_4t.deallocate(ptr, main_sz).unwrap();
@@ -1118,52 +1333,68 @@ fn bench_memory_pools(records: &mut Vec<BenchRecord>, logical_cores: usize) {
         }
     }
 
-    // SecureMemoryPool 1T
-    let mut sec_cfg_1t = SecurePoolConfig::new(256, 1024, 8);
-    sec_cfg_1t.enable_hot_cold_separation = false;
-    sec_cfg_1t.enable_huge_pages = false;
-    let sec_pool_1t = Arc::new(SecureMemoryPool::new(sec_cfg_1t).unwrap());
+    // SecureMemoryPool 1T (pre-populate 32 chunks in local cache and rotate in batches of 16
+    // so active_allocations HashMap averages across 16 distinct chunk addresses instead of a
+    // single ASLR address / RandomState bucket)
+    let mut sec_cfg = SecurePoolConfig::new(256, 1024, 8);
+    sec_cfg.enable_hot_cold_separation = false;
+    sec_cfg.enable_huge_pages = false;
+    let sec_pool_1t = Arc::new(SecureMemoryPool::new(sec_cfg.clone()).unwrap());
+    {
+        let pre: Vec<_> = (0..32).map(|_| sec_pool_1t.allocate().unwrap()).collect();
+        drop(pre);
+    }
+    let sec_batch = 16usize;
+    let sec_rounds = (ops / sec_batch).max(1);
+    let sec_total_ops = (sec_rounds * sec_batch) as u64;
+    let sec_params = BenchParams::fast(sec_total_ops, sec_total_ops);
+
     measure_bench(
         records,
         "memory_pools",
         "memory_pools/secure_pool/alloc_free_1t",
         "ns/op",
-        ops_sec as u64,
-        DEFAULT_TRIALS,
+        sec_params,
         || {
-            for _ in 0..ops_sec {
-                let ptr = sec_pool_1t.allocate().unwrap();
-                black_box(&ptr);
-                drop(ptr);
+            let mut batch_vec = Vec::with_capacity(sec_batch);
+            for _ in 0..sec_rounds {
+                for _ in 0..sec_batch {
+                    batch_vec.push(sec_pool_1t.allocate().unwrap());
+                }
+                black_box(batch_vec.len());
+                batch_vec.clear();
             }
         },
     );
 
-    // SecureMemoryPool 4T (4 concurrent threads on separate CCX cores, each with a per-core
-    // SecureMemoryPool shard to avoid RwLock futex serialization on active_allocations)
-    let mut sec_cfg_4t = SecurePoolConfig::new(256, 1024, 8);
-    sec_cfg_4t.enable_hot_cold_separation = false;
-    sec_cfg_4t.enable_huge_pages = false;
-    let sec_pool_main = Arc::new(SecureMemoryPool::new(sec_cfg_4t.clone()).unwrap());
+    // SecureMemoryPool 4T
+    let sec_pool_main = Arc::new(SecureMemoryPool::new(sec_cfg.clone()).unwrap());
+    {
+        let pre: Vec<_> = (0..32).map(|_| sec_pool_main.allocate().unwrap()).collect();
+        drop(pre);
+    }
     {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let active_flag = Arc::new(AtomicBool::new(false));
         let mut handles = Vec::with_capacity(3);
         let ccx_stride = (logical_cores / 8).max(2);
         for worker_idx in 0..3usize {
-            let pool = Arc::new(SecureMemoryPool::new(sec_cfg_4t.clone()).unwrap());
+            let pool = Arc::new(SecureMemoryPool::new(sec_cfg.clone()).unwrap());
             let stop = Arc::clone(&stop_flag);
             let active = Arc::clone(&active_flag);
             let worker_core = ((worker_idx + 1) * ccx_stride) % logical_cores.max(1);
             handles.push(thread::spawn(move || {
                 pin_current_thread_to_core(worker_core);
+                let pre: Vec<_> = (0..32).map(|_| pool.allocate().unwrap()).collect();
+                drop(pre);
+                let mut w_batch = Vec::with_capacity(16);
                 while !stop.load(Ordering::Relaxed) {
                     if active.load(Ordering::Relaxed) {
-                        for _ in 0..32 {
-                            let ptr = pool.allocate().unwrap();
-                            black_box(&ptr);
-                            drop(ptr);
+                        for _ in 0..16 {
+                            w_batch.push(pool.allocate().unwrap());
                         }
+                        black_box(w_batch.len());
+                        w_batch.clear();
                     } else {
                         std::hint::spin_loop();
                     }
@@ -1176,14 +1407,16 @@ fn bench_memory_pools(records: &mut Vec<BenchRecord>, logical_cores: usize) {
             "memory_pools",
             "memory_pools/secure_pool/alloc_free_4t",
             "ns/op",
-            ops_sec as u64,
-            DEFAULT_TRIALS,
+            sec_params,
             || {
                 active_flag.store(true, Ordering::Relaxed);
-                for _ in 0..ops_sec {
-                    let ptr = sec_pool_main.allocate().unwrap();
-                    black_box(&ptr);
-                    drop(ptr);
+                let mut batch_vec = Vec::with_capacity(sec_batch);
+                for _ in 0..sec_rounds {
+                    for _ in 0..sec_batch {
+                        batch_vec.push(sec_pool_main.allocate().unwrap());
+                    }
+                    black_box(batch_vec.len());
+                    batch_vec.clear();
                 }
                 active_flag.store(false, Ordering::Relaxed);
             },
@@ -1197,9 +1430,11 @@ fn bench_memory_pools(records: &mut Vec<BenchRecord>, logical_cores: usize) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Entropy Coding (Huffman O0/O1/O2, FSE, rANS on 64 KiB block)
+// 6. Entropy Coding (Huffman O0/O1/O2, FSE, rANS on 64 KiB synthetic enwik8-like block)
 // ---------------------------------------------------------------------------
 
+/// Generates a deterministic 64 KiB synthetic `enwik8`-like block composed of
+/// Zipf-skewed English words and MediaWiki markup tokens.
 fn gen_enwik_like_block(size: usize, seed: u64) -> Vec<u8> {
     const TOKENS: &[&[u8]] = &[
         b"the ",
@@ -1238,7 +1473,6 @@ fn gen_enwik_like_block(size: usize, seed: u64) -> Vec<u8> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut out = Vec::with_capacity(size + 64);
     while out.len() < size {
-        // Skewed selection (Zipf-like) over common tokens
         let r = rng.random_range(0..100usize);
         let idx = if r < 55 {
             rng.random_range(0..8)
@@ -1253,11 +1487,12 @@ fn gen_enwik_like_block(size: usize, seed: u64) -> Vec<u8> {
     out
 }
 
-fn bench_entropy(records: &mut Vec<BenchRecord>) {
-    let block_size = 65_536usize;
+fn bench_entropy(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
+    let block_size = sizes.entropy_block_bytes;
     let block = gen_enwik_like_block(block_size, SEED_BASE ^ 0x07);
+    let params = BenchParams::fast(block_size as u64, block_size as u64);
 
-    // Huffman O0
+    // Huffman O0 (64 KiB)
     let huff_o0_enc = HuffmanEncoder::new(&block).unwrap();
     let huff_o0_compressed = huff_o0_enc.encode(&block).unwrap();
     let huff_o0_dec = HuffmanDecoder::new(huff_o0_enc.tree().clone());
@@ -1267,8 +1502,7 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/huffman_o0/encode_64kib",
         "ns/byte",
-        block_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let encoded = huff_o0_enc.encode(black_box(&block)).unwrap();
             black_box(encoded.len());
@@ -1280,8 +1514,7 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/huffman_o0/decode_64kib",
         "ns/byte",
-        block_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let decoded = huff_o0_dec
                 .decode(black_box(&huff_o0_compressed), block_size)
@@ -1290,11 +1523,9 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         },
     );
 
-    // Huffman O1 (encode_x1 / encode_x4 on 64 KiB block; ContextualHuffmanDecoder decode on 8 KiB)
+    // Huffman O1 (full 64 KiB block for encode_x1, encode_x4, and decode)
     let huff_o1_enc = ContextualHuffmanEncoder::new(&block, HuffmanOrder::Order1).unwrap();
-    let o1_dec_size = 8_192usize;
-    let o1_dec_block = &block[..o1_dec_size];
-    let huff_o1_compressed = huff_o1_enc.encode(o1_dec_block).unwrap();
+    let huff_o1_compressed = huff_o1_enc.encode(&block).unwrap();
     let huff_o1_dec = ContextualHuffmanDecoder::new(
         ContextualHuffmanEncoder::new(&block, HuffmanOrder::Order1).unwrap(),
     );
@@ -1304,8 +1535,7 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/huffman_o1/encode_x1_64kib",
         "ns/byte",
-        block_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let encoded = huff_o1_enc.encode_x1(black_box(&block)).unwrap();
             black_box(encoded.len());
@@ -1317,8 +1547,7 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/huffman_o1/encode_x4_64kib",
         "ns/byte",
-        block_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let encoded = huff_o1_enc.encode_x4(black_box(&block)).unwrap();
             black_box(encoded.len());
@@ -1330,34 +1559,30 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/huffman_o1/decode_64kib",
         "ns/byte",
-        o1_dec_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let decoded = huff_o1_dec
-                .decode(black_box(&huff_o1_compressed), o1_dec_size)
+                .decode(black_box(&huff_o1_compressed), block_size)
                 .unwrap();
             black_box(decoded.len());
         },
     );
 
-    // Huffman O2 (on 8 KiB sub-block for sub-tick burst turnaround)
-    let o2_size = 8_192usize;
-    let o2_block = &block[..o2_size];
-    let huff_o2_enc = ContextualHuffmanEncoder::new(o2_block, HuffmanOrder::Order2).unwrap();
-    let huff_o2_compressed = huff_o2_enc.encode(o2_block).unwrap();
+    // Huffman O2 (full 64 KiB block for encode and decode)
+    let huff_o2_enc = ContextualHuffmanEncoder::new(&block, HuffmanOrder::Order2).unwrap();
+    let huff_o2_compressed = huff_o2_enc.encode(&block).unwrap();
     let huff_o2_dec = ContextualHuffmanDecoder::new(
-        ContextualHuffmanEncoder::new(o2_block, HuffmanOrder::Order2).unwrap(),
+        ContextualHuffmanEncoder::new(&block, HuffmanOrder::Order2).unwrap(),
     );
 
     measure_bench(
         records,
         "entropy",
-        "entropy/huffman_o2/encode_16kib",
+        "entropy/huffman_o2/encode_64kib",
         "ns/byte",
-        o2_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
-            let encoded = huff_o2_enc.encode(black_box(o2_block)).unwrap();
+            let encoded = huff_o2_enc.encode(black_box(&block)).unwrap();
             black_box(encoded.len());
         },
     );
@@ -1365,19 +1590,18 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
     measure_bench(
         records,
         "entropy",
-        "entropy/huffman_o2/decode_16kib",
+        "entropy/huffman_o2/decode_64kib",
         "ns/byte",
-        o2_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let decoded = huff_o2_dec
-                .decode(black_box(&huff_o2_compressed), o2_size)
+                .decode(black_box(&huff_o2_compressed), block_size)
                 .unwrap();
             black_box(decoded.len());
         },
     );
 
-    // FSE
+    // FSE (64 KiB)
     let mut fse_enc = FseEncoder::new(FseConfig::default()).unwrap();
     let fse_compressed = fse_enc.compress(&block).unwrap();
 
@@ -1386,8 +1610,7 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/fse/encode_64kib",
         "ns/byte",
-        block_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let encoded = fse_enc.compress(black_box(&block)).unwrap();
             black_box(encoded.len());
@@ -1399,15 +1622,14 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/fse/decode_64kib",
         "ns/byte",
-        block_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let decoded = fse_decompress(black_box(&fse_compressed)).unwrap();
             black_box(decoded.len());
         },
     );
 
-    // rANS64 X1 and X4
+    // rANS64 X1 and X4 (64 KiB)
     let mut freqs = [1u32; 256];
     for &b in &block {
         freqs[b as usize] += 1;
@@ -1425,8 +1647,7 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/rans64_x1/encode_64kib",
         "ns/byte",
-        block_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let encoded = rans_x1_enc.encode(black_box(&block)).unwrap();
             black_box(encoded.len());
@@ -1438,8 +1659,7 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/rans64_x1/decode_64kib",
         "ns/byte",
-        block_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let decoded = rans_x1_dec
                 .decode(black_box(&rans_x1_compressed), block_size)
@@ -1453,8 +1673,7 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/rans64_x4/encode_64kib",
         "ns/byte",
-        block_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let encoded = rans_x4_enc.encode(black_box(&block)).unwrap();
             black_box(encoded.len());
@@ -1466,8 +1685,7 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
         "entropy",
         "entropy/rans64_x4/decode_64kib",
         "ns/byte",
-        block_size as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
             let decoded = rans_x4_dec
                 .decode(black_box(&rans_x4_compressed), block_size)
@@ -1478,35 +1696,26 @@ fn bench_entropy(records: &mut Vec<BenchRecord>) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. Integer Codecs (StreamVByte & GroupVarint)
+// 7. Integer Codecs (100,000 contiguous integers by default)
 // ---------------------------------------------------------------------------
 
-fn bench_int_codecs(records: &mut Vec<BenchRecord>) {
-    // Process 32 blocks of 128 integers (4,096 integers per iteration) so temporary
-    // Vec buffers in encode_deltas/decode_deltas are <= 512 bytes and stay well inside
-    // glibc's per-thread lock-free tcache (MAX_TCACHE_SIZE = 1,032 bytes).
-    let block_n = 128usize;
-    let num_blocks = 32usize;
-    let total_n = block_n * num_blocks;
-    let sorted_u32 = gen_uniform_sparse(block_n, 120, SEED_BASE ^ 0x08);
+fn bench_int_codecs(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
+    let n = sizes.int_codec_elements;
+    let sorted_u32 = gen_uniform_sparse(n, 120, SEED_BASE ^ 0x08);
+    let params = BenchParams::fast(n as u64, n as u64);
 
     let svb_stream = StreamVByte::encode_deltas(&sorted_u32);
-    let mut svb_out = vec![0u32; block_n];
+    let mut svb_out = vec![0u32; n];
 
     measure_bench(
         records,
         "int_codecs",
         "int_codecs/stream_vbyte/encode_deltas",
         "ns/int",
-        total_n as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
-            let mut bytes = 0usize;
-            for _ in 0..num_blocks {
-                let encoded = StreamVByte::encode_deltas(black_box(&sorted_u32));
-                bytes = bytes.wrapping_add(encoded.data.len());
-            }
-            black_box(bytes);
+            let encoded = StreamVByte::encode_deltas(black_box(&sorted_u32));
+            black_box(encoded.data.len());
         },
     );
 
@@ -1515,16 +1724,10 @@ fn bench_int_codecs(records: &mut Vec<BenchRecord>) {
         "int_codecs",
         "int_codecs/stream_vbyte/decode_into",
         "ns/int",
-        total_n as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
-            let mut total = 0usize;
-            for _ in 0..num_blocks {
-                let decoded =
-                    StreamVByte::decode_into(black_box(&svb_stream), block_n, &mut svb_out);
-                total = total.wrapping_add(decoded);
-            }
-            black_box(total);
+            let decoded = StreamVByte::decode_into(black_box(&svb_stream), n, &mut svb_out);
+            black_box(decoded);
         },
     );
 
@@ -1533,15 +1736,10 @@ fn bench_int_codecs(records: &mut Vec<BenchRecord>) {
         "int_codecs",
         "int_codecs/stream_vbyte/decode_deltas",
         "ns/int",
-        total_n as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
-            let mut total = 0usize;
-            for _ in 0..num_blocks {
-                let decoded = StreamVByte::decode_deltas(black_box(&svb_stream), block_n);
-                total = total.wrapping_add(decoded.len());
-            }
-            black_box(total);
+            let decoded = StreamVByte::decode_deltas(black_box(&svb_stream), n);
+            black_box(decoded.len());
         },
     );
 
@@ -1552,15 +1750,10 @@ fn bench_int_codecs(records: &mut Vec<BenchRecord>) {
         "int_codecs",
         "int_codecs/group_varint/encode_deltas",
         "ns/int",
-        total_n as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
-            let mut bytes = 0usize;
-            for _ in 0..num_blocks {
-                let encoded = GroupVarint::encode_deltas(black_box(&sorted_u32));
-                bytes = bytes.wrapping_add(encoded.len());
-            }
-            black_box(bytes);
+            let encoded = GroupVarint::encode_deltas(black_box(&sorted_u32));
+            black_box(encoded.len());
         },
     );
 
@@ -1569,135 +1762,121 @@ fn bench_int_codecs(records: &mut Vec<BenchRecord>) {
         "int_codecs",
         "int_codecs/group_varint/decode_deltas",
         "ns/int",
-        total_n as u64,
-        DEFAULT_TRIALS,
+        params,
         || {
-            let mut total = 0usize;
-            for _ in 0..num_blocks {
-                let decoded = GroupVarint::decode_deltas(black_box(&gv_encoded), block_n);
-                total = total.wrapping_add(decoded.len());
-            }
-            black_box(total);
+            let decoded = GroupVarint::decode_deltas(black_box(&gv_encoded), n);
+            black_box(decoded.len());
         },
     );
 }
 
 // ---------------------------------------------------------------------------
-// 8. Radix Sort (u32, u64, (u64, u64))
+// 8. Radix Sort (10,000,000 = 10^7 elements for u32, u64, (u64, u64) by default)
 // ---------------------------------------------------------------------------
 
-fn bench_radix_sort(records: &mut Vec<BenchRecord>) {
-    // Default 128 elements (with use_counting_sort_threshold=0 so full LSD radix sort runs)
-    // repeated 32 times per call (4,096 elements) so temporary buffer Vecs (512 B for u32,
-    // 1,024 B for u64) stay inside glibc's lock-free tcache (<= 1,032 B) and never coalesce
-    // with counts in unsorted_bin; ZIPORA_BENCH_SORT_LEN=10000000 scales to 10^7.
-    let n: usize = std::env::var("ZIPORA_BENCH_SORT_LEN")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(128);
-    let sort_passes: usize = if n <= 256 { 32 } else { 1 };
-    let total_n = (n * sort_passes) as u64;
+fn bench_radix_sort(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
+    let n = sizes.radix_sort_elements;
     let mut rng = StdRng::seed_from_u64(SEED_BASE ^ 0x09);
-
-    let orig_u32: Vec<u32> = (0..n).map(|_| rng.random::<u32>()).collect();
-    let orig_u64: Vec<u64> = (0..n).map(|_| rng.random::<u64>()).collect();
-    let kv_len = n.clamp(128, 4_000);
-    let kv_passes: usize = if kv_len <= 256 { 16 } else { 1 };
-    let total_kv = (kv_len * kv_passes) as u64;
-    let orig_kv: Vec<(u64, u64)> = (0..kv_len)
-        .map(|i| (rng.random::<u64>(), i as u64))
-        .collect();
-
-    let mut work_u32 = vec![0u32; n];
     let mut sorter = RadixSort::with_config(RadixSortConfig {
         use_parallel: false,
         use_counting_sort_threshold: 0,
         ..RadixSortConfig::default()
     });
-    measure_bench(
-        records,
-        "radix_sort",
-        "radix_sort/lsd_u32",
-        "ns/elem",
-        total_n,
-        DEFAULT_TRIALS,
-        || {
-            let mut acc = 0u32;
-            for _ in 0..sort_passes {
-                work_u32.copy_from_slice(&orig_u32);
-                sorter.sort_u32(black_box(&mut work_u32)).unwrap();
-                acc = acc.wrapping_add(work_u32[0]);
-            }
-            black_box(acc);
-        },
-    );
 
-    let mut work_u64 = vec![0u64; n];
-    measure_bench(
-        records,
-        "radix_sort",
-        "radix_sort/lsd_u64",
-        "ns/elem",
-        total_n,
-        DEFAULT_TRIALS,
-        || {
-            let mut acc = 0u64;
-            for _ in 0..sort_passes {
-                work_u64.copy_from_slice(&orig_u64);
-                sorter.sort_u64(black_box(&mut work_u64)).unwrap();
-                acc = acc.wrapping_add(work_u64[0]);
-            }
-            black_box(acc);
-        },
-    );
+    // 1. LSD u32 (10^7 elements)
+    {
+        let orig_u32: Vec<u32> = (0..n).map(|_| rng.random::<u32>()).collect();
+        let mut work_u32 = vec![0u32; n];
+        measure_bench_with_setup(
+            records,
+            "radix_sort",
+            "radix_sort/lsd_u32",
+            "ns/elem",
+            BenchParams::heavy(n as u64, n as u64, 5),
+            &mut work_u32,
+            |buf| {
+                buf.copy_from_slice(&orig_u32);
+            },
+            |buf| {
+                sorter.sort_u32(black_box(buf.as_mut_slice())).unwrap();
+                black_box(buf[0]);
+            },
+        );
+    }
 
-    let mut work_kv = vec![(0u64, 0u64); kv_len];
-    let kv_sorter = KeyValueRadixSort::<u64, u64>::new();
-    measure_bench(
-        records,
-        "radix_sort",
-        "radix_sort/kv_u64_u64",
-        "ns/elem",
-        total_kv,
-        DEFAULT_TRIALS,
-        || {
-            let mut acc = 0u64;
-            for _ in 0..kv_passes {
-                work_kv.copy_from_slice(&orig_kv);
-                kv_sorter.sort_by_key(black_box(&mut work_kv)).unwrap();
-                acc = acc.wrapping_add(work_kv[0].0);
-            }
-            black_box(acc);
-        },
-    );
+    // 2. LSD u64 (10^7 elements)
+    {
+        let orig_u64: Vec<u64> = (0..n).map(|_| rng.random::<u64>()).collect();
+        let mut work_u64 = vec![0u64; n];
+        measure_bench_with_setup(
+            records,
+            "radix_sort",
+            "radix_sort/lsd_u64",
+            "ns/elem",
+            BenchParams::heavy(n as u64, n as u64, 5),
+            &mut work_u64,
+            |buf| {
+                buf.copy_from_slice(&orig_u64);
+            },
+            |buf| {
+                sorter.sort_u64(black_box(buf.as_mut_slice())).unwrap();
+                black_box(buf[0]);
+            },
+        );
+    }
+
+    // 3. KeyValueRadixSort<u64, u64> (10^7 (u64, u64) elements)
+    {
+        let orig_kv: Vec<(u64, u64)> = (0..n).map(|i| (rng.random::<u64>(), i as u64)).collect();
+        let mut work_kv = vec![(0u64, 0u64); n];
+        let kv_sorter = KeyValueRadixSort::<u64, u64>::new();
+        measure_bench_with_setup(
+            records,
+            "radix_sort",
+            "radix_sort/kv_u64_u64",
+            "ns/elem",
+            BenchParams::heavy(n as u64, n as u64, 3),
+            &mut work_kv,
+            |buf| {
+                buf.copy_from_slice(&orig_kv);
+            },
+            |buf| {
+                kv_sorter
+                    .sort_by_key(black_box(buf.as_mut_slice()))
+                    .unwrap();
+                black_box(buf[0].0);
+            },
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
-// 9. Suffix Array
+// 9. Suffix Array (10,000,000 = 10^7 bytes by default)
 // ---------------------------------------------------------------------------
 
-fn bench_suffix_array(records: &mut Vec<BenchRecord>) {
-    // Default 10 KiB corpus for L2-resident canonical bursts; ZIPORA_BENCH_SA_LEN=10000000 for 10^7.
-    let n: usize = std::env::var("ZIPORA_BENCH_SA_LEN")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(10_000);
+fn bench_suffix_array(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
+    let n = sizes.suffix_array_bytes;
     let text = gen_enwik_like_block(n, SEED_BASE ^ 0x0A);
 
-    measure_bench(
+    let mut built_sa: Option<SuffixArray> = None;
+    measure_bench_with_setup(
         records,
         "suffix_array",
         "suffix_array/construct",
         "ns/byte",
-        n as u64,
-        DEFAULT_TRIALS,
-        || {
+        BenchParams::heavy(n as u64, n as u64, 3),
+        &mut built_sa,
+        |slot| {
+            *slot = None;
+        },
+        |slot| {
             let sa = SuffixArray::new(black_box(&text)).unwrap();
             black_box(sa.as_slice().len());
+            *slot = Some(sa);
         },
     );
 
-    let sa = SuffixArray::new(&text).unwrap();
+    let sa = built_sa.unwrap();
     let patterns: &[&[u8]] = &[
         b"Wikipedia",
         b"compression",
@@ -1706,14 +1885,14 @@ fn bench_suffix_array(records: &mut Vec<BenchRecord>) {
         b"performance",
         b"nonexistent_pattern_xyz",
     ];
-    let query_loops = 200usize;
+    let query_loops = 500usize;
+    let total_searches = (query_loops * patterns.len()) as u64;
     measure_bench(
         records,
         "suffix_array",
         "suffix_array/search_query",
         "ns/op",
-        (query_loops * patterns.len()) as u64,
-        DEFAULT_TRIALS,
+        BenchParams::fast(n as u64, total_searches),
         || {
             let mut hits = 0usize;
             for _ in 0..query_loops {
@@ -1731,7 +1910,7 @@ fn bench_suffix_array(records: &mut Vec<BenchRecord>) {
 // 10. String Search & BM25 Scoring (including S36-R2 build_score_table)
 // ---------------------------------------------------------------------------
 
-fn bench_search_and_scoring(records: &mut Vec<BenchRecord>) {
+fn bench_search_and_scoring(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
     #[repr(C, align(64))]
     struct AlignedHaystack([u8; 65_536]);
 
@@ -1742,15 +1921,15 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>) {
     let haystack = &aligned.0[..];
 
     let searcher = SimdStringSearch::new();
-    let search_iters = 100u64;
+    let search_iters = 200u64;
+    let str_params = BenchParams::fast(haystack_len as u64, search_iters);
 
     measure_bench(
         records,
         "search_and_scoring",
         "search_and_scoring/simd_strchr_64kib",
         "ns/call",
-        search_iters,
-        DEFAULT_TRIALS,
+        str_params,
         || {
             let mut acc = 0usize;
             for _ in 0..search_iters {
@@ -1767,8 +1946,7 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>) {
         "search_and_scoring",
         "search_and_scoring/simd_strstr_64kib",
         "ns/call",
-        search_iters,
-        DEFAULT_TRIALS,
+        str_params,
         || {
             let mut acc = 0usize;
             for _ in 0..search_iters {
@@ -1782,7 +1960,7 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>) {
         },
     );
 
-    // BM25 hot paths + S36-R2 build_score_table
+    // BM25 hot paths (100,000 docs by default) + S36-R2 build_score_table
     let k1 = 1.2f32;
     let b = 0.75f32;
     let avg_dl = 120.0f32;
@@ -1790,7 +1968,7 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>) {
     let norm_table = FieldnormEncoder::build_norm_table(avg_dl, k1, b);
     let scorer = Bm25BatchScorer::new(&norm_table, idf, k1);
 
-    let num_docs = 10_000usize;
+    let num_docs = sizes.bm25_docs;
     let mut rng = StdRng::seed_from_u64(SEED_BASE ^ 0x0B);
     let doc_ids: Vec<u32> = (0..num_docs as u32).map(|i| i * 3).collect();
     let tfs: Vec<u16> = (0..num_docs).map(|_| rng.random_range(1..=16)).collect();
@@ -1800,22 +1978,19 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>) {
     let contiguous_norms: Vec<u8> = doc_ids.iter().map(|&d| norms[d as usize]).collect();
     let mut scores_out = vec![0.0f32; num_docs];
 
-    let bm25_rounds = 100u64;
+    let bm25_rounds = 10u64;
+    let bm25_params = BenchParams::fast(num_docs as u64, bm25_rounds * num_docs as u64);
     measure_bench(
         records,
         "search_and_scoring",
         "search_and_scoring/bm25_score_single",
         "ns/doc",
-        bm25_rounds * num_docs as u64,
-        DEFAULT_TRIALS,
+        bm25_params,
         || {
             let mut sum = 0.0f32;
             for _ in 0..bm25_rounds {
                 for i in 0..num_docs {
-                    sum += scorer.score(
-                        black_box(norms[doc_ids[i] as usize]),
-                        black_box(tfs[i]),
-                    );
+                    sum += scorer.score(black_box(norms[doc_ids[i] as usize]), black_box(tfs[i]));
                 }
             }
             black_box(sum);
@@ -1827,8 +2002,7 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>) {
         "search_and_scoring",
         "search_and_scoring/bm25_batch_score_with_prefetch",
         "ns/doc",
-        bm25_rounds * num_docs as u64,
-        DEFAULT_TRIALS,
+        bm25_params,
         || {
             for _ in 0..bm25_rounds {
                 scorer.batch_score_with_prefetch(
@@ -1847,8 +2021,7 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>) {
         "search_and_scoring",
         "search_and_scoring/bm25_batch_score_simd",
         "ns/doc",
-        bm25_rounds * num_docs as u64,
-        DEFAULT_TRIALS,
+        bm25_params,
         || {
             for _ in 0..bm25_rounds {
                 scorer.batch_score(
@@ -1870,8 +2043,7 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>) {
         "search_and_scoring",
         "search_and_scoring/fieldnorm_build_score_table",
         "ns/cell",
-        table_rounds * cells_per_call,
-        DEFAULT_TRIALS,
+        BenchParams::fast(cells_per_call, table_rounds * cells_per_call),
         || {
             for r in 0..table_rounds {
                 let table = FieldnormEncoder::build_score_table(
@@ -1898,6 +2070,8 @@ fn write_json(path: &Path, report: &CoreBenchReport) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    let smoke_mode = args.iter().any(|a| a == "--smoke")
+        || std::env::var("ZIPORA_BENCH_SMOKE").as_deref() == Ok("1");
     let save_baseline = args.iter().any(|a| a == "--save-baseline")
         || std::env::var("ZIPORA_BENCH_SAVE_BASELINE").as_deref() == Ok("1")
         || std::env::var("UPDATE_BASELINE").as_deref() == Ok("1");
@@ -1908,22 +2082,30 @@ fn main() {
         .map(|w| PathBuf::from(&w[1]))
         .or_else(|| std::env::var("ZIPORA_BENCH_OUT").ok().map(PathBuf::from));
 
-    let host_metadata = collect_host_metadata();
-    configure_allocator_for_benchmarks();
-    let primary_core = select_primary_core(host_metadata.logical_cores);
-    pin_current_thread_to_core(primary_core);
+    // Pin Rayon's global thread pool to 1 thread so single-core benchmarks (including
+    // KeyValueRadixSort::sort_by_key) run deterministically on the pinned core without
+    // spawning 128 threads that contend on a single core's affinity mask.
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global();
 
-    // Pre-fault a 512 KiB contiguous heap region (8 x 64 KiB chunks) and place a 64-byte
-    // fencepost immediately below glibc's `av->top` wilderness chunk before freeing them.
-    // Keep `_top_fence` alive for the entire suite so freed buffers never coalesce into `av->top`.
-    let prewarm: Vec<Vec<u8>> = (0..8).map(|_| black_box(vec![1u8; 60 * 1024])).collect();
-    let _top_fence = black_box(vec![1u8; 64]);
-    drop(prewarm);
+    let logical_cores = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let primary_core = select_primary_core(logical_cores);
+    let host_metadata = collect_host_metadata(primary_core);
+    pin_current_thread_to_core(primary_core);
+    let sizes = if smoke_mode {
+        SuiteSizes::smoke()
+    } else {
+        SuiteSizes::spec()
+    };
+    let tier = if smoke_mode { "smoke" } else { "spec" };
 
     {
         let spin_start = Instant::now();
         let mut spin_acc = 0x1234_5678_9ABC_DEF0u64;
-        while spin_start.elapsed().as_millis() < 250 {
+        while spin_start.elapsed().as_millis() < 200 {
             for _ in 0..10_000 {
                 spin_acc = spin_acc.wrapping_mul(6364136223846793005).wrapping_add(1);
             }
@@ -1932,7 +2114,8 @@ fn main() {
     }
 
     eprintln!(
-        "=== Zipora E1 Core Benchmark Suite (host={}, cpu={}, cores={}, pinned_core={}, commit={}) ===",
+        "=== Zipora E1 Core Benchmark Suite (tier={}, host={}, cpu={}, cores={}, pinned_core={}, commit={}) ===",
+        tier,
         host_metadata.host,
         host_metadata.cpu_model,
         host_metadata.logical_cores,
@@ -1944,56 +2127,69 @@ fn main() {
     let mut records = Vec::new();
     let mut space_metrics = BTreeMap::new();
 
-    for _pass in 0..SUITE_PASSES {
-        bench_rank_select(&mut records, &mut space_metrics);
-        bench_elias_fano(&mut records, &mut space_metrics);
-        bench_tries(&mut records, &mut space_metrics);
-        bench_hash_maps(&mut records);
-        bench_memory_pools(&mut records, host_metadata.logical_cores);
-        bench_entropy(&mut records);
-        bench_int_codecs(&mut records);
-        bench_radix_sort(&mut records);
-        bench_suffix_array(&mut records);
-        bench_search_and_scoring(&mut records);
-    }
+    bench_rank_select(&mut records, &mut space_metrics, sizes);
+    bench_elias_fano(&mut records, &mut space_metrics, sizes);
+    bench_tries(&mut records, &mut space_metrics, sizes);
+    bench_hash_maps(&mut records, sizes);
+    bench_memory_pools(&mut records, host_metadata.logical_cores, sizes);
+    bench_entropy(&mut records, sizes);
+    bench_int_codecs(&mut records, sizes);
+    bench_radix_sort(&mut records, sizes);
+    bench_suffix_array(&mut records, sizes);
+    bench_search_and_scoring(&mut records, sizes);
 
     for rec in &records {
         eprintln!(
-            "  [{:<18}] {:<44} min={:>8.3} {:<7} med={:>8.3} {:<7} p95={:>8.3}",
+            "  [{:<18}] {:<44} N={:<10} min={:>8.3} {:<7} med={:>8.3} {:<7} p95={:>8.3} (spread={:>5.2}%)",
             rec.category,
             rec.name,
+            rec.dataset_size,
             rec.min_ns_per_op,
             rec.unit,
             rec.median_ns_per_op,
             rec.unit,
-            rec.p95_ns_per_op
+            rec.p95_ns_per_op,
+            rec.spread_pct
         );
     }
 
     let elapsed = suite_start.elapsed();
     eprintln!(
-        "=== Completed {} core benchmarks ({} passes) in {:.2}s ===",
+        "=== Completed {} core benchmarks (tier={}) in {:.2}s ===",
         records.len(),
-        SUITE_PASSES,
+        tier,
         elapsed.as_secs_f64()
     );
 
+    let suite_name = if smoke_mode {
+        "smoke_bench"
+    } else {
+        "core_bench"
+    };
     let report = CoreBenchReport {
-        suite: "core_bench".to_string(),
+        suite: suite_name.to_string(),
+        tier: tier.to_string(),
         seed: SEED_BASE,
+        entropy_block_source: ENTROPY_BLOCK_SOURCE.to_string(),
         host_metadata: host_metadata.clone(),
+        dataset_sizes: sizes.to_map(),
         space_metrics,
         benchmarks: records,
     };
 
-    let latest_out = custom_out.unwrap_or_else(|| PathBuf::from("target/bench/core_bench.json"));
+    let default_out = if smoke_mode {
+        PathBuf::from("target/bench/smoke_bench.json")
+    } else {
+        PathBuf::from("target/bench/core_bench.json")
+    };
+    let latest_out = custom_out.unwrap_or(default_out);
     write_json(&latest_out, &report);
 
-    let baseline_path = PathBuf::from(format!(
-        "benches/baselines/{}/core_bench.json",
-        host_metadata.host
-    ));
-    if save_baseline || !baseline_path.exists() {
+    if save_baseline && !smoke_mode {
+        let baseline_path = PathBuf::from(format!(
+            "benches/baselines/{}/core_bench.json",
+            host_metadata.host
+        ));
         write_json(&baseline_path, &report);
     }
 }
