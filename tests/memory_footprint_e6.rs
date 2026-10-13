@@ -15,6 +15,7 @@ use zipora::containers::UintVecMin0;
 use zipora::fsa::cspp_trie::CsppTrie;
 use zipora::fsa::double_array::{DoubleArrayTrie, DoubleArrayTrieMap};
 use zipora::scoring::FieldnormEncoder;
+use zipora::succinct::BitVector;
 use zipora::succinct::elias_fano::{
     ClusteredEliasFano, EliasFano, HybridPostingList, OptimalPartitionedEliasFano,
     PartitionedEliasFano, PostingEncoding,
@@ -23,7 +24,6 @@ use zipora::succinct::rank_select::{
     Rank9, RankSelectFewOne, RankSelectInterleaved256, RankSelectOps, RankSelectSE256,
     RankSelectSE512_64, RankSelectSimple,
 };
-use zipora::succinct::BitVector;
 
 #[test]
 fn test_e6_elias_fano_variants_bits_per_element_across_distributions() {
@@ -189,15 +189,26 @@ fn test_e6_tries_bytes_per_state_and_bytes_per_key() {
     );
 
     // 2. DoubleArrayTrieMap<u32>: sentinel V::EMPTY avoids Option<u32> 8-byte alignment overhead,
-    // keeping each value slot at 4 bytes instead of 8 bytes.
-    assert_eq!(std::mem::size_of::<u32>(), 4);
-    assert_eq!(std::mem::size_of::<Option<u32>>(), 8);
+    // keeping each value slot at 4 bytes instead of 8 bytes (half the value-table footprint of u64/Option<u32>).
     let mut dat_map = DoubleArrayTrieMap::<u32>::new();
+    let mut dat_map_u64 = DoubleArrayTrieMap::<u64>::new();
     for i in 0..2_000u32 {
         let key = format!("term_{:05}", i);
         dat_map.insert(key.as_bytes(), i).unwrap();
+        dat_map_u64.insert(key.as_bytes(), i as u64).unwrap();
     }
     dat_map.shrink_to_fit();
+    dat_map_u64.shrink_to_fit();
+    assert_eq!(dat_map.total_states(), dat_map_u64.total_states());
+    let trie_only_bytes = dat_map.total_states() * 12;
+    let u32_value_bytes = dat_map.mem_size() - trie_only_bytes;
+    let u64_value_bytes = dat_map_u64.mem_size() - trie_only_bytes;
+    assert!(u32_value_bytes > 0);
+    assert_eq!(
+        u64_value_bytes,
+        u32_value_bytes * 2,
+        "4-byte sentinel value slots in DoubleArrayTrieMap<u32> must use half the value-table bytes of 8-byte slots"
+    );
     let map_bytes_per_state = dat_map.mem_size() as f64 / dat_map.total_states() as f64;
     assert!(
         (12.0..=16.0).contains(&map_bytes_per_state),
@@ -230,14 +241,29 @@ fn test_e6_fieldnorm_encoder_one_byte_per_doc_and_quantization_bounds() {
         .map(|i| 20 + ((i.wrapping_mul(2654435761)) % 480))
         .collect();
 
-    // 1. Fieldnorm Vec<u8> is exactly 1.00 byte/doc (100,000 bytes).
+    // 1. Fieldnorm encodes arbitrary u32 document lengths (0..=u32::MAX) into 1 byte/doc
+    // (4.0x smaller than raw u32 lengths) while preserving monotonic round-trip bounds.
+    assert_eq!(FieldnormEncoder::encode(0), 0);
+    assert_eq!(FieldnormEncoder::encode(u32::MAX), 239);
+    assert_eq!(FieldnormEncoder::decode(239), 15u32 << 28);
     let fieldnorm_bytes: Vec<u8> = doc_lengths
         .iter()
         .map(|&dl| FieldnormEncoder::encode(dl))
         .collect();
-    let fieldnorm_b_per_doc = fieldnorm_bytes.len() as f64 / num_docs as f64;
-    assert_eq!(fieldnorm_bytes.len(), num_docs);
-    assert_eq!(fieldnorm_b_per_doc, 1.0);
+    let raw_u32_bytes = std::mem::size_of_val(doc_lengths.as_slice());
+    let encoded_bytes = std::mem::size_of_val(fieldnorm_bytes.as_slice());
+    assert_eq!(raw_u32_bytes, encoded_bytes * 4);
+    let fieldnorm_b_per_doc = encoded_bytes as f64 / num_docs as f64;
+    for (&dl, &code) in doc_lengths.iter().zip(fieldnorm_bytes.iter()) {
+        let decoded = FieldnormEncoder::decode(code);
+        assert!(
+            decoded <= dl,
+            "decoded {decoded} must not exceed original {dl}"
+        );
+        let rel_err = (dl - decoded) as f64 / dl as f64;
+        assert!((rel_err - FieldnormEncoder::quantization_error(dl)).abs() <= 1e-12);
+        assert!(rel_err <= 0.125);
+    }
 
     // 2. Compare against UintVecMin0 on the decoded u32 lengths (9-bit width -> 1.125 B/doc).
     let max_decoded = fieldnorm_bytes
