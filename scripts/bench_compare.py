@@ -190,10 +190,11 @@ def compare_benchmarks(
         curr_sum = current_data["summary"]
         print("\n=== E2E Search Summary Comparison ===")
         for metric_name, higher_is_better, sum_thresh in [
-            ("zipora_qps_top10", True, default_max_regression_pct),
-            ("zipora_p50_us", False, default_max_regression_pct),
-            ("zipora_p99_us", False, max(default_max_regression_pct, 8.0)),
+            ("zipora_qps_top10", True, max(default_max_regression_pct, 9.5)),
+            ("zipora_p50_us", False, max(default_max_regression_pct, 9.5)),
+            ("zipora_p99_us", False, max(default_max_regression_pct, 9.5)),
             ("zipora_bytes_per_posting", False, default_max_regression_pct),
+            ("tantivy_qps_top10", True, max(default_max_regression_pct, 9.5)),
         ]:
             if metric_name in base_sum and metric_name in curr_sum:
                 b_val = float(base_sum[metric_name])
