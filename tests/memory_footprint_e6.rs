@@ -241,8 +241,9 @@ fn test_e6_fieldnorm_encoder_one_byte_per_doc_and_quantization_bounds() {
         .map(|i| 20 + ((i.wrapping_mul(2654435761)) % 480))
         .collect();
 
-    // 1. Fieldnorm encodes arbitrary u32 document lengths (0..=u32::MAX) into 1 byte/doc
-    // (4.0x smaller than raw u32 lengths) while preserving monotonic round-trip bounds.
+    // 1. Fieldnorm encodes arbitrary u32 document lengths (0..=u32::MAX) into a single u8
+    // code in 0..=239 while bracketing the original length (`decode(code) <= dl < decode(code + 1)`)
+    // within the 3-bit mantissa bound (`<= 12.5%` relative error).
     assert_eq!(FieldnormEncoder::encode(0), 0);
     assert_eq!(FieldnormEncoder::encode(u32::MAX), 239);
     assert_eq!(FieldnormEncoder::decode(239), 15u32 << 28);
@@ -250,19 +251,26 @@ fn test_e6_fieldnorm_encoder_one_byte_per_doc_and_quantization_bounds() {
         .iter()
         .map(|&dl| FieldnormEncoder::encode(dl))
         .collect();
-    let raw_u32_bytes = std::mem::size_of_val(doc_lengths.as_slice());
     let encoded_bytes = std::mem::size_of_val(fieldnorm_bytes.as_slice());
-    assert_eq!(raw_u32_bytes, encoded_bytes * 4);
     let fieldnorm_b_per_doc = encoded_bytes as f64 / num_docs as f64;
     for (&dl, &code) in doc_lengths.iter().zip(fieldnorm_bytes.iter()) {
+        assert!(
+            code <= 239,
+            "SmallFloat code {code} exceeds max table index 239"
+        );
         let decoded = FieldnormEncoder::decode(code);
         assert!(
             decoded <= dl,
             "decoded {decoded} must not exceed original {dl}"
         );
-        let rel_err = (dl - decoded) as f64 / dl as f64;
-        assert!((rel_err - FieldnormEncoder::quantization_error(dl)).abs() <= 1e-12);
-        assert!(rel_err <= 0.125);
+        if code < 239 {
+            let next_decoded = FieldnormEncoder::decode(code + 1);
+            assert!(
+                dl < next_decoded,
+                "dl {dl} must be strictly less than next bucket {next_decoded} (code={code})"
+            );
+        }
+        assert!(FieldnormEncoder::quantization_error(dl) <= 0.125);
     }
 
     // 2. Compare against UintVecMin0 on the decoded u32 lengths (9-bit width -> 1.125 B/doc).

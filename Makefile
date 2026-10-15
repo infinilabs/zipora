@@ -89,9 +89,10 @@ test_simd_base64:
 # BENCHMARK
 # =============================================================================
 #
-# Benchmark runner configuration (S37-R2 / Rule B3):
-# - Reference host: `bindiego` (AMD EPYC 7763 64-Core Processor, 128 logical cores)
-# - Pinned CPU core: 23 (`select_primary_core(64) = 23` on CCD 16, override via `ZIPORA_BENCH_PIN_CORE`)
+# Benchmark runner configuration (S37-R2 / S38-R4 / Rule B3):
+# - Reference host: `bindiego` (AMD EPYC 7B13, 64 logical cores across 4 Zen 3 CCDs)
+# - Pinned CPU core: self-pinned (`pid = 0` only) via `select_primary_core` (default core 23
+#   on interior CCD 2 or quietest physical core from read-only `/proc/stat`; override via `ZIPORA_BENCH_PIN_CORE`)
 # - Compiler flags: `BENCH_RUSTFLAGS` pins `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt`,
 #   `-C codegen-units=1`, and `-C llvm-args=-align-loops=32` so unrelated code motion or CGU
 #   re-partitioning does not shift tight-loop alignment or cross-CGU inlining.
@@ -127,7 +128,7 @@ bench_compare:
 
 # Systemic end-to-end search benchmark (plan.md §1.6 E1.1 / G15).
 # Exact command:
-#   RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C llvm-args=-align-loops=32" \
+#   RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32" \
 #     cargo bench --locked --bench e2e_search_bench
 #   python3 scripts/bench_compare.py --suite e2e_search
 bench_e2e_search:

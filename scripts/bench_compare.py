@@ -2,11 +2,12 @@
 """
 Phase B Rule B3: Performance Regression Gate (`scripts/bench_compare.py`).
 
-Runner documentation (S37-R2):
+Runner documentation (S37-R2 / S38-R4):
 - Reference host: `bindiego` (AMD EPYC 7B13, 64 logical cores across 4 Zen 3 CCDs)
-- Pinned CPU core: 62 (`ZIPORA_BENCH_PIN_CORE=62` default on >62-core hosts)
+- Pinned CPU core: self-pinned (`pid = 0` only) via `select_primary_core` (default core 23
+  on interior CCD 2 or quietest physical core from read-only `/proc/stat`; override via `ZIPORA_BENCH_PIN_CORE`)
 - Compiler flags:
-    RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C llvm-args=-align-loops=32"
+    RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32"
 - Exact command:
     make bench_core
     make bench_e2e_search
@@ -17,9 +18,9 @@ Gate rules:
 1. Fails (exit 1) if no baseline file exists for the host.
 2. Fails (exit 1) if any benchmark present in the baseline is missing from the
    current run or ran with a different `dataset_size`.
-3. Compares `min_ns_per_op` (min-of-N across trials, selectable via `--metric`)
+3. Compares `min_ns_per_op` (true minimum across trials, selectable via `--metric`)
    against the per-benchmark `max_regression_pct` recorded in the baseline
-   (default +5.00%; +8.00% on multi-megabyte OS-allocator/DRAM benchmarks),
+   (default +5.00%; +9.00% on spec-size DRAM/allocator-bound benchmarks),
    and prints both min and median alongside trial `spread_pct`.
 """
 
@@ -190,11 +191,11 @@ def compare_benchmarks(
         curr_sum = current_data["summary"]
         print("\n=== E2E Search Summary Comparison ===")
         for metric_name, higher_is_better, sum_thresh in [
-            ("zipora_qps_top10", True, max(default_max_regression_pct, 9.5)),
-            ("zipora_p50_us", False, max(default_max_regression_pct, 9.5)),
-            ("zipora_p99_us", False, max(default_max_regression_pct, 9.5)),
+            ("zipora_qps_top10", True, max(default_max_regression_pct, 9.0)),
+            ("zipora_p50_us", False, max(default_max_regression_pct, 9.0)),
+            ("zipora_p99_us", False, max(default_max_regression_pct, 9.0)),
             ("zipora_bytes_per_posting", False, default_max_regression_pct),
-            ("tantivy_qps_top10", True, max(default_max_regression_pct, 9.5)),
+            ("tantivy_qps_top10", True, max(default_max_regression_pct, 9.0)),
         ]:
             if metric_name in base_sum and metric_name in curr_sum:
                 b_val = float(base_sum[metric_name])

@@ -18,7 +18,20 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-env-changed=RUSTFLAGS");
+    println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
     println!("cargo:rustc-check-cfg=cfg(tokio_unstable)");
+
+    if let Ok(encoded) = env::var("CARGO_ENCODED_RUSTFLAGS") {
+        let decoded = encoded
+            .split('\x1f')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !decoded.is_empty() {
+            println!("cargo:rustc-env=ZIPORA_EFFECTIVE_RUSTFLAGS={}", decoded);
+        }
+    }
 
     // Detect and configure SIMD features
     detect_and_configure_simd();
@@ -130,12 +143,6 @@ fn detect_x86_feature(feature: &str, commonly_available: bool) {
     if commonly_available || try_compile_with_feature(feature) {
         let cfg_name = format!("zipora_has_{}", feature.replace(".", "_").replace("-", "_"));
         println!("cargo:rustc-cfg={}", cfg_name);
-
-        // Also set target feature for the specific feature
-        if feature != "popcnt" {
-            // popcnt is handled specially by Rust
-            println!("cargo:rustc-env=RUSTFLAGS=-C target-feature=+{}", feature);
-        }
     }
 }
 
@@ -304,21 +311,9 @@ fn configure_optimization_flags() {
     match profile.as_str() {
         "release" => {
             println!("cargo:rustc-cfg=zipora_release_mode");
-
-            // Enable aggressive optimizations for release builds
-            if cfg!(feature = "simd") {
-                println!("cargo:rustc-env=RUSTFLAGS=-C target-cpu=native");
-            }
-
-            // Link-time optimization flags are set in Cargo.toml
         }
         "bench" => {
             println!("cargo:rustc-cfg=zipora_bench_mode");
-
-            // Enable maximum optimizations for benchmarks
-            if cfg!(feature = "simd") {
-                println!("cargo:rustc-env=RUSTFLAGS=-C target-cpu=native");
-            }
         }
         _ => {
             println!("cargo:rustc-cfg=zipora_debug_mode");
