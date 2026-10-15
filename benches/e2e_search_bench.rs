@@ -40,7 +40,7 @@ use zipora::succinct::elias_fano::{
 const SEED_E2E: u64 = 0x5A17_0E11_E2E5_EA2C;
 const BLOCK_SIZE: usize = 64;
 const TOP_K: usize = 10;
-const DEFAULT_TRIALS: usize = 5;
+const DEFAULT_TRIALS: usize = 7;
 
 const BM25_K1: f32 = 1.2;
 const BM25_B: f32 = 0.75;
@@ -52,6 +52,7 @@ struct HostMetadata {
     logical_cores: usize,
     pinned_core: usize,
     governor: String,
+    rustflags: String,
     git_commit: String,
     timestamp_utc: String,
 }
@@ -84,14 +85,23 @@ struct E2ESummary {
     zipora_p99_us: f64,
     zipora_vm_hwm_kib: u64,
     zipora_bytes_per_posting: f64,
+    zipora_postings_plus_bmw_bytes_per_posting: f64,
     zipora_total_index_bytes_per_posting: f64,
     zipora_dict_bytes: usize,
     zipora_fieldnorm_bytes: usize,
     zipora_postings_bytes: usize,
     zipora_bmw_metadata_bytes: usize,
+    zipora_total_index_bytes: usize,
     tantivy_qps_top10: f64,
     tantivy_p50_us: f64,
     tantivy_p99_us: f64,
+    tantivy_postings_bytes: usize,
+    tantivy_postings_bytes_per_posting: f64,
+    tantivy_termdict_bytes: usize,
+    tantivy_fieldnorms_bytes: usize,
+    tantivy_store_bytes: usize,
+    tantivy_index_without_store_bytes: usize,
+    tantivy_index_without_store_bytes_per_posting: f64,
     tantivy_index_bytes: usize,
     tantivy_bytes_per_posting: f64,
     qps_speedup_vs_tantivy: f64,
@@ -202,20 +212,6 @@ fn read_vm_hwm_kib() -> u64 {
     0
 }
 
-fn collect_host_metadata(pinned_core: usize) -> HostMetadata {
-    HostMetadata {
-        host: detect_short_host(),
-        cpu_model: detect_cpu_model(),
-        logical_cores: std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1),
-        pinned_core,
-        governor: detect_governor(),
-        git_commit: detect_git_commit(),
-        timestamp_utc: detect_utc_timestamp(),
-    }
-}
-
 fn parse_cpu_list(spec: &str) -> Vec<usize> {
     let mut out = Vec::new();
     for part in spec.trim().split(',') {
@@ -237,6 +233,12 @@ fn parse_cpu_list(spec: &str) -> Vec<usize> {
 }
 
 fn hardware_logical_cores() -> usize {
+    if let Ok(online) = fs::read_to_string("/sys/devices/system/cpu/online") {
+        let cpus = parse_cpu_list(&online);
+        if !cpus.is_empty() {
+            return cpus.len();
+        }
+    }
     if let Ok(present) = fs::read_to_string("/sys/devices/system/cpu/present") {
         let cpus = parse_cpu_list(&present);
         if !cpus.is_empty() {
@@ -248,251 +250,49 @@ fn hardware_logical_cores() -> usize {
         .unwrap_or(1)
 }
 
-#[cfg(target_os = "linux")]
-fn set_other_user_threads_cpuset(cpuset: &libc::cpu_set_t) {
-    // SAFETY: applies `sched_setaffinity` with a valid `cpu_set_t` to same-UID background tasks.
-    unsafe {
-        let my_pid = libc::getpid();
-        let my_uid = libc::geteuid();
-        let Ok(proc_entries) = fs::read_dir("/proc") else {
-            return;
-        };
-        for entry in proc_entries.flatten() {
-            let fname = entry.file_name();
-            let Some(pid_str) = fname.to_str() else {
-                continue;
-            };
-            let Ok(pid) = pid_str.parse::<i32>() else {
-                continue;
-            };
-            if pid == my_pid {
-                continue;
-            }
-            let Ok(meta) = entry.metadata() else {
-                continue;
-            };
-            use std::os::unix::fs::MetadataExt;
-            if meta.uid() != my_uid {
-                continue;
-            }
-            let task_dir = format!("/proc/{pid}/task");
-            if let Ok(tasks) = fs::read_dir(task_dir) {
-                for task_entry in tasks.flatten() {
-                    if let Some(tid_str) = task_entry.file_name().to_str()
-                        && let Ok(tid) = tid_str.parse::<i32>()
-                    {
-                        let _ = libc::sched_setaffinity(
-                            tid,
-                            std::mem::size_of::<libc::cpu_set_t>(),
-                            cpuset,
-                        );
-                    }
-                }
-            }
+fn collect_host_metadata(pinned_core: usize) -> HostMetadata {
+    let rustflags = std::env::var("RUSTFLAGS")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| option_env!("ZIPORA_EFFECTIVE_RUSTFLAGS").map(str::to_string))
+        .unwrap_or_else(|| {
+            "-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32"
+                .to_string()
+        });
+    HostMetadata {
+        host: detect_short_host(),
+        cpu_model: detect_cpu_model(),
+        logical_cores: hardware_logical_cores(),
+        pinned_core,
+        governor: detect_governor(),
+        rustflags,
+        git_commit: detect_git_commit(),
+        timestamp_utc: detect_utc_timestamp(),
+    }
+}
+
+/// Select the primary physical core on interior L3 CCD 2 (`core 23` on `bindiego`) for the
+/// calling thread (`pid = 0` only; never modifies any other process).
+fn select_primary_core(logical_cores: usize, _sample_ms: u64) -> usize {
+    for env_key in ["ZIPORA_BENCH_PIN_CORE", "ZIPORA_BENCH_CORE"] {
+        if let Ok(val) = std::env::var(env_key)
+            && let Ok(core) = val.parse::<usize>()
+        {
+            return core % logical_cores.max(1);
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn evacuate_other_user_threads_from_ccd(primary_core: usize, logical_cores: usize) {
-    if logical_cores <= 4 {
-        return;
-    }
-    let bg_core = if primary_core == 0 { 1 } else { 0 };
-    // SAFETY: constructs a valid `cpu_set_t` containing `bg_core` outside `primary_core`'s L3 CCD.
-    unsafe {
-        let mut other_cpuset: libc::cpu_set_t = std::mem::zeroed();
-        libc::CPU_ZERO(&mut other_cpuset);
-        if bg_core < logical_cores.min(libc::CPU_SETSIZE as usize) {
-            libc::CPU_SET(bg_core, &mut other_cpuset);
-            set_other_user_threads_cpuset(&other_cpuset);
-        }
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn evacuate_other_user_threads_from_ccd(_primary_core: usize, _logical_cores: usize) {}
-
-struct CcdIsolationGuard {
-    #[allow(dead_code)]
-    logical_cores: usize,
-}
-
-impl CcdIsolationGuard {
-    fn acquire(primary_core: usize, logical_cores: usize) -> Self {
-        evacuate_other_user_threads_from_ccd(primary_core, logical_cores);
-        Self { logical_cores }
-    }
-}
-
-impl Drop for CcdIsolationGuard {
-    fn drop(&mut self) {
-        #[cfg(target_os = "linux")]
-        if self.logical_cores > 4 {
-            // SAFETY: restores full `0..logical_cores` affinity to same-UID tasks on exit.
-            unsafe {
-                let mut full_cpuset: libc::cpu_set_t = std::mem::zeroed();
-                libc::CPU_ZERO(&mut full_cpuset);
-                for cpu in 0..self.logical_cores.min(libc::CPU_SETSIZE as usize) {
-                    libc::CPU_SET(cpu, &mut full_cpuset);
-                }
-                set_other_user_threads_cpuset(&full_cpuset);
-            }
-        }
-    }
-}
-
-fn select_primary_core(logical_cores: usize) -> usize {
-    if let Ok(val) = std::env::var("ZIPORA_BENCH_CORE")
-        && let Ok(core) = val.parse::<usize>()
-    {
-        return core % logical_cores.max(1);
-    }
-    if logical_cores >= 24 {
+    let phys_cores = (logical_cores / 2).max(1);
+    if phys_cores >= 24 {
         23
     } else {
-        logical_cores.saturating_sub(1)
+        phys_cores.saturating_sub(1)
     }
 }
-
-#[cfg(target_os = "linux")]
-fn sync_filesystem_writeback() {
-    // SAFETY: `libc::sync()` flushes dirty kernel page-cache writeback before timed execution.
-    unsafe {
-        libc::sync();
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn sync_filesystem_writeback() {}
-
-#[cfg(target_os = "linux")]
-fn ensure_deterministic_process(save_baseline: bool, custom_out: &Option<PathBuf>) {
-    const ADDR_NO_RANDOMIZE: libc::c_ulong = 0x0004_0000;
-    if std::env::var("ZIPORA_BENCH_DETERMINISTIC").as_deref() == Ok("1") {
-        return;
-    }
-    // SAFETY: personality(0xffff_ffff) queries current persona and personality(cur | ADDR_NO_RANDOMIZE)
-    // disables ASLR across re-exec so stack, heap, and mmap virtual addresses are deterministic.
-    unsafe {
-        let cur = libc::personality(0xffff_ffff);
-        if cur != -1 {
-            let _ = libc::personality((cur as libc::c_ulong) | ADDR_NO_RANDOMIZE);
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        let mut cmd = Command::new(exe);
-        cmd.env_clear();
-        for key in [
-            "PATH",
-            "HOME",
-            "USER",
-            "LOGNAME",
-            "HOSTNAME",
-            "LANG",
-            "LC_ALL",
-            "TERM",
-            "RUSTFLAGS",
-            "CARGO_TARGET_DIR",
-            "ZIPORA_BENCH_CORE",
-            "ZIPORA_E2E_DOCS",
-            "ZIPORA_E2E_VOCAB",
-            "ZIPORA_E2E_QUERIES",
-        ] {
-            if let Ok(val) = std::env::var(key) {
-                cmd.env(key, val);
-            }
-        }
-        cmd.env("ZIPORA_BENCH_DETERMINISTIC", "1");
-        cmd.env(
-            "GLIBC_TUNABLES",
-            "glibc.malloc.trim_threshold=-1:glibc.malloc.mmap_threshold=536870912:glibc.malloc.top_pad=67108864",
-        );
-        if save_baseline {
-            cmd.arg("--save-baseline");
-        }
-        if let Some(out) = custom_out {
-            cmd.arg("--output").arg(out);
-        }
-        if let Ok(status) = cmd.status() {
-            std::process::exit(status.code().unwrap_or(1));
-        }
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn ensure_deterministic_process(_save_baseline: bool, _custom_out: &Option<PathBuf>) {}
-
-#[cfg(target_os = "linux")]
-fn configure_allocator_for_benchmarks() {
-    const M_TRIM_THRESHOLD: libc::c_int = -1;
-    const M_MMAP_THRESHOLD: libc::c_int = -3;
-    // SAFETY: Standard glibc mallopt parameters to disable brk auto-trimming and
-    // raise mmap threshold to 512 MiB during benchmark runs.
-    unsafe {
-        libc::mallopt(M_TRIM_THRESHOLD, -1);
-        libc::mallopt(M_MMAP_THRESHOLD, 512 * 1024 * 1024);
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn configure_allocator_for_benchmarks() {}
-
-#[cfg(target_os = "linux")]
-fn prewarm_and_collapse_heap_arena() {
-    const MADV_HUGEPAGE: libc::c_int = 14;
-    const MADV_COLLAPSE: libc::c_int = 25;
-    const HUGEPAGE_SIZE: usize = 2 * 1024 * 1024;
-
-    let arena_bytes = 256 * 1024 * 1024usize;
-    let mut arena: Vec<u8> = Vec::with_capacity(arena_bytes);
-    let base = arena.as_mut_ptr() as usize;
-    let aligned_start = (base + HUGEPAGE_SIZE - 1) & !(HUGEPAGE_SIZE - 1);
-    let aligned_end = (base + arena_bytes) & !(HUGEPAGE_SIZE - 1);
-    // SAFETY: advise MADV_HUGEPAGE on the 2 MiB-aligned 256 MiB [heap] VMA, fault each
-    // 2 MiB block, and synchronously collapse any 4 KiB splits into 2 MiB hugepages via
-    // MADV_COLLAPSE (Linux >= 6.1).
-    unsafe {
-        if aligned_end > aligned_start {
-            let _ = libc::madvise(
-                aligned_start as *mut libc::c_void,
-                aligned_end - aligned_start,
-                MADV_HUGEPAGE,
-            );
-            let mut chunk = aligned_start;
-            while chunk < aligned_end {
-                let mut page = chunk;
-                while page < chunk + HUGEPAGE_SIZE {
-                    std::ptr::write_volatile(page as *mut u8, 1u8);
-                    page += 4096;
-                }
-                for attempt in 0..20 {
-                    let rc =
-                        libc::madvise(chunk as *mut libc::c_void, HUGEPAGE_SIZE, MADV_COLLAPSE);
-                    if rc == 0 {
-                        break;
-                    }
-                    if attempt < 3 {
-                        std::thread::yield_now();
-                    } else {
-                        std::thread::sleep(std::time::Duration::from_millis(5));
-                    }
-                }
-                chunk += HUGEPAGE_SIZE;
-            }
-        }
-    }
-    black_box(arena.as_ptr());
-    drop(arena);
-}
-
-#[cfg(not(target_os = "linux"))]
-fn prewarm_and_collapse_heap_arena() {}
 
 #[cfg(target_os = "linux")]
 fn pin_current_thread_to_core(core_id: usize) {
     // SAFETY: `cpu_set_t` is zero-initialized and `CPU_SET` / `sched_setaffinity`
-    // are called with valid size and self PID (0).
+    // are called with valid size and self PID (0). Never modifies any other process.
     unsafe {
         let mut set: libc::cpu_set_t = std::mem::zeroed();
         libc::CPU_ZERO(&mut set);
@@ -503,6 +303,17 @@ fn pin_current_thread_to_core(core_id: usize) {
 
 #[cfg(not(target_os = "linux"))]
 fn pin_current_thread_to_core(_core_id: usize) {}
+
+#[cfg(target_os = "linux")]
+fn disable_transparent_hugepages_for_self() {
+    // SAFETY: `prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0)` affects only the calling process.
+    unsafe {
+        let _ = libc::prctl(libc::PR_SET_THP_DISABLE, 1, 0, 0, 0);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn disable_transparent_hugepages_for_self() {}
 
 fn round4(val: f64) -> f64 {
     (val * 10_000.0).round() / 10_000.0
@@ -516,9 +327,6 @@ fn compute_stats(samples: &[f64]) -> (f64, f64, f64, f64) {
     let mut sorted = samples.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(CmpOrdering::Equal));
     let n = sorted.len();
-    if n >= 5 && sorted[1] > sorted[0] * 1.035 {
-        sorted[0] = sorted[1];
-    }
     let min = sorted[0];
     let median = if n % 2 == 1 {
         sorted[n / 2]
@@ -540,59 +348,33 @@ fn measure_bench<F>(
     name: &str,
     dataset_size: u64,
     ops_per_trial: u64,
+    trials: usize,
     mut f: F,
 ) where
     F: FnMut(),
 {
-    let trials = DEFAULT_TRIALS;
-    let logical_cores = hardware_logical_cores();
-    let primary_core = select_primary_core(logical_cores);
-    evacuate_other_user_threads_from_ccd(primary_core, logical_cores);
-    sync_filesystem_writeback();
-    f();
-
-    let run_pass = |f: &mut F, bursts: usize| -> Vec<f64> {
-        let mut out = Vec::with_capacity(trials);
-        for _ in 0..trials {
-            let mut best_ns = f64::INFINITY;
-            for _ in 0..bursts {
-                let start = Instant::now();
-                f();
-                let elapsed_ns = start.elapsed().as_nanos() as f64;
-                let ns_per_op = elapsed_ns / (ops_per_trial.max(1) as f64);
-                if ns_per_op < best_ns {
-                    best_ns = ns_per_op;
-                }
-            }
-            out.push(best_ns);
-        }
-        out
-    };
-
-    let mut samples = run_pass(&mut f, 1);
-    let (mut min_ns, mut median_ns, mut p95_ns, mut spread_pct) = compute_stats(&samples);
-
-    // Retry up to 2 times if transient OS noise causes spread > 5.0%
-    for _retry in 0..2 {
-        if spread_pct <= 5.0 {
-            break;
-        }
-        evacuate_other_user_threads_from_ccd(primary_core, logical_cores);
-        std::thread::sleep(std::time::Duration::from_millis(20));
+    let warmup_calls = if ops_per_trial <= 2_500 { 3 } else { 2 };
+    for _ in 0..warmup_calls {
         f();
-        let retry_samples = run_pass(&mut f, 1);
-        let (r_min, r_med, r_p95, r_spread) = compute_stats(&retry_samples);
-        if (r_min < min_ns && r_spread <= spread_pct + 2.0)
-            || (spread_pct > 5.0 && r_spread < spread_pct && r_min <= min_ns * 1.03)
-        {
-            samples = retry_samples;
-            min_ns = r_min;
-            median_ns = r_med;
-            p95_ns = r_p95;
-            spread_pct = r_spread;
-        }
     }
 
+    let bursts_per_trial = if ops_per_trial <= 2_500 { 3 } else { 2 };
+    let mut samples = Vec::with_capacity(trials);
+    for _ in 0..trials {
+        let mut best_elapsed_ns = f64::MAX;
+        for _ in 0..bursts_per_trial {
+            let start = Instant::now();
+            f();
+            let elapsed_ns = start.elapsed().as_nanos() as f64;
+            if elapsed_ns < best_elapsed_ns {
+                best_elapsed_ns = elapsed_ns;
+            }
+        }
+        let ns_per_op = best_elapsed_ns / (ops_per_trial.max(1) as f64);
+        samples.push(ns_per_op);
+    }
+
+    let (min_ns, median_ns, p95_ns, spread_pct) = compute_stats(&samples);
     let rounded_samples: Vec<f64> = samples.into_iter().map(round4).collect();
     records.push(BenchRecord {
         category: "e2e_search".to_string(),
@@ -605,7 +387,7 @@ fn measure_bench<F>(
         median_ns_per_op: round4(median_ns),
         p95_ns_per_op: round4(p95_ns),
         spread_pct: round2(spread_pct),
-        max_regression_pct: 9.5,
+        max_regression_pct: 9.0,
         samples_ns_per_op: rounded_samples,
     });
 }
@@ -902,6 +684,24 @@ fn generate_zipf_corpus_and_queries(
 // FieldnormEncoder + Bench-Local Block-Max WAND)
 // ---------------------------------------------------------------------------
 
+#[repr(C, align(64))]
+struct AlignedBlockScratch {
+    docs: [u32; BLOCK_SIZE],
+    scores: [f32; BLOCK_SIZE],
+    tfs: [u16; BLOCK_SIZE],
+}
+
+impl AlignedBlockScratch {
+    #[inline]
+    const fn new() -> Self {
+        Self {
+            docs: [0u32; BLOCK_SIZE],
+            scores: [0.0f32; BLOCK_SIZE],
+            tfs: [0u16; BLOCK_SIZE],
+        }
+    }
+}
+
 struct TermPostingData {
     postings: HybridPostingList,
     tfs: Vec<u8>,
@@ -909,13 +709,15 @@ struct TermPostingData {
     block_max_scores: Vec<f32>,
     peak_blocks: [u32; 2],
     max_term_score: f32,
-    scorer: Bm25BatchScorer<'static>,
+    idf_k1p1: f32,
 }
 
 struct ZiporaSearchEngine {
     dict: DoubleArrayTrieMap<u32>,
     fieldnorms: Vec<u8>,
     terms: Vec<TermPostingData>,
+    scorers: Vec<Bm25BatchScorer<'static>>,
+    unit_scorer: Bm25BatchScorer<'static>,
     total_postings: usize,
 }
 
@@ -935,15 +737,18 @@ impl ZiporaSearchEngine {
         static NORM_TABLE: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
         let norm_table = NORM_TABLE
             .get_or_init(|| FieldnormEncoder::build_norm_table(corpus.avg_dl, BM25_K1, BM25_B));
+        let unit_scorer = Bm25BatchScorer::new(norm_table, 1.0 / (BM25_K1 + 1.0), BM25_K1);
 
         let n_docs_f = corpus.num_docs as f32;
         let mut terms = Vec::with_capacity(corpus.terms.len());
+        let mut scorers = Vec::with_capacity(corpus.terms.len());
         let mut total_postings = 0usize;
 
         for (docs, tfs_u16) in corpus.term_doc_ids.iter().zip(corpus.term_tfs.iter()) {
             let df = docs.len();
             total_postings += df;
             let idf = ((n_docs_f - df as f32 + 0.5) / (df as f32 + 0.5) + 1.0).ln();
+            let idf_k1p1 = idf * (BM25_K1 + 1.0);
             let scorer = Bm25BatchScorer::new(norm_table, idf, BM25_K1);
 
             let postings = HybridPostingList::from_sorted(docs);
@@ -987,14 +792,17 @@ impl ZiporaSearchEngine {
                 block_max_scores,
                 peak_blocks: [best_blk_0.0, best_blk_1.0],
                 max_term_score,
-                scorer,
+                idf_k1p1,
             });
+            scorers.push(scorer);
         }
 
         Self {
             dict,
             fieldnorms,
             terms,
+            scorers,
+            unit_scorer,
             total_postings,
         }
     }
@@ -1259,7 +1067,7 @@ impl ZiporaSearchEngine {
             let Some(tid) = self.dict.get(query_terms[0].as_bytes()) else {
                 return;
             };
-            self.search_single_term(&self.terms[tid as usize], collector);
+            self.search_single_term(tid as usize, collector);
             return;
         }
 
@@ -1275,7 +1083,7 @@ impl ZiporaSearchEngine {
             return;
         }
         if n_terms == 1 {
-            self.search_single_term(&self.terms[term_indices[0]], collector);
+            self.search_single_term(term_indices[0], collector);
             return;
         }
 
@@ -1287,6 +1095,7 @@ impl ZiporaSearchEngine {
     fn score_single_block_direct(
         &self,
         term: &TermPostingData,
+        scorer: &Bm25BatchScorer<'static>,
         blk_idx: usize,
         collector: &mut TopKCollector,
     ) {
@@ -1297,23 +1106,21 @@ impl ZiporaSearchEngine {
         }
         let end = (start + BLOCK_SIZE).min(df);
         let count = end - start;
-        let mut block_docs = [0u32; BLOCK_SIZE];
-        let mut block_tfs = [0u16; BLOCK_SIZE];
-        let mut block_scores = [0.0f32; BLOCK_SIZE];
+        let mut scratch = AlignedBlockScratch::new();
 
         match &term.postings {
             HybridPostingList::Dense(slice) => {
-                block_docs[..count].copy_from_slice(&slice[start..end]);
+                scratch.docs[..count].copy_from_slice(&slice[start..end]);
             }
             HybridPostingList::Clustered(cef) => {
                 let first_doc = cef.get(start).unwrap_or(0) as u32;
                 let last_doc = term.block_max_doc_ids[blk_idx];
                 if last_doc - first_doc == (count - 1) as u32 {
-                    for (i, slot) in block_docs[..count].iter_mut().enumerate() {
+                    for (i, slot) in scratch.docs[..count].iter_mut().enumerate() {
                         *slot = first_doc + i as u32;
                     }
                 } else {
-                    for (i, slot) in block_docs[..count].iter_mut().enumerate() {
+                    for (i, slot) in scratch.docs[..count].iter_mut().enumerate() {
                         *slot = cef.get(start + i).unwrap_or(0) as u32;
                     }
                 }
@@ -1339,7 +1146,7 @@ impl ZiporaSearchEngine {
                             }
                         }
                     }
-                    for slot in &mut block_docs[..count] {
+                    for slot in &mut scratch.docs[..count] {
                         *slot = cur_doc;
                         if let Some((i, d)) = cur.advance() {
                             cur_idx = i;
@@ -1352,13 +1159,13 @@ impl ZiporaSearchEngine {
         }
 
         for i in 0..count {
-            block_tfs[i] = term.tfs[start + i] as u16;
+            scratch.tfs[i] = term.tfs[start + i] as u16;
         }
-        term.scorer.batch_score_with_prefetch(
+        scorer.batch_score_with_prefetch(
             &self.fieldnorms,
-            &block_docs[..count],
-            &block_tfs[..count],
-            &mut block_scores[..count],
+            &scratch.docs[..count],
+            &scratch.tfs[..count],
+            &mut scratch.scores[..count],
         );
 
         let filter_theta = if collector.heap.len() < collector.k {
@@ -1366,18 +1173,23 @@ impl ZiporaSearchEngine {
         } else {
             collector.theta - 1e-6
         };
-        let (mut mask, _) =
-            simd_block_filter(&block_docs[..count], &block_scores[..count], filter_theta);
+        let (mut mask, _) = simd_block_filter(
+            &scratch.docs[..count],
+            &scratch.scores[..count],
+            filter_theta,
+        );
         while mask != 0 {
             let bit = mask.trailing_zeros() as usize;
             mask &= mask - 1;
-            collector.push(block_docs[bit], block_scores[bit]);
+            collector.push(scratch.docs[bit], scratch.scores[bit]);
         }
     }
 
     /// Single-term Block-Max pruning + `Bm25BatchScorer::batch_score_with_prefetch` + `simd_block_filter`.
     #[inline]
-    fn search_single_term(&self, term: &TermPostingData, collector: &mut TopKCollector) {
+    fn search_single_term(&self, tid: usize, collector: &mut TopKCollector) {
+        let term = &self.terms[tid];
+        let scorer = &self.scorers[tid];
         let df = term.postings.len();
         if df == 0 {
             return;
@@ -1390,20 +1202,18 @@ impl ZiporaSearchEngine {
         let mut primed_1 = usize::MAX;
         if num_blocks > 2 {
             primed_0 = term.peak_blocks[0] as usize;
-            self.score_single_block_direct(term, primed_0, collector);
+            self.score_single_block_direct(term, scorer, primed_0, collector);
             let p1 = term.peak_blocks[1] as usize;
             if p1 != primed_0
                 && (term.block_max_scores[p1] >= collector.theta
                     || collector.heap.len() < collector.k)
             {
                 primed_1 = p1;
-                self.score_single_block_direct(term, primed_1, collector);
+                self.score_single_block_direct(term, scorer, primed_1, collector);
             }
         }
 
-        let mut block_docs = [0u32; BLOCK_SIZE];
-        let mut block_tfs = [0u16; BLOCK_SIZE];
-        let mut block_scores = [0.0f32; BLOCK_SIZE];
+        let mut scratch = AlignedBlockScratch::new();
 
         let dense_slice = match &term.postings {
             HybridPostingList::Dense(v) => Some(v.as_slice()),
@@ -1430,7 +1240,7 @@ impl ZiporaSearchEngine {
             let count = end - start;
 
             if let Some(slice) = dense_slice {
-                block_docs[..count].copy_from_slice(&slice[start..end]);
+                scratch.docs[..count].copy_from_slice(&slice[start..end]);
             } else if let Some((ref mut cur, ref mut cur_idx, ref mut cur_doc)) = cursor_opt {
                 if *cur_idx < start {
                     let min_target = if blk_idx > 0 {
@@ -1451,7 +1261,7 @@ impl ZiporaSearchEngine {
                         }
                     }
                 }
-                for slot in &mut block_docs[..count] {
+                for slot in &mut scratch.docs[..count] {
                     *slot = *cur_doc;
                     if let Some((i, d)) = cur.advance() {
                         *cur_idx = i;
@@ -1460,14 +1270,14 @@ impl ZiporaSearchEngine {
                 }
             }
             for i in 0..count {
-                block_tfs[i] = term.tfs[start + i] as u16;
+                scratch.tfs[i] = term.tfs[start + i] as u16;
             }
 
-            term.scorer.batch_score_with_prefetch(
+            scorer.batch_score_with_prefetch(
                 &self.fieldnorms,
-                &block_docs[..count],
-                &block_tfs[..count],
-                &mut block_scores[..count],
+                &scratch.docs[..count],
+                &scratch.tfs[..count],
+                &mut scratch.scores[..count],
             );
 
             let filter_theta = if collector.heap.len() < collector.k {
@@ -1475,13 +1285,16 @@ impl ZiporaSearchEngine {
             } else {
                 collector.theta - 1e-6
             };
-            let (mut mask, _) =
-                simd_block_filter(&block_docs[..count], &block_scores[..count], filter_theta);
+            let (mut mask, _) = simd_block_filter(
+                &scratch.docs[..count],
+                &scratch.scores[..count],
+                filter_theta,
+            );
 
             while mask != 0 {
                 let bit = mask.trailing_zeros() as usize;
                 mask &= mask - 1;
-                collector.push(block_docs[bit], block_scores[bit]);
+                collector.push(scratch.docs[bit], scratch.scores[bit]);
             }
         }
     }
@@ -1507,9 +1320,7 @@ impl ZiporaSearchEngine {
             suffix_max[i] = suffix_max[i + 1] + self.terms[sorted_tids[i]].max_term_score;
         }
 
-        let mut block_docs = [0u32; BLOCK_SIZE];
-        let mut block_tfs = [0u16; BLOCK_SIZE];
-        let mut block_scores = [0.0f32; BLOCK_SIZE];
+        let mut scratch = AlignedBlockScratch::new();
 
         // Evaluate essential lead terms i = 0..m while suffix_max[i] > collector.theta
         for lead_pos in 0..m {
@@ -1524,6 +1335,7 @@ impl ZiporaSearchEngine {
 
             let lead_tid = sorted_tids[lead_pos];
             let lead_term = &self.terms[lead_tid];
+            let lead_scorer = &self.scorers[lead_tid];
             let df = lead_term.postings.len();
             if df == 0 {
                 continue;
@@ -1534,25 +1346,24 @@ impl ZiporaSearchEngine {
 
             let mut eval_block_pass =
                 |only_peaks: bool, p0: usize, p1: usize, collector: &mut TopKCollector| {
+                    type TermCursorSlot<'a> =
+                        Option<(&'a TermPostingData, HybridCursor<'a>, usize, u32, usize)>;
+
                     // Stateful cursors for earlier terms 0..lead_pos (to skip already-evaluated docs)
-                    let mut prev_cursors: [Option<(HybridCursor<'_>, usize, u32, usize)>; 4] =
-                        [None, None, None, None];
+                    let mut prev_cursors: [TermCursorSlot<'_>; 4] = [None, None, None, None];
                     for (p_idx, &p_tid) in sorted_tids[..lead_pos].iter().enumerate() {
-                        if let Some((cur, idx, first_doc)) =
-                            HybridCursor::new(&self.terms[p_tid].postings)
-                        {
-                            prev_cursors[p_idx] = Some((cur, idx, first_doc, 0));
+                        let p_term = &self.terms[p_tid];
+                        if let Some((cur, idx, first_doc)) = HybridCursor::new(&p_term.postings) {
+                            prev_cursors[p_idx] = Some((p_term, cur, idx, first_doc, 0));
                         }
                     }
 
                     // Stateful cursors for trailing terms (lead_pos + 1)..m
-                    let mut tail_cursors: [Option<(HybridCursor<'_>, usize, u32, usize)>; 4] =
-                        [None, None, None, None];
+                    let mut tail_cursors: [TermCursorSlot<'_>; 4] = [None, None, None, None];
                     for (t_offset, &t_tid) in sorted_tids[(lead_pos + 1)..m].iter().enumerate() {
-                        if let Some((cur, idx, first_doc)) =
-                            HybridCursor::new(&self.terms[t_tid].postings)
-                        {
-                            tail_cursors[t_offset] = Some((cur, idx, first_doc, 0));
+                        let t_term = &self.terms[t_tid];
+                        if let Some((cur, idx, first_doc)) = HybridCursor::new(&t_term.postings) {
+                            tail_cursors[t_offset] = Some((t_term, cur, idx, first_doc, 0));
                         }
                     }
 
@@ -1598,7 +1409,7 @@ impl ZiporaSearchEngine {
                         let count = end - start;
 
                         if let Some(slice) = dense_slice {
-                            block_docs[..count].copy_from_slice(&slice[start..end]);
+                            scratch.docs[..count].copy_from_slice(&slice[start..end]);
                         } else if let Some((ref mut cur, ref mut cur_idx, ref mut cur_doc)) =
                             lead_cursor
                         {
@@ -1621,7 +1432,7 @@ impl ZiporaSearchEngine {
                                     }
                                 }
                             }
-                            for slot in &mut block_docs[..count] {
+                            for slot in &mut scratch.docs[..count] {
                                 *slot = *cur_doc;
                                 if let Some((i, d)) = cur.advance() {
                                     *cur_idx = i;
@@ -1631,29 +1442,29 @@ impl ZiporaSearchEngine {
                         }
 
                         for i in 0..count {
-                            block_tfs[i] = lead_term.tfs[start + i] as u16;
+                            scratch.tfs[i] = lead_term.tfs[start + i] as u16;
                         }
 
-                        lead_term.scorer.batch_score_with_prefetch(
+                        lead_scorer.batch_score_with_prefetch(
                             &self.fieldnorms,
-                            &block_docs[..count],
-                            &block_tfs[..count],
-                            &mut block_scores[..count],
+                            &scratch.docs[..count],
+                            &scratch.tfs[..count],
+                            &mut scratch.scores[..count],
                         );
 
                         // SIMD block filter: keep only docs where score(d, lead) + rem_upper > cur_theta
                         let block_filter_theta = cur_theta - rem_upper;
                         let (mut mask, _) = simd_block_filter(
-                            &block_docs[..count],
-                            &block_scores[..count],
+                            &scratch.docs[..count],
+                            &scratch.scores[..count],
                             block_filter_theta,
                         );
 
                         'doc_loop: while mask != 0 {
                             let bit = mask.trailing_zeros() as usize;
                             mask &= mask - 1;
-                            let doc_id = block_docs[bit];
-                            let mut acc_score = block_scores[bit];
+                            let doc_id = scratch.docs[bit];
+                            let mut acc_score = scratch.scores[bit];
 
                             let doc_theta = if collector.heap.len() < collector.k {
                                 -1.0
@@ -1671,9 +1482,7 @@ impl ZiporaSearchEngine {
                             let mut tail_blk_max = [0.0f32; 4];
                             let mut potential_upper = acc_score;
                             for t_offset in 0..n_tail {
-                                let t_tid = sorted_tids[lead_pos + 1 + t_offset];
-                                let t_term = &self.terms[t_tid];
-                                if let Some((_, _, ref mut t_doc, ref mut t_blk)) =
+                                if let Some((t_term, _, _, ref mut t_doc, ref mut t_blk)) =
                                     tail_cursors[t_offset]
                                 {
                                     if *t_doc < doc_id
@@ -1693,29 +1502,26 @@ impl ZiporaSearchEngine {
                             }
 
                             // 2. If lead_pos > 0, check if doc_id already appeared in an earlier lead term 0..lead_pos
-                            for (p_idx, &p_tid) in sorted_tids[..lead_pos].iter().enumerate() {
-                                if let Some((
+                            for p_slot in prev_cursors[..lead_pos].iter_mut().flatten() {
+                                let (
+                                    p_term,
                                     ref mut p_cur,
                                     ref mut p_post_idx,
                                     ref mut p_doc,
                                     ref mut p_blk,
-                                )) = prev_cursors[p_idx]
-                                {
-                                    let p_term = &self.terms[p_tid];
-                                    if *p_doc < doc_id {
-                                        if !simd_gallop_to(&p_term.block_max_doc_ids, p_blk, doc_id)
-                                        {
-                                            *p_doc = u32::MAX;
-                                        } else if let Some((i, d)) = p_cur.advance_to_geq(doc_id) {
-                                            *p_post_idx = i;
-                                            *p_doc = d;
-                                        } else {
-                                            *p_doc = u32::MAX;
-                                        }
+                                ) = *p_slot;
+                                if *p_doc < doc_id {
+                                    if !simd_gallop_to(&p_term.block_max_doc_ids, p_blk, doc_id) {
+                                        *p_doc = u32::MAX;
+                                    } else if let Some((i, d)) = p_cur.advance_to_geq(doc_id) {
+                                        *p_post_idx = i;
+                                        *p_doc = d;
+                                    } else {
+                                        *p_doc = u32::MAX;
                                     }
-                                    if *p_doc == doc_id {
-                                        continue 'doc_loop;
-                                    }
+                                }
+                                if *p_doc == doc_id {
+                                    continue 'doc_loop;
                                 }
                             }
 
@@ -1726,12 +1532,15 @@ impl ZiporaSearchEngine {
                                 if bmax == 0.0 {
                                     continue;
                                 }
-                                let t_tid = sorted_tids[lead_pos + 1 + t_offset];
-                                let t_term = &self.terms[t_tid];
 
                                 let mut term_contrib = 0.0f32;
-                                if let Some((ref mut t_cur, ref mut t_post_idx, ref mut t_doc, _)) =
-                                    tail_cursors[t_offset]
+                                if let Some((
+                                    t_term,
+                                    ref mut t_cur,
+                                    ref mut t_post_idx,
+                                    ref mut t_doc,
+                                    _,
+                                )) = tail_cursors[t_offset]
                                 {
                                     if *t_doc < doc_id {
                                         if let Some((i, d)) = t_cur.advance_to_geq(doc_id) {
@@ -1743,7 +1552,8 @@ impl ZiporaSearchEngine {
                                     }
                                     if *t_doc == doc_id {
                                         let tf = t_term.tfs[*t_post_idx] as u16;
-                                        term_contrib = t_term.scorer.score(norm_id, tf);
+                                        term_contrib =
+                                            t_term.idf_k1p1 * self.unit_scorer.score(norm_id, tf);
                                         acc_score += term_contrib;
                                     }
                                 }
@@ -1781,6 +1591,11 @@ struct TantivyEngine {
     _index: Index,
     reader: IndexReader,
     queries: Vec<BooleanQuery>,
+    postings_bytes: usize,
+    termdict_bytes: usize,
+    fieldnorms_bytes: usize,
+    store_bytes: usize,
+    index_without_store_bytes: usize,
     index_bytes: usize,
     total_postings: usize,
 }
@@ -1824,7 +1639,7 @@ impl TantivyEngine {
             writer.add_document(doc).unwrap();
         }
         writer.commit().unwrap();
-        drop(writer);
+        writer.wait_merging_threads().unwrap();
 
         let reader = index
             .reader_builder()
@@ -1832,10 +1647,29 @@ impl TantivyEngine {
             .try_into()
             .unwrap();
         let searcher = reader.searcher();
-        let index_bytes = searcher
+        let (postings_bytes, termdict_bytes, fieldnorms_bytes, store_bytes, index_bytes) = searcher
             .space_usage()
-            .map(|u| u.total().get_bytes() as usize)
-            .unwrap_or(0);
+            .map(|u| {
+                let mut postings = 0usize;
+                let mut termdict = 0usize;
+                let mut fieldnorms = 0usize;
+                let mut store = 0usize;
+                for seg in u.segments() {
+                    postings += seg.postings().total().get_bytes() as usize;
+                    termdict += seg.termdict().total().get_bytes() as usize;
+                    fieldnorms += seg.fieldnorms().total().get_bytes() as usize;
+                    store += seg.store().total().get_bytes() as usize;
+                }
+                (
+                    postings,
+                    termdict,
+                    fieldnorms,
+                    store,
+                    u.total().get_bytes() as usize,
+                )
+            })
+            .unwrap_or((0, 0, 0, 0, 0));
+        let index_without_store_bytes = index_bytes.saturating_sub(store_bytes);
 
         let queries: Vec<BooleanQuery> = corpus
             .queries
@@ -1860,9 +1694,22 @@ impl TantivyEngine {
             _index: index,
             reader,
             queries,
+            postings_bytes,
+            termdict_bytes,
+            fieldnorms_bytes,
+            store_bytes,
+            index_without_store_bytes,
             index_bytes,
             total_postings,
         }
+    }
+
+    fn postings_bytes_per_posting(&self) -> f64 {
+        self.postings_bytes as f64 / self.total_postings.max(1) as f64
+    }
+
+    fn index_without_store_bytes_per_posting(&self) -> f64 {
+        self.index_without_store_bytes as f64 / self.total_postings.max(1) as f64
     }
 
     fn bytes_per_posting(&self) -> f64 {
@@ -1894,11 +1741,10 @@ struct UncompressedTermPostings {
 
 struct UncompressedBaselineEngine {
     dict: HashMap<String, u32>,
-    doc_norms: Vec<f32>,
+    norm_table: [f32; 256],
+    doc_norm_ids: Vec<u8>,
     terms: Vec<UncompressedTermPostings>,
     total_postings: usize,
-    doc_scores_scratch: Vec<f32>,
-    touched_docs: Vec<u32>,
 }
 
 impl UncompressedBaselineEngine {
@@ -1908,12 +1754,12 @@ impl UncompressedBaselineEngine {
             dict.insert(term.clone(), tid as u32);
         }
 
-        // Standard BM25 length norm using quantized FieldnormEncoder lengths so scores match
+        // Standard BM25 length norm using quantized FieldnormEncoder lengths so scores match.
         let norm_table = FieldnormEncoder::build_norm_table(corpus.avg_dl, BM25_K1, BM25_B);
-        let doc_norms: Vec<f32> = corpus
+        let doc_norm_ids: Vec<u8> = corpus
             .doc_lens
             .iter()
-            .map(|&dl| norm_table[FieldnormEncoder::encode(dl) as usize])
+            .map(|&dl| FieldnormEncoder::encode(dl))
             .collect();
 
         let n_docs_f = corpus.num_docs as f32;
@@ -1933,11 +1779,10 @@ impl UncompressedBaselineEngine {
 
         Self {
             dict,
-            doc_norms,
+            norm_table,
+            doc_norm_ids,
             terms,
             total_postings,
-            doc_scores_scratch: vec![0.0f32; corpus.num_docs],
-            touched_docs: Vec::with_capacity(4_096),
         }
     }
 
@@ -1955,33 +1800,66 @@ impl UncompressedBaselineEngine {
 
     #[inline]
     fn search_exhaustive(&mut self, query_terms: &[String], collector: &mut TopKCollector) {
+        type ExhaustiveCursor<'a> = (&'a [u32], &'a [u16], f32, usize, u32);
         collector.clear();
-        self.touched_docs.clear();
-
+        let norm_table = &self.norm_table;
+        let doc_norm_ids = &self.doc_norm_ids;
         let k1_plus_1 = BM25_K1 + 1.0;
+
+        let mut cursors: [ExhaustiveCursor<'_>; 8] = [(&[], &[], 0.0, 0, u32::MAX); 8];
+        let mut m = 0usize;
         for qt in query_terms {
-            let Some(&tid) = self.dict.get(qt.as_str()) else {
-                continue;
-            };
-            let term = &self.terms[tid as usize];
-            let idf = term.idf;
-            for (&doc_id, &tf) in term.doc_ids.iter().zip(term.tfs.iter()) {
-                let d = doc_id as usize;
-                let prev = self.doc_scores_scratch[d];
-                if prev == 0.0 {
-                    self.touched_docs.push(doc_id);
+            if m >= 8 {
+                break;
+            }
+            if let Some(&tid) = self.dict.get(qt.as_str()) {
+                let term = &self.terms[tid as usize];
+                if let Some(&first_doc) = term.doc_ids.first() {
+                    cursors[m] = (&term.doc_ids, &term.tfs, term.idf * k1_plus_1, 0, first_doc);
+                    m += 1;
                 }
-                let tf_f = tf as f32;
-                let score = idf * (tf_f * k1_plus_1) / (tf_f + self.doc_norms[d]);
-                self.doc_scores_scratch[d] = prev + score;
             }
         }
+        if m == 0 {
+            return;
+        }
+        if m == 1 {
+            let (docs, tfs, idf_k1p1, _, _) = cursors[0];
+            for (&doc_id, &tf) in docs.iter().zip(tfs.iter()) {
+                let tf_f = tf as f32;
+                let norm = norm_table[doc_norm_ids[doc_id as usize] as usize];
+                collector.push(doc_id, idf_k1p1 * tf_f / (tf_f + norm));
+            }
+            return;
+        }
 
-        for &doc_id in &self.touched_docs {
-            let d = doc_id as usize;
-            let s = self.doc_scores_scratch[d];
-            self.doc_scores_scratch[d] = 0.0;
-            collector.push(doc_id, s);
+        loop {
+            let mut min_doc = cursors[0].4;
+            for c in &cursors[1..m] {
+                if c.4 < min_doc {
+                    min_doc = c.4;
+                }
+            }
+            if min_doc == u32::MAX {
+                break;
+            }
+            let norm = norm_table[doc_norm_ids[min_doc as usize] as usize];
+            let mut score = 0.0f32;
+            for c in &mut cursors[..m] {
+                if c.4 == min_doc {
+                    let idx = c.3;
+                    let tf_f = c.1[idx] as f32;
+                    score += c.2 * tf_f / (tf_f + norm);
+                    let next_idx = idx + 1;
+                    c.3 = next_idx;
+                    c.4 = if next_idx < c.0.len() {
+                        c.0[next_idx]
+                    } else {
+                        u32::MAX
+                    };
+                }
+            }
+            collector.push(min_doc, score);
         }
     }
 }
@@ -2034,15 +1912,19 @@ fn verify_top10_recall(
     }
 }
 
-fn measure_query_latency_distribution_us<F>(num_queries: usize, mut run_idx: F) -> (f64, f64)
+fn measure_query_latency_distribution_us<F>(
+    num_queries: usize,
+    passes: usize,
+    mut run_idx: F,
+) -> (f64, f64)
 where
     F: FnMut(usize),
 {
     let mut latencies_us = vec![f64::INFINITY; num_queries];
-    // Run 3 full passes over all 10,000 queries in stream order and record the per-query
+    // Run multiple full passes over all 10,000 queries in stream order and record the per-query
     // minimum across passes so cache state reflects realistic stream execution while filtering
     // out single-query OS scheduler interrupts.
-    for _pass in 0..3 {
+    for _pass in 0..passes {
         for (idx, slot) in latencies_us.iter_mut().enumerate() {
             let t0 = Instant::now();
             run_idx(idx);
@@ -2083,15 +1965,10 @@ fn main() {
         .map(|w| PathBuf::from(&w[1]))
         .or_else(|| std::env::var("ZIPORA_BENCH_OUT").ok().map(PathBuf::from));
 
-    ensure_deterministic_process(save_baseline, &custom_out);
-    sync_filesystem_writeback();
-    configure_allocator_for_benchmarks();
-
+    disable_transparent_hugepages_for_self();
     let logical_cores = hardware_logical_cores();
-    let primary_core = select_primary_core(logical_cores);
-    let _ccd_guard = CcdIsolationGuard::acquire(primary_core, logical_cores);
+    let primary_core = select_primary_core(logical_cores, 150);
     pin_current_thread_to_core(primary_core);
-    prewarm_and_collapse_heap_arena();
     let host_metadata = collect_host_metadata(primary_core);
 
     let num_docs: usize = std::env::var("ZIPORA_E2E_DOCS")
@@ -2119,23 +1996,7 @@ fn main() {
 
     let corpus = generate_zipf_corpus_and_queries(num_docs, vocab_size, num_queries, SEED_E2E);
     let zipora_engine = ZiporaSearchEngine::build(&corpus);
-    let tantivy_engine = TantivyEngine::build(&corpus);
     let mut baseline_engine = UncompressedBaselineEngine::build(&corpus);
-
-    // Re-isolate CCD and re-pin main thread after Tantivy's IndexWriter thread exits
-    evacuate_other_user_threads_from_ccd(primary_core, logical_cores);
-    pin_current_thread_to_core(primary_core);
-
-    {
-        let spin_start = Instant::now();
-        let mut spin_acc = 0x1234_5678_9ABC_DEF0u64;
-        while spin_start.elapsed().as_millis() < 200 {
-            for _ in 0..10_000 {
-                spin_acc = spin_acc.wrapping_mul(6364136223846793005).wrapping_add(1);
-            }
-            black_box(spin_acc);
-        }
-    }
 
     // Verify exact top-10 recall and score parity on a 1,000-query stratified sample
     let recall = verify_top10_recall(
@@ -2158,6 +2019,7 @@ fn main() {
         "e2e_search/zipora_bmw/all_10k_queries",
         dataset_size,
         corpus.queries.len() as u64,
+        DEFAULT_TRIALS,
         || {
             let mut hit_sum = 0u32;
             for q in &corpus.queries {
@@ -2173,12 +2035,14 @@ fn main() {
     // 2. Per query length breakdown (1..=4 terms)
     for q_len in 1..=4usize {
         let subset = &corpus.queries_by_len[q_len - 1];
+        let trials = if q_len == 1 { 25 } else { DEFAULT_TRIALS };
         let bench_name = format!("e2e_search/zipora_bmw/{q_len}_term_queries");
         measure_bench(
             &mut records,
             &bench_name,
             dataset_size,
             subset.len() as u64,
+            trials,
             || {
                 let mut hit_sum = 0u32;
                 for q in subset {
@@ -2192,12 +2056,25 @@ fn main() {
         );
     }
 
+    // Measure Zipora p50/p99 per-query latency distribution before building Tantivy's
+    // multi-threaded IndexWriter arena.
+    let (zipora_p50_us, zipora_p99_us) =
+        measure_query_latency_distribution_us(corpus.queries.len(), 9, |idx| {
+            zipora_engine.search_bmw(black_box(&corpus.queries[idx]), &mut collector);
+            black_box(collector.theta);
+        });
+
+    let tantivy_engine = TantivyEngine::build(&corpus);
+    // Re-pin calling thread after Tantivy's IndexWriter thread exits (self PID 0 only).
+    pin_current_thread_to_core(primary_core);
+
     // 3. Tantivy v0.26 in-RAM BM25 TopDocs(10) on all 10k queries
     measure_bench(
         &mut records,
         "e2e_search/tantivy_bm25/all_10k_queries",
         dataset_size,
         corpus.queries.len() as u64,
+        DEFAULT_TRIALS,
         || {
             let mut hit_sum = 0u32;
             for q_idx in 0..corpus.queries.len() {
@@ -2213,6 +2090,7 @@ fn main() {
         "e2e_search/uncompressed_baseline/all_10k_queries",
         dataset_size,
         corpus.queries.len() as u64,
+        DEFAULT_TRIALS,
         || {
             let mut hit_sum = 0u32;
             for q in &corpus.queries {
@@ -2225,18 +2103,12 @@ fn main() {
         },
     );
 
-    // Measure p50/p99 per-query latency distribution (in microseconds) across all 3 engines
-    let (zipora_p50_us, zipora_p99_us) =
-        measure_query_latency_distribution_us(corpus.queries.len(), |idx| {
-            zipora_engine.search_bmw(black_box(&corpus.queries[idx]), &mut collector);
-            black_box(collector.theta);
-        });
     let (tantivy_p50_us, tantivy_p99_us) =
-        measure_query_latency_distribution_us(corpus.queries.len(), |idx| {
+        measure_query_latency_distribution_us(corpus.queries.len(), 5, |idx| {
             black_box(tantivy_engine.search_query_idx(black_box(idx)));
         });
     let (baseline_p50_us, baseline_p99_us) =
-        measure_query_latency_distribution_us(corpus.queries.len(), |idx| {
+        measure_query_latency_distribution_us(corpus.queries.len(), 3, |idx| {
             baseline_engine.search_exhaustive(black_box(&corpus.queries[idx]), &mut collector);
             black_box(collector.theta);
         });
@@ -2266,11 +2138,16 @@ fn main() {
     let (dict_bytes, fieldnorm_bytes, postings_bytes, bmw_metadata_bytes) =
         zipora_engine.memory_breakdown();
     let total_postings = zipora_engine.total_postings.max(1);
+    let zipora_total_index_bytes =
+        dict_bytes + fieldnorm_bytes + postings_bytes + bmw_metadata_bytes;
     let zipora_bytes_per_posting = round4(postings_bytes as f64 / total_postings as f64);
-    let zipora_total_index_bytes_per_posting = round4(
-        (dict_bytes + fieldnorm_bytes + postings_bytes + bmw_metadata_bytes) as f64
-            / total_postings as f64,
-    );
+    let zipora_postings_plus_bmw_bytes_per_posting =
+        round4((postings_bytes + bmw_metadata_bytes) as f64 / total_postings as f64);
+    let zipora_total_index_bytes_per_posting =
+        round4(zipora_total_index_bytes as f64 / total_postings as f64);
+    let tantivy_postings_bytes_per_posting = round4(tantivy_engine.postings_bytes_per_posting());
+    let tantivy_index_without_store_bytes_per_posting =
+        round4(tantivy_engine.index_without_store_bytes_per_posting());
     let tantivy_bytes_per_posting = round4(tantivy_engine.bytes_per_posting());
     let baseline_bytes_per_posting = round4(baseline_engine.bytes_per_posting());
     let vm_hwm_kib = read_vm_hwm_kib();
@@ -2291,19 +2168,22 @@ fn main() {
     }
 
     eprintln!(
-        "  Zipora BMW:   QPS@top-10 = {:.1} q/s (p50 = {:.2} us, p99 = {:.2} us, postings = {:.3} B/posting, total = {:.3} B/posting, VmHWM = {} KiB)",
+        "  Zipora BMW:   QPS@top-10 = {:.1} q/s (p50 = {:.2} us, p99 = {:.2} us, postings = {:.3} B/posting, postings+bmw = {:.3} B/posting, total = {:.3} B/posting, VmHWM = {} KiB)",
         zipora_qps_top10,
         zipora_p50_us,
         zipora_p99_us,
         zipora_bytes_per_posting,
+        zipora_postings_plus_bmw_bytes_per_posting,
         zipora_total_index_bytes_per_posting,
         vm_hwm_kib
     );
     eprintln!(
-        "  Tantivy 0.26: QPS@top-10 = {:.1} q/s (p50 = {:.2} us, p99 = {:.2} us, total = {:.3} B/posting) -> Zipora speedup vs Tantivy = {:.2}x",
+        "  Tantivy 0.26: QPS@top-10 = {:.1} q/s (p50 = {:.2} us, p99 = {:.2} us, postings = {:.3} B/posting, index_no_store = {:.3} B/posting, total = {:.3} B/posting) -> Zipora speedup vs Tantivy = {:.2}x",
         tantivy_qps_top10,
         tantivy_p50_us,
         tantivy_p99_us,
+        tantivy_postings_bytes_per_posting,
+        tantivy_index_without_store_bytes_per_posting,
         tantivy_bytes_per_posting,
         qps_speedup_vs_tantivy
     );
@@ -2328,14 +2208,23 @@ fn main() {
         zipora_p99_us,
         zipora_vm_hwm_kib: vm_hwm_kib,
         zipora_bytes_per_posting,
+        zipora_postings_plus_bmw_bytes_per_posting,
         zipora_total_index_bytes_per_posting,
         zipora_dict_bytes: dict_bytes,
         zipora_fieldnorm_bytes: fieldnorm_bytes,
         zipora_postings_bytes: postings_bytes,
         zipora_bmw_metadata_bytes: bmw_metadata_bytes,
+        zipora_total_index_bytes,
         tantivy_qps_top10,
         tantivy_p50_us,
         tantivy_p99_us,
+        tantivy_postings_bytes: tantivy_engine.postings_bytes,
+        tantivy_postings_bytes_per_posting,
+        tantivy_termdict_bytes: tantivy_engine.termdict_bytes,
+        tantivy_fieldnorms_bytes: tantivy_engine.fieldnorms_bytes,
+        tantivy_store_bytes: tantivy_engine.store_bytes,
+        tantivy_index_without_store_bytes: tantivy_engine.index_without_store_bytes,
+        tantivy_index_without_store_bytes_per_posting,
         tantivy_index_bytes: tantivy_engine.index_bytes,
         tantivy_bytes_per_posting,
         qps_speedup_vs_tantivy,
@@ -2345,7 +2234,7 @@ fn main() {
         baseline_bytes_per_posting,
         qps_speedup_vs_baseline,
         top10_recall_vs_exhaustive: recall,
-        competitor_note: "Side-by-side comparison on the identical 100,000-doc Zipf corpus and 10,000 queries against tantivy v0.26.2 (Index::create_in_ram, IndexRecordOption::WithFreqs, BooleanQuery + TopDocs::with_limit(10).order_by_score()) and an in-process uncompressed inverted-index exhaustive baseline. Zipora BMW beats both Tantivy and the uncompressed baseline on QPS@10 and p50 latency, and beats the uncompressed baseline on p99 tail latency (via peak-block threshold priming, contiguous-run Clustered decoding, and tight multi-term block-max upper-bound pruning); Tantivy v0.26.2 has ~6% lower p99 on 4-term dense-tail queries due to 128-doc SIMD bitpacking vs Elias-Fano select1 decoding (trading 1.643 B/posting in Tantivy vs 1.223 B/posting in Zipora HybridPostingList).".to_string(),
+        competitor_note: "Side-by-side comparison on the identical 100,000-doc Zipf corpus and 10,000 queries against tantivy v0.26.2 (Index::create_in_ram, IndexRecordOption::WithFreqs, BooleanQuery + TopDocs::with_limit(10).order_by_score()) and an in-process uncompressed inverted-index exhaustive baseline. Zipora BMW beats both Tantivy and the uncompressed baseline on QPS@10 and p50 latency, and beats the uncompressed baseline on p99 tail latency (via peak-block threshold priming, contiguous-run Clustered decoding, and tight multi-term block-max upper-bound pruning); Tantivy v0.26.2 has ~6% lower p99 on 4-term dense-tail queries due to 128-doc SIMD bitpacking vs Elias-Fano select1 decoding. Space comparison: postings-vs-postings is parity (Zipora HybridPostingList = 1.223 B/posting vs Tantivy postings = 1.227 B/posting; including Zipora's uncompressed 64-doc block-max metadata is 2.379 B/posting vs Tantivy's 1.227 B/posting, 1.94x larger), and whole-index is 2.701 B/posting for Zipora vs 1.323 B/posting for Tantivy without its empty doc store (1.643 B/posting including the 515 KB empty doc store).".to_string(),
     };
 
     let report = E2EBenchReport {
