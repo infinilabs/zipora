@@ -2842,7 +2842,7 @@ mod tests {
             if create_err.is_some() && aligned.is_some() {
                 break;
             }
-            fillers.push(MmapMut::map_anon(page).unwrap());
+            fillers.push(MmapMut::map_anon(2 * 8192 + page).unwrap());
         }
 
         let path = dir.path().join("handmade.mmap");
@@ -2872,7 +2872,7 @@ mod tests {
             if open_err.is_some() && opened.is_some() {
                 break;
             }
-            fillers.push(MmapMut::map_anon(page).unwrap());
+            fillers.push(MmapMut::map_anon(2 * 8192 + page).unwrap());
         }
 
         let mut remap_err = None;
@@ -2889,7 +2889,7 @@ mod tests {
                     remap_err = Some(e);
                     break;
                 }
-                fillers.push(MmapMut::map_anon(page).unwrap());
+                fillers.push(MmapMut::map_anon(4 * 8192 + page).unwrap());
             }
             after = Some(
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -3352,18 +3352,11 @@ mod tests {
 
         // Check temp-file cleanup when `from_new_file` fails after creating
         // the file (here via a misaligned `Page8k` mapping on 4 KiB pages).
-        let files_with_prefix = || -> std::collections::BTreeSet<PathBuf> {
-            std::fs::read_dir(std::env::temp_dir())
-                .unwrap()
-                .filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with(&prefix))
-                })
-                .collect()
-        };
-        let before = files_with_prefix();
+        // Track the exact thread-local `fastrand` suffixes and counter range
+        // rather than calling `read_dir(temp_dir())`, which can stall for
+        // seconds when `TMPDIR` contains hundreds of thousands of entries.
+        let mut rng = fastrand::Rng::with_seed(fastrand::get_seed());
+        let mut tried_rands = Vec::new();
         // SAFETY: sysconf has no preconditions; _SC_PAGESIZE is a valid name.
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         let mut saw_misaligned = false;
@@ -3374,6 +3367,19 @@ mod tests {
             let mut fillers = Vec::new();
             let mut keep = Vec::new();
             for _ in 0..256 {
+                // Probe with an anonymous 16 KiB mapping (matching `Page8k`
+                // capacity-1 file size without disk fsyncs) and 20 KiB steps
+                // until the next 16 KiB VMA slot is misaligned for `Page8k`.
+                for _ in 0..64 {
+                    let probe = MmapMut::map_anon(2 * 8192).unwrap();
+                    if !probe.as_ptr().addr().is_multiple_of(8192) {
+                        drop(probe);
+                        break;
+                    }
+                    fillers.push(probe);
+                    fillers.push(MmapMut::map_anon(2 * 8192 + page).unwrap());
+                }
+                tried_rands.push(rng.u64(..));
                 match MmapVec::<Page8k>::with_capacity_simd(1) {
                     Ok(v) => keep.push(v),
                     Err(ZiporaError::Misaligned { required: 8192, .. }) => {
@@ -3382,13 +3388,41 @@ mod tests {
                     }
                     Err(_) => {}
                 }
-                fillers.push(MmapMut::map_anon(page).unwrap());
+                fillers.push(MmapMut::map_anon(2 * 8192 + page).unwrap());
             }
             drop(keep);
         } else {
             saw_misaligned = true;
         }
-        let leaked: Vec<PathBuf> = files_with_prefix().difference(&before).cloned().collect();
+        let after_rand = rng.u64(..);
+        let after_vec = MmapVec::<u64>::with_capacity_simd(4).unwrap();
+        let after_name = after_vec
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap()
+            .to_string();
+        drop(after_vec);
+        let after_rest = after_name.strip_prefix(&prefix).unwrap();
+        let after_digits: String = after_rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        let end_counter: u64 = after_digits.parse().unwrap();
+        assert!(
+            after_name.ends_with(&format!("_{after_rand:016x}.dat")),
+            "thread-local fastrand out of sync: {after_name} vs {after_rand:016x}"
+        );
+        let temp_dir = std::env::temp_dir();
+        let mut leaked = Vec::new();
+        for c in (counter + 1)..end_counter {
+            for &rand in &tried_rands {
+                let candidate = temp_dir.join(format!("{prefix}{c}_{rand:016x}.dat"));
+                if candidate.exists() {
+                    leaked.push(candidate);
+                }
+            }
+        }
         for p in &leaked {
             let _ = std::fs::remove_file(p);
         }
