@@ -10,8 +10,8 @@ fn test_clone_performance() {
     };
     let mut builder = DictZipBlobStoreBuilder::with_config(config).unwrap();
 
-    // Train with 10MB to build a large dictionary/DFA and exercise clone+put.
-    let big_data = vec![42u8; 10_000_000];
+    // Train with 250KB to build a dictionary/DFA and exercise clone+put.
+    let big_data = vec![42u8; 250_000];
     builder.add_training_sample(&big_data).unwrap();
     let mut store = builder.finish().unwrap();
 

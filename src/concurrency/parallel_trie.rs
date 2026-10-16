@@ -559,14 +559,25 @@ mod tests {
     /// instead of parking behind CPU-bound rayon work.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_parallel_process_does_not_hold_replica_lock() {
-        use std::time::{Duration, Instant};
+        use std::sync::mpsc::sync_channel;
+        use std::time::Duration;
+        use tokio::sync::Notify;
 
         let trie = ParallelLoudsTrie::new();
         trie.insert(b"key").await.unwrap();
 
+        let entered = Arc::new(Notify::new());
+        let entered_in_op = Arc::clone(&entered);
+        let (release_tx, release_rx) = sync_channel::<()>(1);
+        let release_rx = std::sync::Mutex::new(release_rx);
+
         let slow = {
-            let ops = vec![|t: &ZiporaTrie| {
-                std::thread::sleep(Duration::from_millis(1000));
+            let ops = vec![move |t: &ZiporaTrie| {
+                entered_in_op.notify_one();
+                let _ = release_rx
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_millis(500));
                 Ok(t.len())
             }];
             let trie = ParallelLoudsTrie {
@@ -577,13 +588,15 @@ mod tests {
             tokio::spawn(async move { trie.parallel_process(ops).await })
         };
 
-        // Give the slow operation time to start on the blocking pool
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait until the rayon operation is actively executing on the blocking pool.
+        entered.notified().await;
 
-        let start = Instant::now();
-        assert!(trie.contains(b"key").await);
-        assert!(
-            start.elapsed() < Duration::from_millis(500),
+        let contains_res =
+            tokio::time::timeout(Duration::from_millis(250), trie.contains(b"key")).await;
+        let _ = release_tx.send(());
+        assert_eq!(
+            contains_res,
+            Ok(true),
             "contains() blocked behind parallel_process — replica lock held across rayon work"
         );
 

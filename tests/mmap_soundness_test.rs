@@ -6,7 +6,7 @@ use zipora::memory::{MmapVecConfig, mmap_vec::MmapVec};
 fn test_path(name: &str) -> std::path::PathBuf {
     let dir = std::path::PathBuf::from("target/test_tmp");
     let _ = std::fs::create_dir_all(&dir);
-    dir.join(name)
+    dir.join(format!("{}_{}", std::process::id(), name))
 }
 
 /// Verify that MmapVec works correctly with Pod types (all bit patterns valid).
