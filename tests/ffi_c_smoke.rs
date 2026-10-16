@@ -17,18 +17,10 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-struct CleanupDir(PathBuf);
-
-impl Drop for CleanupDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
 fn build_fresh_staticlib(root: &Path, out_archive: &Path) {
     let build_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("ffi_staticlib_target");
-    let _ = fs::remove_dir_all(&build_dir);
-    let _cleanup = CleanupDir(build_dir.clone());
+    let built = build_dir.join("debug/libzipora.a");
+    let _ = fs::remove_file(&built);
 
     let output = Command::new("cargo")
         .current_dir(root)
