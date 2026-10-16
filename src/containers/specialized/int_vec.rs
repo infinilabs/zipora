@@ -750,9 +750,23 @@ impl<T: PackedInt> IntVec<T> {
         CompressionStrategy::MinMax { min_val, bit_width }
     }
 
+    /// Stride between sampled prefix-sum checkpoints stored in `self.index` for
+    /// non-uniform `CompressionStrategy::Delta` vectors (`1` checkpoint per 64 elements
+    /// = 8 bytes per 64 elements = 1 bit/element, bounding `get_delta` to <= 63 bit reads).
+    const DELTA_SAMPLE_STRIDE: usize = 64;
+
     fn analyze_delta(values: &[u64]) -> CompressionStrategy {
         if values.len() < 2 {
             return CompressionStrategy::Raw;
+        }
+
+        if let Some(uniform_delta) = Self::detect_uniform_delta(values) {
+            return CompressionStrategy::Delta {
+                base_val: values[0],
+                delta_width: if uniform_delta == 0 { 1 } else { 0 },
+                is_uniform: true,
+                uniform_delta: Some(uniform_delta),
+            };
         }
 
         let base_val = values[0];
@@ -845,8 +859,17 @@ impl<T: PackedInt> IntVec<T> {
             CompressionStrategy::MinMax { bit_width, .. } => {
                 (len * bit_width as usize).div_ceil(8).max(32)
             }
-            CompressionStrategy::Delta { delta_width, .. } => {
-                8 + (len * delta_width as usize).div_ceil(8).max(32) // base + deltas
+            CompressionStrategy::Delta {
+                delta_width,
+                is_uniform,
+                ..
+            } => {
+                if is_uniform {
+                    16
+                } else {
+                    let index_size = (len.saturating_sub(1) / Self::DELTA_SAMPLE_STRIDE) * 8;
+                    8 + index_size + (len * delta_width as usize).div_ceil(8).max(32)
+                }
             }
             CompressionStrategy::BlockBased {
                 block_size,
@@ -966,6 +989,18 @@ impl<T: PackedInt> IntVec<T> {
             let delta = values[i] - values[i - 1];
             self.write_bits(&mut data[8..], delta, bit_offset, delta_width)?;
             bit_offset += delta_width as usize;
+        }
+
+        let num_samples = (values.len() - 1) / Self::DELTA_SAMPLE_STRIDE;
+        if num_samples > 0 {
+            let mut index_data = Vec::with_capacity(num_samples * 8);
+            for sample_idx in 1..=num_samples {
+                let val = values[sample_idx * Self::DELTA_SAMPLE_STRIDE];
+                index_data.extend_from_slice(&val.to_le_bytes());
+            }
+            self.index = Some(index_data.into_boxed_slice());
+        } else {
+            self.index = None;
         }
 
         self.data = data.into_boxed_slice();
@@ -1176,22 +1211,30 @@ impl<T: PackedInt> IntVec<T> {
         }
 
         let bit_offset = (index - 1) * delta_width as usize;
-        match self.read_bits(&self.data[8..], bit_offset, delta_width) {
-            Ok(_delta) => {
-                // Reconstruct value by summing deltas
-                let mut current_val = base_val;
-                for i in 1..=index {
-                    let delta_offset = (i - 1) * delta_width as usize;
-                    if let Ok(delta) = self.read_bits(&self.data[8..], delta_offset, delta_width) {
-                        current_val += delta;
-                    } else {
-                        return None;
-                    }
-                }
-                Some(current_val)
+        self.read_bits(&self.data[8..], bit_offset, delta_width).ok()?;
+
+        let sample_idx = index / Self::DELTA_SAMPLE_STRIDE;
+        let (start_idx, mut current_val) = if sample_idx > 0
+            && let Some(index_data) = self.index.as_deref()
+            && let Some(sample_bytes) = index_data.get((sample_idx - 1) * 8..sample_idx * 8)
+        {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(sample_bytes);
+            (sample_idx * Self::DELTA_SAMPLE_STRIDE, u64::from_le_bytes(buf))
+        } else {
+            (0, base_val)
+        };
+
+        // Reconstruct value by summing at most DELTA_SAMPLE_STRIDE - 1 deltas from the nearest checkpoint
+        for i in (start_idx + 1)..=index {
+            let delta_offset = (i - 1) * delta_width as usize;
+            if let Ok(delta) = self.read_bits(&self.data[8..], delta_offset, delta_width) {
+                current_val += delta;
+            } else {
+                return None;
             }
-            Err(_) => None,
         }
+        Some(current_val)
     }
 
     fn get_block_based(
@@ -1560,6 +1603,48 @@ mod tests {
             res.is_err(),
             "IntVec::from_slice must return Err on >8-byte PackedInt rather than panicking/aborting via zipora_verify!"
         );
+    }
+
+    #[test]
+    fn test_s39_r5_non_uniform_delta_get_is_bounded_o1() {
+        // Non-uniform sorted sequence of 50,000 elements (alternating deltas +1, +2)
+        // forces `CompressionStrategy::Delta { is_uniform: false, .. }`.
+        // Previously `get_delta(index)` re-summed all deltas `1..=index` on every call,
+        // making 4,000 tail lookups execute ~196,000,000 `read_bits` calls (> 1.5s even in release).
+        let n = if cfg!(miri) { 256usize } else { 50_000usize };
+        let mut values = Vec::with_capacity(n);
+        let mut acc = 1_000u64;
+        for i in 0..n {
+            values.push(acc);
+            acc += if i % 2 == 0 { 1 } else { 2 };
+        }
+
+        let vec = IntVec::from_slice(&values).expect("from_slice must succeed");
+        assert!(
+            matches!(
+                vec.strategy,
+                CompressionStrategy::Delta {
+                    is_uniform: false,
+                    ..
+                }
+            ),
+            "expected non-uniform Delta strategy, got {:?}",
+            vec.strategy
+        );
+
+        let query_count = if cfg!(miri) { 64usize } else { 4_000usize };
+        let start_idx = n - query_count;
+        let t0 = std::time::Instant::now();
+        for i in start_idx..n {
+            assert_eq!(vec.get(i), Some(values[i]), "mismatch at index {i}");
+        }
+        let elapsed = t0.elapsed();
+        if !cfg!(miri) {
+            assert!(
+                elapsed < std::time::Duration::from_millis(250),
+                "4,000 tail lookups on 50,000-element non-uniform Delta IntVec took {elapsed:?} (expected < 250ms with sampled prefix checkpoints; O(index) re-summing takes > 500ms)"
+            );
+        }
     }
 }
 
