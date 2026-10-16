@@ -89,15 +89,15 @@ test_simd_base64:
 # BENCHMARK
 # =============================================================================
 #
-# Benchmark runner configuration (S37-R2 / S38-R4 / Rule B3):
+# Benchmark runner configuration (S37-R2 / S38-R4 / S39-R4 / Rule B3):
 # - Reference host: `bindiego` (AMD EPYC 7B13, 64 logical cores across 4 Zen 3 CCDs)
 # - Pinned CPU core: self-pinned (`pid = 0` only) via `select_primary_core` (default core 23
-#   on interior CCD 2 or quietest physical core from read-only `/proc/stat`; override via `ZIPORA_BENCH_PIN_CORE`)
+#   on interior CCD 2; override via `ZIPORA_BENCH_PIN_CORE`)
 # - Compiler flags: `BENCH_RUSTFLAGS` pins `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt`,
 #   `-C codegen-units=1`, and `-C llvm-args=-align-loops=32` so unrelated code motion or CGU
 #   re-partitioning does not shift tight-loop alignment or cross-CGU inlining.
 # - Baselines under `benches/baselines/<host>/` are never auto-written by the gate;
-#   pass `UPDATE_BASELINE=1` explicitly to record or refresh a baseline.
+#   pass `UPDATE_BASELINE=1` (which forwards `-- --save-baseline`) explicitly to record or refresh a baseline.
 ifeq ($(shell uname -m),x86_64)
 BENCH_RUSTFLAGS := -C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32
 else
@@ -116,7 +116,7 @@ bench_all:
 #     cargo bench --locked --bench core_bench
 #   python3 scripts/bench_compare.py --suite core_bench
 bench_core:
-	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench core_bench
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench core_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
 	python3 scripts/bench_compare.py --suite core_bench
 
 # Fast smoke tier of the core benchmark suite (~2s, reduced dataset sizes).
@@ -132,7 +132,7 @@ bench_compare:
 #     cargo bench --locked --bench e2e_search_bench
 #   python3 scripts/bench_compare.py --suite e2e_search
 bench_e2e_search:
-	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench e2e_search_bench
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench e2e_search_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
 	python3 scripts/bench_compare.py --suite e2e_search
 
 bench_avx512:

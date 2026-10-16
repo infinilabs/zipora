@@ -2,17 +2,17 @@
 """
 Phase B Rule B3: Performance Regression Gate (`scripts/bench_compare.py`).
 
-Runner documentation (S37-R2 / S38-R4):
+Runner documentation (S37-R2 / S38-R4 / S39-R4):
 - Reference host: `bindiego` (AMD EPYC 7B13, 64 logical cores across 4 Zen 3 CCDs)
 - Pinned CPU core: self-pinned (`pid = 0` only) via `select_primary_core` (default core 23
-  on interior CCD 2 or quietest physical core from read-only `/proc/stat`; override via `ZIPORA_BENCH_PIN_CORE`)
+  on interior CCD 2; override via `ZIPORA_BENCH_PIN_CORE`)
 - Compiler flags:
     RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32"
 - Exact command:
     make bench_core
     make bench_e2e_search
 - Baselines under `benches/baselines/<host>/` are never auto-written by the gate;
-  set `UPDATE_BASELINE=1` explicitly when recording or updating a baseline.
+  set `UPDATE_BASELINE=1` (which forwards `-- --save-baseline`) explicitly when recording or updating a baseline.
 
 Gate rules:
 1. Fails (exit 1) if no baseline file exists for the host.
