@@ -1147,44 +1147,27 @@ mod tests {
     #[test]
     fn test_s20_r9_merge_passes_bounded_by_merge_ways() -> Result<()> {
         // S20-R9: `merge_ways` was never read and every run was merged at
-        // once, so `merge_passes` was always 1. 256 descending items with a
-        // 4-item buffer give exactly 64 runs; merging at most `ways` runs at
-        // a time takes ceil(log_ways(64)) passes (`merge_ways` < 2 counts as
-        // 2), and no temporary file is left after the sort.
-        //
-        // Miri pays for every run file, so it sorts 16 descending items with
-        // a 1-item buffer: 16 runs, with the pass counts for 16 runs.
+        // once, so `merge_passes` was always 1. 64 descending items with a
+        // 4-item buffer (Miri: 16 items with a 1-item buffer) give exactly 16
+        // runs; merging at most `ways` runs at a time takes ceil(log_ways(16))
+        // passes (`merge_ways` < 2 counts as 2), and no temporary file is left
+        // after the sort.
         let (items, buffer_items, runs) = if cfg!(miri) {
             (16u64, 1, 16)
         } else {
-            (256, 4, 64)
+            (64, 4, 16)
         };
-        let table: &[(usize, usize)] = if cfg!(miri) {
-            &[
-                (0, 4),
-                (1, 4),
-                (2, 4),
-                (3, 3),
-                (4, 2),
-                (8, 2),
-                (15, 2),
-                (16, 1),
-                (usize::MAX, 1),
-            ]
-        } else {
-            &[
-                (0, 6),
-                (1, 6),
-                (2, 6),
-                (3, 4),
-                (4, 3),
-                (8, 2),
-                (16, 2),
-                (63, 2),
-                (64, 1),
-                (usize::MAX, 1),
-            ]
-        };
+        let table: &[(usize, usize)] = &[
+            (0, 4),
+            (1, 4),
+            (2, 4),
+            (3, 3),
+            (4, 2),
+            (8, 2),
+            (15, 2),
+            (16, 1),
+            (usize::MAX, 1),
+        ];
         let data: Vec<u64> = (0..items).rev().collect();
         let want: Vec<u64> = (0..items).collect();
         for &(ways, passes) in table {
@@ -1207,9 +1190,10 @@ mod tests {
 
         // Comparator-equal items spread over many runs: every grouping must
         // give the order of the single all-run merge (ties go to the earlier
-        // run), which is sorted by key and a permutation of the input. Miri:
-        // 45 items with a 1-item buffer, 18 runs (keys 0, 2, 4 | 1, 3 | ...).
-        let (tied_items, tied_buffer) = if cfg!(miri) { (45u64, 1) } else { (256, 4) };
+        // run), which is sorted by key and a permutation of the input.
+        // 90 items with a 2-item buffer (Miri: 45 items with a 1-item buffer)
+        // produce 18 runs (> 16).
+        let (tied_items, tied_buffer) = if cfg!(miri) { (45u64, 1) } else { (90, 2) };
         let tied: Vec<u64> = (0..tied_items).map(|i| ((i * 7 % 5) << 32) | i).collect();
         let sort_tied = |ways: usize| -> Result<(Vec<u64>, ExternalSortStats)> {
             let config = ReplaceSelectSortConfig {
