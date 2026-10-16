@@ -1965,7 +1965,14 @@ fn main() {
         .map(|w| PathBuf::from(&w[1]))
         .or_else(|| std::env::var("ZIPORA_BENCH_OUT").ok().map(PathBuf::from));
 
-    disable_transparent_hugepages_for_self();
+    let thp_on = args.iter().any(|a| a == "--thp-on")
+        || matches!(
+            std::env::var("ZIPORA_BENCH_THP").as_deref(),
+            Ok("1") | Ok("on") | Ok("true")
+        );
+    if !thp_on {
+        disable_transparent_hugepages_for_self();
+    }
     let logical_cores = hardware_logical_cores();
     let primary_core = select_primary_core(logical_cores, 150);
     pin_current_thread_to_core(primary_core);

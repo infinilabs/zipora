@@ -96,17 +96,19 @@ fn pin_current_thread_to_core(core_id: usize) {
 fn pin_current_thread_to_core(_core_id: usize) {}
 
 /// Disables Transparent Huge Pages (`PR_SET_THP_DISABLE`) for the current benchmark
-/// process only (`self`), while keeping 100% default production glibc `malloc` settings.
+/// process only (`self`), unless `--thp-on` or `ZIPORA_BENCH_THP=on` (`1`) is set,
+/// while keeping 100% default production glibc `malloc` settings.
 ///
-/// Disclosure & Justification (`S38-R2`): `bindiego` is a KVM virtual machine where
+/// Disclosure & Justification (`S38-R2` / `S39-R2`): `bindiego` is a KVM virtual machine where
 /// `/sys/kernel/mm/transparent_hugepage/enabled` is `[always]`, `defrag` is `[madvise]`,
-/// and `/proc/buddyinfo` has `0` free `order 9` (`2 MiB`) blocks in `Zone Normal`. Without
-/// `PR_SET_THP_DISABLE`, whichever 16-160 MiB structure (`Rank9`, `ZiporaTrie`, `GoldHashMap`,
-/// `KeyValueRadixSort`, `SuffixArray`) runs right after background `kcompactd0` compaction
-/// non-deterministically receives a few `2 MiB` hugepages (15-20% faster) while subsequent
-/// runs fall back to `4 KiB` pages. Setting `PR_SET_THP_DISABLE` on `self` ensures consistent
-/// `4 KiB` page backing across every run without modifying glibc allocator parameters or
-/// any other process.
+/// and `/proc/buddyinfo` has fluctuating free `order 9` (`2 MiB`) blocks in `Zone Normal`.
+/// Without `PR_SET_THP_DISABLE`, 16-160 MiB structures (`Rank9`, `ZiporaTrie`, `GoldHashMap`,
+/// `ZiporaHashMap`, `KeyValueRadixSort`, `SuffixArray`) non-deterministically receive variable
+/// fractions of `2 MiB` hugepages across runs (measured at up to 35-55% faster random lookups
+/// and 15-35% faster builds when backed by 2 MiB THP vs 4 KiB pages due to L2 dTLB coverage;
+/// see `docs/review/e1.md` §1.2 for the full `--thp-on` vs default `THP-off` comparison table).
+/// Setting `PR_SET_THP_DISABLE` by default ensures deterministic `4 KiB` page backing for regression
+/// gating; pass `--thp-on` (or `ZIPORA_BENCH_THP=on`) to measure with OS transparent hugepages enabled.
 #[cfg(target_os = "linux")]
 fn disable_transparent_hugepages_for_self() {
     // SAFETY: `prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0)` affects only the calling process.
@@ -4097,7 +4099,14 @@ fn main() {
         .map(|w| PathBuf::from(&w[1]))
         .or_else(|| std::env::var("ZIPORA_BENCH_OUT").ok().map(PathBuf::from));
 
-    disable_transparent_hugepages_for_self();
+    let thp_on = args.iter().any(|a| a == "--thp-on")
+        || matches!(
+            std::env::var("ZIPORA_BENCH_THP").as_deref(),
+            Ok("1") | Ok("on") | Ok("true")
+        );
+    if !thp_on {
+        disable_transparent_hugepages_for_self();
+    }
     let logical_cores = hardware_logical_cores();
     let primary_core = select_primary_core(logical_cores);
     pin_current_thread_to_core(primary_core);
