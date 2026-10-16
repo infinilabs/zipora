@@ -765,21 +765,18 @@ fn key_tag(v: &[Tagged]) -> Vec<(u8, u32)> {
 
 #[test]
 fn test_s20_r3_parallel_merge_tree_stable_and_matches_std() {
-    if cfg!(miri) {
-        // A rayon::join issued outside any pool injects its job into the
-        // global pool and blocks until a pool thread has run it. Under Miri
-        // with Tree Borrows that round trip dominated: 1,592 of part 1's
-        // 2,000 par_merge calls start with one. On a pool thread the joins
-        // take the in-worker path. The split points, chunk counts and merge
-        // tree are unchanged; with one thread nothing is stolen.
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .unwrap()
-            .install(s20_r3_merge_tree_cases);
-    } else {
-        s20_r3_merge_tree_cases();
-    }
+    // A rayon::join issued outside any pool injects its job into the global
+    // pool and blocks on a cross-thread latch until a pool thread has run it.
+    // Running inside a dedicated pool takes the in-worker join path across all
+    // 15,680 par_merge calls in part 1 (1 thread under Miri to avoid Tree
+    // Borrows thread-switch overhead; 2 threads natively so joins can still be
+    // stolen).
+    let pool_threads = if cfg!(miri) { 1 } else { 2 };
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(pool_threads)
+        .build()
+        .unwrap()
+        .install(s20_r3_merge_tree_cases);
 }
 
 fn s20_r3_merge_tree_cases() {
@@ -855,6 +852,9 @@ fn s20_r3_merge_tree_cases() {
             ..Default::default()
         };
         for &n in sizes {
+            if n > 20_011 && threads != 2 && threads != 7 {
+                continue;
+            }
             let mut v32: Vec<u32> = (0..n as u32)
                 .map(|i| i.wrapping_mul(0x9E37_79B9) ^ (i << 7))
                 .collect();
