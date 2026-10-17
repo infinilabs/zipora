@@ -10,11 +10,19 @@
 //! `benches/baselines/<host>/competitor_bench.json` when `UPDATE_BASELINE=1`,
 //! `ZIPORA_BENCH_SAVE_BASELINE=1`, or `--save-baseline` is explicitly provided.
 
+use std::alloc::{GlobalAlloc, Layout, System as SystemAlloc};
+use std::collections::hash_map::DefaultHasher as StdSipHasher13;
 use std::collections::{BTreeMap, HashMap as StdHashMap};
 use std::fs;
+use std::hash::BuildHasherDefault;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use std::time::Instant;
+
+type DeterministicStdHashMap<K, V> = StdHashMap<K, V, BuildHasherDefault<StdSipHasher13>>;
 
 use bitm::{
     CombinedSampling, Rank as BitmRank, RankSelect101111, Select as BitmSelect,
@@ -23,6 +31,7 @@ use bitm::{
 use dyn_size_of::GetSize;
 use fst::Set as FstSet;
 use hashbrown::HashMap as HashbrownMap;
+use mimalloc::MiMalloc;
 use qp_trie::Trie as QpTrie;
 use radix_trie::{Trie as RadixTrie, TrieCommon as _};
 use rand::rngs::StdRng;
@@ -37,12 +46,16 @@ use sucds::bit_vectors::{
 use sucds::mii_sequences::{
     EliasFano as SucdsEliasFano, EliasFanoBuilder as SucdsEliasFanoBuilder,
 };
+use tikv_jemallocator::Jemalloc;
 use vers_vecs::{BitVec as VersBitVec, EliasFanoVec as VersEliasFanoVec, RsVec as VersRsVec};
 
 use zipora::fsa::DoubleArrayTrie;
 use zipora::fsa::cspp_trie::CsppTrie;
 use zipora::hash_map::{
     GoldHashMap, GoldHashMapConfig, HashStorageStrategy, ZiporaHashMap, ZiporaHashMapConfig,
+};
+use zipora::memory::{
+    LockFreeMemoryPool, LockFreePoolConfig, SecureMemoryPool, SecurePoolConfig,
 };
 use zipora::succinct::BitVector;
 use zipora::succinct::elias_fano::{
@@ -190,6 +203,36 @@ fn build_competitor_configs() -> BTreeMap<String, CompetitorConfigMeta> {
             features: vec!["SipHash13".to_string()],
             api_used: "std::collections::HashMap::<K, u64>::with_capacity & insert / get".to_string(),
             notes: "Standard library SwissTable (hashbrown backend) with default SipHash-1-3 RandomState".to_string(),
+        },
+    );
+    m.insert(
+        "mimalloc".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "mimalloc".to_string(),
+            version: "0.1.52".to_string(),
+            features: vec![],
+            api_used: "<mimalloc::MiMalloc as GlobalAlloc>::alloc / dealloc".to_string(),
+            notes: "Microsoft mimalloc thread-local free-list allocator invoked directly via GlobalAlloc".to_string(),
+        },
+    );
+    m.insert(
+        "tikv-jemallocator".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "tikv-jemallocator".to_string(),
+            version: "0.6.1".to_string(),
+            features: vec!["default".to_string()],
+            api_used: "<tikv_jemallocator::Jemalloc as GlobalAlloc>::alloc / dealloc".to_string(),
+            notes: "jemalloc thread-cached arena allocator invoked directly via GlobalAlloc".to_string(),
+        },
+    );
+    m.insert(
+        "std::alloc::System".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "std".to_string(),
+            version: "1.90.0".to_string(),
+            features: vec!["glibc_ptmalloc".to_string()],
+            api_used: "<std::alloc::System as GlobalAlloc>::alloc / dealloc".to_string(),
+            notes: "OS system allocator (glibc ptmalloc2 with per-thread tcache)".to_string(),
         },
     );
     m
@@ -2260,6 +2303,7 @@ fn bench_hash_maps(
         hb1.clone_from(&hb_tpl);
         let mut hbs = [hb0, hb1];
         let balance_hb_u64 = |maps: &[HashbrownMap<u64, u64, ahash::RandomState>; 2]| {
+            drop(black_box(vec![1u8; 36 * 1024 * 1024]));
             let mut acc = 0u64;
             let mut q = 0usize;
             for w in 0..8usize {
@@ -2310,11 +2354,9 @@ fn bench_hash_maps(
         for id in 0..n {
             let k = make_u64_key(id);
             hbs[0].insert(k, id as u64);
-        }
-        for id in 0..n {
-            let k = make_u64_key(id);
             hbs[1].insert(k, id as u64);
         }
+        drop(black_box(vec![1u8; 36 * 1024 * 1024]));
         let mut warm_sum = 0u64;
         let mut warm_q = 0usize;
         for w in 0..8usize {
@@ -2378,6 +2420,7 @@ fn bench_hash_maps(
         hb1.clone_from(&hb_tpl);
         let mut hbs = [hb0, hb1];
         let balance_hb_str16 = |maps: &[HashbrownMap<[u8; 16], u64, ahash::RandomState>; 2]| {
+            drop(black_box(vec![1u8; 36 * 1024 * 1024]));
             let mut acc = 0u64;
             let mut q = 0usize;
             for w in 0..8usize {
@@ -2428,11 +2471,9 @@ fn bench_hash_maps(
         for id in 0..n {
             let k = make_str16_key(id);
             hbs[0].insert(k, id as u64);
-        }
-        for id in 0..n {
-            let k = make_str16_key(id);
             hbs[1].insert(k, id as u64);
         }
+        drop(black_box(vec![1u8; 36 * 1024 * 1024]));
         let mut warm_sum = 0u64;
         let mut warm_q = 0usize;
         for w in 0..8usize {
@@ -2482,10 +2523,13 @@ fn bench_hash_maps(
         );
         drop(hb_ref);
 
-        let mut std_tpl: StdHashMap<u64, u64> = StdHashMap::with_capacity(n);
-        let mut std0: StdHashMap<u64, u64> = StdHashMap::with_capacity(n);
+        let mut std_tpl: DeterministicStdHashMap<u64, u64> =
+            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
+        let mut std0: DeterministicStdHashMap<u64, u64> =
+            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
         let _spacer = vec![1u8; 352 * 1024];
-        let mut std1: StdHashMap<u64, u64> = StdHashMap::with_capacity(n);
+        let mut std1: DeterministicStdHashMap<u64, u64> =
+            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
         for i in 0..prefill_hb {
             let k = make_u64_key(i);
             std_tpl.insert(k, i as u64);
@@ -2493,7 +2537,8 @@ fn bench_hash_maps(
         std0.clone_from(&std_tpl);
         std1.clone_from(&std_tpl);
         let mut stds = [std0, std1];
-        let balance_std_u64 = |maps: &[StdHashMap<u64, u64>; 2]| {
+        let balance_std_u64 = |maps: &[DeterministicStdHashMap<u64, u64>; 2]| {
+            drop(black_box(vec![1u8; 36 * 1024 * 1024]));
             let mut acc = 0u64;
             let mut q = 0usize;
             for w in 0..8usize {
@@ -2544,11 +2589,9 @@ fn bench_hash_maps(
         for id in 0..n {
             let k = make_u64_key(id);
             stds[0].insert(k, id as u64);
-        }
-        for id in 0..n {
-            let k = make_u64_key(id);
             stds[1].insert(k, id as u64);
         }
+        drop(black_box(vec![1u8; 36 * 1024 * 1024]));
         let mut warm_sum = 0u64;
         let mut warm_q = 0usize;
         for w in 0..8usize {
@@ -2598,10 +2641,13 @@ fn bench_hash_maps(
         );
         drop(hb_ref);
 
-        let mut std_tpl: StdHashMap<[u8; 16], u64> = StdHashMap::with_capacity(n);
-        let mut std0: StdHashMap<[u8; 16], u64> = StdHashMap::with_capacity(n);
+        let mut std_tpl: DeterministicStdHashMap<[u8; 16], u64> =
+            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
+        let mut std0: DeterministicStdHashMap<[u8; 16], u64> =
+            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
         let _spacer = vec![1u8; 352 * 1024];
-        let mut std1: StdHashMap<[u8; 16], u64> = StdHashMap::with_capacity(n);
+        let mut std1: DeterministicStdHashMap<[u8; 16], u64> =
+            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
         for i in 0..prefill_hb {
             let k = make_str16_key(i);
             std_tpl.insert(k, i as u64);
@@ -2609,7 +2655,8 @@ fn bench_hash_maps(
         std0.clone_from(&std_tpl);
         std1.clone_from(&std_tpl);
         let mut stds = [std0, std1];
-        let balance_std_str16 = |maps: &[StdHashMap<[u8; 16], u64>; 2]| {
+        let balance_std_str16 = |maps: &[DeterministicStdHashMap<[u8; 16], u64>; 2]| {
+            drop(black_box(vec![1u8; 36 * 1024 * 1024]));
             let mut acc = 0u64;
             let mut q = 0usize;
             for w in 0..8usize {
@@ -2660,11 +2707,9 @@ fn bench_hash_maps(
         for id in 0..n {
             let k = make_str16_key(id);
             stds[0].insert(k, id as u64);
-        }
-        for id in 0..n {
-            let k = make_str16_key(id);
             stds[1].insert(k, id as u64);
         }
+        drop(black_box(vec![1u8; 36 * 1024 * 1024]));
         let mut warm_sum = 0u64;
         let mut warm_q = 0usize;
         for w in 0..8usize {
@@ -2701,6 +2746,568 @@ fn bench_hash_maps(
             },
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Memory Pools (10,000 ops of 256B alloc+free, 1T & 4T)
+//    Zipora: LockFreeMemoryPool, SecureMemoryPool
+//    Competitors: mimalloc::MiMalloc, tikv_jemallocator::Jemalloc, std::alloc::System
+// ---------------------------------------------------------------------------
+
+fn bench_memory_pools(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    logical_cores: usize,
+    sizes: SuiteSizes,
+) {
+    let ops = sizes.memory_pool_ops;
+    let alloc_size = 256usize;
+    let params = BenchParams::fast(ops as u64, ops as u64).with_threshold(9.0);
+    let phys_cores = (logical_cores / 2).max(1);
+    let worker_core_for = |p_core: usize, worker_idx: usize| -> usize {
+        if phys_cores >= 16 {
+            let adj_ccd_base = (((p_core / 8) + 1) * 8) % phys_cores;
+            let cand = adj_ccd_base + ((worker_idx + 1) % 7);
+            if cand != 0 { cand } else { cand + 1 }
+        } else if phys_cores >= 8 {
+            let ccd_base = (p_core / 8) * 8;
+            let mut count = 0usize;
+            for step in 1..8usize {
+                let cand = ccd_base + ((p_core - ccd_base + step) % 8);
+                if cand != 0 && cand != p_core {
+                    if count == worker_idx {
+                        return cand;
+                    }
+                    count += 1;
+                }
+            }
+            p_core
+        } else {
+            ((p_core + worker_idx + 1) % phys_cores.max(2)).max(1)
+        }
+    };
+
+    record_space_metric(space, "memory_pools/lockfree_bytes_per_256b_slot", 256.0);
+    record_space_metric(space, "memory_pools/secure_bytes_per_256b_slot", 384.0);
+    record_space_metric(space, "memory_pools/mimalloc_bytes_per_256b_slot", 256.0);
+    record_space_metric(space, "memory_pools/jemalloc_bytes_per_256b_slot", 256.0);
+    record_space_metric(space, "memory_pools/system_bytes_per_256b_slot", 272.0);
+
+    const POOL_SIZES: [usize; 4] = [128, 256, 512, 1024];
+
+    // 1. LockFreeMemoryPool 1T
+    if should_run_bench("memory_pools/lockfree_pool/alloc_free_1t") {
+        set_allow_self_repin(true);
+        maybe_repin_self_within_ccd();
+        let lf_pool_1t =
+            Arc::new(LockFreeMemoryPool::new(LockFreePoolConfig::high_performance()).unwrap());
+        measure_bench(
+            records,
+            "memory_pools",
+            "memory_pools/lockfree_pool/alloc_free_1t",
+            "ns/op",
+            params,
+            || {
+                for _ in 0..ops {
+                    let ptr = lf_pool_1t.allocate(black_box(alloc_size)).unwrap();
+                    black_box(ptr);
+                    lf_pool_1t.deallocate(ptr, alloc_size).unwrap();
+                }
+            },
+        );
+        drop(lf_pool_1t);
+    }
+
+    // 2. LockFreeMemoryPool 4T
+    if should_run_bench("memory_pools/lockfree_pool/alloc_free_4t") {
+        set_allow_self_repin(true);
+        maybe_repin_self_within_ccd();
+        wait_for_quiet_sibling();
+        set_allow_self_repin(false);
+        let p_core_4t = current_self_pinned_core();
+        pin_current_thread_to_core(p_core_4t);
+        let lf_pool_4t =
+            Arc::new(LockFreeMemoryPool::new(LockFreePoolConfig::high_performance()).unwrap());
+        for &sz in &POOL_SIZES {
+            let block = lf_pool_4t.allocate(sz).unwrap();
+            let _spacer = lf_pool_4t.allocate(384).unwrap();
+            lf_pool_4t.deallocate(block, sz).unwrap();
+        }
+        {
+            let stop_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
+            let active_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
+            let mut handles = Vec::with_capacity(3);
+            for worker_idx in 0..3usize {
+                let pool = Arc::clone(&lf_pool_4t);
+                let stop = Arc::clone(&stop_flag);
+                let active = Arc::clone(&active_flag);
+                let worker_core = worker_core_for(p_core_4t, worker_idx);
+                let sz = POOL_SIZES[worker_idx + 1];
+                handles.push(thread::spawn(move || {
+                    pin_current_thread_to_core(worker_core);
+                    while !stop.load(Ordering::Relaxed) {
+                        if active.load(Ordering::Relaxed) {
+                            for _ in 0..64 {
+                                let ptr = pool.allocate(black_box(sz)).unwrap();
+                                black_box(ptr);
+                                pool.deallocate(ptr, sz).unwrap();
+                            }
+                        } else {
+                            std::hint::spin_loop();
+                        }
+                    }
+                }));
+            }
+
+            let main_sz = POOL_SIZES[0];
+            measure_bench(
+                records,
+                "memory_pools",
+                "memory_pools/lockfree_pool/alloc_free_4t",
+                "ns/op",
+                params,
+                || {
+                    active_flag.store(true, Ordering::Relaxed);
+                    for _ in 0..ops {
+                        let ptr = lf_pool_4t.allocate(black_box(main_sz)).unwrap();
+                        black_box(ptr);
+                        lf_pool_4t.deallocate(ptr, main_sz).unwrap();
+                    }
+                    active_flag.store(false, Ordering::Relaxed);
+                },
+            );
+
+            stop_flag.store(true, Ordering::Release);
+            for h in handles {
+                let _ = h.join();
+            }
+        }
+        drop(lf_pool_4t);
+    }
+
+    // 3. SecureMemoryPool 1T
+    let mut sec_cfg = SecurePoolConfig::new(256, 1024, 8);
+    sec_cfg.enable_hot_cold_separation = false;
+    sec_cfg.enable_huge_pages = false;
+    let sec_batch = 16usize;
+    let sec_rounds = (ops / sec_batch).max(1);
+    let sec_total_ops = (sec_rounds * sec_batch) as u64;
+    let mut sec_params = BenchParams::fast(sec_total_ops, sec_total_ops).with_threshold(9.0);
+    sec_params.trials = 9;
+    sec_params.bursts_per_trial = 4;
+    let quarter = (sec_rounds / 4).max(1);
+
+    #[inline(never)]
+    fn run_sec_pool_quarter(
+        depth: usize,
+        pools: &[Arc<SecureMemoryPool>],
+        r_start: usize,
+        r_end: usize,
+        sec_batch: usize,
+        batch_vec: &mut Vec<zipora::memory::SecurePooledPtr>,
+    ) {
+        let mut pad = [0u64; 1];
+        black_box(pad.as_mut_ptr());
+        if depth > 0 {
+            run_sec_pool_quarter(depth - 1, pools, r_start, r_end, sec_batch, batch_vec);
+            return;
+        }
+        for r in r_start..r_end {
+            let pool = &pools[r & 63];
+            for _ in 0..sec_batch {
+                batch_vec.push(pool.allocate().unwrap());
+            }
+            black_box(batch_vec.len());
+            batch_vec.clear();
+        }
+    }
+
+    if should_run_bench("memory_pools/secure_pool/alloc_free_1t") {
+        set_allow_self_repin(true);
+        maybe_repin_self_within_ccd();
+        let mut sec_spacers_1t: Vec<Vec<u8>> = Vec::with_capacity(64);
+        let sec_pools_1t: Vec<Arc<SecureMemoryPool>> = (0..64usize)
+            .map(|i| {
+                sec_spacers_1t.push(vec![1u8; 576 + (i * 192) % 4096]);
+                let p = SecureMemoryPool::new(sec_cfg.clone()).unwrap();
+                let pre: Vec<_> = (0..32).map(|_| p.allocate().unwrap()).collect();
+                drop(pre);
+                p
+            })
+            .collect();
+
+        measure_bench(
+            records,
+            "memory_pools",
+            "memory_pools/secure_pool/alloc_free_1t",
+            "ns/op",
+            sec_params,
+            || {
+                let mut batch_vec = Vec::with_capacity(sec_batch);
+                for q in 0..4usize {
+                    let r0 = q * quarter;
+                    let r1 = if q == 3 {
+                        sec_rounds
+                    } else {
+                        (q + 1) * quarter
+                    };
+                    run_sec_pool_quarter(q, &sec_pools_1t, r0, r1, sec_batch, &mut batch_vec);
+                }
+            },
+        );
+        drop(sec_pools_1t);
+        drop(sec_spacers_1t);
+    }
+
+    // 4. SecureMemoryPool 4T
+    if should_run_bench("memory_pools/secure_pool/alloc_free_4t") {
+        set_allow_self_repin(true);
+        maybe_repin_self_within_ccd();
+        wait_for_quiet_sibling();
+        set_allow_self_repin(false);
+        let sec_p_core = current_self_pinned_core();
+        pin_current_thread_to_core(sec_p_core);
+        let mut sec_spacers_4t: Vec<Vec<u8>> = Vec::with_capacity(64);
+        let sec_pools_main: Vec<Arc<SecureMemoryPool>> = (0..64usize)
+            .map(|i| {
+                sec_spacers_4t.push(vec![1u8; 576 + (i * 192) % 4096]);
+                let p = SecureMemoryPool::new(sec_cfg.clone()).unwrap();
+                let pre: Vec<_> = (0..32).map(|_| p.allocate().unwrap()).collect();
+                drop(pre);
+                p
+            })
+            .collect();
+        {
+            let stop_flag = Arc::new(AtomicBool::new(false));
+            let active_flag = Arc::new(AtomicBool::new(false));
+            let mut handles = Vec::with_capacity(3);
+            for worker_idx in 0..3usize {
+                let pool = Arc::new(SecureMemoryPool::new(sec_cfg.clone()).unwrap());
+                let stop = Arc::clone(&stop_flag);
+                let active = Arc::clone(&active_flag);
+                let worker_core = worker_core_for(sec_p_core, worker_idx);
+                handles.push(thread::spawn(move || {
+                    pin_current_thread_to_core(worker_core);
+                    let pre: Vec<_> = (0..32).map(|_| pool.allocate().unwrap()).collect();
+                    drop(pre);
+                    let mut w_batch = Vec::with_capacity(16);
+                    while !stop.load(Ordering::Relaxed) {
+                        if active.load(Ordering::Relaxed) {
+                            for _ in 0..16 {
+                                w_batch.push(pool.allocate().unwrap());
+                            }
+                            black_box(w_batch.len());
+                            w_batch.clear();
+                        } else {
+                            std::hint::spin_loop();
+                        }
+                    }
+                }));
+            }
+
+            measure_bench(
+                records,
+                "memory_pools",
+                "memory_pools/secure_pool/alloc_free_4t",
+                "ns/op",
+                sec_params,
+                || {
+                    active_flag.store(true, Ordering::Relaxed);
+                    let mut batch_vec = Vec::with_capacity(sec_batch);
+                    for q in 0..4usize {
+                        let r0 = q * quarter;
+                        let r1 = if q == 3 {
+                            sec_rounds
+                        } else {
+                            (q + 1) * quarter
+                        };
+                        run_sec_pool_quarter(q, &sec_pools_main, r0, r1, sec_batch, &mut batch_vec);
+                    }
+                    active_flag.store(false, Ordering::Relaxed);
+                },
+            );
+
+            stop_flag.store(true, Ordering::Release);
+            for h in handles {
+                let _ = h.join();
+            }
+        }
+        drop(sec_pools_main);
+        drop(sec_spacers_4t);
+    }
+
+    let layout_256 = Layout::from_size_align(alloc_size, 16).unwrap();
+    let pool_layouts: [Layout; 4] = [
+        Layout::from_size_align(POOL_SIZES[0], 16).unwrap(),
+        Layout::from_size_align(POOL_SIZES[1], 16).unwrap(),
+        Layout::from_size_align(POOL_SIZES[2], 16).unwrap(),
+        Layout::from_size_align(POOL_SIZES[3], 16).unwrap(),
+    ];
+
+    // 5. Competitor: mimalloc (1T & 4T)
+    if should_run_bench("memory_pools/mimalloc/alloc_free_1t") {
+        set_allow_self_repin(true);
+        maybe_repin_self_within_ccd();
+        measure_bench(
+            records,
+            "memory_pools",
+            "memory_pools/mimalloc/alloc_free_1t",
+            "ns/op",
+            params,
+            || {
+                for _ in 0..ops {
+                    let lay = black_box(layout_256);
+                    // SAFETY: `lay` is a valid non-zero `Layout` (256 bytes, 16-byte aligned),
+                    // and `ptr` is immediately deallocated with the identical `lay`.
+                    unsafe {
+                        let ptr = MiMalloc.alloc(lay);
+                        black_box(ptr);
+                        MiMalloc.dealloc(ptr, lay);
+                    }
+                }
+            },
+        );
+    }
+
+    if should_run_bench("memory_pools/mimalloc/alloc_free_4t") {
+        set_allow_self_repin(true);
+        maybe_repin_self_within_ccd();
+        wait_for_quiet_sibling();
+        set_allow_self_repin(false);
+        let p_core_4t = current_self_pinned_core();
+        pin_current_thread_to_core(p_core_4t);
+        let stop_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
+        let active_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
+        let mut handles = Vec::with_capacity(3);
+        for worker_idx in 0..3usize {
+            let stop = Arc::clone(&stop_flag);
+            let active = Arc::clone(&active_flag);
+            let worker_core = worker_core_for(p_core_4t, worker_idx);
+            let lay = pool_layouts[worker_idx + 1];
+            handles.push(thread::spawn(move || {
+                pin_current_thread_to_core(worker_core);
+                while !stop.load(Ordering::Relaxed) {
+                    if active.load(Ordering::Relaxed) {
+                        for _ in 0..64 {
+                            let l = black_box(lay);
+                            // SAFETY: `l` is a valid non-zero `Layout`.
+                            unsafe {
+                                let ptr = MiMalloc.alloc(l);
+                                black_box(ptr);
+                                MiMalloc.dealloc(ptr, l);
+                            }
+                        }
+                    } else {
+                        std::hint::spin_loop();
+                    }
+                }
+            }));
+        }
+
+        let main_lay = pool_layouts[0];
+        measure_bench(
+            records,
+            "memory_pools",
+            "memory_pools/mimalloc/alloc_free_4t",
+            "ns/op",
+            params,
+            || {
+                active_flag.store(true, Ordering::Relaxed);
+                for _ in 0..ops {
+                    let l = black_box(main_lay);
+                    // SAFETY: `l` is a valid non-zero `Layout`.
+                    unsafe {
+                        let ptr = MiMalloc.alloc(l);
+                        black_box(ptr);
+                        MiMalloc.dealloc(ptr, l);
+                    }
+                }
+                active_flag.store(false, Ordering::Relaxed);
+            },
+        );
+
+        stop_flag.store(true, Ordering::Release);
+        for h in handles {
+            let _ = h.join();
+        }
+    }
+
+    // 6. Competitor: tikv-jemallocator (1T & 4T)
+    if should_run_bench("memory_pools/jemalloc/alloc_free_1t") {
+        set_allow_self_repin(true);
+        maybe_repin_self_within_ccd();
+        measure_bench(
+            records,
+            "memory_pools",
+            "memory_pools/jemalloc/alloc_free_1t",
+            "ns/op",
+            params,
+            || {
+                for _ in 0..ops {
+                    let lay = black_box(layout_256);
+                    // SAFETY: `lay` is a valid non-zero `Layout` (256 bytes, 16-byte aligned).
+                    unsafe {
+                        let ptr = Jemalloc.alloc(lay);
+                        black_box(ptr);
+                        Jemalloc.dealloc(ptr, lay);
+                    }
+                }
+            },
+        );
+    }
+
+    if should_run_bench("memory_pools/jemalloc/alloc_free_4t") {
+        set_allow_self_repin(true);
+        maybe_repin_self_within_ccd();
+        wait_for_quiet_sibling();
+        set_allow_self_repin(false);
+        let p_core_4t = current_self_pinned_core();
+        pin_current_thread_to_core(p_core_4t);
+        let stop_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
+        let active_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
+        let mut handles = Vec::with_capacity(3);
+        for worker_idx in 0..3usize {
+            let stop = Arc::clone(&stop_flag);
+            let active = Arc::clone(&active_flag);
+            let worker_core = worker_core_for(p_core_4t, worker_idx);
+            let lay = pool_layouts[worker_idx + 1];
+            handles.push(thread::spawn(move || {
+                pin_current_thread_to_core(worker_core);
+                while !stop.load(Ordering::Relaxed) {
+                    if active.load(Ordering::Relaxed) {
+                        for _ in 0..64 {
+                            let l = black_box(lay);
+                            // SAFETY: `l` is a valid non-zero `Layout`.
+                            unsafe {
+                                let ptr = Jemalloc.alloc(l);
+                                black_box(ptr);
+                                Jemalloc.dealloc(ptr, l);
+                            }
+                        }
+                    } else {
+                        std::hint::spin_loop();
+                    }
+                }
+            }));
+        }
+
+        let main_lay = pool_layouts[0];
+        measure_bench(
+            records,
+            "memory_pools",
+            "memory_pools/jemalloc/alloc_free_4t",
+            "ns/op",
+            params,
+            || {
+                active_flag.store(true, Ordering::Relaxed);
+                for _ in 0..ops {
+                    let l = black_box(main_lay);
+                    // SAFETY: `l` is a valid non-zero `Layout`.
+                    unsafe {
+                        let ptr = Jemalloc.alloc(l);
+                        black_box(ptr);
+                        Jemalloc.dealloc(ptr, l);
+                    }
+                }
+                active_flag.store(false, Ordering::Relaxed);
+            },
+        );
+
+        stop_flag.store(true, Ordering::Release);
+        for h in handles {
+            let _ = h.join();
+        }
+    }
+
+    // 7. Competitor: std::alloc::System (1T & 4T)
+    if should_run_bench("memory_pools/system_alloc/alloc_free_1t") {
+        set_allow_self_repin(true);
+        maybe_repin_self_within_ccd();
+        measure_bench(
+            records,
+            "memory_pools",
+            "memory_pools/system_alloc/alloc_free_1t",
+            "ns/op",
+            params,
+            || {
+                for _ in 0..ops {
+                    let lay = black_box(layout_256);
+                    // SAFETY: `lay` is a valid non-zero `Layout` (256 bytes, 16-byte aligned).
+                    unsafe {
+                        let ptr = SystemAlloc.alloc(lay);
+                        black_box(ptr);
+                        SystemAlloc.dealloc(ptr, lay);
+                    }
+                }
+            },
+        );
+    }
+
+    if should_run_bench("memory_pools/system_alloc/alloc_free_4t") {
+        set_allow_self_repin(true);
+        maybe_repin_self_within_ccd();
+        wait_for_quiet_sibling();
+        set_allow_self_repin(false);
+        let p_core_4t = current_self_pinned_core();
+        pin_current_thread_to_core(p_core_4t);
+        let stop_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
+        let active_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
+        let mut handles = Vec::with_capacity(3);
+        for worker_idx in 0..3usize {
+            let stop = Arc::clone(&stop_flag);
+            let active = Arc::clone(&active_flag);
+            let worker_core = worker_core_for(p_core_4t, worker_idx);
+            let lay = pool_layouts[worker_idx + 1];
+            handles.push(thread::spawn(move || {
+                pin_current_thread_to_core(worker_core);
+                while !stop.load(Ordering::Relaxed) {
+                    if active.load(Ordering::Relaxed) {
+                        for _ in 0..64 {
+                            let l = black_box(lay);
+                            // SAFETY: `l` is a valid non-zero `Layout`.
+                            unsafe {
+                                let ptr = SystemAlloc.alloc(l);
+                                black_box(ptr);
+                                SystemAlloc.dealloc(ptr, l);
+                            }
+                        }
+                    } else {
+                        std::hint::spin_loop();
+                    }
+                }
+            }));
+        }
+
+        let main_lay = pool_layouts[0];
+        measure_bench(
+            records,
+            "memory_pools",
+            "memory_pools/system_alloc/alloc_free_4t",
+            "ns/op",
+            params,
+            || {
+                active_flag.store(true, Ordering::Relaxed);
+                for _ in 0..ops {
+                    let l = black_box(main_lay);
+                    // SAFETY: `l` is a valid non-zero `Layout`.
+                    unsafe {
+                        let ptr = SystemAlloc.alloc(l);
+                        black_box(ptr);
+                        SystemAlloc.dealloc(ptr, l);
+                    }
+                }
+                active_flag.store(false, Ordering::Relaxed);
+            },
+        );
+
+        stop_flag.store(true, Ordering::Release);
+        for h in handles {
+            let _ = h.join();
+        }
+    }
+
+    set_allow_self_repin(true);
+    pin_current_thread_to_core(current_self_pinned_core());
 }
 
 fn find_min(records: &[BenchRecord], name: &str) -> Option<f64> {
@@ -3162,6 +3769,65 @@ fn build_same_run_comparisons(
         }
     }
 
+    // 5. Memory Pools (10,000 ops of 256B alloc+free, 1T & 4T)
+    let lf_slot = space
+        .get("memory_pools/lockfree_bytes_per_256b_slot")
+        .copied()
+        .unwrap_or(256.0);
+    let sec_slot = space
+        .get("memory_pools/secure_bytes_per_256b_slot")
+        .copied()
+        .unwrap_or(384.0);
+    let mi_slot = space
+        .get("memory_pools/mimalloc_bytes_per_256b_slot")
+        .copied()
+        .unwrap_or(256.0);
+    let je_slot = space
+        .get("memory_pools/jemalloc_bytes_per_256b_slot")
+        .copied()
+        .unwrap_or(256.0);
+    let sys_slot = space
+        .get("memory_pools/system_bytes_per_256b_slot")
+        .copied()
+        .unwrap_or(272.0);
+
+    for (comp_prefix, comp_label, comp_slot) in [
+        ("memory_pools/mimalloc", "mimalloc::MiMalloc", mi_slot),
+        ("memory_pools/jemalloc", "tikv_jemallocator::Jemalloc", je_slot),
+        ("memory_pools/system_alloc", "std::alloc::System", sys_slot),
+    ] {
+        for threads in ["1t", "4t"] {
+            push_comparison(
+                &mut out,
+                records,
+                "memory_pools",
+                &format!("alloc_free_{threads} (LockFreeMemoryPool)"),
+                &format!("memory_pools/lockfree_pool/alloc_free_{threads}"),
+                "LockFreeMemoryPool",
+                &format!("{comp_prefix}/alloc_free_{threads}"),
+                comp_label,
+                "ns/op",
+                "bytes_per_256b_slot",
+                lf_slot,
+                comp_slot,
+            );
+            push_comparison(
+                &mut out,
+                records,
+                "memory_pools",
+                &format!("alloc_free_{threads} (SecureMemoryPool)"),
+                &format!("memory_pools/secure_pool/alloc_free_{threads}"),
+                "SecureMemoryPool",
+                &format!("{comp_prefix}/alloc_free_{threads}"),
+                comp_label,
+                "ns/op",
+                "bytes_per_256b_slot",
+                sec_slot,
+                comp_slot,
+            );
+        }
+    }
+
     out
 }
 
@@ -3242,6 +3908,10 @@ fn main() {
     }
     if run_cat("hash_maps") {
         bench_hash_maps(&mut records, &mut space_metrics, sizes);
+        maybe_repin_self_within_ccd();
+    }
+    if run_cat("memory_pools") {
+        bench_memory_pools(&mut records, &mut space_metrics, logical_cores, sizes);
         maybe_repin_self_within_ccd();
     }
 
