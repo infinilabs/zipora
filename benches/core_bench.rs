@@ -99,14 +99,20 @@ fn pin_current_thread_to_core(_core_id: usize) {}
 /// process only (`self`), unless `--thp-on` or `ZIPORA_BENCH_THP=on` (`1`) is set,
 /// while keeping 100% default production glibc `malloc` settings.
 ///
-/// Disclosure & Justification (`S38-R2` / `S39-R2`): `bindiego` is a KVM virtual machine where
-/// `/sys/kernel/mm/transparent_hugepage/enabled` is `[always]`, `defrag` is `[madvise]`,
-/// and `/proc/buddyinfo` has fluctuating free `order 9` (`2 MiB`) blocks in `Zone Normal`.
-/// Without `PR_SET_THP_DISABLE`, 16-160 MiB structures (`Rank9`, `ZiporaTrie`, `GoldHashMap`,
+/// Disclosure & Justification (`S38-R2` / `S39-R2` / `S40-R2`): `bindiego` is a KVM virtual machine
+/// where `/sys/kernel/mm/transparent_hugepage/enabled` is `[always]`, `defrag` is `[madvise]`,
+/// and `/proc/buddyinfo` (`Node 0, zone Normal`) has fluctuating free `order 9` (`2 MiB`) and
+/// `order 10` (`4 MiB`) blocks (ranging from `10` free `order 9` blocks = `20 MiB` under heavy
+/// build fragmentation to `374-426` free `order 9` blocks = `820-924 MiB` when unfragmented).
+/// Without `PR_SET_THP_DISABLE`, 16-400+ MiB structures (`Rank9`, `ZiporaTrie`, `GoldHashMap`,
 /// `ZiporaHashMap`, `KeyValueRadixSort`, `SuffixArray`) non-deterministically receive variable
-/// fractions of `2 MiB` hugepages across runs (measured at up to 35-55% faster random lookups
-/// and 15-35% faster builds when backed by 2 MiB THP vs 4 KiB pages due to L2 dTLB coverage;
-/// see `docs/review/e1.md` §1.2 for the full `--thp-on` vs default `THP-off` comparison table).
+/// fractions of `2 MiB` hugepages across runs: when unfragmented (`374-426` free `2 MiB` blocks),
+/// `--thp-on` is measured at `20-24%` faster on hash-map lookups (`20-26%` on inserts), `10-26%`
+/// faster on trie lookups (`26-44%` on DAT `build_sorted`), `12-23%` faster on `1 Gbit` rank/select,
+/// `28-34%` faster on `10M` radix sort, and `26-28%` faster on `10M` suffix array construct/search,
+/// whereas when `order 9` free blocks drop to `~10` (`20 MiB`), multi-hundred-MiB allocations fall
+/// back to `4 KiB` pages (`~0%` gain; see `docs/review/e1.md` §4.3 for the 3-run min/median and
+/// best-case `--thp-on` vs default `THP-off` comparison table and `/proc/buddyinfo` counts).
 /// Setting `PR_SET_THP_DISABLE` by default ensures deterministic `4 KiB` page backing for regression
 /// gating; pass `--thp-on` (or `ZIPORA_BENCH_THP=on`) to measure with OS transparent hugepages enabled.
 #[cfg(target_os = "linux")]

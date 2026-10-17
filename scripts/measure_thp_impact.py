@@ -1,28 +1,56 @@
 #!/usr/bin/env python3
 """
-S39-R2: Compare Transparent Hugepages OFF (`PR_SET_THP_DISABLE`, default) vs
-ON (`--thp-on` / `ZIPORA_BENCH_THP=on`) across `core_bench` and `e2e_search_bench`.
+S39-R2 / S40-R2: Compare Transparent Hugepages OFF (`PR_SET_THP_DISABLE`, default) vs
+ON (`--thp-on` / `ZIPORA_BENCH_THP=on`) across `core_bench` and `e2e_search_bench`,
+including multi-run (`>= 3` runs) min/median statistics and `/proc/buddyinfo`
+`Zone Normal` free `order 9` (2 MiB) / `order 10` (4 MiB) block counts.
 
 Usage:
-  RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32" \\
-    cargo bench --locked --bench core_bench -- --thp-on --output target/bench/core_bench_thp_on.json
-  RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32" \\
-    cargo bench --locked --bench e2e_search_bench -- --thp-on --output target/bench/e2e_search_thp_on.json
+  for r in 1 2 3; do
+    RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32" \\
+      cargo bench --locked --bench core_bench -- --thp-on --output target/bench/core_bench_thp_on_run${r}.json
+  done
   python3 scripts/measure_thp_impact.py
 """
 
 import argparse
 import json
+import statistics
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 
-def load_records(path: Path) -> dict:
-    data = json.loads(path.read_text())
+def read_buddyinfo_normal_2mib() -> Optional[Tuple[int, int, int, str]]:
+    """Return (order9_2mib_blocks, order10_4mib_blocks, total_2mib_equiv_blocks, raw_line)."""
+    p = Path("/proc/buddyinfo")
+    if not p.exists():
+        return None
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if "Normal" in line:
+            parts = line.split()
+            # Format: Node 0, zone Normal <order0> <order1> ... <order10>
+            try:
+                idx = parts.index("Normal")
+                orders = [int(x) for x in parts[idx + 1 :]]
+                if len(orders) >= 11:
+                    o9 = orders[9]
+                    o10 = orders[10]
+                    equiv_2mib = o9 + 2 * o10
+                    return o9, o10, equiv_2mib, line.strip()
+            except (ValueError, IndexError):
+                pass
+    return None
+
+
+def load_records(path: Path) -> Tuple[Dict[str, dict], dict]:
+    data = json.loads(path.read_text(encoding="utf-8"))
     return {b["name"]: b for b in data.get("benchmarks", [])}, data
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compare THP-off vs THP-on benchmark JSON reports.")
+    parser = argparse.ArgumentParser(
+        description="Compare THP-off vs THP-on benchmark JSON reports (multi-run + buddyinfo)."
+    )
     parser.add_argument(
         "--core-off",
         default="benches/baselines/bindiego/core_bench.json",
@@ -31,7 +59,17 @@ def main() -> int:
     parser.add_argument(
         "--core-on",
         default="target/bench/core_bench_thp_on.json",
-        help="Path to THP-on core_bench JSON",
+        help="Path to single best-case THP-on core_bench JSON (if present)",
+    )
+    parser.add_argument(
+        "--core-on-runs",
+        nargs="*",
+        default=[
+            "target/bench/core_bench_thp_on_run1.json",
+            "target/bench/core_bench_thp_on_run2.json",
+            "target/bench/core_bench_thp_on_run3.json",
+        ],
+        help="Paths to >=3 THP-on core_bench JSON runs for multi-run min/median reporting",
     )
     parser.add_argument(
         "--e2e-off",
@@ -45,25 +83,67 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    buddy = read_buddyinfo_normal_2mib()
+    if buddy is not None:
+        o9, o10, equiv, raw = buddy
+        print(
+            f"**Current `/proc/buddyinfo` (`Zone Normal`)**: `order 9` (`2 MiB`) = `{o9}` free blocks, "
+            f"`order 10` (`4 MiB`) = `{o10}` free blocks (`{equiv}` x `2 MiB` equivalent = `{equiv * 2} MiB` contiguous)\n"
+            f"  - Raw: `{raw}`\n"
+        )
+
     core_off_p = Path(args.core_off)
     core_on_p = Path(args.core_on)
-    if core_off_p.exists() and core_on_p.exists():
+    run_paths = [Path(p) for p in args.core_on_runs if Path(p).exists()]
+
+    if core_off_p.exists() and (run_paths or core_on_p.exists()):
         off_map, _ = load_records(core_off_p)
-        on_map, _ = load_records(core_on_p)
-        print("### `core_bench` THP-Off (`PR_SET_THP_DISABLE`) vs THP-On (`--thp-on`)\n")
-        print("| Benchmark | Dataset Size | THP-Off Min | THP-On Min | THP-On Delta (%) | THP-Off Median | THP-On Median |")
-        print("|---|---:|---:|---:|---:|---:|---:|")
-        for name, off in off_map.items():
-            on = on_map.get(name)
-            if not on:
-                continue
-            off_min = off["min_ns_per_op"]
-            on_min = on["min_ns_per_op"]
-            delta_pct = ((on_min - off_min) / off_min * 100.0) if off_min > 0 else 0.0
+        best_map = load_records(core_on_p)[0] if core_on_p.exists() else {}
+        run_maps = [load_records(p)[0] for p in run_paths]
+
+        if len(run_maps) >= 3:
             print(
-                f"| `{name}` | `{off['dataset_size']}` | `{off_min:.4f}` | `{on_min:.4f}` | `{delta_pct:+.2f}%` | `{off['median_ns_per_op']:.4f}` | `{on['median_ns_per_op']:.4f}` |"
+                f"### `core_bench` THP-Off (`PR_SET_THP_DISABLE`) vs THP-On (`--thp-on` across {len(run_maps)} runs + Unfragmented Best-Case Sample)\n"
             )
-        print()
+            print(
+                "| Benchmark | Dataset Size | THP-Off Min | THP-Off Med | THP-On 3-Run Min | THP-On 3-Run Med | 3-Run Min Delta (%) | Unfrag Best-Case THP-On Min | Unfrag Delta (%) |"
+            )
+            print("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+            for name, off in off_map.items():
+                off_min = off["min_ns_per_op"]
+                off_med = off["median_ns_per_op"]
+                r_mins = [rm[name]["min_ns_per_op"] for rm in run_maps if name in rm]
+                if not r_mins:
+                    continue
+                r_min = min(r_mins)
+                r_med = statistics.median(r_mins)
+                r_delta = ((r_min - off_min) / off_min * 100.0) if off_min > 0 else 0.0
+                if name in best_map:
+                    b_min = min(r_min, best_map[name]["min_ns_per_op"])
+                else:
+                    b_min = r_min
+                b_delta = ((b_min - off_min) / off_min * 100.0) if off_min > 0 else 0.0
+                print(
+                    f"| `{name}` | `{off['dataset_size']}` | `{off_min:.4f}` | `{off_med:.4f}` | `{r_min:.4f}` | `{r_med:.4f}` | `{r_delta:+.2f}%` | `{b_min:.4f}` | `{b_delta:+.2f}%` |"
+                )
+            print()
+        elif best_map:
+            print("### `core_bench` THP-Off (`PR_SET_THP_DISABLE`) vs THP-On (`--thp-on`)\n")
+            print(
+                "| Benchmark | Dataset Size | THP-Off Min | THP-On Min | THP-On Delta (%) | THP-Off Median | THP-On Median |"
+            )
+            print("|---|---:|---:|---:|---:|---:|---:|")
+            for name, off in off_map.items():
+                on = best_map.get(name)
+                if not on:
+                    continue
+                off_min = off["min_ns_per_op"]
+                on_min = on["min_ns_per_op"]
+                delta_pct = ((on_min - off_min) / off_min * 100.0) if off_min > 0 else 0.0
+                print(
+                    f"| `{name}` | `{off['dataset_size']}` | `{off_min:.4f}` | `{on_min:.4f}` | `{delta_pct:+.2f}%` | `{off['median_ns_per_op']:.4f}` | `{on['median_ns_per_op']:.4f}` |"
+                )
+            print()
 
     e2e_off_p = Path(args.e2e_off)
     e2e_on_p = Path(args.e2e_on)
@@ -71,7 +151,9 @@ def main() -> int:
         off_map, off_full = load_records(e2e_off_p)
         on_map, on_full = load_records(e2e_on_p)
         print("### `e2e_search_bench` THP-Off (`PR_SET_THP_DISABLE`) vs THP-On (`--thp-on`)\n")
-        print("| Benchmark / Engine | THP-Off Min (`ns/q`) | THP-On Min (`ns/q`) | THP-On Delta (%) | THP-Off QPS | THP-On QPS |")
+        print(
+            "| Benchmark / Engine | THP-Off Min (`ns/q`) | THP-On Min (`ns/q`) | THP-On Delta (%) | THP-Off QPS | THP-On QPS |"
+        )
         print("|---|---:|---:|---:|---:|---:|")
         for name, off in off_map.items():
             on = on_map.get(name)
@@ -95,10 +177,14 @@ def main() -> int:
             for eng in ["zipora_bmw", "tantivy", "uncompressed_baseline"]:
                 if eng in off_lat:
                     d = off_lat[eng]
-                    print(f"| `{eng}` | `THP-off` (default) | `{d['qps']:,.1f}` | `{d['p50_us']:.2f}` | `{d['p95_us']:.2f}` | `{d['p99_us']:.2f}` |")
+                    print(
+                        f"| `{eng}` | `THP-off` (default) | `{d['qps']:,.1f}` | `{d['p50_us']:.2f}` | `{d['p95_us']:.2f}` | `{d['p99_us']:.2f}` |"
+                    )
                 if eng in on_lat:
                     d = on_lat[eng]
-                    print(f"| `{eng}` | `THP-on` (`--thp-on`) | `{d['qps']:,.1f}` | `{d['p50_us']:.2f}` | `{d['p95_us']:.2f}` | `{d['p99_us']:.2f}` |")
+                    print(
+                        f"| `{eng}` | `THP-on` (`--thp-on`) | `{d['qps']:,.1f}` | `{d['p50_us']:.2f}` | `{d['p95_us']:.2f}` | `{d['p99_us']:.2f}` |"
+                    )
 
     return 0
 
