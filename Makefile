@@ -10,7 +10,7 @@
 
 .PHONY: all build build_debug build_release
 .PHONY: test test_debug test_release test_simd_base64
-.PHONY: bench bench_all bench_core bench_smoke bench_e2e_search bench_compare bench_avx512 bench_fsa bench_io bench_serialization
+.PHONY: bench bench_all bench_core bench_competitors bench_smoke bench_e2e_search bench_compare bench_avx512 bench_fsa bench_io bench_serialization
 .PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
 .PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_c12 miri_scalar
 .PHONY: tsan_cspp tsan_pool tsan_concurrency
@@ -118,6 +118,15 @@ bench_all:
 bench_core:
 	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench core_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
 	python3 scripts/bench_compare.py --suite core_bench $(if $(UPDATE_BASELINE),,--confirm-retries 5)
+
+# Canonical Phase E competitor benchmark matrix (plan.md §1.6 E2 + E3 + B3).
+# Exact command:
+#   RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32" \
+#     cargo bench --locked --bench competitor_bench
+#   python3 scripts/bench_compare.py --suite competitor_bench --confirm-retries 5
+bench_competitors:
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench competitor_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
+	python3 scripts/bench_compare.py --suite competitor_bench $(if $(UPDATE_BASELINE),,--confirm-retries 5)
 
 # Fast smoke tier of the core benchmark suite (~2s, reduced dataset sizes).
 bench_smoke:

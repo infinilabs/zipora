@@ -203,6 +203,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
+name = "bitm"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31468ea4a856000d83cb61960dfdc2980ecd96b15b61321c8c76cc96aea6e688"
+dependencies = [
+ "dyn_size_of",
+]
+
+[[package]]
 name = "bitpacking"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -515,6 +524,12 @@ name = "downcast-rs"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
+
+[[package]]
+name = "dyn_size_of"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a742b95783b1f45b900129082cbc47717b6a77ee8d17eea70a8ea62462f5de3"
 
 [[package]]
 name = "either"
@@ -1373,6 +1388,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
+name = "sucds"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5daf36f30cf37a5a99eed7a86c0c717a7f70e6b45aab14374fe75702e1f69494"
+
+[[package]]
 name = "syn"
 version = "2.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1761,6 +1782,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "vers-vecs"
+version = "1.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ab7f54690e244b9c886609bc08e12d0cf4738c3a780214642598674cffef6a9"
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2096,10 +2123,12 @@ dependencies = [
  "base64 0.23.1",
  "bincode",
  "bitflags",
+ "bitm",
  "bytemuck",
  "cbindgen",
  "criterion",
  "crossbeam-epoch",
+ "dyn_size_of",
  "fastrand",
  "libc",
  "log",
@@ -2111,11 +2140,13 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "sucds",
  "tantivy",
  "tempfile",
  "thiserror",
  "thread_local",
  "tokio",
+ "vers-vecs",
  "zstd",
 ]
 

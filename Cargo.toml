@@ -80,6 +80,10 @@ tempfile = "3.14"
 arbitrary = { version = "1.4", features = ["derive"] }
 rand = "0.9"
 tantivy = { version = "0.26", default-features = false }
+sucds = { version = "0.10", features = ["intrinsics"] }
+vers-vecs = { version = "1.10", features = ["simd"] }
+bitm = "0.5"
+dyn_size_of = "0.4"
 # Note: rayon is already in main dependencies
 
 [build-dependencies]
@@ -269,6 +273,10 @@ harness = false
 
 [[bench]]
 name = "core_bench"
+harness = false
+
+[[bench]]
+name = "competitor_bench"
 harness = false
 
 [[bench]]
