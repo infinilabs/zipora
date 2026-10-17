@@ -17,20 +17,27 @@ use std::fs;
 use std::hash::BuildHasherDefault;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Instant;
 
 type DeterministicStdHashMap<K, V> = StdHashMap<K, V, BuildHasherDefault<StdSipHasher13>>;
 
+use bit_vec::BitVec as HuffmanBitVec;
 use bitm::{
     CombinedSampling, Rank as BitmRank, RankSelect101111, Select as BitmSelect,
     Select0 as BitmSelect0,
 };
+use constriction::stream::{
+    Decode as ConstrictionDecode,
+    model::SmallContiguousCategoricalEntropyModel,
+    stack::DefaultAnsCoder,
+};
 use dyn_size_of::GetSize;
 use fst::Set as FstSet;
 use hashbrown::HashMap as HashbrownMap;
+use huffman_compress::CodeBuilder as HuffmanCompressBuilder;
 use mimalloc::MiMalloc;
 use qp_trie::Trie as QpTrie;
 use radix_trie::{Trie as RadixTrie, TrieCommon as _};
@@ -49,6 +56,12 @@ use sucds::mii_sequences::{
 use tikv_jemallocator::Jemalloc;
 use vers_vecs::{BitVec as VersBitVec, EliasFanoVec as VersEliasFanoVec, RsVec as VersRsVec};
 
+use zipora::entropy::fse::{FseConfig, FseEncoder, fse_decompress};
+use zipora::entropy::huffman::{
+    ContextualHuffmanDecoder, ContextualHuffmanEncoder, HuffmanDecoder, HuffmanEncoder,
+    HuffmanOrder,
+};
+use zipora::entropy::rans::{ParallelX1, ParallelX4, Rans64Decoder, Rans64Encoder};
 use zipora::fsa::DoubleArrayTrie;
 use zipora::fsa::cspp_trie::CsppTrie;
 use zipora::hash_map::{
@@ -233,6 +246,36 @@ fn build_competitor_configs() -> BTreeMap<String, CompetitorConfigMeta> {
             features: vec!["glibc_ptmalloc".to_string()],
             api_used: "<std::alloc::System as GlobalAlloc>::alloc / dealloc".to_string(),
             notes: "OS system allocator (glibc ptmalloc2 with per-thread tcache)".to_string(),
+        },
+    );
+    m.insert(
+        "zstd".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "zstd".to_string(),
+            version: "0.13.3".to_string(),
+            features: vec!["default".to_string()],
+            api_used: "zstd::bulk::Compressor::new(level).compress(&[u8]) & zstd::bulk::Decompressor::new().decompress(&[u8], capacity)".to_string(),
+            notes: "Official libzstd C binding at levels 1 and 3 with reused ZSTD_CCtx / ZSTD_DCtx (LZ77 + FSE + 4-stream Huffman whole-block compressor)".to_string(),
+        },
+    );
+    m.insert(
+        "constriction".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "constriction".to_string(),
+            version: "0.5.0".to_string(),
+            features: vec!["std".to_string()],
+            api_used: "DefaultAnsCoder (AnsCoder<u32, u64>) + SmallContiguousCategoricalEntropyModel (PRECISION=12) + SmallContiguousLookupDecoderModel (PRECISION=12)".to_string(),
+            notes: "64-bit state / 32-bit word rANS coder with 12-bit (4096-entry) O(1) lookup decoder table".to_string(),
+        },
+    );
+    m.insert(
+        "huffman-compress".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "huffman-compress".to_string(),
+            version: "0.7.0".to_string(),
+            features: vec![],
+            api_used: "CodeBuilder::from_iter(weights).finish() -> Book::<u8>::encode(&mut BitVec, &u8) & Tree::<u8>::decoder(&BitVec, len)".to_string(),
+            notes: "Static Order-0 Huffman codebook (BTreeMap<u8, BitVec>) + arena binary tree decoder over bit-vec v0.8.0".to_string(),
         },
     );
     m
@@ -3310,6 +3353,545 @@ fn bench_memory_pools(
     pin_current_thread_to_core(current_self_pinned_core());
 }
 
+// ---------------------------------------------------------------------------
+// 6. Entropy Coding (65,536 bytes = 64 KiB synthetic enwik8-like block)
+//    Zipora: HuffmanEncoder O0, ContextualHuffmanEncoder O1/O2, FseEncoder,
+//            Rans64Encoder<ParallelX1>, Rans64Encoder<ParallelX4>
+//    Competitors: huffman-compress, constriction (ANS), zstd (levels 1 & 3)
+// ---------------------------------------------------------------------------
+
+fn bench_entropy(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    sizes: SuiteSizes,
+) {
+    let mut brk_holes: Vec<Vec<u8>> = Vec::with_capacity(6);
+    for _ in 0..6 {
+        brk_holes.push(black_box(vec![1u8; 4 * 1024 * 1024]));
+    }
+    let _brk_anchor = black_box(vec![1u8; 64 * 1024]);
+    drop(brk_holes);
+
+    let block_size = sizes.entropy_block_bytes;
+    let block = gen_enwik_like_block(block_size, SEED_BASE ^ 0x07);
+    let mut params = BenchParams::fast(block_size as u64, block_size as u64).with_threshold(9.0);
+    params.warmup_calls = 8;
+    params.trials = 11;
+    params.bursts_per_trial = 8;
+
+    // 1. Zipora Huffman O0 (64 KiB)
+    let huff_o0_enc = HuffmanEncoder::new(&block).unwrap();
+    let huff_o0_compressed = huff_o0_enc.encode(&block).unwrap();
+    let huff_o0_dec = HuffmanDecoder::new(huff_o0_enc.tree().clone());
+    record_space_metric(
+        space,
+        "entropy/huffman_o0_bits_per_byte",
+        (huff_o0_compressed.len() as f64 * 8.0) / (block_size as f64),
+    );
+
+    measure_bench(
+        records,
+        "entropy",
+        "entropy/huffman_o0/encode_64kib",
+        "ns/byte",
+        params,
+        || {
+            let encoded = huff_o0_enc.encode(black_box(&block)).unwrap();
+            black_box(encoded.len());
+        },
+    );
+
+    measure_bench(
+        records,
+        "entropy",
+        "entropy/huffman_o0/decode_64kib",
+        "ns/byte",
+        params,
+        || {
+            let decoded = huff_o0_dec
+                .decode(black_box(&huff_o0_compressed), block_size)
+                .unwrap();
+            black_box(decoded.len());
+        },
+    );
+
+    // 2. Zipora Huffman O1 (full 64 KiB block for encode_x1, encode_x4, and decode)
+    let huff_o1_enc = ContextualHuffmanEncoder::new(&block, HuffmanOrder::Order1).unwrap();
+    let huff_o1_comp_sample = huff_o1_enc.encode(&block).unwrap();
+    record_space_metric(
+        space,
+        "entropy/huffman_o1_bits_per_byte",
+        (huff_o1_comp_sample.len() as f64 * 8.0) / (block_size as f64),
+    );
+    drop(huff_o1_comp_sample);
+
+    measure_bench(
+        records,
+        "entropy",
+        "entropy/huffman_o1/encode_x1_64kib",
+        "ns/byte",
+        params,
+        || {
+            let encoded = huff_o1_enc.encode_x1(black_box(&block)).unwrap();
+            black_box(encoded.len());
+        },
+    );
+
+    measure_bench(
+        records,
+        "entropy",
+        "entropy/huffman_o1/encode_x4_64kib",
+        "ns/byte",
+        params,
+        || {
+            let encoded = huff_o1_enc.encode_x4(black_box(&block)).unwrap();
+            black_box(encoded.len());
+        },
+    );
+    drop(huff_o1_enc);
+
+    type ContextualBuiltItem = (
+        Option<ContextualHuffmanEncoder>,
+        Option<ContextualHuffmanDecoder>,
+        Vec<u8>,
+    );
+    type ContextualBuildFn = fn(Vec<u8>, Vec<u8>) -> ContextualBuiltItem;
+
+    let build_on_concurrent_threads = |f: ContextualBuildFn| {
+        let barrier = Arc::new(Barrier::new(8));
+        let handles: Vec<_> = (0..8usize)
+            .map(|i| {
+                let blk = block.clone();
+                let bar = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let spacer = vec![1u8; (i * 4_672) + 1_376];
+                    bar.wait();
+                    let res = f(blk, spacer);
+                    bar.wait();
+                    res
+                })
+            })
+            .collect();
+        let mut out = Vec::with_capacity(8);
+        for h in handles {
+            out.push(h.join().unwrap());
+        }
+        pin_current_thread_to_core(current_self_pinned_core());
+        out
+    };
+
+    let mut ctx_ring_params = params;
+    ctx_ring_params.trials = 9;
+    ctx_ring_params.bursts_per_trial = 8;
+    {
+        let mut built = build_on_concurrent_threads(|blk, spacer| {
+            black_box(spacer.as_ptr());
+            let enc = ContextualHuffmanEncoder::new(&blk, HuffmanOrder::Order1).unwrap();
+            let comp = enc.encode(&blk).unwrap();
+            drop(spacer);
+            (None, Some(ContextualHuffmanDecoder::new(enc)), comp)
+        });
+        let mut huff_o1_decs: (usize, [(ContextualHuffmanDecoder, Vec<u8>); 8]) = (
+            0,
+            std::array::from_fn(|_| {
+                let (_, dec, comp) = built.pop().unwrap();
+                (dec.unwrap(), comp)
+            }),
+        );
+        measure_bench_with_setup(
+            records,
+            "entropy",
+            "entropy/huffman_o1/decode_64kib",
+            "ns/byte",
+            ctx_ring_params,
+            &mut huff_o1_decs,
+            |state| {
+                state.0 = (state.0 + 1) & 7;
+            },
+            |state| {
+                let (dec, comp) = &state.1[state.0];
+                let decoded = dec.decode(black_box(comp), block_size).unwrap();
+                black_box(decoded.len());
+            },
+        );
+    }
+
+    // 3. Zipora Huffman O2 (full 64 KiB block for encode and decode)
+    {
+        type ContextualO2EncPair = (ContextualHuffmanEncoder, Vec<u8>);
+        type ContextualO2EncRing = (usize, [ContextualO2EncPair; 8], [Vec<u8>; 2]);
+
+        let mut built = build_on_concurrent_threads(|blk, spacer| {
+            black_box(spacer.as_ptr());
+            let enc = ContextualHuffmanEncoder::new(&blk, HuffmanOrder::Order2).unwrap();
+            drop(spacer);
+            (Some(enc), None, blk)
+        });
+        let huff_o2_comp_sample = built[0].0.as_ref().unwrap().encode(&block).unwrap();
+        record_space_metric(
+            space,
+            "entropy/huffman_o2_bits_per_byte",
+            (huff_o2_comp_sample.len() as f64 * 8.0) / (block_size as f64),
+        );
+        drop(huff_o2_comp_sample);
+
+        let mut huff_o2_encs: ContextualO2EncRing = (
+            0,
+            std::array::from_fn(|_| {
+                let (enc, _, blk) = built.pop().unwrap();
+                (enc.unwrap(), blk)
+            }),
+            [Vec::new(), Vec::new()],
+        );
+        measure_bench_with_setup(
+            records,
+            "entropy",
+            "entropy/huffman_o2/encode_64kib",
+            "ns/byte",
+            ctx_ring_params,
+            &mut huff_o2_encs,
+            |state| {
+                state.0 = (state.0 + 1) & 7;
+            },
+            |state| {
+                let (enc, blk) = &state.1[state.0];
+                let encoded = enc.encode(black_box(blk)).unwrap();
+                black_box(encoded.len());
+                state.2[state.0 & 1] = encoded;
+            },
+        );
+    }
+
+    {
+        let mut built = build_on_concurrent_threads(|blk, spacer| {
+            black_box(spacer.as_ptr());
+            let enc = ContextualHuffmanEncoder::new(&blk, HuffmanOrder::Order2).unwrap();
+            let comp = enc.encode(&blk).unwrap();
+            drop(spacer);
+            (None, Some(ContextualHuffmanDecoder::new(enc)), comp)
+        });
+        let mut huff_o2_decs: (usize, [(ContextualHuffmanDecoder, Vec<u8>); 8]) = (
+            0,
+            std::array::from_fn(|_| {
+                let (_, dec, comp) = built.pop().unwrap();
+                (dec.unwrap(), comp)
+            }),
+        );
+        measure_bench_with_setup(
+            records,
+            "entropy",
+            "entropy/huffman_o2/decode_64kib",
+            "ns/byte",
+            ctx_ring_params,
+            &mut huff_o2_decs,
+            |state| {
+                state.0 = (state.0 + 1) & 7;
+            },
+            |state| {
+                let (dec, comp) = &state.1[state.0];
+                let decoded = dec.decode(black_box(comp), block_size).unwrap();
+                black_box(decoded.len());
+            },
+        );
+    }
+
+    // 4. Zipora FSE (64 KiB)
+    let mut fse_enc = FseEncoder::new(FseConfig::default()).unwrap();
+    let fse_compressed = fse_enc.compress(&block).unwrap();
+    record_space_metric(
+        space,
+        "entropy/fse_bits_per_byte",
+        (fse_compressed.len() as f64 * 8.0) / (block_size as f64),
+    );
+
+    measure_bench(
+        records,
+        "entropy",
+        "entropy/fse/encode_64kib",
+        "ns/byte",
+        params,
+        || {
+            let encoded = fse_enc.compress(black_box(&block)).unwrap();
+            black_box(encoded.len());
+        },
+    );
+
+    measure_bench(
+        records,
+        "entropy",
+        "entropy/fse/decode_64kib",
+        "ns/byte",
+        params,
+        || {
+            let decoded = fse_decompress(black_box(&fse_compressed)).unwrap();
+            black_box(decoded.len());
+        },
+    );
+
+    // 5. Zipora rANS64 X1 and X4 (64 KiB)
+    let mut freqs = [1u32; 256];
+    for &b in &block {
+        freqs[b as usize] += 1;
+    }
+    let rans_x1_enc = Rans64Encoder::<ParallelX1>::new(&freqs).unwrap();
+    let rans_x1_compressed = rans_x1_enc.encode(&block).unwrap();
+    let rans_x1_dec = Rans64Decoder::<ParallelX1>::new(&rans_x1_enc);
+    record_space_metric(
+        space,
+        "entropy/rans64_x1_bits_per_byte",
+        (rans_x1_compressed.len() as f64 * 8.0) / (block_size as f64),
+    );
+
+    let rans_x4_enc = Rans64Encoder::<ParallelX4>::new(&freqs).unwrap();
+    let rans_x4_compressed = rans_x4_enc.encode(&block).unwrap();
+    let rans_x4_dec = Rans64Decoder::<ParallelX4>::new(&rans_x4_enc);
+    record_space_metric(
+        space,
+        "entropy/rans64_x4_bits_per_byte",
+        (rans_x4_compressed.len() as f64 * 8.0) / (block_size as f64),
+    );
+
+    measure_bench(
+        records,
+        "entropy",
+        "entropy/rans64_x1/encode_64kib",
+        "ns/byte",
+        params,
+        || {
+            let encoded = rans_x1_enc.encode(black_box(&block)).unwrap();
+            black_box(encoded.len());
+        },
+    );
+
+    measure_bench(
+        records,
+        "entropy",
+        "entropy/rans64_x1/decode_64kib",
+        "ns/byte",
+        params,
+        || {
+            let decoded = rans_x1_dec
+                .decode(black_box(&rans_x1_compressed), block_size)
+                .unwrap();
+            black_box(decoded.len());
+        },
+    );
+
+    measure_bench(
+        records,
+        "entropy",
+        "entropy/rans64_x4/encode_64kib",
+        "ns/byte",
+        params,
+        || {
+            let encoded = rans_x4_enc.encode(black_box(&block)).unwrap();
+            black_box(encoded.len());
+        },
+    );
+
+    measure_bench(
+        records,
+        "entropy",
+        "entropy/rans64_x4/decode_64kib",
+        "ns/byte",
+        params,
+        || {
+            let decoded = rans_x4_dec
+                .decode(black_box(&rans_x4_compressed), block_size)
+                .unwrap();
+            black_box(decoded.len());
+        },
+    );
+
+    // 6. Competitor: huffman-compress (static Order-0 Huffman on 64 KiB block)
+    {
+        let mut huff_weights: BTreeMap<u8, u32> = BTreeMap::new();
+        for &b in &block {
+            *huff_weights.entry(b).or_insert(0) += 1;
+        }
+        let (hc_book, hc_tree) = HuffmanCompressBuilder::from_iter(huff_weights).finish();
+        let mut hc_compressed = HuffmanBitVec::with_capacity(block_size * 8);
+        for &b in &block {
+            hc_book.encode(&mut hc_compressed, &b).unwrap();
+        }
+        let hc_bytes = hc_compressed.len().div_ceil(8);
+        record_space_metric(
+            space,
+            "entropy/huffman_compress_bits_per_byte",
+            (hc_bytes as f64 * 8.0) / (block_size as f64),
+        );
+
+        let mut hc_params = params;
+        hc_params.warmup_calls = 2;
+        hc_params.trials = 7;
+        hc_params.bursts_per_trial = 2;
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/huffman_compress/encode_64kib",
+            "ns/byte",
+            hc_params,
+            || {
+                let mut buf = HuffmanBitVec::with_capacity(block_size * 8);
+                for b in black_box(&block) {
+                    hc_book.encode(&mut buf, b).unwrap();
+                }
+                black_box(buf.len());
+            },
+        );
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/huffman_compress/decode_64kib",
+            "ns/byte",
+            hc_params,
+            || {
+                let mut out = Vec::with_capacity(block_size);
+                out.extend(hc_tree.decoder(black_box(&hc_compressed), block_size));
+                black_box(out.len());
+            },
+        );
+    }
+
+    // 7. Competitor: constriction ANS (DefaultAnsCoder + 12-bit categorical / lookup model)
+    {
+        let probs_f64: Vec<f64> = freqs.iter().map(|&c| c as f64).collect();
+        let constriction_enc_model =
+            SmallContiguousCategoricalEntropyModel::from_floating_point_probabilities_perfect(
+                &probs_f64,
+            )
+            .unwrap();
+        let constriction_dec_model = constriction_enc_model.to_lookup_decoder_model();
+
+        let mut init_coder = DefaultAnsCoder::with_write_backend(Vec::with_capacity(block_size / 4));
+        init_coder
+            .encode_iid_symbols_reverse(
+                block.iter().map(|&b| b as usize),
+                constriction_enc_model.as_view(),
+            )
+            .unwrap();
+        let constriction_compressed: Vec<u32> = init_coder.into_compressed().unwrap();
+        record_space_metric(
+            space,
+            "entropy/constriction_ans_bits_per_byte",
+            ((constriction_compressed.len() * 4) as f64 * 8.0) / (block_size as f64),
+        );
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/constriction_ans/encode_64kib",
+            "ns/byte",
+            params,
+            || {
+                let mut coder =
+                    DefaultAnsCoder::with_write_backend(Vec::with_capacity(block_size / 4));
+                coder
+                    .encode_iid_symbols_reverse(
+                        black_box(&block).iter().map(|&b| b as usize),
+                        constriction_enc_model.as_view(),
+                    )
+                    .unwrap();
+                let words = coder.into_compressed().unwrap();
+                black_box(words.len());
+            },
+        );
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/constriction_ans/decode_64kib",
+            "ns/byte",
+            params,
+            || {
+                let mut coder =
+                    DefaultAnsCoder::from_compressed_slice(black_box(&constriction_compressed))
+                        .unwrap();
+                let mut out = Vec::with_capacity(block_size);
+                for sym in coder.decode_iid_symbols(block_size, &constriction_dec_model) {
+                    out.push(sym.unwrap() as u8);
+                }
+                black_box(out.len());
+            },
+        );
+    }
+
+    // 8. Competitor: zstd levels 1 and 3 (64 KiB whole-block compress / decompress with reused CCtx/DCtx)
+    {
+        let mut zstd_l1_comp = zstd::bulk::Compressor::new(1).unwrap();
+        let mut zstd_l3_comp = zstd::bulk::Compressor::new(3).unwrap();
+        let mut zstd_decomp = zstd::bulk::Decompressor::new().unwrap();
+        let zstd_l1_compressed = zstd_l1_comp.compress(&block).unwrap();
+        let zstd_l3_compressed = zstd_l3_comp.compress(&block).unwrap();
+        record_space_metric(
+            space,
+            "entropy/zstd_l1_bits_per_byte",
+            (zstd_l1_compressed.len() as f64 * 8.0) / (block_size as f64),
+        );
+        record_space_metric(
+            space,
+            "entropy/zstd_l3_bits_per_byte",
+            (zstd_l3_compressed.len() as f64 * 8.0) / (block_size as f64),
+        );
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/zstd_l1/encode_64kib",
+            "ns/byte",
+            params,
+            || {
+                let encoded = zstd_l1_comp.compress(black_box(&block)).unwrap();
+                black_box(encoded.len());
+            },
+        );
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/zstd_l1/decode_64kib",
+            "ns/byte",
+            params,
+            || {
+                let decoded = zstd_decomp
+                    .decompress(black_box(&zstd_l1_compressed), block_size)
+                    .unwrap();
+                black_box(decoded.len());
+            },
+        );
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/zstd_l3/encode_64kib",
+            "ns/byte",
+            params,
+            || {
+                let encoded = zstd_l3_comp.compress(black_box(&block)).unwrap();
+                black_box(encoded.len());
+            },
+        );
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/zstd_l3/decode_64kib",
+            "ns/byte",
+            params,
+            || {
+                let decoded = zstd_decomp
+                    .decompress(black_box(&zstd_l3_compressed), block_size)
+                    .unwrap();
+                black_box(decoded.len());
+            },
+        );
+    }
+
+    drop(_brk_anchor);
+}
+
 fn find_min(records: &[BenchRecord], name: &str) -> Option<f64> {
     records
         .iter()
@@ -3828,6 +4410,168 @@ fn build_same_run_comparisons(
         }
     }
 
+    // 6. Entropy Coding (64 KiB synthetic enwik8-like block)
+    let huff_o0_bpb = space
+        .get("entropy/huffman_o0_bits_per_byte")
+        .copied()
+        .unwrap_or(0.0);
+    let huff_o1_bpb = space
+        .get("entropy/huffman_o1_bits_per_byte")
+        .copied()
+        .unwrap_or(0.0);
+    let huff_o2_bpb = space
+        .get("entropy/huffman_o2_bits_per_byte")
+        .copied()
+        .unwrap_or(0.0);
+    let fse_bpb = space
+        .get("entropy/fse_bits_per_byte")
+        .copied()
+        .unwrap_or(0.0);
+    let rans_x1_bpb = space
+        .get("entropy/rans64_x1_bits_per_byte")
+        .copied()
+        .unwrap_or(0.0);
+    let rans_x4_bpb = space
+        .get("entropy/rans64_x4_bits_per_byte")
+        .copied()
+        .unwrap_or(0.0);
+    let hc_bpb = space
+        .get("entropy/huffman_compress_bits_per_byte")
+        .copied()
+        .unwrap_or(0.0);
+    let cons_bpb = space
+        .get("entropy/constriction_ans_bits_per_byte")
+        .copied()
+        .unwrap_or(0.0);
+    let zstd_l1_bpb = space
+        .get("entropy/zstd_l1_bits_per_byte")
+        .copied()
+        .unwrap_or(0.0);
+    let zstd_l3_bpb = space
+        .get("entropy/zstd_l3_bits_per_byte")
+        .copied()
+        .unwrap_or(0.0);
+
+    // 6a. Huffman O0/O1/O2 vs huffman-compress and zstd
+    for (z_enc, z_dec, z_var, z_bpb) in [
+        (
+            "entropy/huffman_o0/encode_64kib",
+            "entropy/huffman_o0/decode_64kib",
+            "HuffmanEncoder (O0)",
+            huff_o0_bpb,
+        ),
+        (
+            "entropy/huffman_o1/encode_x1_64kib",
+            "entropy/huffman_o1/decode_64kib",
+            "ContextualHuffmanEncoder (O1 x1)",
+            huff_o1_bpb,
+        ),
+        (
+            "entropy/huffman_o1/encode_x4_64kib",
+            "entropy/huffman_o1/decode_64kib",
+            "ContextualHuffmanEncoder (O1 x4)",
+            huff_o1_bpb,
+        ),
+        (
+            "entropy/huffman_o2/encode_64kib",
+            "entropy/huffman_o2/decode_64kib",
+            "ContextualHuffmanEncoder (O2)",
+            huff_o2_bpb,
+        ),
+    ] {
+        for (c_prefix, c_label, c_bpb) in [
+            ("entropy/huffman_compress", "huffman-compress", hc_bpb),
+            ("entropy/zstd_l1", "zstd (level 1)", zstd_l1_bpb),
+            ("entropy/zstd_l3", "zstd (level 3)", zstd_l3_bpb),
+        ] {
+            push_comparison(
+                &mut out,
+                records,
+                "entropy",
+                &format!("encode_64kib ({z_var})"),
+                z_enc,
+                z_var,
+                &format!("{c_prefix}/encode_64kib"),
+                c_label,
+                "ns/byte",
+                "bits_per_byte",
+                z_bpb,
+                c_bpb,
+            );
+            push_comparison(
+                &mut out,
+                records,
+                "entropy",
+                &format!("decode_64kib ({z_var})"),
+                z_dec,
+                z_var,
+                &format!("{c_prefix}/decode_64kib"),
+                c_label,
+                "ns/byte",
+                "bits_per_byte",
+                z_bpb,
+                c_bpb,
+            );
+        }
+    }
+
+    // 6b. FSE & rANS64 (X1 & X4) vs constriction ANS and zstd (levels 1 & 3)
+    for (z_enc, z_dec, z_var, z_bpb) in [
+        (
+            "entropy/fse/encode_64kib",
+            "entropy/fse/decode_64kib",
+            "FseEncoder",
+            fse_bpb,
+        ),
+        (
+            "entropy/rans64_x1/encode_64kib",
+            "entropy/rans64_x1/decode_64kib",
+            "Rans64Encoder<ParallelX1>",
+            rans_x1_bpb,
+        ),
+        (
+            "entropy/rans64_x4/encode_64kib",
+            "entropy/rans64_x4/decode_64kib",
+            "Rans64Encoder<ParallelX4>",
+            rans_x4_bpb,
+        ),
+    ] {
+        for (c_prefix, c_label, c_bpb) in [
+            ("entropy/constriction_ans", "constriction::DefaultAnsCoder", cons_bpb),
+            ("entropy/zstd_l1", "zstd (level 1)", zstd_l1_bpb),
+            ("entropy/zstd_l3", "zstd (level 3)", zstd_l3_bpb),
+        ] {
+            push_comparison(
+                &mut out,
+                records,
+                "entropy",
+                &format!("encode_64kib ({z_var})"),
+                z_enc,
+                z_var,
+                &format!("{c_prefix}/encode_64kib"),
+                c_label,
+                "ns/byte",
+                "bits_per_byte",
+                z_bpb,
+                c_bpb,
+            );
+            push_comparison(
+                &mut out,
+                records,
+                "entropy",
+                &format!("decode_64kib ({z_var})"),
+                z_dec,
+                z_var,
+                &format!("{c_prefix}/decode_64kib"),
+                c_label,
+                "ns/byte",
+                "bits_per_byte",
+                z_bpb,
+                c_bpb,
+            );
+        }
+    }
+
     out
 }
 
@@ -3912,6 +4656,10 @@ fn main() {
     }
     if run_cat("memory_pools") {
         bench_memory_pools(&mut records, &mut space_metrics, logical_cores, sizes);
+        maybe_repin_self_within_ccd();
+    }
+    if run_cat("entropy") {
+        bench_entropy(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
 
