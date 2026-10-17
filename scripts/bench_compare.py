@@ -32,6 +32,7 @@ Gate rules:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import socket
@@ -149,14 +150,52 @@ def find_compiled_bench_binary(bench_bin: str) -> Optional[Path]:
     return candidates[0][1]
 
 
+def resolve_retry_binary(
+    bench_bin: str, host_metadata: Dict[str, Any]
+) -> Optional[Path]:
+    recorded_path = str(host_metadata.get("binary_path", "") or "").strip()
+    recorded_sha256 = str(host_metadata.get("binary_sha256", "") or "").strip().lower()
+    if recorded_path:
+        bin_path = Path(recorded_path)
+        if not bin_path.is_file() or not os.access(bin_path, os.X_OK):
+            print(
+                f"ERROR: recorded benchmark binary in host_metadata.binary_path does not exist or is not executable: {bin_path}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if recorded_sha256:
+            try:
+                actual_sha256 = hashlib.sha256(bin_path.read_bytes()).hexdigest().lower()
+            except OSError as exc:
+                print(
+                    f"ERROR: failed to read recorded benchmark binary {bin_path}: {exc}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if actual_sha256 != recorded_sha256:
+                print(
+                    f"ERROR: recorded benchmark binary {bin_path} SHA-256 mismatch "
+                    f"(expected {recorded_sha256}, found {actual_sha256}); refusing to retry with a different binary.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        return bin_path
+    return find_compiled_bench_binary(bench_bin)
+
+
 def run_isolated_retry(
     suite: str,
     bench_names: List[str],
     attempt: int,
     total_attempts: int,
-    rustflags: Optional[str],
+    host_metadata: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    bench_bin = "core_bench" if suite == "core_bench" else "e2e_search_bench"
+    if suite == "core_bench":
+        bench_bin = "core_bench"
+    elif suite == "competitor_bench":
+        bench_bin = "competitor_bench"
+    else:
+        bench_bin = "e2e_search_bench"
     target_root = Path(os.environ.get("CARGO_TARGET_DIR", "target"))
     retry_out = target_root / "bench" / f"{suite}_retry_{attempt}.json"
     if retry_out.exists():
@@ -165,6 +204,7 @@ def run_isolated_retry(
         except OSError:
             pass
 
+    compiled_bin = resolve_retry_binary(bench_bin, host_metadata)
     nr, busy = wait_for_quiet_host_window(max_wait_sec=35.0)
     filter_arg = ",".join(bench_names)
     print(
@@ -173,7 +213,7 @@ def run_isolated_retry(
         flush=True,
     )
 
-    compiled_bin = find_compiled_bench_binary(bench_bin)
+    rustflags = host_metadata.get("rustflags")
     env = os.environ.copy()
     if rustflags:
         env["RUSTFLAGS"] = rustflags
@@ -191,7 +231,7 @@ def run_isolated_retry(
             "--output",
             str(retry_out),
         ]
-    if suite == "core_bench" and bench_names:
+    if suite in ("core_bench", "competitor_bench") and bench_names:
         cmd.extend(["--filter", filter_arg])
 
     proc = subprocess.run(cmd, env=env, check=False)
@@ -513,7 +553,7 @@ def main() -> int:
 
     retries_used = 0
     if max_retries > 0 and failures and not has_integrity_error:
-        rustflags = current_data.get("host_metadata", {}).get("rustflags")
+        host_metadata = current_data.get("host_metadata", {}) or {}
         any_merged = False
         for attempt in range(1, max_retries + 1):
             retries_used = attempt
@@ -525,14 +565,14 @@ def main() -> int:
             for msg in failures:
                 print(f"  * {msg}", flush=True)
 
-            if args.suite == "core_bench" and regressed_names:
+            if args.suite in ("core_bench", "competitor_bench") and regressed_names:
                 # Re-run each failing benchmark in an isolated process so each
                 # fits inside a short quiet host window with a clean heap.
                 batch_size = 1 if len(regressed_names) <= 20 else 2
                 for i in range(0, len(regressed_names), batch_size):
                     chunk = regressed_names[i : i + batch_size]
                     retry_data = run_isolated_retry(
-                        args.suite, chunk, attempt, max_retries, rustflags
+                        args.suite, chunk, attempt, max_retries, host_metadata
                     )
                     if retry_data is not None:
                         if merge_retry_into_current(
@@ -541,7 +581,7 @@ def main() -> int:
                             any_merged = True
             else:
                 retry_data = run_isolated_retry(
-                    args.suite, regressed_names, attempt, max_retries, rustflags
+                    args.suite, regressed_names, attempt, max_retries, host_metadata
                 )
                 if retry_data is not None:
                     if merge_retry_into_current(current_data, retry_data, args.metric):
