@@ -24,6 +24,7 @@ use std::time::Instant;
 
 type DeterministicStdHashMap<K, V> = StdHashMap<K, V, BuildHasherDefault<StdSipHasher13>>;
 
+use aho_corasick::AhoCorasick;
 use bit_vec::BitVec as HuffmanBitVec;
 use bitm::{
     CombinedSampling, Rank as BitmRank, RankSelect101111, Select as BitmSelect,
@@ -39,12 +40,15 @@ use dyn_size_of::GetSize;
 use fst::Set as FstSet;
 use hashbrown::HashMap as HashbrownMap;
 use huffman_compress::CodeBuilder as HuffmanCompressBuilder;
+use memchr::{memchr as crate_memchr, memmem as crate_memmem};
 use mimalloc::MiMalloc;
 use qp_trie::Trie as QpTrie;
 use radix_trie::{Trie as RadixTrie, TrieCommon as _};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
+use rdst::{RadixKey as RdstRadixKey, RadixSort as RdstRadixSort};
+use sacabase::StringIndex as SacabaseStringIndex;
 use serde::{Deserialize, Serialize};
 use stream_vbyte::{
     decode::decode as svb_crate_decode, encode::encode as svb_crate_encode,
@@ -58,9 +62,13 @@ use sucds::bit_vectors::{
 use sucds::mii_sequences::{
     EliasFano as SucdsEliasFano, EliasFanoBuilder as SucdsEliasFanoBuilder,
 };
+use suffix::SuffixTable;
 use tikv_jemallocator::Jemalloc;
 use vers_vecs::{BitVec as VersBitVec, EliasFanoVec as VersEliasFanoVec, RsVec as VersRsVec};
+use voracious_radix_sort::{RadixSort as VoraciousRadixSort, Radixable as VoraciousRadixable};
 
+use zipora::algorithms::radix_sort::{KeyValueRadixSort, RadixSort, RadixSortConfig};
+use zipora::algorithms::suffix_array::SuffixArray;
 use zipora::compression::stream_vbyte::{GroupVarint, StreamVByte};
 use zipora::entropy::fse::{FseConfig, FseEncoder, fse_decompress};
 use zipora::entropy::huffman::{
@@ -68,14 +76,17 @@ use zipora::entropy::huffman::{
     HuffmanOrder,
 };
 use zipora::entropy::rans::{ParallelX1, ParallelX4, Rans64Decoder, Rans64Encoder};
-use zipora::fsa::DoubleArrayTrie;
 use zipora::fsa::cspp_trie::CsppTrie;
+use zipora::fsa::{DoubleArrayTrie, TrieStrategy, ZiporaTrie, ZiporaTrieConfig};
 use zipora::hash_map::{
     GoldHashMap, GoldHashMapConfig, HashStorageStrategy, ZiporaHashMap, ZiporaHashMapConfig,
 };
 use zipora::memory::{
     LockFreeMemoryPool, LockFreePoolConfig, SecureMemoryPool, SecurePoolConfig,
 };
+use zipora::scoring::bm25::Bm25BatchScorer;
+use zipora::scoring::fieldnorm::FieldnormEncoder;
+use zipora::string::SimdStringSearch;
 use zipora::succinct::BitVector;
 use zipora::succinct::elias_fano::{
     ClusteredEliasFano, EliasFano, HybridPostingList, OptimalPartitionedEliasFano,
@@ -218,7 +229,7 @@ fn build_competitor_configs() -> BTreeMap<String, CompetitorConfigMeta> {
         "std::collections::HashMap".to_string(),
         CompetitorConfigMeta {
             crate_name: "std".to_string(),
-            version: "1.90.0".to_string(),
+            version: "1.97.1".to_string(),
             features: vec!["SipHash13".to_string()],
             api_used: "std::collections::HashMap::<K, u64>::with_capacity & insert / get".to_string(),
             notes: "Standard library SwissTable (hashbrown backend) with default SipHash-1-3 RandomState".to_string(),
@@ -248,7 +259,7 @@ fn build_competitor_configs() -> BTreeMap<String, CompetitorConfigMeta> {
         "std::alloc::System".to_string(),
         CompetitorConfigMeta {
             crate_name: "std".to_string(),
-            version: "1.90.0".to_string(),
+            version: "1.97.1".to_string(),
             features: vec!["glibc_ptmalloc".to_string()],
             api_used: "<std::alloc::System as GlobalAlloc>::alloc / dealloc".to_string(),
             notes: "OS system allocator (glibc ptmalloc2 with per-thread tcache)".to_string(),
@@ -306,6 +317,86 @@ fn build_competitor_configs() -> BTreeMap<String, CompetitorConfigMeta> {
             ],
             api_used: "bitpacking::BitPacker4x::{num_bits_sorted, compress_sorted, decompress, decompress_sorted}".to_string(),
             notes: "Quickwit/Tantivy SIMD bit-packing (128-int blocks, SSE3 4-lane BitPacker4x with SIMD delta integration)".to_string(),
+        },
+    );
+    m.insert(
+        "voracious_radix_sort".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "voracious_radix_sort".to_string(),
+            version: "1.2.0".to_string(),
+            features: vec![],
+            api_used: "<[T] as voracious_radix_sort::RadixSort>::voracious_sort".to_string(),
+            notes: "Single-threaded hybrid MSD/Ska/LSD radix sort over u32, u64, and Radixable<u64> (u64, u64) pairs".to_string(),
+        },
+    );
+    m.insert(
+        "rdst".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "rdst".to_string(),
+            version: "0.20.11".to_string(),
+            features: vec![],
+            api_used: "slice.radix_sort_builder().with_single_threaded_tuner().sort()".to_string(),
+            notes: "Single-threaded adaptive LSB/Ska radix sort with RadixKey for u32, u64, and (u64, u64) pairs".to_string(),
+        },
+    );
+    m.insert(
+        "std::slice::sort_unstable".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "std".to_string(),
+            version: "1.97.1".to_string(),
+            features: vec!["ipnsort".to_string()],
+            api_used: "<[T]>::sort_unstable & <[T]>::sort_unstable_by_key".to_string(),
+            notes: "Standard library in-place pattern-defeating quicksort (ipnsort)".to_string(),
+        },
+    );
+    m.insert(
+        "suffix".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "suffix".to_string(),
+            version: "1.3.0".to_string(),
+            features: vec![],
+            api_used: "suffix::SuffixTable::new(&str) & SuffixTable::positions(&str)".to_string(),
+            notes: "BurntSushi pure-Rust SA-IS suffix array construction and binary search".to_string(),
+        },
+    );
+    m.insert(
+        "divsufsort".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "divsufsort".to_string(),
+            version: "2.0.0".to_string(),
+            features: vec![],
+            api_used: "divsufsort::sort(&[u8]) & sacabase::StringIndex::longest_substring_match(&[u8])".to_string(),
+            notes: "Pure-Rust port of Yuta Mori's libdivsufsort induced-sorting suffix array construction".to_string(),
+        },
+    );
+    m.insert(
+        "cdivsufsort".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "cdivsufsort".to_string(),
+            version: "2.0.0".to_string(),
+            features: vec![],
+            api_used: "cdivsufsort::sort(&[u8]) & sacabase::StringIndex::longest_substring_match(&[u8])".to_string(),
+            notes: "C FFI binding to Yuta Mori's libdivsufsort reference implementation".to_string(),
+        },
+    );
+    m.insert(
+        "memchr".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "memchr".to_string(),
+            version: "2.7.5".to_string(),
+            features: vec!["std".to_string()],
+            api_used: "memchr::memchr(u8, &[u8]), memchr::memmem::find(&[u8], &[u8]), & memchr::memmem::Finder::find(&[u8])".to_string(),
+            notes: "BurntSushi AVX2/SSE2 vectorized byte and substring search".to_string(),
+        },
+    );
+    m.insert(
+        "aho-corasick".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "aho-corasick".to_string(),
+            version: "1.1.3".to_string(),
+            features: vec!["std".to_string(), "perf-literal".to_string()],
+            api_used: "aho_corasick::AhoCorasick::new([needle]).unwrap().find(&[u8])".to_string(),
+            notes: "BurntSushi Aho-Corasick automaton with SIMD prefilter".to_string(),
         },
     );
     m
@@ -1792,6 +1883,123 @@ fn bench_tries(
             drop(packed);
         }
     }
+
+    // 6. ZiporaTrie (DoubleArray strategy) build + lookup on all 1,000,000 permuted keys
+    //    (matching core_bench.rs so all 80/80 core_bench rows are present in competitor_bench).
+    if !should_run_any(&["tries/zipora_trie_da/build", "tries/zipora_trie_da/lookup"]) {
+        return;
+    }
+    maybe_repin_self_within_ccd();
+    let num_zipora_keys = n as u64;
+    let zperm = BijectivePerm::new(n, SEED_BASE ^ 0x0599);
+    let mut zlookup_params = BenchParams::heavy(num_zipora_keys, lookup_batch as u64, 11);
+    zlookup_params.warmup_calls = 8;
+    zlookup_params.bursts_per_trial = 18;
+    let mut zbuild_params = BenchParams::heavy(num_zipora_keys, num_zipora_keys, 3);
+    zbuild_params.warmup_calls = 1;
+    zbuild_params.bursts_per_trial = 1;
+
+    let config = ZiporaTrieConfig {
+        trie_strategy: TrieStrategy::DoubleArray {
+            initial_capacity: (n / 2) + 90_112,
+            growth_factor: 2.0,
+            free_list_management: true,
+            auto_shrink: false,
+        },
+        ..ZiporaTrieConfig::default()
+    };
+
+    const Z_REPLICAS: usize = 4;
+    let (ztries, _ztrie_spacers) = {
+        let (_, zipora_packed) = gen_trie_distribution(0, n);
+        let zkey_len = zipora_packed.key_len;
+        const Z_SPACERS_KB: [usize; 6] = [1_376, 3_424, 2_368, 4_416, 1_888, 3_936];
+        let mut z_holes: Vec<Vec<u8>> = Vec::with_capacity(6);
+        for _ in 0..6 {
+            z_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
+        }
+        let z_anchor = black_box(vec![1u8; 64 * 1024]);
+        drop(z_holes);
+        let mut z_pending: Option<ZiporaTrie<RankSelectInterleaved256>> = None;
+        measure_bench_with_setup(
+            records,
+            "tries",
+            "tries/zipora_trie_da/build",
+            "ns/key",
+            zbuild_params,
+            &mut z_pending,
+            |slot| {
+                let _ = slot.take();
+            },
+            |slot| {
+                let mut z: ZiporaTrie<RankSelectInterleaved256> =
+                    ZiporaTrie::with_config(config.clone());
+                for k in zipora_packed.data.chunks_exact(zkey_len) {
+                    z.insert(black_box(k)).unwrap();
+                }
+                black_box(z.len());
+                *slot = Some(z);
+            },
+        );
+        let mut built_ztries = Vec::with_capacity(Z_REPLICAS);
+        let mut zspacers = Vec::with_capacity(Z_REPLICAS + 1);
+        if let Some(last) = z_pending.take() {
+            built_ztries.push(last);
+        }
+        while built_ztries.len() < Z_REPLICAS {
+            let skb = Z_SPACERS_KB[built_ztries.len()];
+            zspacers.push(vec![1u8; skb * 1024]);
+            let mut z: ZiporaTrie<RankSelectInterleaved256> =
+                ZiporaTrie::with_config(config.clone());
+            for k in zipora_packed.data.chunks_exact(zkey_len) {
+                z.insert(k).unwrap();
+            }
+            built_ztries.push(z);
+        }
+        zspacers.push(z_anchor);
+        (built_ztries, zspacers)
+    };
+
+    let zwarm_perm = BijectivePerm::new(n, SEED_BASE ^ 0x059A);
+    let mut warm_ztrie = 0usize;
+    let mut warm_z_idx = 0usize;
+    for w_burst in 0..8usize {
+        let w_start = w_burst * lookup_batch;
+        zwarm_perm.for_each_slice(w_start, lookup_batch, |id| {
+            let z = &ztries[warm_z_idx & (Z_REPLICAS - 1)];
+            warm_z_idx = warm_z_idx.wrapping_add(1);
+            let k = AlignedKey(make_url_path_key(id));
+            if z.contains(black_box(&k.0[..])) {
+                warm_ztrie += 1;
+            }
+        });
+    }
+    black_box(warm_ztrie);
+
+    measure_bench(
+        records,
+        "tries",
+        "tries/zipora_trie_da/lookup",
+        "ns/op",
+        zlookup_params,
+        || {
+            let start = current_burst_index() * lookup_batch;
+            let mut found = 0usize;
+            let mut q_idx = 0usize;
+            zperm.for_each_slice(start, lookup_batch, |id| {
+                let z = &ztries[q_idx & (Z_REPLICAS - 1)];
+                q_idx = q_idx.wrapping_add(1);
+                let k = AlignedKey(make_url_path_key(id));
+                if z.contains(black_box(&k.0[..])) {
+                    found += 1;
+                }
+            });
+            debug_assert_eq!(found, lookup_batch);
+            black_box(found);
+        },
+    );
+    drop(ztries);
+    drop(_ztrie_spacers);
 }
 
 // ---------------------------------------------------------------------------
@@ -2348,123 +2556,148 @@ fn bench_hash_maps(
         );
     }
 
-    let prefill_hb = n.saturating_sub(24 * half_batch);
-
     // 5. Competitor: hashbrown::HashMap<u64, u64, ahash::RandomState>
+    let quarter_batch = (get_batch / 4).max(1);
+    let prefill_hb = n.saturating_sub(24 * quarter_batch);
     if should_run_any(&[
         "hash_maps/hashbrown_ahash/insert_u64",
         "hash_maps/hashbrown_ahash/get_u64",
     ]) {
         maybe_repin_self_within_ccd();
-        let mut hb_tpl: HashbrownMap<u64, u64, ahash::RandomState> =
-            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
         let mut hb0: HashbrownMap<u64, u64, ahash::RandomState> =
             HashbrownMap::with_capacity_and_hasher(n, make_hasher());
-        let _spacer = vec![1u8; 352 * 1024];
+        let _spacer0 = vec![1u8; 352 * 1024];
         let mut hb1: HashbrownMap<u64, u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        let _spacer1 = vec![1u8; 352 * 1024];
+        let mut hb2: HashbrownMap<u64, u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        let _spacer2 = vec![1u8; 352 * 1024];
+        let mut hb3: HashbrownMap<u64, u64, ahash::RandomState> =
             HashbrownMap::with_capacity_and_hasher(n, make_hasher());
         record_space_metric(
             space,
             "hash_maps/hashbrown_u64_bytes_per_entry",
             hb0.allocation_size() as f64 / n.max(1) as f64,
         );
-        for i in 0..prefill_hb {
-            let k = make_u64_key(i);
-            hb_tpl.insert(k, i as u64);
+        if should_run_bench("hash_maps/hashbrown_ahash/insert_u64") {
+            for i in 0..n {
+                let k = make_u64_key(i);
+                hb0.insert(k, i as u64);
+                hb1.insert(k, i as u64);
+                hb2.insert(k, i as u64);
+                hb3.insert(k, i as u64);
+            }
+            hb0.clear();
+            hb1.clear();
+            hb2.clear();
+            hb3.clear();
+            for i in 0..prefill_hb {
+                let k = make_u64_key(i);
+                hb0.insert(k, i as u64);
+                hb1.insert(k, i as u64);
+                hb2.insert(k, i as u64);
+                hb3.insert(k, i as u64);
+            }
+            let mut hbs = [hb0, hb1, hb2, hb3];
+            measure_bench_with_setup(
+                records,
+                "hash_maps",
+                "hash_maps/hashbrown_ahash/insert_u64",
+                "ns/op",
+                insert_params,
+                &mut hbs,
+                |maps| {
+                    if maps[0].len() >= n {
+                        for m in maps.iter_mut() {
+                            m.clear();
+                        }
+                        for i in 0..prefill_hb {
+                            let k = make_u64_key(i);
+                            for m in maps.iter_mut() {
+                                m.insert(k, i as u64);
+                            }
+                        }
+                    }
+                },
+                |maps| {
+                    let b_idx = current_burst_index();
+                    let start = n + b_idx * get_batch;
+                    for id in start..start + quarter_batch {
+                        let k = make_u64_key(id);
+                        maps[0].insert(black_box(k), id as u64);
+                    }
+                    for id in start + quarter_batch..start + 2 * quarter_batch {
+                        let k = make_u64_key(id);
+                        maps[1].insert(black_box(k), id as u64);
+                    }
+                    for id in start + 2 * quarter_batch..start + 3 * quarter_batch {
+                        let k = make_u64_key(id);
+                        maps[2].insert(black_box(k), id as u64);
+                    }
+                    for id in start + 3 * quarter_batch..start + get_batch {
+                        let k = make_u64_key(id);
+                        maps[3].insert(black_box(k), id as u64);
+                    }
+                    black_box(maps[0].len() + maps[1].len() + maps[2].len() + maps[3].len());
+                },
+            );
+            let [h0, h1, h2, h3] = hbs;
+            hb0 = h0;
+            hb1 = h1;
+            hb2 = h2;
+            hb3 = h3;
         }
-        hb0.clone_from(&hb_tpl);
-        hb1.clone_from(&hb_tpl);
-        let mut hbs = [hb0, hb1];
-        let balance_hb_u64 = |maps: &[HashbrownMap<u64, u64, ahash::RandomState>; 2]| {
-            drop(black_box(vec![1u8; 36 * 1024 * 1024]));
-            let mut acc = 0u64;
-            let mut q = 0usize;
-            for w in 0..8usize {
+
+        if should_run_bench("hash_maps/hashbrown_ahash/get_u64") {
+            hb0.clear();
+            hb1.clear();
+            hb2.clear();
+            hb3.clear();
+            for id in 0..n {
+                let k = make_u64_key(id);
+                hb0.insert(k, id as u64);
+                hb1.insert(k, id as u64);
+                hb2.insert(k, id as u64);
+                hb3.insert(k, id as u64);
+            }
+            let hbs = [hb0, hb1, hb2, hb3];
+            let mut warm_sum = 0u64;
+            let mut warm_q = 0usize;
+            for w in 0..16usize {
                 u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
-                    let m = &maps[q & 1];
-                    q = q.wrapping_add(1);
+                    let m = &hbs[warm_q & 3];
+                    warm_q = warm_q.wrapping_add(1);
                     let k = make_u64_key(id);
                     if let Some(&v) = m.get(black_box(&k)) {
-                        acc = acc.wrapping_add(v);
+                        warm_sum = warm_sum.wrapping_add(v);
                     }
                 });
             }
-            black_box(acc);
-        };
-        balance_hb_u64(&hbs);
-        measure_bench_with_setup(
-            records,
-            "hash_maps",
-            "hash_maps/hashbrown_ahash/insert_u64",
-            "ns/op",
-            insert_params,
-            &mut hbs,
-            |maps| {
-                if maps[0].len() >= n || maps[1].len() >= n {
-                    maps[0].clone_from(&hb_tpl);
-                    maps[1].clone_from(&hb_tpl);
-                    balance_hb_u64(maps);
-                }
-            },
-            |maps| {
-                let b_idx = current_burst_index();
-                let start = n + b_idx * get_batch;
-                for id in start..start + half_batch {
-                    let k = make_u64_key(id);
-                    maps[0].insert(black_box(k), id as u64);
-                }
-                for id in start + half_batch..start + get_batch {
-                    let k = make_u64_key(id);
-                    maps[1].insert(black_box(k), id as u64);
-                }
-                black_box(maps[0].len() + maps[1].len());
-            },
-        );
-        drop(hb_tpl);
-
-        hbs[0].clear();
-        hbs[1].clear();
-        for id in 0..n {
-            let k = make_u64_key(id);
-            hbs[0].insert(k, id as u64);
-            hbs[1].insert(k, id as u64);
+            black_box(warm_sum);
+            measure_bench(
+                records,
+                "hash_maps",
+                "hash_maps/hashbrown_ahash/get_u64",
+                "ns/op",
+                get_params,
+                || {
+                    let b_idx = current_burst_index();
+                    let start = b_idx * get_batch;
+                    let mut sum = 0u64;
+                    let mut q_idx = 0usize;
+                    u64_perm.for_each_slice(start, get_batch, |id| {
+                        let m = &hbs[q_idx & 3];
+                        q_idx = q_idx.wrapping_add(1);
+                        let k = make_u64_key(id);
+                        if let Some(&v) = m.get(black_box(&k)) {
+                            sum = sum.wrapping_add(v);
+                        }
+                    });
+                    black_box(sum);
+                },
+            );
         }
-        drop(black_box(vec![1u8; 36 * 1024 * 1024]));
-        let mut warm_sum = 0u64;
-        let mut warm_q = 0usize;
-        for w in 0..8usize {
-            u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
-                let m = &hbs[warm_q & 1];
-                warm_q = warm_q.wrapping_add(1);
-                let k = make_u64_key(id);
-                if let Some(&v) = m.get(black_box(&k)) {
-                    warm_sum = warm_sum.wrapping_add(v);
-                }
-            });
-        }
-        black_box(warm_sum);
-        measure_bench(
-            records,
-            "hash_maps",
-            "hash_maps/hashbrown_ahash/get_u64",
-            "ns/op",
-            get_params,
-            || {
-                let b_idx = current_burst_index();
-                let start = b_idx * get_batch;
-                let mut sum = 0u64;
-                let mut q_idx = 0usize;
-                u64_perm.for_each_slice(start, get_batch, |id| {
-                    let m = &hbs[q_idx & 1];
-                    q_idx = q_idx.wrapping_add(1);
-                    let k = make_u64_key(id);
-                    if let Some(&v) = m.get(black_box(&k)) {
-                        sum = sum.wrapping_add(v);
-                    }
-                });
-                black_box(sum);
-            },
-        );
     }
 
     // 6. Competitor: hashbrown::HashMap<[u8; 16], u64, ahash::RandomState>
@@ -2473,115 +2706,140 @@ fn bench_hash_maps(
         "hash_maps/hashbrown_ahash/get_str16",
     ]) {
         maybe_repin_self_within_ccd();
-        let mut hb_tpl: HashbrownMap<[u8; 16], u64, ahash::RandomState> =
-            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
         let mut hb0: HashbrownMap<[u8; 16], u64, ahash::RandomState> =
             HashbrownMap::with_capacity_and_hasher(n, make_hasher());
-        let _spacer = vec![1u8; 352 * 1024];
+        let _spacer0 = vec![1u8; 352 * 1024];
         let mut hb1: HashbrownMap<[u8; 16], u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        let _spacer1 = vec![1u8; 352 * 1024];
+        let mut hb2: HashbrownMap<[u8; 16], u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        let _spacer2 = vec![1u8; 352 * 1024];
+        let mut hb3: HashbrownMap<[u8; 16], u64, ahash::RandomState> =
             HashbrownMap::with_capacity_and_hasher(n, make_hasher());
         record_space_metric(
             space,
             "hash_maps/hashbrown_str16_bytes_per_entry",
             hb0.allocation_size() as f64 / n.max(1) as f64,
         );
-        for i in 0..prefill_hb {
-            let k = make_str16_key(i);
-            hb_tpl.insert(k, i as u64);
+        if should_run_bench("hash_maps/hashbrown_ahash/insert_str16") {
+            for i in 0..n {
+                let k = make_str16_key(i);
+                hb0.insert(k, i as u64);
+                hb1.insert(k, i as u64);
+                hb2.insert(k, i as u64);
+                hb3.insert(k, i as u64);
+            }
+            hb0.clear();
+            hb1.clear();
+            hb2.clear();
+            hb3.clear();
+            for i in 0..prefill_hb {
+                let k = make_str16_key(i);
+                hb0.insert(k, i as u64);
+                hb1.insert(k, i as u64);
+                hb2.insert(k, i as u64);
+                hb3.insert(k, i as u64);
+            }
+            let mut hbs = [hb0, hb1, hb2, hb3];
+            measure_bench_with_setup(
+                records,
+                "hash_maps",
+                "hash_maps/hashbrown_ahash/insert_str16",
+                "ns/op",
+                insert_params,
+                &mut hbs,
+                |maps| {
+                    if maps[0].len() >= n {
+                        for m in maps.iter_mut() {
+                            m.clear();
+                        }
+                        for i in 0..prefill_hb {
+                            let k = make_str16_key(i);
+                            for m in maps.iter_mut() {
+                                m.insert(k, i as u64);
+                            }
+                        }
+                    }
+                },
+                |maps| {
+                    let b_idx = current_burst_index();
+                    let start = n + b_idx * get_batch;
+                    for id in start..start + quarter_batch {
+                        let k = make_str16_key(id);
+                        maps[0].insert(black_box(k), id as u64);
+                    }
+                    for id in start + quarter_batch..start + 2 * quarter_batch {
+                        let k = make_str16_key(id);
+                        maps[1].insert(black_box(k), id as u64);
+                    }
+                    for id in start + 2 * quarter_batch..start + 3 * quarter_batch {
+                        let k = make_str16_key(id);
+                        maps[2].insert(black_box(k), id as u64);
+                    }
+                    for id in start + 3 * quarter_batch..start + get_batch {
+                        let k = make_str16_key(id);
+                        maps[3].insert(black_box(k), id as u64);
+                    }
+                    black_box(maps[0].len() + maps[1].len() + maps[2].len() + maps[3].len());
+                },
+            );
+            let [h0, h1, h2, h3] = hbs;
+            hb0 = h0;
+            hb1 = h1;
+            hb2 = h2;
+            hb3 = h3;
         }
-        hb0.clone_from(&hb_tpl);
-        hb1.clone_from(&hb_tpl);
-        let mut hbs = [hb0, hb1];
-        let balance_hb_str16 = |maps: &[HashbrownMap<[u8; 16], u64, ahash::RandomState>; 2]| {
-            drop(black_box(vec![1u8; 36 * 1024 * 1024]));
-            let mut acc = 0u64;
-            let mut q = 0usize;
-            for w in 0..8usize {
+
+        if should_run_bench("hash_maps/hashbrown_ahash/get_str16") {
+            hb0.clear();
+            hb1.clear();
+            hb2.clear();
+            hb3.clear();
+            for id in 0..n {
+                let k = make_str16_key(id);
+                hb0.insert(k, id as u64);
+                hb1.insert(k, id as u64);
+                hb2.insert(k, id as u64);
+                hb3.insert(k, id as u64);
+            }
+            let hbs = [hb0, hb1, hb2, hb3];
+            let mut warm_sum = 0u64;
+            let mut warm_q = 0usize;
+            for w in 0..16usize {
                 str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
-                    let m = &maps[q & 1];
-                    q = q.wrapping_add(1);
+                    let m = &hbs[warm_q & 3];
+                    warm_q = warm_q.wrapping_add(1);
                     let k = make_str16_key(id);
                     if let Some(&v) = m.get(black_box(&k)) {
-                        acc = acc.wrapping_add(v);
+                        warm_sum = warm_sum.wrapping_add(v);
                     }
                 });
             }
-            black_box(acc);
-        };
-        balance_hb_str16(&hbs);
-        measure_bench_with_setup(
-            records,
-            "hash_maps",
-            "hash_maps/hashbrown_ahash/insert_str16",
-            "ns/op",
-            insert_params,
-            &mut hbs,
-            |maps| {
-                if maps[0].len() >= n || maps[1].len() >= n {
-                    maps[0].clone_from(&hb_tpl);
-                    maps[1].clone_from(&hb_tpl);
-                    balance_hb_str16(maps);
-                }
-            },
-            |maps| {
-                let b_idx = current_burst_index();
-                let start = n + b_idx * get_batch;
-                for id in start..start + half_batch {
-                    let k = make_str16_key(id);
-                    maps[0].insert(black_box(k), id as u64);
-                }
-                for id in start + half_batch..start + get_batch {
-                    let k = make_str16_key(id);
-                    maps[1].insert(black_box(k), id as u64);
-                }
-                black_box(maps[0].len() + maps[1].len());
-            },
-        );
-        drop(hb_tpl);
-
-        hbs[0].clear();
-        hbs[1].clear();
-        for id in 0..n {
-            let k = make_str16_key(id);
-            hbs[0].insert(k, id as u64);
-            hbs[1].insert(k, id as u64);
+            black_box(warm_sum);
+            measure_bench(
+                records,
+                "hash_maps",
+                "hash_maps/hashbrown_ahash/get_str16",
+                "ns/op",
+                get_params,
+                || {
+                    let b_idx = current_burst_index();
+                    let start = b_idx * get_batch;
+                    let mut sum = 0u64;
+                    let mut q_idx = 0usize;
+                    str16_perm.for_each_slice(start, get_batch, |id| {
+                        let m = &hbs[q_idx & 3];
+                        q_idx = q_idx.wrapping_add(1);
+                        let k = make_str16_key(id);
+                        if let Some(&v) = m.get(black_box(&k)) {
+                            sum = sum.wrapping_add(v);
+                        }
+                    });
+                    black_box(sum);
+                },
+            );
         }
-        drop(black_box(vec![1u8; 36 * 1024 * 1024]));
-        let mut warm_sum = 0u64;
-        let mut warm_q = 0usize;
-        for w in 0..8usize {
-            str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
-                let m = &hbs[warm_q & 1];
-                warm_q = warm_q.wrapping_add(1);
-                let k = make_str16_key(id);
-                if let Some(&v) = m.get(black_box(&k)) {
-                    warm_sum = warm_sum.wrapping_add(v);
-                }
-            });
-        }
-        black_box(warm_sum);
-        measure_bench(
-            records,
-            "hash_maps",
-            "hash_maps/hashbrown_ahash/get_str16",
-            "ns/op",
-            get_params,
-            || {
-                let b_idx = current_burst_index();
-                let start = b_idx * get_batch;
-                let mut sum = 0u64;
-                let mut q_idx = 0usize;
-                str16_perm.for_each_slice(start, get_batch, |id| {
-                    let m = &hbs[q_idx & 1];
-                    q_idx = q_idx.wrapping_add(1);
-                    let k = make_str16_key(id);
-                    if let Some(&v) = m.get(black_box(&k)) {
-                        sum = sum.wrapping_add(v);
-                    }
-                });
-                black_box(sum);
-            },
-        );
     }
 
     // 7. Competitor: std::collections::HashMap<u64, u64>
@@ -2596,110 +2854,135 @@ fn bench_hash_maps(
         );
         drop(hb_ref);
 
-        let mut std_tpl: DeterministicStdHashMap<u64, u64> =
-            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
         let mut std0: DeterministicStdHashMap<u64, u64> =
             DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
-        let _spacer = vec![1u8; 352 * 1024];
+        let _spacer0 = vec![1u8; 352 * 1024];
         let mut std1: DeterministicStdHashMap<u64, u64> =
             DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
-        for i in 0..prefill_hb {
-            let k = make_u64_key(i);
-            std_tpl.insert(k, i as u64);
+        let _spacer1 = vec![1u8; 352 * 1024];
+        let mut std2: DeterministicStdHashMap<u64, u64> =
+            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
+        let _spacer2 = vec![1u8; 352 * 1024];
+        let mut std3: DeterministicStdHashMap<u64, u64> =
+            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
+        if should_run_bench("hash_maps/std/insert_u64") {
+            for i in 0..n {
+                let k = make_u64_key(i);
+                std0.insert(k, i as u64);
+                std1.insert(k, i as u64);
+                std2.insert(k, i as u64);
+                std3.insert(k, i as u64);
+            }
+            std0.clear();
+            std1.clear();
+            std2.clear();
+            std3.clear();
+            for i in 0..prefill_hb {
+                let k = make_u64_key(i);
+                std0.insert(k, i as u64);
+                std1.insert(k, i as u64);
+                std2.insert(k, i as u64);
+                std3.insert(k, i as u64);
+            }
+            let mut stds = [std0, std1, std2, std3];
+            measure_bench_with_setup(
+                records,
+                "hash_maps",
+                "hash_maps/std/insert_u64",
+                "ns/op",
+                insert_params,
+                &mut stds,
+                |maps| {
+                    if maps[0].len() >= n {
+                        for m in maps.iter_mut() {
+                            m.clear();
+                        }
+                        for i in 0..prefill_hb {
+                            let k = make_u64_key(i);
+                            for m in maps.iter_mut() {
+                                m.insert(k, i as u64);
+                            }
+                        }
+                    }
+                },
+                |maps| {
+                    let b_idx = current_burst_index();
+                    let start = n + b_idx * get_batch;
+                    for id in start..start + quarter_batch {
+                        let k = make_u64_key(id);
+                        maps[0].insert(black_box(k), id as u64);
+                    }
+                    for id in start + quarter_batch..start + 2 * quarter_batch {
+                        let k = make_u64_key(id);
+                        maps[1].insert(black_box(k), id as u64);
+                    }
+                    for id in start + 2 * quarter_batch..start + 3 * quarter_batch {
+                        let k = make_u64_key(id);
+                        maps[2].insert(black_box(k), id as u64);
+                    }
+                    for id in start + 3 * quarter_batch..start + get_batch {
+                        let k = make_u64_key(id);
+                        maps[3].insert(black_box(k), id as u64);
+                    }
+                    black_box(maps[0].len() + maps[1].len() + maps[2].len() + maps[3].len());
+                },
+            );
+            let [s0, s1, s2, s3] = stds;
+            std0 = s0;
+            std1 = s1;
+            std2 = s2;
+            std3 = s3;
         }
-        std0.clone_from(&std_tpl);
-        std1.clone_from(&std_tpl);
-        let mut stds = [std0, std1];
-        let balance_std_u64 = |maps: &[DeterministicStdHashMap<u64, u64>; 2]| {
-            drop(black_box(vec![1u8; 36 * 1024 * 1024]));
-            let mut acc = 0u64;
-            let mut q = 0usize;
-            for w in 0..8usize {
+
+        if should_run_bench("hash_maps/std/get_u64") {
+            std0.clear();
+            std1.clear();
+            std2.clear();
+            std3.clear();
+            for id in 0..n {
+                let k = make_u64_key(id);
+                std0.insert(k, id as u64);
+                std1.insert(k, id as u64);
+                std2.insert(k, id as u64);
+                std3.insert(k, id as u64);
+            }
+            let stds = [std0, std1, std2, std3];
+            let mut warm_sum = 0u64;
+            let mut warm_q = 0usize;
+            for w in 0..16usize {
                 u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
-                    let m = &maps[q & 1];
-                    q = q.wrapping_add(1);
+                    let m = &stds[warm_q & 3];
+                    warm_q = warm_q.wrapping_add(1);
                     let k = make_u64_key(id);
                     if let Some(&v) = m.get(black_box(&k)) {
-                        acc = acc.wrapping_add(v);
+                        warm_sum = warm_sum.wrapping_add(v);
                     }
                 });
             }
-            black_box(acc);
-        };
-        balance_std_u64(&stds);
-        measure_bench_with_setup(
-            records,
-            "hash_maps",
-            "hash_maps/std/insert_u64",
-            "ns/op",
-            insert_params,
-            &mut stds,
-            |maps| {
-                if maps[0].len() >= n || maps[1].len() >= n {
-                    maps[0].clone_from(&std_tpl);
-                    maps[1].clone_from(&std_tpl);
-                    balance_std_u64(maps);
-                }
-            },
-            |maps| {
-                let b_idx = current_burst_index();
-                let start = n + b_idx * get_batch;
-                for id in start..start + half_batch {
-                    let k = make_u64_key(id);
-                    maps[0].insert(black_box(k), id as u64);
-                }
-                for id in start + half_batch..start + get_batch {
-                    let k = make_u64_key(id);
-                    maps[1].insert(black_box(k), id as u64);
-                }
-                black_box(maps[0].len() + maps[1].len());
-            },
-        );
-        drop(std_tpl);
-
-        stds[0].clear();
-        stds[1].clear();
-        for id in 0..n {
-            let k = make_u64_key(id);
-            stds[0].insert(k, id as u64);
-            stds[1].insert(k, id as u64);
+            black_box(warm_sum);
+            measure_bench(
+                records,
+                "hash_maps",
+                "hash_maps/std/get_u64",
+                "ns/op",
+                get_params,
+                || {
+                    let b_idx = current_burst_index();
+                    let start = b_idx * get_batch;
+                    let mut sum = 0u64;
+                    let mut q_idx = 0usize;
+                    u64_perm.for_each_slice(start, get_batch, |id| {
+                        let m = &stds[q_idx & 3];
+                        q_idx = q_idx.wrapping_add(1);
+                        let k = make_u64_key(id);
+                        if let Some(&v) = m.get(black_box(&k)) {
+                            sum = sum.wrapping_add(v);
+                        }
+                    });
+                    black_box(sum);
+                },
+            );
         }
-        drop(black_box(vec![1u8; 36 * 1024 * 1024]));
-        let mut warm_sum = 0u64;
-        let mut warm_q = 0usize;
-        for w in 0..8usize {
-            u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
-                let m = &stds[warm_q & 1];
-                warm_q = warm_q.wrapping_add(1);
-                let k = make_u64_key(id);
-                if let Some(&v) = m.get(black_box(&k)) {
-                    warm_sum = warm_sum.wrapping_add(v);
-                }
-            });
-        }
-        black_box(warm_sum);
-        measure_bench(
-            records,
-            "hash_maps",
-            "hash_maps/std/get_u64",
-            "ns/op",
-            get_params,
-            || {
-                let b_idx = current_burst_index();
-                let start = b_idx * get_batch;
-                let mut sum = 0u64;
-                let mut q_idx = 0usize;
-                u64_perm.for_each_slice(start, get_batch, |id| {
-                    let m = &stds[q_idx & 1];
-                    q_idx = q_idx.wrapping_add(1);
-                    let k = make_u64_key(id);
-                    if let Some(&v) = m.get(black_box(&k)) {
-                        sum = sum.wrapping_add(v);
-                    }
-                });
-                black_box(sum);
-            },
-        );
     }
 
     // 8. Competitor: std::collections::HashMap<[u8; 16], u64>
@@ -2714,110 +2997,135 @@ fn bench_hash_maps(
         );
         drop(hb_ref);
 
-        let mut std_tpl: DeterministicStdHashMap<[u8; 16], u64> =
-            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
         let mut std0: DeterministicStdHashMap<[u8; 16], u64> =
             DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
-        let _spacer = vec![1u8; 352 * 1024];
+        let _spacer0 = vec![1u8; 352 * 1024];
         let mut std1: DeterministicStdHashMap<[u8; 16], u64> =
             DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
-        for i in 0..prefill_hb {
-            let k = make_str16_key(i);
-            std_tpl.insert(k, i as u64);
+        let _spacer1 = vec![1u8; 352 * 1024];
+        let mut std2: DeterministicStdHashMap<[u8; 16], u64> =
+            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
+        let _spacer2 = vec![1u8; 352 * 1024];
+        let mut std3: DeterministicStdHashMap<[u8; 16], u64> =
+            DeterministicStdHashMap::with_capacity_and_hasher(n, BuildHasherDefault::default());
+        if should_run_bench("hash_maps/std/insert_str16") {
+            for i in 0..n {
+                let k = make_str16_key(i);
+                std0.insert(k, i as u64);
+                std1.insert(k, i as u64);
+                std2.insert(k, i as u64);
+                std3.insert(k, i as u64);
+            }
+            std0.clear();
+            std1.clear();
+            std2.clear();
+            std3.clear();
+            for i in 0..prefill_hb {
+                let k = make_str16_key(i);
+                std0.insert(k, i as u64);
+                std1.insert(k, i as u64);
+                std2.insert(k, i as u64);
+                std3.insert(k, i as u64);
+            }
+            let mut stds = [std0, std1, std2, std3];
+            measure_bench_with_setup(
+                records,
+                "hash_maps",
+                "hash_maps/std/insert_str16",
+                "ns/op",
+                insert_params,
+                &mut stds,
+                |maps| {
+                    if maps[0].len() >= n {
+                        for m in maps.iter_mut() {
+                            m.clear();
+                        }
+                        for i in 0..prefill_hb {
+                            let k = make_str16_key(i);
+                            for m in maps.iter_mut() {
+                                m.insert(k, i as u64);
+                            }
+                        }
+                    }
+                },
+                |maps| {
+                    let b_idx = current_burst_index();
+                    let start = n + b_idx * get_batch;
+                    for id in start..start + quarter_batch {
+                        let k = make_str16_key(id);
+                        maps[0].insert(black_box(k), id as u64);
+                    }
+                    for id in start + quarter_batch..start + 2 * quarter_batch {
+                        let k = make_str16_key(id);
+                        maps[1].insert(black_box(k), id as u64);
+                    }
+                    for id in start + 2 * quarter_batch..start + 3 * quarter_batch {
+                        let k = make_str16_key(id);
+                        maps[2].insert(black_box(k), id as u64);
+                    }
+                    for id in start + 3 * quarter_batch..start + get_batch {
+                        let k = make_str16_key(id);
+                        maps[3].insert(black_box(k), id as u64);
+                    }
+                    black_box(maps[0].len() + maps[1].len() + maps[2].len() + maps[3].len());
+                },
+            );
+            let [s0, s1, s2, s3] = stds;
+            std0 = s0;
+            std1 = s1;
+            std2 = s2;
+            std3 = s3;
         }
-        std0.clone_from(&std_tpl);
-        std1.clone_from(&std_tpl);
-        let mut stds = [std0, std1];
-        let balance_std_str16 = |maps: &[DeterministicStdHashMap<[u8; 16], u64>; 2]| {
-            drop(black_box(vec![1u8; 36 * 1024 * 1024]));
-            let mut acc = 0u64;
-            let mut q = 0usize;
-            for w in 0..8usize {
+
+        if should_run_bench("hash_maps/std/get_str16") {
+            std0.clear();
+            std1.clear();
+            std2.clear();
+            std3.clear();
+            for id in 0..n {
+                let k = make_str16_key(id);
+                std0.insert(k, id as u64);
+                std1.insert(k, id as u64);
+                std2.insert(k, id as u64);
+                std3.insert(k, id as u64);
+            }
+            let stds = [std0, std1, std2, std3];
+            let mut warm_sum = 0u64;
+            let mut warm_q = 0usize;
+            for w in 0..16usize {
                 str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
-                    let m = &maps[q & 1];
-                    q = q.wrapping_add(1);
+                    let m = &stds[warm_q & 3];
+                    warm_q = warm_q.wrapping_add(1);
                     let k = make_str16_key(id);
                     if let Some(&v) = m.get(black_box(&k)) {
-                        acc = acc.wrapping_add(v);
+                        warm_sum = warm_sum.wrapping_add(v);
                     }
                 });
             }
-            black_box(acc);
-        };
-        balance_std_str16(&stds);
-        measure_bench_with_setup(
-            records,
-            "hash_maps",
-            "hash_maps/std/insert_str16",
-            "ns/op",
-            insert_params,
-            &mut stds,
-            |maps| {
-                if maps[0].len() >= n || maps[1].len() >= n {
-                    maps[0].clone_from(&std_tpl);
-                    maps[1].clone_from(&std_tpl);
-                    balance_std_str16(maps);
-                }
-            },
-            |maps| {
-                let b_idx = current_burst_index();
-                let start = n + b_idx * get_batch;
-                for id in start..start + half_batch {
-                    let k = make_str16_key(id);
-                    maps[0].insert(black_box(k), id as u64);
-                }
-                for id in start + half_batch..start + get_batch {
-                    let k = make_str16_key(id);
-                    maps[1].insert(black_box(k), id as u64);
-                }
-                black_box(maps[0].len() + maps[1].len());
-            },
-        );
-        drop(std_tpl);
-
-        stds[0].clear();
-        stds[1].clear();
-        for id in 0..n {
-            let k = make_str16_key(id);
-            stds[0].insert(k, id as u64);
-            stds[1].insert(k, id as u64);
+            black_box(warm_sum);
+            measure_bench(
+                records,
+                "hash_maps",
+                "hash_maps/std/get_str16",
+                "ns/op",
+                get_params,
+                || {
+                    let b_idx = current_burst_index();
+                    let start = b_idx * get_batch;
+                    let mut sum = 0u64;
+                    let mut q_idx = 0usize;
+                    str16_perm.for_each_slice(start, get_batch, |id| {
+                        let m = &stds[q_idx & 3];
+                        q_idx = q_idx.wrapping_add(1);
+                        let k = make_str16_key(id);
+                        if let Some(&v) = m.get(black_box(&k)) {
+                            sum = sum.wrapping_add(v);
+                        }
+                    });
+                    black_box(sum);
+                },
+            );
         }
-        drop(black_box(vec![1u8; 36 * 1024 * 1024]));
-        let mut warm_sum = 0u64;
-        let mut warm_q = 0usize;
-        for w in 0..8usize {
-            str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
-                let m = &stds[warm_q & 1];
-                warm_q = warm_q.wrapping_add(1);
-                let k = make_str16_key(id);
-                if let Some(&v) = m.get(black_box(&k)) {
-                    warm_sum = warm_sum.wrapping_add(v);
-                }
-            });
-        }
-        black_box(warm_sum);
-        measure_bench(
-            records,
-            "hash_maps",
-            "hash_maps/std/get_str16",
-            "ns/op",
-            get_params,
-            || {
-                let b_idx = current_burst_index();
-                let start = b_idx * get_batch;
-                let mut sum = 0u64;
-                let mut q_idx = 0usize;
-                str16_perm.for_each_slice(start, get_batch, |id| {
-                    let m = &stds[q_idx & 1];
-                    q_idx = q_idx.wrapping_add(1);
-                    let k = make_str16_key(id);
-                    if let Some(&v) = m.get(black_box(&k)) {
-                        sum = sum.wrapping_add(v);
-                    }
-                });
-                black_box(sum);
-            },
-        );
     }
 }
 
@@ -4229,6 +4537,1105 @@ fn bench_int_codecs(
     drop(_brk_anchor);
 }
 
+// ---------------------------------------------------------------------------
+// 8. Radix Sort (10,000,000 = 10^7 elements for u32, u64, (u64, u64) by default)
+//    Zipora: RadixSort (lsd_u32, lsd_u64), KeyValueRadixSort<u64, u64> (kv_u64_u64)
+//    Competitors: voracious_radix_sort, rdst (single-threaded), [T]::sort_unstable
+// ---------------------------------------------------------------------------
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
+struct RadixKvPair {
+    key: u64,
+    val: u64,
+}
+
+impl PartialEq for RadixKvPair {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for RadixKvPair {}
+
+impl PartialOrd for RadixKvPair {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RadixKvPair {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
+impl VoraciousRadixable<u64> for RadixKvPair {
+    type Key = u64;
+    #[inline]
+    fn key(&self) -> Self::Key {
+        self.key
+    }
+}
+
+impl RdstRadixKey for RadixKvPair {
+    const LEVELS: usize = 8;
+    #[inline]
+    fn get_level(&self, level: usize) -> u8 {
+        (self.key >> (level * 8)) as u8
+    }
+}
+
+fn bench_radix_sort_lsd(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    sizes: SuiteSizes,
+) {
+    let n = sizes.radix_sort_elements;
+    let mut sorter = RadixSort::with_config(RadixSortConfig {
+        use_parallel: false,
+        use_counting_sort_threshold: 0,
+        ..RadixSortConfig::default()
+    });
+    let mut lsd_u32_params = BenchParams::heavy(n as u64, n as u64, 3);
+    lsd_u32_params.warmup_calls = 1;
+    lsd_u32_params.bursts_per_trial = 2;
+    let mut lsd_u64_params = BenchParams::heavy(n as u64, n as u64, 3);
+    lsd_u64_params.warmup_calls = 1;
+    lsd_u64_params.bursts_per_trial = 1;
+
+    record_space_metric(space, "radix_sort/zipora_u32_bytes_per_elem", 8.0);
+    record_space_metric(space, "radix_sort/voracious_u32_bytes_per_elem", 8.0);
+    record_space_metric(space, "radix_sort/rdst_u32_bytes_per_elem", 8.0);
+    record_space_metric(space, "radix_sort/std_u32_bytes_per_elem", 4.0);
+    record_space_metric(space, "radix_sort/zipora_u64_bytes_per_elem", 16.0);
+    record_space_metric(space, "radix_sort/voracious_u64_bytes_per_elem", 16.0);
+    record_space_metric(space, "radix_sort/rdst_u64_bytes_per_elem", 16.0);
+    record_space_metric(space, "radix_sort/std_u64_bytes_per_elem", 8.0);
+
+    drop(black_box(vec![1u8; 31 * 1024 * 1024]));
+    let mut lsd_holes: Vec<Vec<u8>> = Vec::with_capacity(4);
+    for _ in 0..4 {
+        lsd_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
+    }
+    let _lsd_top_anchor = black_box(vec![1u8; 64 * 1024]);
+    drop(lsd_holes);
+
+    // 1. u32 sorting (10^7 elements): Zipora LSD, voracious_radix_sort, rdst, std::sort_unstable
+    {
+        let template_u32 = gen_radix_u32_template(n);
+        if should_run_bench("radix_sort/lsd_u32") {
+            let sorter0 = RadixSort::with_config(RadixSortConfig {
+                use_parallel: false,
+                use_counting_sort_threshold: 0,
+                ..RadixSortConfig::default()
+            });
+            let work0 = vec![0u32; n];
+            let _spacer = vec![1u8; 352 * 1024];
+            let sorter1 = RadixSort::with_config(RadixSortConfig {
+                use_parallel: false,
+                use_counting_sort_threshold: 0,
+                ..RadixSortConfig::default()
+            });
+            let work1 = vec![0u32; n];
+            let mut u32_state = (
+                0usize,
+                Vec::<Vec<u8>>::with_capacity(32),
+                [(sorter0, work0), (sorter1, work1)],
+            );
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/lsd_u32",
+                "ns/elem",
+                lsd_u32_params,
+                &mut u32_state,
+                |st| {
+                    st.0 ^= 1;
+                    st.1.push(vec![1u8; 352 * 1024]);
+                    st.2[st.0].1.copy_from_slice(&template_u32);
+                },
+                |st| {
+                    let (srt, buf) = &mut st.2[st.0];
+                    srt.sort_u32(black_box(buf.as_mut_slice())).unwrap();
+                    black_box(buf[0]);
+                },
+            );
+        }
+
+        let mut work_u32 = vec![0u32; n];
+        if should_run_bench("radix_sort/voracious/u32") {
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/voracious/u32",
+                "ns/elem",
+                lsd_u64_params,
+                &mut work_u32,
+                |buf| {
+                    buf.copy_from_slice(&template_u32);
+                },
+                |buf| {
+                    black_box(buf.as_mut_slice()).voracious_sort();
+                    black_box(buf[0]);
+                },
+            );
+        }
+
+        if should_run_bench("radix_sort/rdst/u32") {
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/rdst/u32",
+                "ns/elem",
+                lsd_u64_params,
+                &mut work_u32,
+                |buf| {
+                    buf.copy_from_slice(&template_u32);
+                },
+                |buf| {
+                    black_box(buf.as_mut_slice())
+                        .radix_sort_builder()
+                        .with_single_threaded_tuner()
+                        .sort();
+                    black_box(buf[0]);
+                },
+            );
+        }
+
+        if should_run_bench("radix_sort/std_unstable/u32") {
+            let mut std_u32_params = BenchParams::heavy(n as u64, n as u64, 3);
+            std_u32_params.warmup_calls = 0;
+            std_u32_params.bursts_per_trial = 1;
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/std_unstable/u32",
+                "ns/elem",
+                std_u32_params,
+                &mut work_u32,
+                |buf| {
+                    buf.copy_from_slice(&template_u32);
+                },
+                |buf| {
+                    black_box(buf.as_mut_slice()).sort_unstable();
+                    black_box(buf[0]);
+                },
+            );
+        }
+    }
+
+    // 2. u64 sorting (10^7 elements): Zipora LSD, voracious_radix_sort, rdst, std::sort_unstable
+    {
+        let template_u64 = gen_radix_u64_template(n);
+        let mut work_u64 = (Vec::<Vec<u8>>::with_capacity(16), vec![0u64; n]);
+        if should_run_bench("radix_sort/lsd_u64") {
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/lsd_u64",
+                "ns/elem",
+                lsd_u64_params,
+                &mut work_u64,
+                |st| {
+                    st.0.push(vec![1u8; 352 * 1024]);
+                    st.1.copy_from_slice(&template_u64);
+                },
+                |st| {
+                    sorter.sort_u64(black_box(st.1.as_mut_slice())).unwrap();
+                    black_box(st.1[0]);
+                },
+            );
+        }
+
+        if should_run_bench("radix_sort/voracious/u64") {
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/voracious/u64",
+                "ns/elem",
+                lsd_u64_params,
+                &mut work_u64.1,
+                |buf| {
+                    buf.copy_from_slice(&template_u64);
+                },
+                |buf| {
+                    black_box(buf.as_mut_slice()).voracious_sort();
+                    black_box(buf[0]);
+                },
+            );
+        }
+
+        if should_run_bench("radix_sort/rdst/u64") {
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/rdst/u64",
+                "ns/elem",
+                lsd_u64_params,
+                &mut work_u64.1,
+                |buf| {
+                    buf.copy_from_slice(&template_u64);
+                },
+                |buf| {
+                    black_box(buf.as_mut_slice())
+                        .radix_sort_builder()
+                        .with_single_threaded_tuner()
+                        .sort();
+                    black_box(buf[0]);
+                },
+            );
+        }
+
+        if should_run_bench("radix_sort/std_unstable/u64") {
+            let mut std_u64_params = BenchParams::heavy(n as u64, n as u64, 3);
+            std_u64_params.warmup_calls = 0;
+            std_u64_params.bursts_per_trial = 1;
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/std_unstable/u64",
+                "ns/elem",
+                std_u64_params,
+                &mut work_u64.1,
+                |buf| {
+                    buf.copy_from_slice(&template_u64);
+                },
+                |buf| {
+                    black_box(buf.as_mut_slice()).sort_unstable();
+                    black_box(buf[0]);
+                },
+            );
+        }
+    }
+    drop(_lsd_top_anchor);
+}
+
+fn bench_radix_sort_kv(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    primary_core: usize,
+    sizes: SuiteSizes,
+) {
+    maybe_repin_self_within_ccd();
+    let n = sizes.radix_sort_elements;
+    record_space_metric(space, "radix_sort/zipora_kv_bytes_per_elem", 56.0);
+    record_space_metric(space, "radix_sort/voracious_kv_bytes_per_elem", 32.0);
+    record_space_metric(space, "radix_sort/rdst_kv_bytes_per_elem", 32.0);
+    record_space_metric(space, "radix_sort/std_kv_bytes_per_elem", 16.0);
+
+    let p_core_init = current_self_pinned_core().min(primary_core);
+    let _ = p_core_init;
+    let rayon_core_for = |p_core: usize| -> usize {
+        let ccd_base = (p_core / 8) * 8;
+        if p_core != ccd_base + 2 {
+            ccd_base + 2
+        } else {
+            ccd_base + 3
+        }
+    };
+    let init_rayon_core = rayon_core_for(current_self_pinned_core());
+    set_allow_self_repin(false);
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .start_handler(move |_| {
+            pin_current_thread_to_core(init_rayon_core);
+        })
+        .build_global();
+    rayon::broadcast(|_| {});
+
+    drop(black_box(vec![1u8; 31 * 1024 * 1024]));
+    let template_kv = gen_radix_kv_template(n);
+    let mut work_kv = vec![(0u64, 0u64); n];
+    let mut kv_holes: Vec<Vec<u8>> = Vec::with_capacity(18);
+    for _ in 0..18 {
+        kv_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
+    }
+    let _kv_top_anchor = black_box(vec![1u8; 64 * 1024]);
+    drop(kv_holes);
+
+    let kv_sorter = KeyValueRadixSort::<u64, u64>::new();
+    let mut kv_params = BenchParams::heavy(n as u64, n as u64, 3);
+    kv_params.warmup_calls = 1;
+    kv_params.bursts_per_trial = 1;
+    if should_run_bench("radix_sort/kv_u64_u64") {
+        measure_bench_with_setup(
+            records,
+            "radix_sort",
+            "radix_sort/kv_u64_u64",
+            "ns/elem",
+            kv_params,
+            &mut work_kv,
+            |buf| {
+                buf.copy_from_slice(&template_kv);
+            },
+            |buf| {
+                kv_sorter
+                    .sort_by_key(black_box(buf.as_mut_slice()))
+                    .unwrap();
+                black_box(buf[0].0);
+            },
+        );
+    }
+
+    if should_run_bench("radix_sort/voracious/kv_u64_u64")
+        || should_run_bench("radix_sort/rdst/kv_u64_u64")
+        || should_run_bench("radix_sort/std_unstable/kv_u64_u64")
+    {
+        let template_pairs: Vec<RadixKvPair> = template_kv
+            .iter()
+            .map(|&(key, val)| RadixKvPair { key, val })
+            .collect();
+        let mut work_pairs = vec![RadixKvPair::default(); n];
+
+        if should_run_bench("radix_sort/voracious/kv_u64_u64") {
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/voracious/kv_u64_u64",
+                "ns/elem",
+                kv_params,
+                &mut work_pairs,
+                |buf| {
+                    buf.copy_from_slice(&template_pairs);
+                },
+                |buf| {
+                    black_box(buf.as_mut_slice()).voracious_sort();
+                    black_box(buf[0].key);
+                },
+            );
+        }
+
+        if should_run_bench("radix_sort/rdst/kv_u64_u64") {
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/rdst/kv_u64_u64",
+                "ns/elem",
+                kv_params,
+                &mut work_pairs,
+                |buf| {
+                    buf.copy_from_slice(&template_pairs);
+                },
+                |buf| {
+                    black_box(buf.as_mut_slice())
+                        .radix_sort_builder()
+                        .with_single_threaded_tuner()
+                        .sort();
+                    black_box(buf[0].key);
+                },
+            );
+        }
+
+        if should_run_bench("radix_sort/std_unstable/kv_u64_u64") {
+            let mut std_kv_params = BenchParams::heavy(n as u64, n as u64, 3);
+            std_kv_params.warmup_calls = 0;
+            std_kv_params.bursts_per_trial = 1;
+            measure_bench_with_setup(
+                records,
+                "radix_sort",
+                "radix_sort/std_unstable/kv_u64_u64",
+                "ns/elem",
+                std_kv_params,
+                &mut work_pairs,
+                |buf| {
+                    buf.copy_from_slice(&template_pairs);
+                },
+                |buf| {
+                    black_box(buf.as_mut_slice()).sort_unstable_by_key(|p| p.key);
+                    black_box(buf[0].key);
+                },
+            );
+        }
+    }
+
+    drop(_kv_top_anchor);
+    set_allow_self_repin(true);
+}
+
+// ---------------------------------------------------------------------------
+// 9. Suffix Array (10,000,000 = 10^7 bytes + 100,000 uniform substring queries)
+//    Zipora: SuffixArray
+//    Competitors: suffix::SuffixTable, divsufsort, cdivsufsort
+// ---------------------------------------------------------------------------
+
+fn bench_suffix_array(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    sizes: SuiteSizes,
+) {
+    maybe_repin_self_within_ccd();
+    let n = sizes.suffix_array_bytes;
+    record_space_metric(space, "suffix_array/zipora_bytes_per_byte", 5.0);
+    record_space_metric(space, "suffix_array/suffix_crate_bytes_per_byte", 5.0);
+    record_space_metric(space, "suffix_array/divsufsort_rust_bytes_per_byte", 5.0);
+    record_space_metric(space, "suffix_array/cdivsufsort_c_bytes_per_byte", 5.0);
+
+    let text0 = gen_enwik_like_block(n, SEED_BASE ^ 0x0A);
+    drop(black_box(vec![1u8; 31 * 1024 * 1024]));
+    let mut sa_holes: Vec<Vec<u8>> = Vec::with_capacity(18);
+    for _ in 0..18 {
+        sa_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
+    }
+    let _brk_top_anchor = black_box(vec![1u8; 64 * 1024]);
+    drop(sa_holes);
+
+    let num_queries = sizes.suffix_array_queries;
+    let sa_batch = (num_queries / 100).max(500).min(num_queries.max(1));
+    let pat_len = 16usize;
+    let max_start = n - pat_len;
+    let sa_query_seed = SEED_BASE ^ 0x0A01;
+    let sa_perm_len = ((n / 10) / 1000 * 1000).max(1_000);
+    let sa_window = (max_start / sa_perm_len).max(1);
+    let sa_perm = BijectivePerm::new(sa_perm_len, SEED_BASE ^ 0x0A02);
+    let mut sa_search_params = BenchParams::heavy(n as u64, sa_batch as u64, 12);
+    sa_search_params.warmup_calls = 8;
+    sa_search_params.bursts_per_trial = 12;
+
+    if should_run_any(&["suffix_array/construct", "suffix_array/search_query"]) {
+        let mut sa_pending: Option<SuffixArray> = None;
+        let mut sa_build_params = BenchParams::heavy(n as u64, n as u64, 4);
+        sa_build_params.warmup_calls = 1;
+        sa_build_params.bursts_per_trial = 1;
+        measure_bench_with_setup(
+            records,
+            "suffix_array",
+            "suffix_array/construct",
+            "ns/byte",
+            sa_build_params,
+            &mut sa_pending,
+            |slot| {
+                let _ = slot.take();
+            },
+            |slot| {
+                let built = SuffixArray::new(black_box(&text0)).unwrap();
+                black_box(built.as_slice().len());
+                *slot = Some(built);
+            },
+        );
+        let sa0 = sa_pending
+            .take()
+            .unwrap_or_else(|| SuffixArray::new(&text0).unwrap());
+
+        if should_run_bench("suffix_array/search_query") {
+            let _text_spacer = vec![1u8; 1_376 * 1024];
+            let text1 = text0.clone();
+            let _sa_spacer = vec![1u8; 3_424 * 1024];
+            let sa1 = SuffixArray::new(&text1).unwrap();
+            let sas = [sa0, sa1];
+            let texts = [text0.clone(), text1];
+
+            let mut warm_sa_hits = 0usize;
+            for idx in 0..(sa_batch * 24) {
+                let slot = idx & 1;
+                let txt = &texts[slot];
+                let sa = &sas[slot];
+                let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
+                let mut pat = [0u8; 16];
+                pat.copy_from_slice(&txt[pos..pos + pat_len]);
+                if idx % 10 == 9 {
+                    pat[pat_len - 1] = b'~';
+                }
+                let (_, count) = sa.search(black_box(txt), black_box(&pat[..]));
+                warm_sa_hits = warm_sa_hits.wrapping_add(count);
+            }
+            black_box(warm_sa_hits);
+
+            measure_bench(
+                records,
+                "suffix_array",
+                "suffix_array/search_query",
+                "ns/op",
+                sa_search_params,
+                || {
+                    let base = current_burst_index() * sa_batch;
+                    let mut hits = 0usize;
+                    let mut q_idx = 0usize;
+                    sa_perm.for_each_slice(base, sa_batch, |id| {
+                        let slot = q_idx & 1;
+                        let txt = &texts[slot];
+                        let sa = &sas[slot];
+                        let pos = (id * sa_window + uniform_index_at(sa_query_seed, id, sa_window))
+                            .min(max_start.saturating_sub(1));
+                        let mut pat = [0u8; 16];
+                        pat.copy_from_slice(&txt[pos..pos + pat_len]);
+                        if q_idx % 10 == 9 {
+                            pat[pat_len - 1] = b'~';
+                        }
+                        q_idx = q_idx.wrapping_add(1);
+                        let (_, count) = sa.search(black_box(txt), black_box(&pat[..]));
+                        hits = hits.wrapping_add(count);
+                    });
+                    black_box(hits);
+                },
+            );
+            drop(sas);
+            drop(texts);
+            drop(_sa_spacer);
+            drop(_text_spacer);
+        } else {
+            drop(sa0);
+        }
+    }
+
+    // 2. Competitor: suffix::SuffixTable (pure-Rust SA-IS)
+    if should_run_bench("suffix_array/suffix_crate/construct")
+        || should_run_bench("suffix_array/suffix_crate/search_query")
+    {
+        let text_str0 = std::str::from_utf8(&text0).unwrap();
+        let mut st_pending: Option<SuffixTable<'_, '_>> = None;
+        let mut comp_sa_build_params = BenchParams::heavy(n as u64, n as u64, 3);
+        comp_sa_build_params.warmup_calls = 0;
+        comp_sa_build_params.bursts_per_trial = 1;
+        measure_bench_with_setup(
+            records,
+            "suffix_array",
+            "suffix_array/suffix_crate/construct",
+            "ns/byte",
+            comp_sa_build_params,
+            &mut st_pending,
+            |slot| {
+                let _ = slot.take();
+            },
+            |slot| {
+                let built = SuffixTable::new(black_box(text_str0));
+                black_box(built.table().len());
+                *slot = Some(built);
+            },
+        );
+        if should_run_bench("suffix_array/suffix_crate/search_query") {
+            let st0 = st_pending
+                .take()
+                .unwrap_or_else(|| SuffixTable::new(text_str0));
+            let _text_spacer = vec![1u8; 1_376 * 1024];
+            let text1 = text0.clone();
+            let text_str1 = std::str::from_utf8(&text1).unwrap();
+            let _sa_spacer = vec![1u8; 3_424 * 1024];
+            let st1 = SuffixTable::new(text_str1);
+            let sts = [st0, st1];
+            let texts = [&text0, &text1];
+
+            let mut warm_hits = 0usize;
+            for idx in 0..(sa_batch * 24) {
+                let slot = idx & 1;
+                let txt = texts[slot];
+                let st = &sts[slot];
+                let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
+                let mut pat = [0u8; 16];
+                pat.copy_from_slice(&txt[pos..pos + pat_len]);
+                if idx % 10 == 9 {
+                    pat[pat_len - 1] = b'~';
+                }
+                let pat_str = std::str::from_utf8(&pat).unwrap();
+                warm_hits = warm_hits.wrapping_add(st.positions(black_box(pat_str)).len());
+            }
+            black_box(warm_hits);
+
+            measure_bench(
+                records,
+                "suffix_array",
+                "suffix_array/suffix_crate/search_query",
+                "ns/op",
+                sa_search_params,
+                || {
+                    let base = current_burst_index() * sa_batch;
+                    let mut hits = 0usize;
+                    let mut q_idx = 0usize;
+                    sa_perm.for_each_slice(base, sa_batch, |id| {
+                        let slot = q_idx & 1;
+                        let txt = texts[slot];
+                        let st = &sts[slot];
+                        let pos = (id * sa_window + uniform_index_at(sa_query_seed, id, sa_window))
+                            .min(max_start.saturating_sub(1));
+                        let mut pat = [0u8; 16];
+                        pat.copy_from_slice(&txt[pos..pos + pat_len]);
+                        if q_idx % 10 == 9 {
+                            pat[pat_len - 1] = b'~';
+                        }
+                        q_idx = q_idx.wrapping_add(1);
+                        let pat_str = std::str::from_utf8(&pat).unwrap();
+                        let positions = st.positions(black_box(pat_str));
+                        hits = hits.wrapping_add(positions.len());
+                    });
+                    black_box(hits);
+                },
+            );
+            drop(sts);
+            drop(text1);
+            drop(_sa_spacer);
+            drop(_text_spacer);
+        } else {
+            drop(st_pending);
+        }
+    }
+
+    // 3. Competitor: divsufsort (pure-Rust divsufsort)
+    if should_run_bench("suffix_array/divsufsort_rust/construct")
+        || should_run_bench("suffix_array/divsufsort_rust/search_query")
+    {
+        let mut dss_pending: Option<sacabase::SuffixArray<'_, i32>> = None;
+        let mut comp_sa_build_params = BenchParams::heavy(n as u64, n as u64, 3);
+        comp_sa_build_params.warmup_calls = 0;
+        comp_sa_build_params.bursts_per_trial = 1;
+        measure_bench_with_setup(
+            records,
+            "suffix_array",
+            "suffix_array/divsufsort_rust/construct",
+            "ns/byte",
+            comp_sa_build_params,
+            &mut dss_pending,
+            |slot| {
+                let _ = slot.take();
+            },
+            |slot| {
+                let built = divsufsort::sort(black_box(&text0));
+                black_box(built.text().len());
+                *slot = Some(built);
+            },
+        );
+        if should_run_bench("suffix_array/divsufsort_rust/search_query") {
+            let dss0 = dss_pending
+                .take()
+                .unwrap_or_else(|| divsufsort::sort(&text0));
+            let _text_spacer = vec![1u8; 1_376 * 1024];
+            let text1 = text0.clone();
+            let _sa_spacer = vec![1u8; 3_424 * 1024];
+            let dss1 = divsufsort::sort(&text1);
+            let dsss = [dss0, dss1];
+            let texts = [&text0, &text1];
+
+            let mut warm_hits = 0usize;
+            for idx in 0..(sa_batch * 24) {
+                let slot = idx & 1;
+                let txt = texts[slot];
+                let dss = &dsss[slot];
+                let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
+                let mut pat = [0u8; 16];
+                pat.copy_from_slice(&txt[pos..pos + pat_len]);
+                if idx % 10 == 9 {
+                    pat[pat_len - 1] = b'~';
+                }
+                let m = dss.longest_substring_match(black_box(&pat[..]));
+                if m.len == pat_len {
+                    warm_hits = warm_hits.wrapping_add(1);
+                }
+            }
+            black_box(warm_hits);
+
+            measure_bench(
+                records,
+                "suffix_array",
+                "suffix_array/divsufsort_rust/search_query",
+                "ns/op",
+                sa_search_params,
+                || {
+                    let base = current_burst_index() * sa_batch;
+                    let mut hits = 0usize;
+                    let mut q_idx = 0usize;
+                    sa_perm.for_each_slice(base, sa_batch, |id| {
+                        let slot = q_idx & 1;
+                        let txt = texts[slot];
+                        let dss = &dsss[slot];
+                        let pos = (id * sa_window + uniform_index_at(sa_query_seed, id, sa_window))
+                            .min(max_start.saturating_sub(1));
+                        let mut pat = [0u8; 16];
+                        pat.copy_from_slice(&txt[pos..pos + pat_len]);
+                        if q_idx % 10 == 9 {
+                            pat[pat_len - 1] = b'~';
+                        }
+                        q_idx = q_idx.wrapping_add(1);
+                        let m = dss.longest_substring_match(black_box(&pat[..]));
+                        if m.len == pat_len {
+                            hits = hits.wrapping_add(1);
+                        }
+                    });
+                    black_box(hits);
+                },
+            );
+            drop(dsss);
+            drop(text1);
+            drop(_sa_spacer);
+            drop(_text_spacer);
+        } else {
+            drop(dss_pending);
+        }
+    }
+
+    // 4. Competitor: cdivsufsort (C libdivsufsort binding)
+    if should_run_bench("suffix_array/cdivsufsort_c/construct")
+        || should_run_bench("suffix_array/cdivsufsort_c/search_query")
+    {
+        let mut cdss_pending: Option<sacabase::SuffixArray<'_, i32>> = None;
+        let mut comp_sa_build_params = BenchParams::heavy(n as u64, n as u64, 3);
+        comp_sa_build_params.warmup_calls = 0;
+        comp_sa_build_params.bursts_per_trial = 1;
+        measure_bench_with_setup(
+            records,
+            "suffix_array",
+            "suffix_array/cdivsufsort_c/construct",
+            "ns/byte",
+            comp_sa_build_params,
+            &mut cdss_pending,
+            |slot| {
+                let _ = slot.take();
+            },
+            |slot| {
+                let built = cdivsufsort::sort(black_box(&text0));
+                black_box(built.text().len());
+                *slot = Some(built);
+            },
+        );
+        if should_run_bench("suffix_array/cdivsufsort_c/search_query") {
+            let cdss0 = cdss_pending
+                .take()
+                .unwrap_or_else(|| cdivsufsort::sort(&text0));
+            let _text_spacer = vec![1u8; 1_376 * 1024];
+            let text1 = text0.clone();
+            let _sa_spacer = vec![1u8; 3_424 * 1024];
+            let cdss1 = cdivsufsort::sort(&text1);
+            let cdsss = [cdss0, cdss1];
+            let texts = [&text0, &text1];
+
+            let mut warm_hits = 0usize;
+            for idx in 0..(sa_batch * 24) {
+                let slot = idx & 1;
+                let txt = texts[slot];
+                let cdss = &cdsss[slot];
+                let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
+                let mut pat = [0u8; 16];
+                pat.copy_from_slice(&txt[pos..pos + pat_len]);
+                if idx % 10 == 9 {
+                    pat[pat_len - 1] = b'~';
+                }
+                let m = cdss.longest_substring_match(black_box(&pat[..]));
+                if m.len == pat_len {
+                    warm_hits = warm_hits.wrapping_add(1);
+                }
+            }
+            black_box(warm_hits);
+
+            measure_bench(
+                records,
+                "suffix_array",
+                "suffix_array/cdivsufsort_c/search_query",
+                "ns/op",
+                sa_search_params,
+                || {
+                    let base = current_burst_index() * sa_batch;
+                    let mut hits = 0usize;
+                    let mut q_idx = 0usize;
+                    sa_perm.for_each_slice(base, sa_batch, |id| {
+                        let slot = q_idx & 1;
+                        let txt = texts[slot];
+                        let cdss = &cdsss[slot];
+                        let pos = (id * sa_window + uniform_index_at(sa_query_seed, id, sa_window))
+                            .min(max_start.saturating_sub(1));
+                        let mut pat = [0u8; 16];
+                        pat.copy_from_slice(&txt[pos..pos + pat_len]);
+                        if q_idx % 10 == 9 {
+                            pat[pat_len - 1] = b'~';
+                        }
+                        q_idx = q_idx.wrapping_add(1);
+                        let m = cdss.longest_substring_match(black_box(&pat[..]));
+                        if m.len == pat_len {
+                            hits = hits.wrapping_add(1);
+                        }
+                    });
+                    black_box(hits);
+                },
+            );
+            drop(cdsss);
+            drop(text1);
+            drop(_sa_spacer);
+            drop(_text_spacer);
+        } else {
+            drop(cdss_pending);
+        }
+    }
+
+    drop(_brk_top_anchor);
+}
+
+// ---------------------------------------------------------------------------
+// 10. String Search & BM25 Scoring (64 KiB strchr & strstr + 100,000-doc BM25)
+//     Zipora: SimdStringSearch (sse42_strchr, sse42_strstr), Bm25BatchScorer, FieldnormEncoder
+//     Competitors: memchr::memchr, memchr::memmem::{find, Finder}, aho_corasick::AhoCorasick
+// ---------------------------------------------------------------------------
+
+fn bench_search_and_scoring(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    sizes: SuiteSizes,
+) {
+    maybe_repin_self_within_ccd();
+    record_space_metric(space, "search_and_scoring/strchr_strstr_aux_bytes", 0.0);
+    {
+        let haystack_len = 65_536usize;
+        let haystacks = &SEARCH_HAYSTACKS.0;
+        let needle = &SEARCH_NEEDLE.0[..13];
+
+        let searcher = SimdStringSearch::new();
+        let search_iters = 128u64;
+        let mut str_params =
+            BenchParams::fast(haystack_len as u64, search_iters).with_threshold(9.0);
+        str_params.warmup_calls = 64;
+        str_params.trials = 15;
+        str_params.bursts_per_trial = 10;
+
+        wait_for_quiet_sibling();
+        let haystack0 = &haystacks[0][..];
+        let mut pre_acc = 0usize;
+        for _ in 0..4_096usize {
+            if let Some(pos) = searcher.sse42_strchr(black_box(haystack0), black_box(b'Z')) {
+                pre_acc = pre_acc.wrapping_add(pos);
+            }
+        }
+        black_box(pre_acc);
+
+        measure_bench(
+            records,
+            "search_and_scoring",
+            "search_and_scoring/simd_strchr_64kib",
+            "ns/call",
+            str_params,
+            || {
+                let mut acc = 0usize;
+                for _ in 0..search_iters {
+                    if let Some(pos) = searcher.sse42_strchr(black_box(haystack0), black_box(b'Z'))
+                    {
+                        acc = acc.wrapping_add(pos);
+                    }
+                }
+                black_box(acc);
+            },
+        );
+
+        for idx in 0..2_048usize {
+            let haystack = &haystacks[idx & 3][..];
+            if let Some(pos) = searcher.sse42_strstr(black_box(haystack), black_box(needle)) {
+                pre_acc = pre_acc.wrapping_add(pos);
+            }
+        }
+        black_box(pre_acc);
+
+        let mut strstr_params = str_params;
+        strstr_params.warmup_calls = 64;
+        strstr_params.bursts_per_trial = 8;
+        measure_bench(
+            records,
+            "search_and_scoring",
+            "search_and_scoring/simd_strstr_64kib",
+            "ns/call",
+            strstr_params,
+            || {
+                let mut acc = 0usize;
+                for idx in 0..search_iters {
+                    let haystack = &haystacks[(idx as usize) & 3][..];
+                    if let Some(pos) = searcher.sse42_strstr(black_box(haystack), black_box(needle))
+                    {
+                        acc = acc.wrapping_add(pos);
+                    }
+                }
+                black_box(acc);
+            },
+        );
+
+        // Competitors for strchr & strstr on the exact same haystacks and 13-byte needle
+        measure_bench(
+            records,
+            "search_and_scoring",
+            "search_and_scoring/memchr_strchr_64kib",
+            "ns/call",
+            str_params,
+            || {
+                let mut acc = 0usize;
+                for _ in 0..search_iters {
+                    if let Some(pos) = crate_memchr(black_box(b'Z'), black_box(haystack0)) {
+                        acc = acc.wrapping_add(pos);
+                    }
+                }
+                black_box(acc);
+            },
+        );
+
+        measure_bench(
+            records,
+            "search_and_scoring",
+            "search_and_scoring/memmem_strstr_64kib",
+            "ns/call",
+            strstr_params,
+            || {
+                let mut acc = 0usize;
+                for idx in 0..search_iters {
+                    let haystack = &haystacks[(idx as usize) & 3][..];
+                    if let Some(pos) = crate_memmem::find(black_box(haystack), black_box(needle)) {
+                        acc = acc.wrapping_add(pos);
+                    }
+                }
+                black_box(acc);
+            },
+        );
+
+        let finder = crate_memmem::Finder::new(needle);
+        measure_bench(
+            records,
+            "search_and_scoring",
+            "search_and_scoring/memmem_finder_strstr_64kib",
+            "ns/call",
+            strstr_params,
+            || {
+                let mut acc = 0usize;
+                for idx in 0..search_iters {
+                    let haystack = &haystacks[(idx as usize) & 3][..];
+                    if let Some(pos) = finder.find(black_box(haystack)) {
+                        acc = acc.wrapping_add(pos);
+                    }
+                }
+                black_box(acc);
+            },
+        );
+
+        let ac = AhoCorasick::new([needle]).unwrap();
+        measure_bench(
+            records,
+            "search_and_scoring",
+            "search_and_scoring/aho_corasick_strstr_64kib",
+            "ns/call",
+            strstr_params,
+            || {
+                let mut acc = 0usize;
+                for idx in 0..search_iters {
+                    let haystack = &haystacks[(idx as usize) & 3][..];
+                    if let Some(m) = ac.find(black_box(haystack)) {
+                        acc = acc.wrapping_add(m.start());
+                    }
+                }
+                black_box(acc);
+            },
+        );
+    }
+
+    // BM25 hot paths (100,000 docs by default) + S36-R2 build_score_table
+    let k1 = 1.2f32;
+    let b = 0.75f32;
+    let avg_dl = 120.0f32;
+    let idf = 3.25f32;
+
+    {
+        let norm_table = FieldnormEncoder::build_norm_table(avg_dl, k1, b);
+        let scorer = Bm25BatchScorer::new(&norm_table, idf, k1);
+
+        let num_docs = sizes.bm25_docs;
+        let mut rng = StdRng::seed_from_u64(SEED_BASE ^ 0x0B);
+        let doc_ids: Vec<u32> = (0..num_docs as u32).map(|i| i * 3).collect();
+        let tfs: Vec<u16> = (0..num_docs).map(|_| rng.random_range(1..=16)).collect();
+        let norms: Vec<u8> = (0..num_docs * 3)
+            .map(|_| rng.random_range(1..=200))
+            .collect();
+        let contiguous_norms: Vec<u8> = doc_ids.iter().map(|&d| norms[d as usize]).collect();
+        let mut scores_out = vec![0.0f32; num_docs];
+
+        let bm25_params = BenchParams::fast(num_docs as u64, num_docs as u64);
+        measure_bench(
+            records,
+            "search_and_scoring",
+            "search_and_scoring/bm25_score_single",
+            "ns/doc",
+            bm25_params,
+            || {
+                let mut sum = 0.0f32;
+                for i in 0..num_docs {
+                    sum += scorer.score(black_box(norms[doc_ids[i] as usize]), black_box(tfs[i]));
+                }
+                black_box(sum);
+            },
+        );
+
+        measure_bench(
+            records,
+            "search_and_scoring",
+            "search_and_scoring/bm25_batch_score_with_prefetch",
+            "ns/doc",
+            bm25_params.with_threshold(9.0),
+            || {
+                scorer.batch_score_with_prefetch(
+                    black_box(&norms),
+                    black_box(&doc_ids),
+                    black_box(&tfs),
+                    black_box(&mut scores_out),
+                );
+                black_box(scores_out[0]);
+            },
+        );
+
+        let mut simd_spacers: Vec<Vec<u8>> = Vec::with_capacity(8);
+        let mut simd_ring_bufs: [(Vec<u8>, Vec<u16>, Vec<f32>); 8] = std::array::from_fn(|_| {
+            simd_spacers.push(vec![1u8; 4_672]);
+            (
+                contiguous_norms.clone(),
+                tfs.clone(),
+                vec![0.0f32; num_docs],
+            )
+        });
+        let mut simd_params = bm25_params;
+        simd_params.bursts_per_trial = 8;
+        let mut simd_ring = 0usize;
+        measure_bench_with_setup(
+            records,
+            "search_and_scoring",
+            "search_and_scoring/bm25_batch_score_simd",
+            "ns/doc",
+            simd_params,
+            &mut simd_ring,
+            |ring| {
+                *ring = (*ring + 1) & 7;
+            },
+            |ring| {
+                let (cn, tf_buf, out_buf) = &mut simd_ring_bufs[*ring];
+                scorer.batch_score(
+                    black_box(cn.as_slice()),
+                    black_box(tf_buf.as_slice()),
+                    black_box(out_buf.as_mut_slice()),
+                );
+                black_box(out_buf[0]);
+            },
+        );
+        drop(simd_spacers);
+    }
+
+    // S36-R2: FieldnormEncoder::build_score_table (256 * 256 = 65,536 cells = 256 KiB per call)
+    let table_rounds = 500u64;
+    let max_tf = 255u16;
+    let cells_per_call = (max_tf as u64 + 1) * 256u64;
+    let mut table_params =
+        BenchParams::fast(cells_per_call, table_rounds * cells_per_call).with_threshold(9.0);
+    table_params.warmup_calls = 4;
+    table_params.trials = 7;
+    table_params.bursts_per_trial = 3;
+    measure_bench(
+        records,
+        "search_and_scoring",
+        "search_and_scoring/fieldnorm_build_score_table",
+        "ns/cell",
+        table_params,
+        || {
+            for r in 0..table_rounds {
+                let table = FieldnormEncoder::build_score_table(
+                    black_box(avg_dl),
+                    black_box(k1),
+                    black_box(b),
+                    black_box(idf + (r as f32) * 1e-6),
+                    black_box(max_tf),
+                );
+                black_box(table[1][1]);
+            }
+        },
+    );
+}
+
 fn find_min(records: &[BenchRecord], name: &str) -> Option<f64> {
     records
         .iter()
@@ -4965,6 +6372,160 @@ fn build_same_run_comparisons(
         }
     }
 
+    // 8. Radix Sort (10,000,000 elements: u32, u64, (u64, u64))
+    for (kind, z_bench, z_var, z_space_key, comp_suffix, vor_space_key, rdst_space_key, std_space_key) in [
+        (
+            "u32",
+            "radix_sort/lsd_u32",
+            "RadixSort::sort_u32",
+            "radix_sort/zipora_u32_bytes_per_elem",
+            "u32",
+            "radix_sort/voracious_u32_bytes_per_elem",
+            "radix_sort/rdst_u32_bytes_per_elem",
+            "radix_sort/std_u32_bytes_per_elem",
+        ),
+        (
+            "u64",
+            "radix_sort/lsd_u64",
+            "RadixSort::sort_u64",
+            "radix_sort/zipora_u64_bytes_per_elem",
+            "u64",
+            "radix_sort/voracious_u64_bytes_per_elem",
+            "radix_sort/rdst_u64_bytes_per_elem",
+            "radix_sort/std_u64_bytes_per_elem",
+        ),
+        (
+            "(u64, u64)",
+            "radix_sort/kv_u64_u64",
+            "KeyValueRadixSort<u64, u64>",
+            "radix_sort/zipora_kv_bytes_per_elem",
+            "kv_u64_u64",
+            "radix_sort/voracious_kv_bytes_per_elem",
+            "radix_sort/rdst_kv_bytes_per_elem",
+            "radix_sort/std_kv_bytes_per_elem",
+        ),
+    ] {
+        let z_bpe = space.get(z_space_key).copied().unwrap_or(0.0);
+        let vor_bpe = space.get(vor_space_key).copied().unwrap_or(0.0);
+        let rdst_bpe = space.get(rdst_space_key).copied().unwrap_or(0.0);
+        let std_bpe = space.get(std_space_key).copied().unwrap_or(0.0);
+        for (c_prefix, c_label, c_bpe) in [
+            ("radix_sort/voracious", "voracious_radix_sort", vor_bpe),
+            ("radix_sort/rdst", "rdst (single-threaded)", rdst_bpe),
+            ("radix_sort/std_unstable", "[T]::sort_unstable", std_bpe),
+        ] {
+            push_comparison(
+                &mut out,
+                records,
+                "radix_sort",
+                &format!("sort_{kind} ({z_var})"),
+                z_bench,
+                z_var,
+                &format!("{c_prefix}/{comp_suffix}"),
+                c_label,
+                "ns/elem",
+                "bytes_per_elem",
+                z_bpe,
+                c_bpe,
+            );
+        }
+    }
+
+    // 9. Suffix Array (10,000,000 bytes construct + 100,000 16B substring queries)
+    let sa_z_bpb = space
+        .get("suffix_array/zipora_bytes_per_byte")
+        .copied()
+        .unwrap_or(5.0);
+    for (c_prefix, c_label, c_space_key) in [
+        (
+            "suffix_array/suffix_crate",
+            "suffix::SuffixTable",
+            "suffix_array/suffix_crate_bytes_per_byte",
+        ),
+        (
+            "suffix_array/divsufsort_rust",
+            "divsufsort (Rust)",
+            "suffix_array/divsufsort_rust_bytes_per_byte",
+        ),
+        (
+            "suffix_array/cdivsufsort_c",
+            "cdivsufsort (C)",
+            "suffix_array/cdivsufsort_c_bytes_per_byte",
+        ),
+    ] {
+        let c_bpb = space.get(c_space_key).copied().unwrap_or(5.0);
+        push_comparison(
+            &mut out,
+            records,
+            "suffix_array",
+            "construct (10M bytes)",
+            "suffix_array/construct",
+            "SuffixArray",
+            &format!("{c_prefix}/construct"),
+            c_label,
+            "ns/byte",
+            "bytes_per_byte",
+            sa_z_bpb,
+            c_bpb,
+        );
+        push_comparison(
+            &mut out,
+            records,
+            "suffix_array",
+            "search_query (10M bytes, 16B pattern)",
+            "suffix_array/search_query",
+            "SuffixArray",
+            &format!("{c_prefix}/search_query"),
+            c_label,
+            "ns/op",
+            "bytes_per_byte",
+            sa_z_bpb,
+            c_bpb,
+        );
+    }
+
+    // 10. String Search (64 KiB strchr & strstr)
+    push_comparison(
+        &mut out,
+        records,
+        "search_and_scoring",
+        "strchr_64kib (SimdStringSearch)",
+        "search_and_scoring/simd_strchr_64kib",
+        "SimdStringSearch::sse42_strchr",
+        "search_and_scoring/memchr_strchr_64kib",
+        "memchr::memchr",
+        "ns/call",
+        "aux_bytes",
+        0.0,
+        0.0,
+    );
+    for (c_bench, c_label) in [
+        ("search_and_scoring/memmem_strstr_64kib", "memchr::memmem::find"),
+        (
+            "search_and_scoring/memmem_finder_strstr_64kib",
+            "memchr::memmem::Finder",
+        ),
+        (
+            "search_and_scoring/aho_corasick_strstr_64kib",
+            "aho_corasick::AhoCorasick",
+        ),
+    ] {
+        push_comparison(
+            &mut out,
+            records,
+            "search_and_scoring",
+            "strstr_64kib (SimdStringSearch)",
+            "search_and_scoring/simd_strstr_64kib",
+            "SimdStringSearch::sse42_strstr",
+            c_bench,
+            c_label,
+            "ns/call",
+            "aux_bytes",
+            0.0,
+            0.0,
+        );
+    }
+
     out
 }
 
@@ -5059,9 +6620,26 @@ fn main() {
         bench_int_codecs(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
+    if run_cat("radix_sort") {
+        bench_radix_sort_lsd(&mut records, &mut space_metrics, sizes);
+        bench_radix_sort_kv(&mut records, &mut space_metrics, primary_core, sizes);
+        maybe_repin_self_within_ccd();
+    }
+    if run_cat("suffix_array") {
+        bench_suffix_array(&mut records, &mut space_metrics, sizes);
+        maybe_repin_self_within_ccd();
+    }
+    if run_cat("search_and_scoring") {
+        bench_search_and_scoring(&mut records, &mut space_metrics, sizes);
+        maybe_repin_self_within_ccd();
+    }
 
     let elapsed = suite_start.elapsed();
-    let host_metadata = collect_host_metadata(primary_core);
+    let mut host_metadata = collect_host_metadata(primary_core);
+    host_metadata.runner_command = format!(
+        "RUSTFLAGS=\"{}\" cargo bench --locked --bench competitor_bench && python3 scripts/bench_compare.py --suite competitor_bench --confirm-retries 5",
+        host_metadata.rustflags
+    );
     let same_run_comparisons = build_same_run_comparisons(&records, &space_metrics);
 
     eprintln!(
