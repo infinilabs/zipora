@@ -10,7 +10,7 @@
 //! `benches/baselines/<host>/competitor_bench.json` when `UPDATE_BASELINE=1`,
 //! `ZIPORA_BENCH_SAVE_BASELINE=1`, or `--save-baseline` is explicitly provided.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap as StdHashMap};
 use std::fs;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
@@ -22,6 +22,7 @@ use bitm::{
 };
 use dyn_size_of::GetSize;
 use fst::Set as FstSet;
+use hashbrown::HashMap as HashbrownMap;
 use qp_trie::Trie as QpTrie;
 use radix_trie::{Trie as RadixTrie, TrieCommon as _};
 use rand::rngs::StdRng;
@@ -40,6 +41,9 @@ use vers_vecs::{BitVec as VersBitVec, EliasFanoVec as VersEliasFanoVec, RsVec as
 
 use zipora::fsa::DoubleArrayTrie;
 use zipora::fsa::cspp_trie::CsppTrie;
+use zipora::hash_map::{
+    GoldHashMap, GoldHashMapConfig, HashStorageStrategy, ZiporaHashMap, ZiporaHashMapConfig,
+};
 use zipora::succinct::BitVector;
 use zipora::succinct::elias_fano::{
     ClusteredEliasFano, EliasFano, HybridPostingList, OptimalPartitionedEliasFano,
@@ -162,6 +166,30 @@ fn build_competitor_configs() -> BTreeMap<String, CompetitorConfigMeta> {
             api_used: "radix_trie::Trie::<&[u8], ()>::insert & Trie::get(&[u8])".to_string(),
             notes: "16-way nibble-compressed radix tree with boxed child pointers and Nibblet vectors; bytes/key includes node heap + key backing bytes"
                 .to_string(),
+        },
+    );
+    m.insert(
+        "hashbrown+ahash".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "hashbrown".to_string(),
+            version: "0.16.1".to_string(),
+            features: vec![
+                "inline-more".to_string(),
+                "raw-entry".to_string(),
+                "equivalent".to_string(),
+            ],
+            api_used: "hashbrown::HashMap::<K, u64, ahash::RandomState>::with_capacity_and_hasher & insert / get".to_string(),
+            notes: "Google SwissTable (AVX2 16-way control byte group probing) with ahash v0.8.12".to_string(),
+        },
+    );
+    m.insert(
+        "std::collections::HashMap".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "std".to_string(),
+            version: "1.90.0".to_string(),
+            features: vec!["SipHash13".to_string()],
+            api_used: "std::collections::HashMap::<K, u64>::with_capacity & insert / get".to_string(),
+            notes: "Standard library SwissTable (hashbrown backend) with default SipHash-1-3 RandomState".to_string(),
         },
     );
     m
@@ -1650,6 +1678,1031 @@ fn bench_tries(
     }
 }
 
+// ---------------------------------------------------------------------------
+// 4. Hash Maps (1,000,000 u64 keys & 1,000,000 16-byte string keys, zero replay)
+//    Zipora: ZiporaHashMap, GoldHashMap
+//    Competitors: hashbrown::HashMap + ahash, std::collections::HashMap
+// ---------------------------------------------------------------------------
+
+fn bench_hash_maps(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    sizes: SuiteSizes,
+) {
+    let n = sizes.hash_map_keys;
+    drop(black_box(vec![1u8; 31 * 1024 * 1024]));
+    let get_batch = (n / 250).max(1_000).min(n.max(1));
+    let cap = (n * 2).next_power_of_two();
+    let u64_perm = BijectivePerm::new(n, SEED_BASE ^ 0x0601);
+    let str16_perm = BijectivePerm::new(n, SEED_BASE ^ 0x0602);
+
+    let make_zconfig = || ZiporaHashMapConfig {
+        initial_capacity: cap,
+        storage_strategy: HashStorageStrategy::Standard {
+            initial_capacity: cap,
+            growth_factor: 2.0,
+        },
+        ..ZiporaHashMapConfig::default()
+    };
+    let make_hasher = || {
+        ahash::RandomState::with_seeds(
+            0x517c_c1b7_2722_0a95,
+            0x9e37_79b9_7f4a_7c15,
+            0xbf58_476d_1ce4_e5b9,
+            0x94d0_49bb_1331_11eb,
+        )
+    };
+    let gconfig_u64 = GoldHashMapConfig {
+        initial_capacity: cap * 4,
+        ..GoldHashMapConfig::default()
+    };
+    let gconfig_str16 = GoldHashMapConfig {
+        initial_capacity: n.saturating_mul(5),
+        ..GoldHashMapConfig::default()
+    };
+
+    let mut insert_params = BenchParams::heavy(n as u64, get_batch as u64, 10);
+    insert_params.warmup_calls = 8;
+    insert_params.bursts_per_trial = 12;
+
+    let mut get_params = BenchParams::heavy(n as u64, get_batch as u64, 14);
+    get_params.warmup_calls = 12;
+    get_params.bursts_per_trial = 18;
+
+    let half_batch = (get_batch / 2).max(1);
+    let prefill_0 = n.saturating_sub(32 * half_batch);
+    let prefill_1 = n.saturating_sub(16 * half_batch);
+
+    // 1. ZiporaHashMap u64
+    if should_run_any(&[
+        "hash_maps/zipora_hash_map/insert_u64",
+        "hash_maps/zipora_hash_map/get_u64",
+    ]) {
+        maybe_repin_self_within_ccd();
+        let mut zmap0: ZiporaHashMap<u64, u64> =
+            ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap();
+        let _spacer = vec![1u8; 352 * 1024];
+        let mut zmap1: ZiporaHashMap<u64, u64> =
+            ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap();
+        record_space_metric(
+            space,
+            "hash_maps/zipora_u64_bytes_per_entry",
+            (zmap0.capacity() * 40) as f64 / n.max(1) as f64,
+        );
+        for i in 0..n {
+            let k = make_u64_key(i);
+            zmap0.insert(k, i as u64).unwrap();
+            zmap1.insert(k, i as u64).unwrap();
+        }
+        zmap0.clear();
+        zmap1.clear();
+        for i in 0..prefill_0 {
+            let k = make_u64_key(i);
+            zmap0.insert(k, i as u64).unwrap();
+        }
+        for i in 0..prefill_1 {
+            let k = make_u64_key(i);
+            zmap1.insert(k, i as u64).unwrap();
+        }
+        let mut zmaps = [zmap0, zmap1];
+        measure_bench_with_setup(
+            records,
+            "hash_maps",
+            "hash_maps/zipora_hash_map/insert_u64",
+            "ns/op",
+            insert_params,
+            &mut zmaps,
+            |maps| {
+                for m in maps.iter_mut() {
+                    if m.len() >= n {
+                        m.clear();
+                        for i in 0..prefill_0 {
+                            let k = make_u64_key(i);
+                            m.insert(k, i as u64).unwrap();
+                        }
+                    }
+                }
+            },
+            |maps| {
+                let b_idx = current_burst_index();
+                let start = n + b_idx * get_batch;
+                for id in start..start + half_batch {
+                    let k = make_u64_key(id);
+                    maps[0].insert(black_box(k), id as u64).unwrap();
+                }
+                for id in start + half_batch..start + get_batch {
+                    let k = make_u64_key(id);
+                    maps[1].insert(black_box(k), id as u64).unwrap();
+                }
+                black_box(maps[0].len() + maps[1].len());
+            },
+        );
+
+        zmaps[0].clear();
+        zmaps[1].clear();
+        for id in 0..n {
+            let k = make_u64_key(id);
+            zmaps[0].insert(k, id as u64).unwrap();
+        }
+        for id in 0..n {
+            let k = make_u64_key(id);
+            zmaps[1].insert(k, id as u64).unwrap();
+        }
+        let mut warm_sum = 0u64;
+        let mut warm_q = 0usize;
+        for w in 0..8usize {
+            u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                let m = &zmaps[warm_q & 1];
+                warm_q = warm_q.wrapping_add(1);
+                let k = make_u64_key(id);
+                if let Some(&v) = m.get(black_box(&k)) {
+                    warm_sum = warm_sum.wrapping_add(v);
+                }
+            });
+        }
+        black_box(warm_sum);
+        measure_bench(
+            records,
+            "hash_maps",
+            "hash_maps/zipora_hash_map/get_u64",
+            "ns/op",
+            get_params,
+            || {
+                let b_idx = current_burst_index();
+                let start = b_idx * get_batch;
+                let mut sum = 0u64;
+                let mut q_idx = 0usize;
+                u64_perm.for_each_slice(start, get_batch, |id| {
+                    let m = &zmaps[q_idx & 1];
+                    q_idx = q_idx.wrapping_add(1);
+                    let k = make_u64_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        sum = sum.wrapping_add(v);
+                    }
+                });
+                black_box(sum);
+            },
+        );
+    }
+
+    // 2. ZiporaHashMap [u8; 16]
+    if should_run_any(&[
+        "hash_maps/zipora_hash_map/insert_str16",
+        "hash_maps/zipora_hash_map/get_str16",
+    ]) {
+        maybe_repin_self_within_ccd();
+        let mut zmap0: ZiporaHashMap<[u8; 16], u64> =
+            ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap();
+        let _spacer = vec![1u8; 352 * 1024];
+        let mut zmap1: ZiporaHashMap<[u8; 16], u64> =
+            ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap();
+        record_space_metric(
+            space,
+            "hash_maps/zipora_str16_bytes_per_entry",
+            (zmap0.capacity() * 48) as f64 / n.max(1) as f64,
+        );
+        for i in 0..n {
+            let k = make_str16_key(i);
+            zmap0.insert(k, i as u64).unwrap();
+            zmap1.insert(k, i as u64).unwrap();
+        }
+        zmap0.clear();
+        zmap1.clear();
+        for i in 0..prefill_0 {
+            let k = make_str16_key(i);
+            zmap0.insert(k, i as u64).unwrap();
+        }
+        for i in 0..prefill_1 {
+            let k = make_str16_key(i);
+            zmap1.insert(k, i as u64).unwrap();
+        }
+        let mut zmaps = [zmap0, zmap1];
+        measure_bench_with_setup(
+            records,
+            "hash_maps",
+            "hash_maps/zipora_hash_map/insert_str16",
+            "ns/op",
+            insert_params,
+            &mut zmaps,
+            |maps| {
+                for m in maps.iter_mut() {
+                    if m.len() >= n {
+                        m.clear();
+                        for i in 0..prefill_0 {
+                            let k = make_str16_key(i);
+                            m.insert(k, i as u64).unwrap();
+                        }
+                    }
+                }
+            },
+            |maps| {
+                let b_idx = current_burst_index();
+                let start = n + b_idx * get_batch;
+                for id in start..start + half_batch {
+                    let k = make_str16_key(id);
+                    maps[0].insert(black_box(k), id as u64).unwrap();
+                }
+                for id in start + half_batch..start + get_batch {
+                    let k = make_str16_key(id);
+                    maps[1].insert(black_box(k), id as u64).unwrap();
+                }
+                black_box(maps[0].len() + maps[1].len());
+            },
+        );
+
+        zmaps[0].clear();
+        zmaps[1].clear();
+        for id in 0..n {
+            let k = make_str16_key(id);
+            zmaps[0].insert(k, id as u64).unwrap();
+        }
+        for id in 0..n {
+            let k = make_str16_key(id);
+            zmaps[1].insert(k, id as u64).unwrap();
+        }
+        let mut warm_sum = 0u64;
+        let mut warm_q = 0usize;
+        for w in 0..8usize {
+            str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                let m = &zmaps[warm_q & 1];
+                warm_q = warm_q.wrapping_add(1);
+                let k = make_str16_key(id);
+                if let Some(&v) = m.get(black_box(&k)) {
+                    warm_sum = warm_sum.wrapping_add(v);
+                }
+            });
+        }
+        black_box(warm_sum);
+        measure_bench(
+            records,
+            "hash_maps",
+            "hash_maps/zipora_hash_map/get_str16",
+            "ns/op",
+            get_params,
+            || {
+                let b_idx = current_burst_index();
+                let start = b_idx * get_batch;
+                let mut sum = 0u64;
+                let mut q_idx = 0usize;
+                str16_perm.for_each_slice(start, get_batch, |id| {
+                    let m = &zmaps[q_idx & 1];
+                    q_idx = q_idx.wrapping_add(1);
+                    let k = make_str16_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        sum = sum.wrapping_add(v);
+                    }
+                });
+                black_box(sum);
+            },
+        );
+    }
+
+    // 3. GoldHashMap u64
+    if should_run_any(&[
+        "hash_maps/gold_hash_map/insert_u64",
+        "hash_maps/gold_hash_map/get_u64",
+    ]) {
+        maybe_repin_self_within_ccd();
+        let g_1m_u64: GoldHashMap<u64, u64> = GoldHashMap::with_config(GoldHashMapConfig {
+            initial_capacity: (n * 10 / 7).max(16),
+            ..GoldHashMapConfig::default()
+        });
+        record_space_metric(
+            space,
+            "hash_maps/gold_u64_bytes_per_entry",
+            (g_1m_u64.capacity() * 4 + n * 24) as f64 / n.max(1) as f64,
+        );
+        drop(g_1m_u64);
+
+        let u64_insert_batch = (n / 500).max(1_000).min(n.max(1));
+        let u64_half_batch = (u64_insert_batch / 2).max(1);
+        let prefault_gold_u64 = n.saturating_add(n / 4);
+        let prefill_gold_u64 = n.saturating_sub(120 * u64_half_batch);
+        let reset_gold_u64 = prefault_gold_u64;
+        let mut gold_u64_insert_params = BenchParams::heavy(n as u64, u64_insert_batch as u64, 14);
+        gold_u64_insert_params.warmup_calls = 8;
+        gold_u64_insert_params.bursts_per_trial = 8;
+
+        let mut gmap0: GoldHashMap<u64, u64> = GoldHashMap::with_config(gconfig_u64.clone());
+        let _spacer = vec![1u8; 352 * 1024];
+        let mut gmap1: GoldHashMap<u64, u64> = GoldHashMap::with_config(gconfig_u64);
+        for i in 0..prefault_gold_u64 {
+            let k = make_u64_key(i);
+            let _ = gmap0.insert(k, i as u64);
+        }
+        for i in 0..prefault_gold_u64 {
+            let k = make_u64_key(i);
+            let _ = gmap1.insert(k, i as u64);
+        }
+        gmap0.clear();
+        gmap1.clear();
+        for i in 0..prefill_gold_u64 {
+            let k = make_u64_key(i);
+            let _ = gmap0.insert(k, i as u64);
+            let _ = gmap1.insert(k, i as u64);
+        }
+        let mut gmaps = [gmap0, gmap1];
+        let mut pre_warm_u64 = 0u64;
+        let mut pre_q_u64 = 0usize;
+        for w in 0..8usize {
+            u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                let m = &gmaps[pre_q_u64 & 1];
+                pre_q_u64 = pre_q_u64.wrapping_add(1);
+                let k = make_u64_key(id);
+                if let Some(&v) = m.get(black_box(&k)) {
+                    pre_warm_u64 = pre_warm_u64.wrapping_add(v);
+                }
+            });
+        }
+        black_box(pre_warm_u64);
+        measure_bench_with_setup(
+            records,
+            "hash_maps",
+            "hash_maps/gold_hash_map/insert_u64",
+            "ns/op",
+            gold_u64_insert_params,
+            &mut gmaps,
+            |maps| {
+                if maps[0].len() >= reset_gold_u64 || maps[1].len() >= reset_gold_u64 {
+                    maps[0].clear();
+                    maps[1].clear();
+                    for i in 0..prefill_gold_u64 {
+                        let k = make_u64_key(i);
+                        let _ = maps[0].insert(k, i as u64);
+                        let _ = maps[1].insert(k, i as u64);
+                    }
+                }
+            },
+            |maps| {
+                let b_idx = current_burst_index();
+                let start = n + b_idx * u64_insert_batch;
+                for id in start..start + u64_half_batch {
+                    let k = make_u64_key(id);
+                    let _ = maps[0].insert(black_box(k), id as u64);
+                }
+                for id in start + u64_half_batch..start + u64_insert_batch {
+                    let k = make_u64_key(id);
+                    let _ = maps[1].insert(black_box(k), id as u64);
+                }
+                black_box(maps[0].len() + maps[1].len());
+            },
+        );
+
+        gmaps[0].clear();
+        gmaps[1].clear();
+        for id in 0..n {
+            let k = make_u64_key(id);
+            let _ = gmaps[0].insert(k, id as u64);
+        }
+        for id in 0..n {
+            let k = make_u64_key(id);
+            let _ = gmaps[1].insert(k, id as u64);
+        }
+        let mut warm_sum = 0u64;
+        let mut warm_q = 0usize;
+        for w in 0..8usize {
+            u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                let m = &gmaps[warm_q & 1];
+                warm_q = warm_q.wrapping_add(1);
+                let k = make_u64_key(id);
+                if let Some(&v) = m.get(black_box(&k)) {
+                    warm_sum = warm_sum.wrapping_add(v);
+                }
+            });
+        }
+        black_box(warm_sum);
+        measure_bench(
+            records,
+            "hash_maps",
+            "hash_maps/gold_hash_map/get_u64",
+            "ns/op",
+            get_params,
+            || {
+                let b_idx = current_burst_index();
+                let start = b_idx * get_batch;
+                let mut sum = 0u64;
+                let mut q_idx = 0usize;
+                u64_perm.for_each_slice(start, get_batch, |id| {
+                    let m = &gmaps[q_idx & 1];
+                    q_idx = q_idx.wrapping_add(1);
+                    let k = make_u64_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        sum = sum.wrapping_add(v);
+                    }
+                });
+                black_box(sum);
+            },
+        );
+    }
+
+    // 4. GoldHashMap [u8; 16]
+    if should_run_any(&[
+        "hash_maps/gold_hash_map/insert_str16",
+        "hash_maps/gold_hash_map/get_str16",
+    ]) {
+        maybe_repin_self_within_ccd();
+        let g_1m_str16: GoldHashMap<[u8; 16], u64> = GoldHashMap::with_config(GoldHashMapConfig {
+            initial_capacity: (n * 10 / 7).max(16),
+            ..GoldHashMapConfig::default()
+        });
+        record_space_metric(
+            space,
+            "hash_maps/gold_str16_bytes_per_entry",
+            (g_1m_str16.capacity() * 4 + n * 32) as f64 / n.max(1) as f64,
+        );
+        drop(g_1m_str16);
+
+        let str16_insert_batch = (n / 500).max(1_000).min(n.max(1));
+        let str16_half_batch = (str16_insert_batch / 2).max(1);
+        let prefault_str16 = n.saturating_add(n / 4);
+        let prefill_str16 = n.saturating_sub(120 * str16_half_batch);
+        let reset_str16 = prefault_str16;
+        let mut str16_insert_params = BenchParams::heavy(n as u64, str16_insert_batch as u64, 14);
+        str16_insert_params.warmup_calls = 8;
+        str16_insert_params.bursts_per_trial = 8;
+        let mut gmap0: GoldHashMap<[u8; 16], u64> = GoldHashMap::with_config(gconfig_str16.clone());
+        let _spacer = vec![1u8; 352 * 1024];
+        let mut gmap1: GoldHashMap<[u8; 16], u64> = GoldHashMap::with_config(gconfig_str16);
+        for i in 0..prefault_str16 {
+            let k = make_str16_key(i);
+            let _ = gmap0.insert(k, i as u64);
+        }
+        for i in 0..prefault_str16 {
+            let k = make_str16_key(i);
+            let _ = gmap1.insert(k, i as u64);
+        }
+        gmap0.clear();
+        gmap1.clear();
+        for i in 0..prefill_str16 {
+            let k = make_str16_key(i);
+            let _ = gmap0.insert(k, i as u64);
+            let _ = gmap1.insert(k, i as u64);
+        }
+        let mut gmaps = [gmap0, gmap1];
+        let mut pre_warm_str16 = 0u64;
+        let mut pre_q_str16 = 0usize;
+        for w in 0..8usize {
+            str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                let m = &gmaps[pre_q_str16 & 1];
+                pre_q_str16 = pre_q_str16.wrapping_add(1);
+                let k = make_str16_key(id);
+                if let Some(&v) = m.get(black_box(&k)) {
+                    pre_warm_str16 = pre_warm_str16.wrapping_add(v);
+                }
+            });
+        }
+        black_box(pre_warm_str16);
+        measure_bench_with_setup(
+            records,
+            "hash_maps",
+            "hash_maps/gold_hash_map/insert_str16",
+            "ns/op",
+            str16_insert_params,
+            &mut gmaps,
+            |maps| {
+                if maps[0].len() >= reset_str16 || maps[1].len() >= reset_str16 {
+                    maps[0].clear();
+                    maps[1].clear();
+                    for i in 0..prefill_str16 {
+                        let k = make_str16_key(i);
+                        let _ = maps[0].insert(k, i as u64);
+                        let _ = maps[1].insert(k, i as u64);
+                    }
+                }
+            },
+            |maps| {
+                let b_idx = current_burst_index();
+                let start = n + b_idx * str16_insert_batch;
+                for id in start..start + str16_half_batch {
+                    let k = make_str16_key(id);
+                    let _ = maps[0].insert(black_box(k), id as u64);
+                }
+                for id in start + str16_half_batch..start + str16_insert_batch {
+                    let k = make_str16_key(id);
+                    let _ = maps[1].insert(black_box(k), id as u64);
+                }
+                black_box(maps[0].len() + maps[1].len());
+            },
+        );
+
+        gmaps[0].clear();
+        gmaps[1].clear();
+        for id in 0..n {
+            let k = make_str16_key(id);
+            let _ = gmaps[0].insert(k, id as u64);
+        }
+        for id in 0..n {
+            let k = make_str16_key(id);
+            let _ = gmaps[1].insert(k, id as u64);
+        }
+        let mut warm_sum = 0u64;
+        let mut warm_q = 0usize;
+        for w in 0..8usize {
+            str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                let m = &gmaps[warm_q & 1];
+                warm_q = warm_q.wrapping_add(1);
+                let k = make_str16_key(id);
+                if let Some(&v) = m.get(black_box(&k)) {
+                    warm_sum = warm_sum.wrapping_add(v);
+                }
+            });
+        }
+        black_box(warm_sum);
+        measure_bench(
+            records,
+            "hash_maps",
+            "hash_maps/gold_hash_map/get_str16",
+            "ns/op",
+            get_params,
+            || {
+                let b_idx = current_burst_index();
+                let start = b_idx * get_batch;
+                let mut sum = 0u64;
+                let mut q_idx = 0usize;
+                str16_perm.for_each_slice(start, get_batch, |id| {
+                    let m = &gmaps[q_idx & 1];
+                    q_idx = q_idx.wrapping_add(1);
+                    let k = make_str16_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        sum = sum.wrapping_add(v);
+                    }
+                });
+                black_box(sum);
+            },
+        );
+    }
+
+    let prefill_hb = n.saturating_sub(24 * half_batch);
+
+    // 5. Competitor: hashbrown::HashMap<u64, u64, ahash::RandomState>
+    if should_run_any(&[
+        "hash_maps/hashbrown_ahash/insert_u64",
+        "hash_maps/hashbrown_ahash/get_u64",
+    ]) {
+        maybe_repin_self_within_ccd();
+        let mut hb_tpl: HashbrownMap<u64, u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        let mut hb0: HashbrownMap<u64, u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        let _spacer = vec![1u8; 352 * 1024];
+        let mut hb1: HashbrownMap<u64, u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        record_space_metric(
+            space,
+            "hash_maps/hashbrown_u64_bytes_per_entry",
+            hb0.allocation_size() as f64 / n.max(1) as f64,
+        );
+        for i in 0..prefill_hb {
+            let k = make_u64_key(i);
+            hb_tpl.insert(k, i as u64);
+        }
+        hb0.clone_from(&hb_tpl);
+        hb1.clone_from(&hb_tpl);
+        let mut hbs = [hb0, hb1];
+        let balance_hb_u64 = |maps: &[HashbrownMap<u64, u64, ahash::RandomState>; 2]| {
+            let mut acc = 0u64;
+            let mut q = 0usize;
+            for w in 0..8usize {
+                u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                    let m = &maps[q & 1];
+                    q = q.wrapping_add(1);
+                    let k = make_u64_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        acc = acc.wrapping_add(v);
+                    }
+                });
+            }
+            black_box(acc);
+        };
+        balance_hb_u64(&hbs);
+        measure_bench_with_setup(
+            records,
+            "hash_maps",
+            "hash_maps/hashbrown_ahash/insert_u64",
+            "ns/op",
+            insert_params,
+            &mut hbs,
+            |maps| {
+                if maps[0].len() >= n || maps[1].len() >= n {
+                    maps[0].clone_from(&hb_tpl);
+                    maps[1].clone_from(&hb_tpl);
+                    balance_hb_u64(maps);
+                }
+            },
+            |maps| {
+                let b_idx = current_burst_index();
+                let start = n + b_idx * get_batch;
+                for id in start..start + half_batch {
+                    let k = make_u64_key(id);
+                    maps[0].insert(black_box(k), id as u64);
+                }
+                for id in start + half_batch..start + get_batch {
+                    let k = make_u64_key(id);
+                    maps[1].insert(black_box(k), id as u64);
+                }
+                black_box(maps[0].len() + maps[1].len());
+            },
+        );
+        drop(hb_tpl);
+
+        hbs[0].clear();
+        hbs[1].clear();
+        for id in 0..n {
+            let k = make_u64_key(id);
+            hbs[0].insert(k, id as u64);
+        }
+        for id in 0..n {
+            let k = make_u64_key(id);
+            hbs[1].insert(k, id as u64);
+        }
+        let mut warm_sum = 0u64;
+        let mut warm_q = 0usize;
+        for w in 0..8usize {
+            u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                let m = &hbs[warm_q & 1];
+                warm_q = warm_q.wrapping_add(1);
+                let k = make_u64_key(id);
+                if let Some(&v) = m.get(black_box(&k)) {
+                    warm_sum = warm_sum.wrapping_add(v);
+                }
+            });
+        }
+        black_box(warm_sum);
+        measure_bench(
+            records,
+            "hash_maps",
+            "hash_maps/hashbrown_ahash/get_u64",
+            "ns/op",
+            get_params,
+            || {
+                let b_idx = current_burst_index();
+                let start = b_idx * get_batch;
+                let mut sum = 0u64;
+                let mut q_idx = 0usize;
+                u64_perm.for_each_slice(start, get_batch, |id| {
+                    let m = &hbs[q_idx & 1];
+                    q_idx = q_idx.wrapping_add(1);
+                    let k = make_u64_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        sum = sum.wrapping_add(v);
+                    }
+                });
+                black_box(sum);
+            },
+        );
+    }
+
+    // 6. Competitor: hashbrown::HashMap<[u8; 16], u64, ahash::RandomState>
+    if should_run_any(&[
+        "hash_maps/hashbrown_ahash/insert_str16",
+        "hash_maps/hashbrown_ahash/get_str16",
+    ]) {
+        maybe_repin_self_within_ccd();
+        let mut hb_tpl: HashbrownMap<[u8; 16], u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        let mut hb0: HashbrownMap<[u8; 16], u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        let _spacer = vec![1u8; 352 * 1024];
+        let mut hb1: HashbrownMap<[u8; 16], u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        record_space_metric(
+            space,
+            "hash_maps/hashbrown_str16_bytes_per_entry",
+            hb0.allocation_size() as f64 / n.max(1) as f64,
+        );
+        for i in 0..prefill_hb {
+            let k = make_str16_key(i);
+            hb_tpl.insert(k, i as u64);
+        }
+        hb0.clone_from(&hb_tpl);
+        hb1.clone_from(&hb_tpl);
+        let mut hbs = [hb0, hb1];
+        let balance_hb_str16 = |maps: &[HashbrownMap<[u8; 16], u64, ahash::RandomState>; 2]| {
+            let mut acc = 0u64;
+            let mut q = 0usize;
+            for w in 0..8usize {
+                str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                    let m = &maps[q & 1];
+                    q = q.wrapping_add(1);
+                    let k = make_str16_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        acc = acc.wrapping_add(v);
+                    }
+                });
+            }
+            black_box(acc);
+        };
+        balance_hb_str16(&hbs);
+        measure_bench_with_setup(
+            records,
+            "hash_maps",
+            "hash_maps/hashbrown_ahash/insert_str16",
+            "ns/op",
+            insert_params,
+            &mut hbs,
+            |maps| {
+                if maps[0].len() >= n || maps[1].len() >= n {
+                    maps[0].clone_from(&hb_tpl);
+                    maps[1].clone_from(&hb_tpl);
+                    balance_hb_str16(maps);
+                }
+            },
+            |maps| {
+                let b_idx = current_burst_index();
+                let start = n + b_idx * get_batch;
+                for id in start..start + half_batch {
+                    let k = make_str16_key(id);
+                    maps[0].insert(black_box(k), id as u64);
+                }
+                for id in start + half_batch..start + get_batch {
+                    let k = make_str16_key(id);
+                    maps[1].insert(black_box(k), id as u64);
+                }
+                black_box(maps[0].len() + maps[1].len());
+            },
+        );
+        drop(hb_tpl);
+
+        hbs[0].clear();
+        hbs[1].clear();
+        for id in 0..n {
+            let k = make_str16_key(id);
+            hbs[0].insert(k, id as u64);
+        }
+        for id in 0..n {
+            let k = make_str16_key(id);
+            hbs[1].insert(k, id as u64);
+        }
+        let mut warm_sum = 0u64;
+        let mut warm_q = 0usize;
+        for w in 0..8usize {
+            str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                let m = &hbs[warm_q & 1];
+                warm_q = warm_q.wrapping_add(1);
+                let k = make_str16_key(id);
+                if let Some(&v) = m.get(black_box(&k)) {
+                    warm_sum = warm_sum.wrapping_add(v);
+                }
+            });
+        }
+        black_box(warm_sum);
+        measure_bench(
+            records,
+            "hash_maps",
+            "hash_maps/hashbrown_ahash/get_str16",
+            "ns/op",
+            get_params,
+            || {
+                let b_idx = current_burst_index();
+                let start = b_idx * get_batch;
+                let mut sum = 0u64;
+                let mut q_idx = 0usize;
+                str16_perm.for_each_slice(start, get_batch, |id| {
+                    let m = &hbs[q_idx & 1];
+                    q_idx = q_idx.wrapping_add(1);
+                    let k = make_str16_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        sum = sum.wrapping_add(v);
+                    }
+                });
+                black_box(sum);
+            },
+        );
+    }
+
+    // 7. Competitor: std::collections::HashMap<u64, u64>
+    if should_run_any(&["hash_maps/std/insert_u64", "hash_maps/std/get_u64"]) {
+        maybe_repin_self_within_ccd();
+        let hb_ref: HashbrownMap<u64, u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        record_space_metric(
+            space,
+            "hash_maps/std_u64_bytes_per_entry",
+            hb_ref.allocation_size() as f64 / n.max(1) as f64,
+        );
+        drop(hb_ref);
+
+        let mut std_tpl: StdHashMap<u64, u64> = StdHashMap::with_capacity(n);
+        let mut std0: StdHashMap<u64, u64> = StdHashMap::with_capacity(n);
+        let _spacer = vec![1u8; 352 * 1024];
+        let mut std1: StdHashMap<u64, u64> = StdHashMap::with_capacity(n);
+        for i in 0..prefill_hb {
+            let k = make_u64_key(i);
+            std_tpl.insert(k, i as u64);
+        }
+        std0.clone_from(&std_tpl);
+        std1.clone_from(&std_tpl);
+        let mut stds = [std0, std1];
+        let balance_std_u64 = |maps: &[StdHashMap<u64, u64>; 2]| {
+            let mut acc = 0u64;
+            let mut q = 0usize;
+            for w in 0..8usize {
+                u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                    let m = &maps[q & 1];
+                    q = q.wrapping_add(1);
+                    let k = make_u64_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        acc = acc.wrapping_add(v);
+                    }
+                });
+            }
+            black_box(acc);
+        };
+        balance_std_u64(&stds);
+        measure_bench_with_setup(
+            records,
+            "hash_maps",
+            "hash_maps/std/insert_u64",
+            "ns/op",
+            insert_params,
+            &mut stds,
+            |maps| {
+                if maps[0].len() >= n || maps[1].len() >= n {
+                    maps[0].clone_from(&std_tpl);
+                    maps[1].clone_from(&std_tpl);
+                    balance_std_u64(maps);
+                }
+            },
+            |maps| {
+                let b_idx = current_burst_index();
+                let start = n + b_idx * get_batch;
+                for id in start..start + half_batch {
+                    let k = make_u64_key(id);
+                    maps[0].insert(black_box(k), id as u64);
+                }
+                for id in start + half_batch..start + get_batch {
+                    let k = make_u64_key(id);
+                    maps[1].insert(black_box(k), id as u64);
+                }
+                black_box(maps[0].len() + maps[1].len());
+            },
+        );
+        drop(std_tpl);
+
+        stds[0].clear();
+        stds[1].clear();
+        for id in 0..n {
+            let k = make_u64_key(id);
+            stds[0].insert(k, id as u64);
+        }
+        for id in 0..n {
+            let k = make_u64_key(id);
+            stds[1].insert(k, id as u64);
+        }
+        let mut warm_sum = 0u64;
+        let mut warm_q = 0usize;
+        for w in 0..8usize {
+            u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                let m = &stds[warm_q & 1];
+                warm_q = warm_q.wrapping_add(1);
+                let k = make_u64_key(id);
+                if let Some(&v) = m.get(black_box(&k)) {
+                    warm_sum = warm_sum.wrapping_add(v);
+                }
+            });
+        }
+        black_box(warm_sum);
+        measure_bench(
+            records,
+            "hash_maps",
+            "hash_maps/std/get_u64",
+            "ns/op",
+            get_params,
+            || {
+                let b_idx = current_burst_index();
+                let start = b_idx * get_batch;
+                let mut sum = 0u64;
+                let mut q_idx = 0usize;
+                u64_perm.for_each_slice(start, get_batch, |id| {
+                    let m = &stds[q_idx & 1];
+                    q_idx = q_idx.wrapping_add(1);
+                    let k = make_u64_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        sum = sum.wrapping_add(v);
+                    }
+                });
+                black_box(sum);
+            },
+        );
+    }
+
+    // 8. Competitor: std::collections::HashMap<[u8; 16], u64>
+    if should_run_any(&["hash_maps/std/insert_str16", "hash_maps/std/get_str16"]) {
+        maybe_repin_self_within_ccd();
+        let hb_ref: HashbrownMap<[u8; 16], u64, ahash::RandomState> =
+            HashbrownMap::with_capacity_and_hasher(n, make_hasher());
+        record_space_metric(
+            space,
+            "hash_maps/std_str16_bytes_per_entry",
+            hb_ref.allocation_size() as f64 / n.max(1) as f64,
+        );
+        drop(hb_ref);
+
+        let mut std_tpl: StdHashMap<[u8; 16], u64> = StdHashMap::with_capacity(n);
+        let mut std0: StdHashMap<[u8; 16], u64> = StdHashMap::with_capacity(n);
+        let _spacer = vec![1u8; 352 * 1024];
+        let mut std1: StdHashMap<[u8; 16], u64> = StdHashMap::with_capacity(n);
+        for i in 0..prefill_hb {
+            let k = make_str16_key(i);
+            std_tpl.insert(k, i as u64);
+        }
+        std0.clone_from(&std_tpl);
+        std1.clone_from(&std_tpl);
+        let mut stds = [std0, std1];
+        let balance_std_str16 = |maps: &[StdHashMap<[u8; 16], u64>; 2]| {
+            let mut acc = 0u64;
+            let mut q = 0usize;
+            for w in 0..8usize {
+                str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                    let m = &maps[q & 1];
+                    q = q.wrapping_add(1);
+                    let k = make_str16_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        acc = acc.wrapping_add(v);
+                    }
+                });
+            }
+            black_box(acc);
+        };
+        balance_std_str16(&stds);
+        measure_bench_with_setup(
+            records,
+            "hash_maps",
+            "hash_maps/std/insert_str16",
+            "ns/op",
+            insert_params,
+            &mut stds,
+            |maps| {
+                if maps[0].len() >= n || maps[1].len() >= n {
+                    maps[0].clone_from(&std_tpl);
+                    maps[1].clone_from(&std_tpl);
+                    balance_std_str16(maps);
+                }
+            },
+            |maps| {
+                let b_idx = current_burst_index();
+                let start = n + b_idx * get_batch;
+                for id in start..start + half_batch {
+                    let k = make_str16_key(id);
+                    maps[0].insert(black_box(k), id as u64);
+                }
+                for id in start + half_batch..start + get_batch {
+                    let k = make_str16_key(id);
+                    maps[1].insert(black_box(k), id as u64);
+                }
+                black_box(maps[0].len() + maps[1].len());
+            },
+        );
+        drop(std_tpl);
+
+        stds[0].clear();
+        stds[1].clear();
+        for id in 0..n {
+            let k = make_str16_key(id);
+            stds[0].insert(k, id as u64);
+        }
+        for id in 0..n {
+            let k = make_str16_key(id);
+            stds[1].insert(k, id as u64);
+        }
+        let mut warm_sum = 0u64;
+        let mut warm_q = 0usize;
+        for w in 0..8usize {
+            str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
+                let m = &stds[warm_q & 1];
+                warm_q = warm_q.wrapping_add(1);
+                let k = make_str16_key(id);
+                if let Some(&v) = m.get(black_box(&k)) {
+                    warm_sum = warm_sum.wrapping_add(v);
+                }
+            });
+        }
+        black_box(warm_sum);
+        measure_bench(
+            records,
+            "hash_maps",
+            "hash_maps/std/get_str16",
+            "ns/op",
+            get_params,
+            || {
+                let b_idx = current_burst_index();
+                let start = b_idx * get_batch;
+                let mut sum = 0u64;
+                let mut q_idx = 0usize;
+                str16_perm.for_each_slice(start, get_batch, |id| {
+                    let m = &stds[q_idx & 1];
+                    q_idx = q_idx.wrapping_add(1);
+                    let k = make_str16_key(id);
+                    if let Some(&v) = m.get(black_box(&k)) {
+                        sum = sum.wrapping_add(v);
+                    }
+                });
+                black_box(sum);
+            },
+        );
+    }
+}
+
 fn find_min(records: &[BenchRecord], name: &str) -> Option<f64> {
     records
         .iter()
@@ -2050,6 +3103,65 @@ fn build_same_run_comparisons(
         }
     }
 
+    // 4. Hash Maps (1,000,000 u64 and [u8; 16] keys)
+    for (key_kind, z_bpe_key, g_bpe_key, hb_bpe_key, std_bpe_key) in [
+        (
+            "u64",
+            "hash_maps/zipora_u64_bytes_per_entry",
+            "hash_maps/gold_u64_bytes_per_entry",
+            "hash_maps/hashbrown_u64_bytes_per_entry",
+            "hash_maps/std_u64_bytes_per_entry",
+        ),
+        (
+            "str16",
+            "hash_maps/zipora_str16_bytes_per_entry",
+            "hash_maps/gold_str16_bytes_per_entry",
+            "hash_maps/hashbrown_str16_bytes_per_entry",
+            "hash_maps/std_str16_bytes_per_entry",
+        ),
+    ] {
+        let z_bpe = space.get(z_bpe_key).copied().unwrap_or(0.0);
+        let g_bpe = space.get(g_bpe_key).copied().unwrap_or(0.0);
+        let hb_bpe = space.get(hb_bpe_key).copied().unwrap_or(0.0);
+        let std_bpe = space.get(std_bpe_key).copied().unwrap_or(0.0);
+
+        for (comp_prefix, comp_label, comp_bpe) in [
+            ("hash_maps/hashbrown_ahash", "hashbrown+ahash", hb_bpe),
+            ("hash_maps/std", "std::collections::HashMap", std_bpe),
+        ] {
+            for (op_name, op_suffix) in [("insert", "insert"), ("get", "get")] {
+                push_comparison(
+                    &mut out,
+                    records,
+                    "hash_maps",
+                    &format!("{op_name}_{key_kind} (ZiporaHashMap)"),
+                    &format!("hash_maps/zipora_hash_map/{op_suffix}_{key_kind}"),
+                    "ZiporaHashMap",
+                    &format!("{comp_prefix}/{op_suffix}_{key_kind}"),
+                    comp_label,
+                    "ns/op",
+                    "bytes_per_entry",
+                    z_bpe,
+                    comp_bpe,
+                );
+                push_comparison(
+                    &mut out,
+                    records,
+                    "hash_maps",
+                    &format!("{op_name}_{key_kind} (GoldHashMap)"),
+                    &format!("hash_maps/gold_hash_map/{op_suffix}_{key_kind}"),
+                    "GoldHashMap",
+                    &format!("{comp_prefix}/{op_suffix}_{key_kind}"),
+                    comp_label,
+                    "ns/op",
+                    "bytes_per_entry",
+                    g_bpe,
+                    comp_bpe,
+                );
+            }
+        }
+    }
+
     out
 }
 
@@ -2126,6 +3238,10 @@ fn main() {
     }
     if run_cat("tries") {
         bench_tries(&mut records, &mut space_metrics, sizes);
+        maybe_repin_self_within_ccd();
+    }
+    if run_cat("hash_maps") {
+        bench_hash_maps(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
 

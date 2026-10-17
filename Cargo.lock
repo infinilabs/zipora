@@ -2193,6 +2193,7 @@ dependencies = [
  "dyn_size_of",
  "fastrand",
  "fst",
+ "hashbrown",
  "libc",
  "log",
  "lz4_flex",

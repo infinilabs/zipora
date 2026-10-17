@@ -87,6 +87,7 @@ dyn_size_of = "0.4"
 fst = "0.4"
 qp-trie = "0.8"
 radix_trie = "0.3"
+hashbrown = { version = "0.16", default-features = false, features = ["inline-more", "raw-entry", "equivalent"] }
 # Note: rayon is already in main dependencies
 
 [build-dependencies]
