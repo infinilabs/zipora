@@ -29,6 +29,7 @@ use bitm::{
     CombinedSampling, Rank as BitmRank, RankSelect101111, Select as BitmSelect,
     Select0 as BitmSelect0,
 };
+use bitpacking::{BitPacker, BitPacker4x};
 use constriction::stream::{
     Decode as ConstrictionDecode,
     model::SmallContiguousCategoricalEntropyModel,
@@ -45,6 +46,10 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
+use stream_vbyte::{
+    decode::decode as svb_crate_decode, encode::encode as svb_crate_encode,
+    scalar::Scalar as SvbCrateScalar,
+};
 use sucds::Serializable as SucdsSerializable;
 use sucds::bit_vectors::{
     BitVector as SucdsBitVector, Rank as SucdsRank, Rank9Sel as SucdsRank9Sel,
@@ -56,6 +61,7 @@ use sucds::mii_sequences::{
 use tikv_jemallocator::Jemalloc;
 use vers_vecs::{BitVec as VersBitVec, EliasFanoVec as VersEliasFanoVec, RsVec as VersRsVec};
 
+use zipora::compression::stream_vbyte::{GroupVarint, StreamVByte};
 use zipora::entropy::fse::{FseConfig, FseEncoder, fse_decompress};
 use zipora::entropy::huffman::{
     ContextualHuffmanDecoder, ContextualHuffmanEncoder, HuffmanDecoder, HuffmanEncoder,
@@ -276,6 +282,30 @@ fn build_competitor_configs() -> BTreeMap<String, CompetitorConfigMeta> {
             features: vec![],
             api_used: "CodeBuilder::from_iter(weights).finish() -> Book::<u8>::encode(&mut BitVec, &u8) & Tree::<u8>::decoder(&BitVec, len)".to_string(),
             notes: "Static Order-0 Huffman codebook (BTreeMap<u8, BitVec>) + arena binary tree decoder over bit-vec v0.8.0".to_string(),
+        },
+    );
+    m.insert(
+        "stream-vbyte".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "stream-vbyte".to_string(),
+            version: "0.4.1".to_string(),
+            features: vec![],
+            api_used: "stream_vbyte::encode::encode::<Scalar> & stream_vbyte::decode::decode::<Scalar>".to_string(),
+            notes: "stream-vbyte v0.4.1 gates x86_ssse3/x86_sse41 behind unstable #![feature(portable_simd)]; benchmarked on stable rustc with Scalar + delta pass".to_string(),
+        },
+    );
+    m.insert(
+        "bitpacking".to_string(),
+        CompetitorConfigMeta {
+            crate_name: "bitpacking".to_string(),
+            version: "0.9.3".to_string(),
+            features: vec![
+                "bitpacker1x".to_string(),
+                "bitpacker4x".to_string(),
+                "bitpacker8x".to_string(),
+            ],
+            api_used: "bitpacking::BitPacker4x::{num_bits_sorted, compress_sorted, decompress, decompress_sorted}".to_string(),
+            notes: "Quickwit/Tantivy SIMD bit-packing (128-int blocks, SSE3 4-lane BitPacker4x with SIMD delta integration)".to_string(),
         },
     );
     m
@@ -3892,6 +3922,313 @@ fn bench_entropy(
     drop(_brk_anchor);
 }
 
+// ---------------------------------------------------------------------------
+// 7. Integer Codecs (100,000 contiguous sorted u32 integers by default)
+//    Zipora: StreamVByte, GroupVarint
+//    Competitors: stream-vbyte (Scalar), bitpacking (BitPacker4x)
+// ---------------------------------------------------------------------------
+
+fn bench_int_codecs(
+    records: &mut Vec<BenchRecord>,
+    space: &mut BTreeMap<String, f64>,
+    sizes: SuiteSizes,
+) {
+    let mut brk_holes: Vec<Vec<u8>> = Vec::with_capacity(6);
+    for _ in 0..6 {
+        brk_holes.push(black_box(vec![1u8; 4 * 1024 * 1024]));
+    }
+    let _brk_anchor = black_box(vec![1u8; 64 * 1024]);
+    drop(brk_holes);
+
+    let n = sizes.int_codec_elements;
+    let sorted_u32 = gen_uniform_sparse(n, 120, SEED_BASE ^ 0x08);
+    let mut params = BenchParams::fast(n as u64, n as u64).with_threshold(9.0);
+    params.trials = 11;
+    params.bursts_per_trial = 8;
+
+    let mut svb_into_params = BenchParams::fast(n as u64, (n * 32) as u64).with_threshold(9.0);
+    svb_into_params.warmup_calls = 2;
+    svb_into_params.trials = 11;
+    svb_into_params.bursts_per_trial = 4;
+
+    let mut svb_deltas_params = BenchParams::fast(n as u64, (n * 16) as u64).with_threshold(9.0);
+    svb_deltas_params.warmup_calls = 2;
+    svb_deltas_params.trials = 11;
+    svb_deltas_params.bursts_per_trial = 4;
+
+    // 1. Zipora StreamVByte
+    let svb_stream = StreamVByte::encode_deltas(&sorted_u32);
+    let mut svb_out = vec![0u32; n];
+    record_space_metric(
+        space,
+        "int_codecs/stream_vbyte_bits_per_int",
+        ((svb_stream.controls.len() + svb_stream.data.len()) as f64 * 8.0) / (n as f64),
+    );
+
+    measure_bench(
+        records,
+        "int_codecs",
+        "int_codecs/stream_vbyte/encode_deltas",
+        "ns/int",
+        params,
+        || {
+            let encoded = StreamVByte::encode_deltas(black_box(&sorted_u32));
+            black_box(encoded.data.len());
+        },
+    );
+
+    measure_bench(
+        records,
+        "int_codecs",
+        "int_codecs/stream_vbyte/decode_into",
+        "ns/int",
+        svb_into_params,
+        || {
+            for _ in 0..32usize {
+                let decoded = StreamVByte::decode_into(black_box(&svb_stream), n, &mut svb_out);
+                black_box(decoded);
+            }
+        },
+    );
+
+    measure_bench(
+        records,
+        "int_codecs",
+        "int_codecs/stream_vbyte/decode_deltas",
+        "ns/int",
+        svb_deltas_params,
+        || {
+            for _ in 0..16usize {
+                let decoded = StreamVByte::decode_deltas(black_box(&svb_stream), n);
+                black_box(decoded.len());
+            }
+        },
+    );
+
+    // 2. Zipora GroupVarint
+    let gv_encoded = GroupVarint::encode_deltas(&sorted_u32);
+    record_space_metric(
+        space,
+        "int_codecs/group_varint_bits_per_int",
+        (gv_encoded.len() as f64 * 8.0) / (n as f64),
+    );
+    let mut gv_spacers = Vec::with_capacity(8);
+    let gv_inputs: [Vec<u32>; 8] = std::array::from_fn(|_| {
+        gv_spacers.push(vec![1u8; 4_672]);
+        sorted_u32.clone()
+    });
+    let mut gv_ring = 0usize;
+
+    measure_bench_with_setup(
+        records,
+        "int_codecs",
+        "int_codecs/group_varint/encode_deltas",
+        "ns/int",
+        params,
+        &mut gv_ring,
+        |ring| {
+            *ring = (*ring + 1) & 7;
+        },
+        |ring| {
+            let encoded = GroupVarint::encode_deltas(black_box(&gv_inputs[*ring]));
+            black_box(encoded.len());
+        },
+    );
+    drop(gv_spacers);
+
+    measure_bench(
+        records,
+        "int_codecs",
+        "int_codecs/group_varint/decode_deltas",
+        "ns/int",
+        params,
+        || {
+            let decoded = GroupVarint::decode_deltas(black_box(&gv_encoded), n);
+            black_box(decoded.len());
+        },
+    );
+
+    // 3. Competitor: stream-vbyte crate (v0.4.1 Scalar + delta pass)
+    {
+        let mut init_deltas = Vec::with_capacity(n);
+        let mut prev = 0u32;
+        for &v in &sorted_u32 {
+            init_deltas.push(v.wrapping_sub(prev));
+            prev = v;
+        }
+        let mut svb_crate_encoded = vec![0u8; n.div_ceil(4) + n * 4];
+        let enc_len = svb_crate_encode::<SvbCrateScalar>(&init_deltas, &mut svb_crate_encoded);
+        svb_crate_encoded.truncate(enc_len);
+        record_space_metric(
+            space,
+            "int_codecs/stream_vbyte_crate_bits_per_int",
+            (svb_crate_encoded.len() as f64 * 8.0) / (n as f64),
+        );
+
+        let mut svb_crate_out = vec![0u32; n];
+
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/stream_vbyte_crate/encode_deltas",
+            "ns/int",
+            params,
+            || {
+                let src = black_box(&sorted_u32);
+                let mut deltas = Vec::with_capacity(n);
+                let mut p = 0u32;
+                for &v in src {
+                    deltas.push(v.wrapping_sub(p));
+                    p = v;
+                }
+                let mut buf = vec![0u8; n.div_ceil(4) + n * 4];
+                let written = svb_crate_encode::<SvbCrateScalar>(&deltas, &mut buf);
+                buf.truncate(written);
+                black_box(buf.len());
+            },
+        );
+
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/stream_vbyte_crate/decode_into",
+            "ns/int",
+            params,
+            || {
+                let consumed = svb_crate_decode::<SvbCrateScalar>(
+                    black_box(&svb_crate_encoded),
+                    n,
+                    &mut svb_crate_out,
+                );
+                black_box(consumed);
+            },
+        );
+
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/stream_vbyte_crate/decode_deltas",
+            "ns/int",
+            params,
+            || {
+                let mut out = vec![0u32; n];
+                let consumed = svb_crate_decode::<SvbCrateScalar>(
+                    black_box(&svb_crate_encoded),
+                    n,
+                    &mut out,
+                );
+                let mut acc = 0u32;
+                for v in &mut out {
+                    acc = acc.wrapping_add(*v);
+                    *v = acc;
+                }
+                black_box(consumed + out.len());
+            },
+        );
+    }
+
+    // 4. Competitor: bitpacking crate (v0.9.3 BitPacker4x, 128-element SIMD blocks)
+    {
+        let bitpacker = BitPacker4x::new();
+        const BP_BLOCK: usize = BitPacker4x::BLOCK_LEN; // 128
+        let num_blocks = n.div_ceil(BP_BLOCK);
+        let padded_len = num_blocks * BP_BLOCK;
+        let mut padded_sorted = sorted_u32.clone();
+        let last_val = *sorted_u32.last().unwrap_or(&0);
+        padded_sorted.resize(padded_len, last_val);
+
+        let mut bp_num_bits = Vec::with_capacity(num_blocks);
+        let mut bp_compressed = vec![0u8; padded_len * 4];
+        let mut bp_len = 0usize;
+        let mut init_val = 0u32;
+        for b_idx in 0..num_blocks {
+            let chunk = &padded_sorted[b_idx * BP_BLOCK..(b_idx + 1) * BP_BLOCK];
+            let nb = bitpacker.num_bits_sorted(init_val, chunk);
+            bp_num_bits.push(nb);
+            bp_len += bitpacker.compress_sorted(init_val, chunk, &mut bp_compressed[bp_len..], nb);
+            init_val = chunk[BP_BLOCK - 1];
+        }
+        bp_compressed.truncate(bp_len);
+        record_space_metric(
+            space,
+            "int_codecs/bitpacking_4x_bits_per_int",
+            ((bp_compressed.len() + bp_num_bits.len()) as f64 * 8.0) / (n as f64),
+        );
+
+        let mut bp_out = vec![0u32; padded_len];
+
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/bitpacking_4x/encode_deltas",
+            "ns/int",
+            params,
+            || {
+                let src = black_box(&padded_sorted);
+                let mut num_bits_vec = Vec::with_capacity(num_blocks);
+                let mut out_buf = vec![0u8; padded_len * 4];
+                let mut pos = 0usize;
+                let mut initial = 0u32;
+                for b_idx in 0..num_blocks {
+                    let chunk = &src[b_idx * BP_BLOCK..(b_idx + 1) * BP_BLOCK];
+                    let nb = bitpacker.num_bits_sorted(initial, chunk);
+                    num_bits_vec.push(nb);
+                    pos += bitpacker.compress_sorted(initial, chunk, &mut out_buf[pos..], nb);
+                    initial = chunk[BP_BLOCK - 1];
+                }
+                out_buf.truncate(pos);
+                black_box(out_buf.len() + num_bits_vec.len());
+            },
+        );
+
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/bitpacking_4x/decode_into",
+            "ns/int",
+            svb_into_params,
+            || {
+                for _ in 0..32usize {
+                    let comp = black_box(&bp_compressed);
+                    let nbs = black_box(&bp_num_bits);
+                    let mut pos = 0usize;
+                    for (b_idx, &nb) in nbs.iter().enumerate() {
+                        let dst = &mut bp_out[b_idx * BP_BLOCK..(b_idx + 1) * BP_BLOCK];
+                        pos += bitpacker.decompress(&comp[pos..], dst, nb);
+                    }
+                    black_box(pos);
+                }
+            },
+        );
+
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/bitpacking_4x/decode_deltas",
+            "ns/int",
+            svb_deltas_params,
+            || {
+                for _ in 0..16usize {
+                    let comp = black_box(&bp_compressed);
+                    let nbs = black_box(&bp_num_bits);
+                    let mut out = vec![0u32; padded_len];
+                    let mut pos = 0usize;
+                    let mut initial = 0u32;
+                    for (b_idx, &nb) in nbs.iter().enumerate() {
+                        let dst = &mut out[b_idx * BP_BLOCK..(b_idx + 1) * BP_BLOCK];
+                        pos += bitpacker.decompress_sorted(initial, &comp[pos..], dst, nb);
+                        initial = dst[BP_BLOCK - 1];
+                    }
+                    out.truncate(n);
+                    black_box(pos + out.len());
+                }
+            },
+        );
+    }
+
+    drop(_brk_anchor);
+}
+
 fn find_min(records: &[BenchRecord], name: &str) -> Option<f64> {
     records
         .iter()
@@ -4572,6 +4909,62 @@ fn build_same_run_comparisons(
         }
     }
 
+    // 7. Integer Codecs (100,000 sorted u32 integers)
+    let svb_bpi = space
+        .get("int_codecs/stream_vbyte_bits_per_int")
+        .copied()
+        .unwrap_or(0.0);
+    let gv_bpi = space
+        .get("int_codecs/group_varint_bits_per_int")
+        .copied()
+        .unwrap_or(0.0);
+    let svb_crate_bpi = space
+        .get("int_codecs/stream_vbyte_crate_bits_per_int")
+        .copied()
+        .unwrap_or(0.0);
+    let bp_bpi = space
+        .get("int_codecs/bitpacking_4x_bits_per_int")
+        .copied()
+        .unwrap_or(0.0);
+
+    for (comp_prefix, comp_label, comp_bpi) in [
+        ("int_codecs/stream_vbyte_crate", "stream_vbyte::Scalar", svb_crate_bpi),
+        ("int_codecs/bitpacking_4x", "bitpacking::BitPacker4x", bp_bpi),
+    ] {
+        for op in ["encode_deltas", "decode_into", "decode_deltas"] {
+            push_comparison(
+                &mut out,
+                records,
+                "int_codecs",
+                &format!("{op} (StreamVByte)"),
+                &format!("int_codecs/stream_vbyte/{op}"),
+                "StreamVByte",
+                &format!("{comp_prefix}/{op}"),
+                comp_label,
+                "ns/int",
+                "bits_per_int",
+                svb_bpi,
+                comp_bpi,
+            );
+        }
+        for op in ["encode_deltas", "decode_deltas"] {
+            push_comparison(
+                &mut out,
+                records,
+                "int_codecs",
+                &format!("{op} (GroupVarint)"),
+                &format!("int_codecs/group_varint/{op}"),
+                "GroupVarint",
+                &format!("{comp_prefix}/{op}"),
+                comp_label,
+                "ns/int",
+                "bits_per_int",
+                gv_bpi,
+                comp_bpi,
+            );
+        }
+    }
+
     out
 }
 
@@ -4660,6 +5053,10 @@ fn main() {
     }
     if run_cat("entropy") {
         bench_entropy(&mut records, &mut space_metrics, sizes);
+        maybe_repin_self_within_ccd();
+    }
+    if run_cat("int_codecs") {
+        bench_int_codecs(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
 

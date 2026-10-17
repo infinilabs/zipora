@@ -1513,6 +1513,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
+name = "stream-vbyte"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f04a005bc697f0aed603e32beaab46d4a69fc4f41503c3b1b0c2168201b9e51"
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2291,6 +2297,7 @@ dependencies = [
  "bit-vec",
  "bitflags",
  "bitm",
+ "bitpacking",
  "bytemuck",
  "cbindgen",
  "constriction",
@@ -2314,6 +2321,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "stream-vbyte",
  "sucds",
  "tantivy",
  "tempfile",
