@@ -84,6 +84,9 @@ sucds = { version = "0.10", features = ["intrinsics"] }
 vers-vecs = { version = "1.10", features = ["simd"] }
 bitm = "0.5"
 dyn_size_of = "0.4"
+fst = "0.4"
+qp-trie = "0.8"
+radix_trie = "0.3"
 # Note: rayon is already in main dependencies
 
 [build-dependencies]
