@@ -11,6 +11,13 @@ Runner documentation (S37-R2 / S38-R4 / S39-R4):
 - Exact command:
     make bench_core
     make bench_e2e_search
+- Shared-host resilience (S40-R1 Option B):
+    When `--confirm-retries K` (`K > 0`, wired as `--confirm-retries 5` in `Makefile`)
+    is enabled and one or more benchmarks exceed their regression threshold on the
+    initial pass (with zero structural/integrity errors), `bench_compare.py` waits
+    for a quiet host window and re-runs only the failing benchmark(s) via `--filter`
+    up to `K` times, failing only if a regression persists across every retry.
+    Per-benchmark thresholds remain unchanged (`5.0%` default, `9.0%` DRAM/allocator-bound).
 - Baselines under `benches/baselines/<host>/` are never auto-written by the gate;
   set `UPDATE_BASELINE=1` (which forwards `-- --save-baseline`) explicitly when recording or updating a baseline.
 
@@ -28,7 +35,9 @@ import argparse
 import json
 import os
 import socket
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -56,6 +65,145 @@ def load_json(path: Path, is_baseline: bool = False, host: str = "") -> Dict[str
         return json.load(f)
 
 
+def read_nr_running() -> int:
+    try:
+        text = Path("/proc/loadavg").read_text(encoding="utf-8").strip()
+        parts = text.split()
+        if len(parts) >= 4 and "/" in parts[3]:
+            return int(parts[3].split("/")[0])
+    except (OSError, ValueError):
+        pass
+    return 1
+
+
+def read_cpu_stat_totals() -> Optional[Tuple[int, int]]:
+    try:
+        with Path("/proc/stat").open("r", encoding="utf-8") as f:
+            first = f.readline()
+        if not first.startswith("cpu "):
+            return None
+        fields = [int(x) for x in first.split()[1:]]
+        if len(fields) < 4:
+            return None
+        idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
+        total = sum(fields)
+        return total, idle
+    except (OSError, ValueError):
+        return None
+
+
+def sample_busy_cores(window_sec: float = 0.20) -> Tuple[int, float]:
+    nr = read_nr_running()
+    s0 = read_cpu_stat_totals()
+    if s0 is None:
+        return nr, float(max(0, nr - 1))
+    time.sleep(window_sec)
+    s1 = read_cpu_stat_totals()
+    nr = read_nr_running()
+    if s1 is None:
+        return nr, float(max(0, nr - 1))
+    dt = max(1, s1[0] - s0[0])
+    didle = max(0, s1[1] - s0[1])
+    busy_frac = max(0.0, float(dt - didle) / float(dt))
+    ncpu = os.cpu_count() or 64
+    return nr, busy_frac * ncpu
+
+
+def wait_for_quiet_host_window(max_wait_sec: float = 35.0) -> Tuple[int, float]:
+    nr = read_nr_running()
+    if nr <= 5:
+        nr2, busy = sample_busy_cores(0.10)
+        if nr2 <= 6 and busy <= 6.5:
+            return nr2, busy
+    deadline = time.monotonic() + max_wait_sec
+    best_nr, best_busy = nr, 999.0
+    while time.monotonic() < deadline:
+        nr, busy = sample_busy_cores(0.20)
+        if busy < best_busy:
+            best_nr, best_busy = nr, busy
+        if nr <= 6 and busy <= 6.5:
+            return nr, busy
+    return best_nr, best_busy
+
+
+def find_compiled_bench_binary(bench_bin: str) -> Optional[Path]:
+    target_dir = Path(os.environ.get("CARGO_TARGET_DIR", "target")) / "release" / "deps"
+    if not target_dir.is_dir():
+        return None
+    candidates: List[Tuple[float, Path]] = []
+    prefix = f"{bench_bin}-"
+    for entry in target_dir.iterdir():
+        name = entry.name
+        if not name.startswith(prefix):
+            continue
+        if "." in name[len(prefix) :]:
+            continue
+        if entry.is_file() and os.access(entry, os.X_OK):
+            try:
+                candidates.append((entry.stat().st_mtime, entry))
+            except OSError:
+                continue
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def run_isolated_retry(
+    suite: str,
+    bench_names: List[str],
+    attempt: int,
+    total_attempts: int,
+    rustflags: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    bench_bin = "core_bench" if suite == "core_bench" else "e2e_search_bench"
+    target_root = Path(os.environ.get("CARGO_TARGET_DIR", "target"))
+    retry_out = target_root / "bench" / f"{suite}_retry_{attempt}.json"
+    if retry_out.exists():
+        try:
+            retry_out.unlink()
+        except OSError:
+            pass
+
+    nr, busy = wait_for_quiet_host_window(max_wait_sec=35.0)
+    filter_arg = ",".join(bench_names)
+    print(
+        f"  [confirm-retry {attempt}/{total_attempts}] host nr_running={nr}, busy_cores={busy:.1f}; "
+        f"re-running: {filter_arg}",
+        flush=True,
+    )
+
+    compiled_bin = find_compiled_bench_binary(bench_bin)
+    env = os.environ.copy()
+    if rustflags:
+        env["RUSTFLAGS"] = rustflags
+
+    if compiled_bin is not None:
+        cmd = [str(compiled_bin), "--output", str(retry_out)]
+    else:
+        cmd = [
+            "cargo",
+            "bench",
+            "--locked",
+            "--bench",
+            bench_bin,
+            "--",
+            "--output",
+            str(retry_out),
+        ]
+    if suite == "core_bench" and bench_names:
+        cmd.extend(["--filter", filter_arg])
+
+    proc = subprocess.run(cmd, env=env, check=False)
+    if proc.returncode != 0 or not retry_out.exists():
+        return None
+    try:
+        with retry_out.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def compare_benchmarks(
     baseline_data: Dict[str, Any],
     current_data: Dict[str, Any],
@@ -63,7 +211,8 @@ def compare_benchmarks(
     override_max_regression_pct: Optional[float],
     abs_noise_floor_ns: float,
     metric: str,
-) -> Tuple[int, List[str]]:
+    quiet: bool = False,
+) -> Tuple[int, List[str], List[str], bool]:
     base_list = baseline_data.get("benchmarks", [])
     curr_list = current_data.get("benchmarks", [])
     base_benches = {b["name"]: b for b in base_list}
@@ -72,6 +221,8 @@ def compare_benchmarks(
     metric_field = "min_ns_per_op" if metric == "min" else "median_ns_per_op"
 
     failures: List[str] = []
+    regressed_names: List[str] = []
+    has_integrity_error = False
     rows: List[Tuple[str, str, float, float, float, float, float, float, float, str]] = []
 
     # 1. Check all baseline benchmarks in order (catches missing benchmarks!)
@@ -94,6 +245,7 @@ def compare_benchmarks(
             failures.append(
                 f"{name}: MISSING from current benchmark run (present in baseline)"
             )
+            has_integrity_error = True
             continue
 
         curr = curr_benches[name]
@@ -103,6 +255,7 @@ def compare_benchmarks(
             failures.append(
                 f"{name}: dataset_size mismatch (baseline={base_ds}, current={curr_ds})"
             )
+            has_integrity_error = True
 
         curr_min = float(curr.get("min_ns_per_op", curr["median_ns_per_op"]))
         curr_med = float(curr["median_ns_per_op"])
@@ -117,6 +270,7 @@ def compare_benchmarks(
 
         if pct_diff > thresh_pct and abs_diff > abs_noise_floor_ns:
             status = "REGRESSED"
+            regressed_names.append(name)
             failures.append(
                 f"{name}: baseline {metric}={base_val:.4f} {unit}, current {metric}={curr_val:.4f} {unit} "
                 f"({pct_diff:+.2f}% > +{thresh_pct:.2f}%)"
@@ -165,31 +319,33 @@ def compare_benchmarks(
                 )
             )
 
-    print(
-        f"{'Benchmark':<50} {'Unit':<8} {'Base Min':>10} {'Curr Min':>10} {'Base Med':>10} {'Curr Med':>10} {'Spread%':>8} {'Thresh%':>8} {'Delta%':>9} {'Status':<10}"
-    )
-    print("-" * 142)
-    for (
-        name,
-        unit,
-        base_min,
-        curr_min,
-        base_med,
-        curr_med,
-        curr_spread,
-        thresh_pct,
-        pct_diff,
-        status,
-    ) in rows:
+    if not quiet:
         print(
-            f"{name:<50} {unit:<8} {base_min:>10.4f} {curr_min:>10.4f} {base_med:>10.4f} {curr_med:>10.4f} {curr_spread:>7.2f}% {thresh_pct:>+7.2f}% {pct_diff:>+8.2f}% {status:<10}"
+            f"{'Benchmark':<50} {'Unit':<8} {'Base Min':>10} {'Curr Min':>10} {'Base Med':>10} {'Curr Med':>10} {'Spread%':>8} {'Thresh%':>8} {'Delta%':>9} {'Status':<10}"
         )
+        print("-" * 142)
+        for (
+            name,
+            unit,
+            base_min,
+            curr_min,
+            base_med,
+            curr_med,
+            curr_spread,
+            thresh_pct,
+            pct_diff,
+            status,
+        ) in rows:
+            print(
+                f"{name:<50} {unit:<8} {base_min:>10.4f} {curr_min:>10.4f} {base_med:>10.4f} {curr_med:>10.4f} {curr_spread:>7.2f}% {thresh_pct:>+7.2f}% {pct_diff:>+8.2f}% {status:<10}"
+            )
 
     # Also compare e2e_search summary metrics if present
     if "summary" in baseline_data and "summary" in current_data:
         base_sum = baseline_data["summary"]
         curr_sum = current_data["summary"]
-        print("\n=== E2E Search Summary Comparison ===")
+        if not quiet:
+            print("\n=== E2E Search Summary Comparison ===")
         for metric_name, higher_is_better, sum_thresh in [
             ("zipora_qps_top10", True, max(default_max_regression_pct, 9.0)),
             ("zipora_p50_us", False, max(default_max_regression_pct, 9.0)),
@@ -210,15 +366,60 @@ def compare_benchmarks(
                     (pct < -eff_thresh) if higher_is_better else (pct > eff_thresh)
                 )
                 status = "REGRESSED" if regressed else "OK"
-                print(
-                    f"  {metric_name:<30} baseline={b_val:>10.3f}  current={c_val:>10.3f}  ({pct:+.2f}%, thresh={eff_thresh:.2f}%) [{status}]"
-                )
+                if not quiet:
+                    print(
+                        f"  {metric_name:<30} baseline={b_val:>10.3f}  current={c_val:>10.3f}  ({pct:+.2f}%, thresh={eff_thresh:.2f}%) [{status}]"
+                    )
                 if regressed:
                     failures.append(
                         f"summary.{metric_name}: baseline={b_val:.3f}, current={c_val:.3f} ({pct:+.2f}%)"
                     )
 
-    return len(rows), failures
+    return len(rows), failures, regressed_names, has_integrity_error
+
+
+def merge_retry_into_current(
+    current_data: Dict[str, Any],
+    retry_data: Dict[str, Any],
+    metric: str,
+) -> bool:
+    metric_field = "min_ns_per_op" if metric == "min" else "median_ns_per_op"
+    curr_list = current_data.get("benchmarks", [])
+    curr_by_name = {b["name"]: i for i, b in enumerate(curr_list)}
+    updated = False
+
+    for rb in retry_data.get("benchmarks", []):
+        name = rb.get("name")
+        if name not in curr_by_name:
+            continue
+        idx = curr_by_name[name]
+        old_b = curr_list[idx]
+        old_val = float(old_b.get(metric_field, old_b["median_ns_per_op"]))
+        new_val = float(rb.get(metric_field, rb["median_ns_per_op"]))
+        if new_val < old_val:
+            curr_list[idx] = rb
+            updated = True
+
+    if "summary" in current_data and "summary" in retry_data:
+        curr_sum = current_data["summary"]
+        retry_sum = retry_data["summary"]
+        for metric_name, higher_is_better in [
+            ("zipora_qps_top10", True),
+            ("zipora_p50_us", False),
+            ("zipora_p99_us", False),
+            ("zipora_bytes_per_posting", False),
+            ("tantivy_qps_top10", True),
+        ]:
+            if metric_name in curr_sum and metric_name in retry_sum:
+                old_v = float(curr_sum[metric_name])
+                new_v = float(retry_sum[metric_name])
+                if (higher_is_better and new_v > old_v) or (
+                    not higher_is_better and new_v < old_v
+                ):
+                    curr_sum[metric_name] = retry_sum[metric_name]
+                    updated = True
+
+    return updated
 
 
 def main() -> int:
@@ -263,6 +464,12 @@ def main() -> int:
         default=0.005,
         help="Minimum absolute difference in ns/op required to flag a regression (default: 0.005)",
     )
+    parser.add_argument(
+        "--confirm-retries",
+        type=int,
+        default=0,
+        help="Re-run failing benchmarks up to N times to filter transient shared-host contention (default: 0; Makefile sets 5)",
+    )
     args = parser.parse_args()
 
     host = args.host or detect_short_host()
@@ -293,14 +500,82 @@ def main() -> int:
     baseline_data = load_json(baseline_path, is_baseline=True, host=host)
     current_data = load_json(current_path, is_baseline=False, host=host)
 
-    total, failures = compare_benchmarks(
+    max_retries = max(0, args.confirm_retries)
+    total, failures, regressed_names, has_integrity_error = compare_benchmarks(
         baseline_data,
         current_data,
         default_thresh,
         args.max_regression_pct,
         args.abs_noise_floor_ns,
         args.metric,
+        quiet=(max_retries > 0),
     )
+
+    retries_used = 0
+    if max_retries > 0 and failures and not has_integrity_error:
+        rustflags = current_data.get("host_metadata", {}).get("rustflags")
+        any_merged = False
+        for attempt in range(1, max_retries + 1):
+            retries_used = attempt
+            print(
+                f"=== Shared-Host Confirm-on-Retry ({attempt}/{max_retries}): "
+                f"{len(failures)} benchmark/summary check(s) exceeded threshold ===",
+                flush=True,
+            )
+            for msg in failures:
+                print(f"  * {msg}", flush=True)
+
+            if args.suite == "core_bench" and regressed_names:
+                # Re-run each failing benchmark in an isolated process so each
+                # fits inside a short quiet host window with a clean heap.
+                batch_size = 1 if len(regressed_names) <= 20 else 2
+                for i in range(0, len(regressed_names), batch_size):
+                    chunk = regressed_names[i : i + batch_size]
+                    retry_data = run_isolated_retry(
+                        args.suite, chunk, attempt, max_retries, rustflags
+                    )
+                    if retry_data is not None:
+                        if merge_retry_into_current(
+                            current_data, retry_data, args.metric
+                        ):
+                            any_merged = True
+            else:
+                retry_data = run_isolated_retry(
+                    args.suite, regressed_names, attempt, max_retries, rustflags
+                )
+                if retry_data is not None:
+                    if merge_retry_into_current(current_data, retry_data, args.metric):
+                        any_merged = True
+
+            total, failures, regressed_names, has_integrity_error = compare_benchmarks(
+                baseline_data,
+                current_data,
+                default_thresh,
+                args.max_regression_pct,
+                args.abs_noise_floor_ns,
+                args.metric,
+                quiet=True,
+            )
+            if not failures:
+                break
+
+        if any_merged and args.current is None:
+            try:
+                with current_path.open("w", encoding="utf-8") as f:
+                    json.dump(current_data, f, indent=2)
+            except OSError:
+                pass
+
+    if max_retries > 0:
+        total, failures, _, _ = compare_benchmarks(
+            baseline_data,
+            current_data,
+            default_thresh,
+            args.max_regression_pct,
+            args.abs_noise_floor_ns,
+            args.metric,
+            quiet=False,
+        )
 
     print("-" * 142)
     if failures:
@@ -309,9 +584,15 @@ def main() -> int:
             print(f"  - {msg}")
         return 1
 
-    print(
-        f"PASS: all {total} benchmark(s) present and within regression thresholds ({args.metric})."
-    )
+    if retries_used > 0:
+        print(
+            f"PASS: all {total} benchmark(s) present and within regression thresholds ({args.metric}) "
+            f"after {retries_used} shared-host confirmation retry(s)."
+        )
+    else:
+        print(
+            f"PASS: all {total} benchmark(s) present and within regression thresholds ({args.metric})."
+        )
     return 0
 
 

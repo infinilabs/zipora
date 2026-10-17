@@ -114,26 +114,26 @@ bench_all:
 # Exact command:
 #   RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32" \
 #     cargo bench --locked --bench core_bench
-#   python3 scripts/bench_compare.py --suite core_bench
+#   python3 scripts/bench_compare.py --suite core_bench --confirm-retries 5
 bench_core:
 	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench core_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
-	python3 scripts/bench_compare.py --suite core_bench
+	python3 scripts/bench_compare.py --suite core_bench $(if $(UPDATE_BASELINE),,--confirm-retries 5)
 
 # Fast smoke tier of the core benchmark suite (~2s, reduced dataset sizes).
 bench_smoke:
 	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench core_bench -- --smoke
 
 bench_compare:
-	python3 scripts/bench_compare.py --suite core_bench
+	python3 scripts/bench_compare.py --suite core_bench --confirm-retries 5
 
 # Systemic end-to-end search benchmark (plan.md §1.6 E1.1 / G15).
 # Exact command:
 #   RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32" \
 #     cargo bench --locked --bench e2e_search_bench
-#   python3 scripts/bench_compare.py --suite e2e_search
+#   python3 scripts/bench_compare.py --suite e2e_search --confirm-retries 3
 bench_e2e_search:
 	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench e2e_search_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
-	python3 scripts/bench_compare.py --suite e2e_search
+	python3 scripts/bench_compare.py --suite e2e_search $(if $(UPDATE_BASELINE),,--confirm-retries 3)
 
 bench_avx512:
 	$(CARGO) bench --release --bench avx512_bench

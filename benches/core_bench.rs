@@ -41,8 +41,8 @@ use std::hint::black_box;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -161,16 +161,23 @@ fn hardware_logical_cores() -> usize {
         .unwrap_or(1)
 }
 
-/// Selects the physical core on interior L3 CCD 2 (`default_core = 23` on `bindiego`)
-/// for the calling thread (`pid = 0` only; never modifies any other process).
-fn select_primary_core(logical_cores: usize) -> usize {
+fn explicit_pin_core_override(logical_cores: usize) -> Option<usize> {
     for env_key in ["ZIPORA_BENCH_PIN_CORE", "ZIPORA_BENCH_CORE"] {
         if let Ok(val) = std::env::var(env_key)
             && let Ok(parsed) = val.parse::<usize>()
             && parsed < logical_cores
         {
-            return parsed;
+            return Some(parsed);
         }
+    }
+    None
+}
+
+/// Selects the initial physical core on interior L3 CCD 2 (`default_core = 23` on `bindiego`)
+/// for the calling thread (`pid = 0` only; never modifies any other process).
+fn select_primary_core(logical_cores: usize) -> usize {
+    if let Some(parsed) = explicit_pin_core_override(logical_cores) {
+        return parsed;
     }
     let phys_cores = (logical_cores / 2).max(1);
     if phys_cores >= 24 {
@@ -180,14 +187,78 @@ fn select_primary_core(logical_cores: usize) -> usize {
     }
 }
 
+static BENCH_FILTER: OnceLock<Option<Vec<String>>> = OnceLock::new();
+static HOST_WAIT_BUDGET_MS: AtomicU64 = AtomicU64::new(20_000);
+
+fn init_bench_filter(filter_spec: Option<String>) {
+    let parsed = filter_spec.and_then(|s| {
+        let items: Vec<String> = s
+            .split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect();
+        if items.is_empty() { None } else { Some(items) }
+    });
+    if parsed.is_some() {
+        HOST_WAIT_BUDGET_MS.store(60_000, Ordering::Relaxed);
+    }
+    let _ = BENCH_FILTER.set(parsed);
+}
+
+fn has_active_filter() -> bool {
+    BENCH_FILTER
+        .get()
+        .and_then(Option::as_ref)
+        .is_some_and(|v| !v.is_empty())
+}
+
+fn should_run_bench(name: &str) -> bool {
+    let Some(Some(filters)) = BENCH_FILTER.get() else {
+        return true;
+    };
+    filters
+        .iter()
+        .any(|f| name == f.as_str() || name.contains(f.as_str()))
+}
+
+fn should_run_any(names: &[&str]) -> bool {
+    names.iter().any(|n| should_run_bench(n))
+}
+
+fn should_run_prefix(prefix: &str) -> bool {
+    let Some(Some(filters)) = BENCH_FILTER.get() else {
+        return true;
+    };
+    filters.iter().any(|f| {
+        !f.contains('/')
+            || f.starts_with(prefix)
+            || prefix.starts_with(f.as_str())
+            || f.contains(prefix)
+    })
+}
+
+fn should_run_category(cat: &str, cat_filter: Option<&str>) -> bool {
+    if let Some(cf) = cat_filter
+        && !cf.is_empty()
+        && !cf.split(',').any(|p| p.trim() == cat)
+    {
+        return false;
+    }
+    let cat_prefix = format!("{cat}/");
+    should_run_prefix(&cat_prefix)
+}
+
 struct SelfPinTracker {
     primary_core: usize,
     current_core: usize,
     sibling_core: usize,
     logical_cores: usize,
     allow_repin: bool,
+    user_pinned: bool,
     schedstat_file: Option<fs::File>,
     procstat_file: Option<fs::File>,
+    loadavg_file: Option<fs::File>,
 }
 
 static SELF_PIN_TRACKER: Mutex<SelfPinTracker> = Mutex::new(SelfPinTracker {
@@ -196,8 +267,10 @@ static SELF_PIN_TRACKER: Mutex<SelfPinTracker> = Mutex::new(SelfPinTracker {
     sibling_core: 55,
     logical_cores: 64,
     allow_repin: true,
+    user_pinned: false,
     schedstat_file: None,
     procstat_file: None,
+    loadavg_file: None,
 });
 
 static CURRENT_BURST_IDX: AtomicUsize = AtomicUsize::new(0);
@@ -247,6 +320,44 @@ fn read_file_into_stack_buf(file_opt: &mut Option<fs::File>, buf: &mut [u8]) -> 
         }
     }
     total
+}
+
+fn parse_loadavg_nr_running(buf: &[u8]) -> usize {
+    let mut idx = 0usize;
+    for _ in 0..3 {
+        while idx < buf.len() && (buf[idx] == b' ' || buf[idx] == b'\t') {
+            idx += 1;
+        }
+        while idx < buf.len() && buf[idx] != b' ' && buf[idx] != b'\t' && buf[idx] != b'\n' {
+            idx += 1;
+        }
+    }
+    while idx < buf.len() && (buf[idx] == b' ' || buf[idx] == b'\t') {
+        idx += 1;
+    }
+    let mut nr = 0usize;
+    let mut has_digit = false;
+    while idx < buf.len() && buf[idx].is_ascii_digit() {
+        nr = nr
+            .saturating_mul(10)
+            .saturating_add((buf[idx] - b'0') as usize);
+        idx += 1;
+        has_digit = true;
+    }
+    if has_digit { nr } else { 1 }
+}
+
+fn read_nr_running() -> usize {
+    let Ok(mut guard) = SELF_PIN_TRACKER.lock() else {
+        return 1;
+    };
+    let mut buf = [0u8; 128];
+    let len = read_file_into_stack_buf(&mut guard.loadavg_file, &mut buf);
+    if len > 0 {
+        parse_loadavg_nr_running(&buf[..len])
+    } else {
+        1
+    }
 }
 
 fn format_cpu_prefix(cpu_id: usize, out: &mut [u8; 12]) -> usize {
@@ -312,13 +423,7 @@ fn parse_cpu_line_tokens(buf: &[u8], cpu_id: usize, tokens: &mut [u64; 10]) -> u
     0
 }
 
-fn parse_ccd_schedstat(sched_buf: &[u8], cur: usize, sib: usize) -> (u64, u64, u64, u64) {
-    let ccd_start = (cur % 32) & !7;
-    let ccd_end = ccd_start + 8;
-    let mut cur_ns = 0u64;
-    let mut sib_ns = 0u64;
-    let mut sib_pc = 0u64;
-    let mut ccd_other_ns = 0u64;
+fn parse_all_schedstat_ns(sched_buf: &[u8], out_ns: &mut [u64; 64], out_pc: &mut [u64; 64]) {
     for line in sched_buf.split(|&b| b == b'\n') {
         if line.len() < 5
             || line[0] != b'c'
@@ -336,12 +441,7 @@ fn parse_ccd_schedstat(sched_buf: &[u8], cur: usize, sib: usize) -> (u64, u64, u
                 .saturating_add((line[idx] - b'0') as usize);
             idx += 1;
         }
-        if idx >= line.len() || line[idx] != b' ' {
-            continue;
-        }
-        let in_ccd =
-            (cid >= ccd_start && cid < ccd_end) || (cid >= ccd_start + 32 && cid < ccd_end + 32);
-        if cid != cur && cid != sib && !in_ccd {
+        if cid >= 64 || idx >= line.len() || line[idx] != b' ' {
             continue;
         }
         let mut tokens = [0u64; 10];
@@ -372,17 +472,184 @@ fn parse_ccd_schedstat(sched_buf: &[u8], cur: usize, sib: usize) -> (u64, u64, u
             }
         }
         if count >= 9 {
-            if cid == cur {
-                cur_ns = tokens[6];
-            } else if cid == sib {
-                sib_ns = tokens[6];
-                sib_pc = tokens[8];
-            } else if in_ccd {
-                ccd_other_ns = ccd_other_ns.saturating_add(tokens[6]);
-            }
+            out_ns[cid] = tokens[6];
+            out_pc[cid] = tokens[8];
         }
     }
+}
+
+fn parse_ccd_schedstat(sched_buf: &[u8], cur: usize, sib: usize) -> (u64, u64, u64, u64) {
+    let mut out_ns = [0u64; 64];
+    let mut out_pc = [0u64; 64];
+    parse_all_schedstat_ns(sched_buf, &mut out_ns, &mut out_pc);
+    let ccd_start = (cur % 32) & !7;
+    let ccd_end = ccd_start + 8;
+    let mut ccd_other_ns = 0u64;
+    for cid in 0..64usize {
+        if cid == cur || cid == sib {
+            continue;
+        }
+        let in_ccd =
+            (cid >= ccd_start && cid < ccd_end) || (cid >= ccd_start + 32 && cid < ccd_end + 32);
+        if in_ccd {
+            ccd_other_ns = ccd_other_ns.saturating_add(out_ns[cid]);
+        }
+    }
+    let cur_ns = if cur < 64 { out_ns[cur] } else { 0 };
+    let sib_ns = if sib < 64 { out_ns[sib] } else { 0 };
+    let sib_pc = if sib < 64 { out_pc[sib] } else { 0 };
     (cur_ns, sib_ns, sib_pc, ccd_other_ns)
+}
+
+fn read_all_schedstat_snapshot(out_ns: &mut [u64; 64]) -> (usize, usize, bool, bool) {
+    let Ok(mut guard) = SELF_PIN_TRACKER.lock() else {
+        return (23, 64, false, false);
+    };
+    let mut sched_buf = [0u8; 32768];
+    let sched_len = read_file_into_stack_buf(&mut guard.schedstat_file, &mut sched_buf);
+    let mut out_pc = [0u64; 64];
+    if sched_len > 0 {
+        parse_all_schedstat_ns(&sched_buf[..sched_len], out_ns, &mut out_pc);
+    }
+    (
+        guard.primary_core,
+        guard.logical_cores,
+        guard.allow_repin,
+        guard.user_pinned,
+    )
+}
+
+fn choose_quietest_physical_core(
+    delta_ns: &[u64; 64],
+    primary_core: usize,
+    logical_cores: usize,
+) -> usize {
+    let phys = (logical_cores / 2).clamp(1, 32);
+    if phys <= 1 {
+        return 0;
+    }
+    let pair_busy = |p: usize| -> u64 {
+        let sib = if p + phys < 64 { p + phys } else { p };
+        delta_ns[p].saturating_add(delta_ns[sib])
+    };
+    let ccd_busy = |ccd: usize| -> u64 {
+        let start = (ccd * 8).min(phys);
+        let end = ((ccd + 1) * 8).min(phys);
+        let mut sum = 0u64;
+        for q in start..end {
+            sum = sum.saturating_add(pair_busy(q));
+        }
+        sum
+    };
+    let prim = primary_core.min(phys - 1).max(1);
+    if pair_busy(prim) <= 15_000 && ccd_busy(prim / 8) <= 800_000 {
+        return prim;
+    }
+    let ccd_pref = |ccd: usize| -> usize {
+        match ccd {
+            2 => 0,
+            1 => 1,
+            3 => 2,
+            _ => 3,
+        }
+    };
+    let mut best_p = prim;
+    let mut best_key = (u64::MAX, u64::MAX, usize::MAX, usize::MAX);
+    for p in 1..phys {
+        let key = (
+            pair_busy(p) / 15_000,
+            ccd_busy(p / 8) / 250_000,
+            ccd_pref(p / 8),
+            usize::from(p != prim),
+        );
+        if key < best_key {
+            best_key = key;
+            best_p = p;
+        }
+    }
+    best_p
+}
+
+fn apply_self_core_selection(best_core: usize) {
+    if let Ok(mut guard) = SELF_PIN_TRACKER.lock() {
+        let phys = (guard.logical_cores / 2).max(1);
+        let sib = if best_core + phys < guard.logical_cores {
+            best_core + phys
+        } else {
+            best_core
+        };
+        guard.current_core = best_core;
+        guard.sibling_core = sib;
+    }
+    pin_current_thread_to_core(best_core);
+}
+
+fn consume_wait_budget_ms(step_ms: u64) -> bool {
+    loop {
+        let cur = HOST_WAIT_BUDGET_MS.load(Ordering::Relaxed);
+        if cur == 0 {
+            return false;
+        }
+        let next = cur.saturating_sub(step_ms);
+        if HOST_WAIT_BUDGET_MS
+            .compare_exchange_weak(cur, next, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return true;
+        }
+    }
+}
+
+/// Waits briefly if a concurrent all-core workload (such as a `rustmq` build where
+/// `/proc/loadavg` `nr_running > 7` or `> 6` other CPU cores are active) is saturating
+/// socket DRAM bandwidth, and pins the calling thread (`pid = 0` only) to the quietest
+/// physical core pair on the quietest L3 CCD (defaulting to `primary_core = 23` when
+/// uncontended). Never touches any other process.
+fn wait_for_quiet_host_and_repin(max_wait_ms: u64, force_sample_repin: bool) {
+    let nr0 = read_nr_running();
+    if nr0 <= 6 && !force_sample_repin {
+        pin_current_thread_to_core(current_self_pinned_core());
+        return;
+    }
+    let mut waited_ms = 0u64;
+    let mut last_delta = [0u64; 64];
+    let (mut prim, mut lcores, mut allow_repin, mut user_pinned) = (23usize, 64usize, true, false);
+    let mut sampled = false;
+    loop {
+        let step_ms = if read_nr_running() > 6 && waited_ms < max_wait_ms {
+            40u64
+        } else {
+            8u64
+        };
+        if step_ms >= 40 && !consume_wait_budget_ms(step_ms) {
+            break;
+        }
+        let mut ns0 = [0u64; 64];
+        (prim, lcores, allow_repin, user_pinned) = read_all_schedstat_snapshot(&mut ns0);
+        let t0 = Instant::now();
+        thread::sleep(Duration::from_millis(step_ms));
+        let wall_ns = t0.elapsed().as_nanos() as u64;
+        let mut ns1 = [0u64; 64];
+        let _ = read_all_schedstat_snapshot(&mut ns1);
+        let mut total_other_ns = 0u64;
+        for c in 0..lcores.min(64) {
+            last_delta[c] = ns1[c].saturating_sub(ns0[c]);
+            total_other_ns = total_other_ns.saturating_add(last_delta[c]);
+        }
+        sampled = true;
+        waited_ms = waited_ms.saturating_add(step_ms);
+        let active_other_cpus = (total_other_ns as f64) / (wall_ns.max(1) as f64);
+        let nr = read_nr_running();
+        if (nr <= 6 && active_other_cpus <= 5.5) || waited_ms >= max_wait_ms {
+            break;
+        }
+    }
+    if allow_repin && !user_pinned && sampled {
+        let best = choose_quietest_physical_core(&last_delta, prim, lcores);
+        apply_self_core_selection(best);
+    } else {
+        pin_current_thread_to_core(current_self_pinned_core());
+    }
 }
 
 /// Reads `(rq_cpu_time_ns, pcount, busy_jiffies, ccd_other_sched_ns)` for the SMT sibling
@@ -451,13 +718,19 @@ fn read_current_and_sibling_raw() -> (u64, u64, u64, u64, u64) {
     (cur_ns, sib_ns, sib_pc, sib_j, ccd_other_ns)
 }
 
-/// Spins briefly on `current_core` in `500 us` (`0.5 ms`) windows (without sleeping)
-/// when transient primary-core preemption or SMT-sibling contention is detected,
-/// returning as soon as a `0.5 ms` sibling wakeup ends so the retry runs inside the
-/// `~15.5 ms` quiet window between 60 Hz ticks. Never touches any other process.
+/// Spins briefly on `current_core` in `500 us` (`0.5 ms`) windows when transient
+/// primary-core preemption, SMT-sibling contention, or CCD contention is detected;
+/// if contention persists beyond 4 windows (`2 ms`) or the host is under heavy load,
+/// waits out the burst and hops `self` (`pid = 0` only) to the quietest physical core
+/// pair on the quietest CCD. Never touches any other process.
 fn wait_for_quiet_sibling() {
-    for _ in 0..16 {
-        let (_cur_ns0, sib_ns0, _sib_pc0, sib_j0, _ccd_ns0) = read_current_and_sibling_raw();
+    if read_nr_running() > 7 {
+        let max_ms = if has_active_filter() { 4_000 } else { 1_200 };
+        wait_for_quiet_host_and_repin(max_ms, true);
+        return;
+    }
+    for iter in 0..16 {
+        let (_cur_ns0, sib_ns0, _sib_pc0, sib_j0, ccd_ns0) = read_current_and_sibling_raw();
         let cpu0 = current_thread_cpu_ns();
         let spin_start = Instant::now();
         let mut acc = 1u64;
@@ -469,12 +742,18 @@ fn wait_for_quiet_sibling() {
         black_box(acc);
         let wall_ns = spin_start.elapsed().as_nanos() as u64;
         let cpu1 = current_thread_cpu_ns();
-        let (_cur_ns1, sib_ns1, _sib_pc1, sib_j1, _ccd_ns1) = read_current_and_sibling_raw();
+        let (_cur_ns1, sib_ns1, _sib_pc1, sib_j1, ccd_ns1) = read_current_and_sibling_raw();
         let stolen = wall_ns.saturating_sub(cpu1.saturating_sub(cpu0));
         let sib_d_ns = sib_ns1.saturating_sub(sib_ns0);
         let sib_d_j = sib_j1.saturating_sub(sib_j0);
-        if stolen < 15_000 && sib_d_ns < 15_000 && sib_d_j == 0 {
-            break;
+        let ccd_d_ns = ccd_ns1.saturating_sub(ccd_ns0);
+        if stolen < 15_000 && sib_d_ns < 15_000 && sib_d_j == 0 && ccd_d_ns < 250_000 {
+            return;
+        }
+        if iter == 3 && is_self_repin_allowed() {
+            let max_ms = if has_active_filter() { 3_000 } else { 800 };
+            wait_for_quiet_host_and_repin(max_ms, true);
+            return;
         }
     }
 }
@@ -486,16 +765,20 @@ fn init_self_pin_tracker(primary_core: usize, logical_cores: usize) {
     } else {
         primary_core
     };
+    let user_pinned = explicit_pin_core_override(logical_cores).is_some();
     let schedstat_file = fs::File::open("/proc/schedstat").ok();
     let procstat_file = fs::File::open("/proc/stat").ok();
+    let loadavg_file = fs::File::open("/proc/loadavg").ok();
     if let Ok(mut guard) = SELF_PIN_TRACKER.lock() {
         guard.primary_core = primary_core;
         guard.current_core = primary_core;
         guard.sibling_core = sibling_core;
         guard.logical_cores = logical_cores;
         guard.allow_repin = true;
+        guard.user_pinned = user_pinned;
         guard.schedstat_file = schedstat_file;
         guard.procstat_file = procstat_file;
+        guard.loadavg_file = loadavg_file;
     }
 }
 
@@ -520,9 +803,12 @@ fn current_self_pinned_core() -> usize {
 }
 
 /// Ensures the calling benchmark thread (`pid = 0` only; never modifies any other
-/// process) remains pinned to its primary physical core on CCD 2.
+/// process) is pinned to `primary_core` (`23` on CCD 2) when uncontended, or dynamically
+/// selects the quietest physical core pair on the quietest CCD if `primary_core` / CCD 2
+/// or the host is contended.
 fn maybe_repin_self_within_ccd() {
-    pin_current_thread_to_core(current_self_pinned_core());
+    let max_ms = if has_active_filter() { 6_000 } else { 2_500 };
+    wait_for_quiet_host_and_repin(max_ms, false);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -722,7 +1008,7 @@ fn collect_host_metadata(pinned_core: usize) -> HostMetadata {
                 .to_string()
         });
     let runner_command = format!(
-        "RUSTFLAGS=\"{rustflags}\" cargo bench --locked --bench core_bench && python3 scripts/bench_compare.py --suite core_bench"
+        "RUSTFLAGS=\"{rustflags}\" cargo bench --locked --bench core_bench && python3 scripts/bench_compare.py --suite core_bench --confirm-retries 5"
     );
 
     let git_commit = Command::new("git")
@@ -923,11 +1209,8 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         "bursts_per_trial must be > 0 for {name}"
     );
 
-    if let Ok(filter) = std::env::var("ZIPORA_BENCH_FILTER")
-        && !filter.is_empty()
-        && !filter.split(',').any(|p| name.contains(p))
-    {
-        if params.trials <= 9 {
+    if !should_run_bench(name) {
+        if params.trials <= 4 {
             CURRENT_BURST_IDX.store(0, Ordering::Relaxed);
             setup(state);
             f(state);
@@ -935,12 +1218,17 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         return;
     }
 
+    let filtered_mode = has_active_filter();
     let check_preempt = true;
     let check_sibling = true;
     let allow_repin = is_self_repin_allowed();
     if allow_repin {
-        maybe_repin_self_within_ccd();
-        let (_cur_ns0, sib_ns0, _sib_pc0, sib_j0, _ccd_ns0) = read_current_and_sibling_raw();
+        if filtered_mode {
+            wait_for_quiet_host_and_repin(8_000, true);
+        } else {
+            maybe_repin_self_within_ccd();
+        }
+        let (_cur_ns0, sib_ns0, _sib_pc0, sib_j0, ccd_ns0) = read_current_and_sibling_raw();
         let spin_start = Instant::now();
         let cpu0 = current_thread_cpu_ns();
         let mut acc = 1u64;
@@ -952,13 +1240,16 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         black_box(acc);
         let wall_ns = spin_start.elapsed().as_nanos() as u64;
         let cpu1 = current_thread_cpu_ns();
-        let (_cur_ns1, sib_ns1, _sib_pc1, sib_j1, _ccd_ns1) = read_current_and_sibling_raw();
+        let (_cur_ns1, sib_ns1, _sib_pc1, sib_j1, ccd_ns1) = read_current_and_sibling_raw();
         let stolen = wall_ns.saturating_sub(cpu1.saturating_sub(cpu0));
         let sib_d_ns = sib_ns1.saturating_sub(sib_ns0);
         let sib_d_j = sib_j1.saturating_sub(sib_j0);
-        if stolen >= 15_000 || sib_d_ns >= 15_000 || sib_d_j > 0 {
+        let ccd_d_ns = ccd_ns1.saturating_sub(ccd_ns0);
+        if stolen >= 15_000 || sib_d_ns >= 15_000 || sib_d_j > 0 || ccd_d_ns >= 250_000 {
             wait_for_quiet_sibling();
         }
+    } else if read_nr_running() > 6 {
+        wait_for_quiet_host_and_repin(if filtered_mode { 8_000 } else { 2_500 }, false);
     }
     let mut samples = [0.0f64; 16];
     CURRENT_BURST_IDX.store(0, Ordering::Relaxed);
@@ -973,28 +1264,29 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         } else {
             1usize
         };
+    let retry_mult = if filtered_mode { 2usize } else { 1usize };
     for bench_attempt in 0..max_bench_attempts {
         let bench_start = Instant::now();
-        let per_trial_burst_retries = if params.bursts_per_trial == 1 {
-            2usize
+        let per_trial_burst_retries = (if params.bursts_per_trial == 1 {
+            3usize
         } else if params.bursts_per_trial == 2 {
             4usize
         } else {
             6usize
-        };
-        let mut total_burst_retries = if params.bursts_per_trial == 1 {
-            4usize
+        }) * retry_mult;
+        let mut total_burst_retries = (if params.bursts_per_trial == 1 {
+            6usize
         } else {
             (per_trial_burst_retries * params.trials).min(32)
-        };
+        }) * retry_mult;
         let mut bench_trial_retries = if check_sibling {
-            if params.bursts_per_trial == 1 {
+            (if params.bursts_per_trial == 1 {
                 0usize
             } else if params.bursts_per_trial == 2 {
                 4usize
             } else {
                 6usize
-            }
+            }) * retry_mult
         } else {
             0usize
         };
@@ -1007,7 +1299,18 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         let bench_sib_j0 = _t_sib_j0;
         let bench_ccd_ns0 = t_ccd_ns0;
         let mut b_sib_ns0 = t_sib_ns0;
+        let mut b_ccd_ns0 = t_ccd_ns0;
         for sample_slot in samples.iter_mut().take(params.trials) {
+            if filtered_mode && read_nr_running() > 6 {
+                wait_for_quiet_host_and_repin(2_000, allow_repin);
+                let (ns_after, pc_after, j_after, ccd_after) = read_current_sibling_activity();
+                t_sib_ns0 = ns_after;
+                b_sib_ns0 = ns_after;
+                b_ccd_ns0 = ccd_after;
+                _t_sib_pc0 = pc_after;
+                _t_sib_j0 = j_after;
+                t_ccd_ns0 = ccd_after;
+            }
             let mut best_burst_ns = f64::MAX;
             let mut fallback_burst_ns = f64::MAX;
             loop {
@@ -1020,10 +1323,14 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
                         setup(state);
                         let setup_ns = setup_start.elapsed().as_nanos() as u64;
                         if check_sibling && setup_ns >= 100_000 {
-                            let (s_after_setup, _, _, _) = read_current_sibling_activity();
+                            let (s_after_setup, _, _, c_after_setup) =
+                                read_current_sibling_activity();
                             let setup_sib = s_after_setup.saturating_sub(b_sib_ns0);
+                            let setup_ccd = c_after_setup.saturating_sub(b_ccd_ns0);
                             t_sib_ns0 = t_sib_ns0.saturating_add(setup_sib);
+                            t_ccd_ns0 = t_ccd_ns0.saturating_add(setup_ccd);
                             b_sib_ns0 = s_after_setup;
+                            b_ccd_ns0 = c_after_setup;
                         }
                     } else {
                         setup(state);
@@ -1052,13 +1359,15 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
                     if elapsed_ns < fallback_burst_ns {
                         fallback_burst_ns = elapsed_ns;
                     }
-                    let b_sib_busy = if check_sibling && wall_ns >= 250_000 {
-                        let (s_ns1, _, _, _) = read_current_sibling_activity();
+                    let (b_sib_busy, b_ccd_busy) = if check_sibling && wall_ns >= 250_000 {
+                        let (s_ns1, _, _, c_ns1) = read_current_sibling_activity();
                         let sib_delta = s_ns1.saturating_sub(b_sib_ns0);
+                        let ccd_delta = c_ns1.saturating_sub(b_ccd_ns0);
                         b_sib_ns0 = s_ns1;
-                        sib_delta
+                        b_ccd_ns0 = c_ns1;
+                        (sib_delta, ccd_delta)
                     } else {
-                        0
+                        (0, 0)
                     };
                     if check_preempt && trial_burst_retries > 0 && total_burst_retries > 0 {
                         let is_long_burst = allow_repin && wall_ns >= 100_000_000;
@@ -1078,15 +1387,23 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
                                     && b_sib_busy >= 3_000_000
                                     && b_sib_busy.saturating_mul(40) >= wall_ns)
                         };
-                        if preempted || sib_contended {
-                            if allow_repin && (stolen >= 500_000 || b_sib_busy >= 150_000) {
+                        let ccd_contended = allow_repin
+                            && wall_ns >= 2_000_000
+                            && (b_ccd_busy.saturating_mul(2) >= wall_ns
+                                || (wall_ns >= 20_000_000 && read_nr_running() > 7));
+                        if preempted || sib_contended || ccd_contended {
+                            if allow_repin
+                                && (stolen >= 500_000 || b_sib_busy >= 150_000 || ccd_contended)
+                            {
                                 wait_for_quiet_sibling();
-                                let (ns_after, pc_after, j_after, _) =
+                                let (ns_after, pc_after, j_after, ccd_after) =
                                     read_current_sibling_activity();
                                 t_sib_ns0 = ns_after;
                                 b_sib_ns0 = ns_after;
+                                b_ccd_ns0 = ccd_after;
                                 _t_sib_pc0 = pc_after;
                                 _t_sib_j0 = j_after;
+                                t_ccd_ns0 = ccd_after;
                             } else if !allow_repin {
                                 let wake_start = Instant::now();
                                 let mut acc = 1u64;
@@ -1098,12 +1415,14 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
                                     }
                                 }
                                 black_box(acc);
-                                let (ns_after, pc_after, j_after, _) =
+                                let (ns_after, pc_after, j_after, ccd_after) =
                                     read_current_sibling_activity();
                                 t_sib_ns0 = ns_after;
                                 b_sib_ns0 = ns_after;
+                                b_ccd_ns0 = ccd_after;
                                 _t_sib_pc0 = pc_after;
                                 _t_sib_j0 = j_after;
+                                t_ccd_ns0 = ccd_after;
                             }
                             trial_burst_retries -= 1;
                             total_burst_retries -= 1;
@@ -1119,9 +1438,10 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
                     let (t_sib_ns1, t_sib_pc1, t_sib_j1, t_ccd_ns1) =
                         read_current_sibling_activity();
                     let sib_busy_ns = t_sib_ns1.saturating_sub(t_sib_ns0);
-                    let _ccd_busy_ns = t_ccd_ns1.saturating_sub(t_ccd_ns0);
+                    let ccd_busy_ns = t_ccd_ns1.saturating_sub(t_ccd_ns0);
                     t_sib_ns0 = t_sib_ns1;
                     b_sib_ns0 = t_sib_ns1;
+                    b_ccd_ns0 = t_ccd_ns1;
                     _t_sib_pc0 = t_sib_pc1;
                     _t_sib_j0 = t_sib_j1;
                     t_ccd_ns0 = t_ccd_ns1;
@@ -1130,13 +1450,16 @@ fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
                         && ((sib_busy_ns >= 150_000
                             && sib_busy_ns.saturating_mul(16) >= trial_wall_ns)
                             || (sib_busy_ns >= 8_000_000
-                                && sib_busy_ns.saturating_mul(25) >= trial_wall_ns))
+                                && sib_busy_ns.saturating_mul(25) >= trial_wall_ns)
+                            || (trial_wall_ns >= 2_000_000
+                                && ccd_busy_ns.saturating_mul(2) >= trial_wall_ns))
                     {
                         wait_for_quiet_sibling();
                         let (ns_after, pc_after, j_after, ccd_after) =
                             read_current_sibling_activity();
                         t_sib_ns0 = ns_after;
                         b_sib_ns0 = ns_after;
+                        b_ccd_ns0 = ccd_after;
                         _t_sib_pc0 = pc_after;
                         _t_sib_j0 = j_after;
                         t_ccd_ns0 = ccd_after;
@@ -1340,13 +1663,13 @@ fn bench_rank_select(
     let select1_seed = SEED_BASE ^ 0x0102;
     let select0_seed = SEED_BASE ^ 0x0103;
     let base_words = gen_rank_words(num_words);
+    let total_ones: usize = base_words.iter().map(|w| w.count_ones() as usize).sum();
+    let max_ones = total_ones.max(1);
+    let max_zeros = num_bits.saturating_sub(total_ones).max(1);
 
-    let (max_ones, max_zeros) = {
+    if should_run_bench("rank_select/rank9/rank1") {
         maybe_repin_self_within_ccd();
         let words = base_words.clone();
-        let total_ones: usize = words.iter().map(|w| w.count_ones() as usize).sum();
-        let max_ones = total_ones.max(1);
-        let max_zeros = num_bits.saturating_sub(total_ones).max(1);
 
         let r9 = Rank9::new(BitVector::from_blocks(words, num_bits)).unwrap();
         warm_rank_pages(&r9, num_bits);
@@ -1371,10 +1694,13 @@ fn bench_rank_select(
                 black_box(acc);
             },
         );
-        (max_ones, max_zeros)
-    };
+    }
 
-    {
+    if should_run_any(&[
+        "rank_select/interleaved256/rank1",
+        "rank_select/interleaved256/select1",
+        "rank_select/interleaved256/select0",
+    ]) {
         maybe_repin_self_within_ccd();
         let words = base_words.clone();
         let rsi = RankSelectInterleaved256::new(BitVector::from_blocks(words, num_bits)).unwrap();
@@ -1433,7 +1759,11 @@ fn bench_rank_select(
         );
     }
 
-    {
+    if should_run_any(&[
+        "rank_select/se256/rank1",
+        "rank_select/se256/select1",
+        "rank_select/se256/select0",
+    ]) {
         maybe_repin_self_within_ccd();
         let words = base_words.clone();
         drop(base_words);
@@ -1551,6 +1881,9 @@ fn bench_elias_fano(
         ("zipf_clustered", &clustered),
         ("dense", &dense),
     ] {
+        if !should_run_prefix(&format!("elias_fano/{dist_name}/")) {
+            continue;
+        }
         // Construct a 4-instance ring for each Elias-Fano variant separated by 4,672-byte
         // spacers (`4096 + 576`, coprime to 64B cache lines and 4KiB pages) so binary-search
         // / select tables step across cache-line and page offsets across the bursts.
@@ -1950,6 +2283,22 @@ fn bench_tries(
     let lookup_batch = (n / 250).max(1_000).min(n.max(1));
 
     for dist_idx in 0..3usize {
+        let dist_label = match dist_idx {
+            0 => "url_paths",
+            1 => "random_16b",
+            _ => "shared_prefix",
+        };
+        let run_dat = should_run_any(&[
+            &format!("tries/dat/{dist_label}/build_sorted"),
+            &format!("tries/dat/{dist_label}/lookup"),
+        ]);
+        let run_cspp = should_run_any(&[
+            &format!("tries/cspp/{dist_label}/build"),
+            &format!("tries/cspp/{dist_label}/lookup"),
+        ]);
+        if !run_dat && !run_cspp {
+            continue;
+        }
         maybe_repin_self_within_ccd();
         let perm = BijectivePerm::new(n, SEED_BASE ^ 0x0500 ^ (dist_idx as u64));
         let num_keys = n as u64;
@@ -1967,216 +2316,240 @@ fn bench_tries(
         cspp_build_params.warmup_calls = 0;
         cspp_build_params.bursts_per_trial = 1;
 
-        // 1. DoubleArrayTrie (build_from_sorted + lookup on all 1,000,000 permuted keys).
-        let target_dats = if dist_idx < 2 { 2usize } else { 4usize };
-        let (dist_name, dats, _dat_spacers) = {
-            let (dist_name, packed) = gen_trie_distribution(dist_idx, n);
-            let key_slices = packed.slices();
-            const DAT_SPACERS_KB: [usize; 6] = [1_376, 3_424, 2_368, 4_416, 1_888, 3_936];
-            let num_dat_holes = if dist_idx == 1 { 8usize } else { 6usize };
-            let mut dat_holes: Vec<Vec<u8>> = Vec::with_capacity(num_dat_holes);
-            for _ in 0..num_dat_holes {
-                dat_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
-            }
-            let dat_anchor = black_box(vec![1u8; 64 * 1024]);
-            drop(dat_holes);
-            let mut dat_state: (Option<DoubleArrayTrie>, Vec<Vec<u8>>) =
-                (None, Vec::with_capacity(target_dats + 8));
-            measure_bench_with_setup(
-                records,
-                "tries",
-                &format!("tries/dat/{dist_name}/build_sorted"),
-                "ns/key",
-                dat_build_params,
-                &mut dat_state,
-                |st| {
-                    let _ = st.0.take();
-                    if dist_idx == 1 {
-                        st.1.push(vec![1u8; 352 * 1024]);
-                    }
-                },
-                |st| {
-                    let d = DoubleArrayTrie::build_from_sorted(black_box(&key_slices)).unwrap();
-                    black_box(d.len());
-                    st.0 = Some(d);
-                },
-            );
-            let mut dat_spacers = dat_state.1;
-            let mut built_dats = Vec::with_capacity(target_dats);
-            if let Some(last) = dat_state.0.take() {
-                built_dats.push(last);
-            }
-            while built_dats.len() < target_dats {
-                let skb = DAT_SPACERS_KB[built_dats.len()];
-                dat_spacers.push(vec![1u8; skb * 1024]);
-                let d = DoubleArrayTrie::build_from_sorted(&key_slices).unwrap();
-                built_dats.push(d);
-            }
-            dat_spacers.push(dat_anchor);
-            (dist_name, built_dats, dat_spacers)
-        };
-        let dat_len = dats.len();
-        let bytes_per_state = dats[0].mem_size() as f64 / dats[0].total_states().max(1) as f64;
-        record_space_metric(
-            space,
-            &format!("tries/dat_{dist_name}_bytes_per_state"),
-            bytes_per_state,
-        );
-
         let warm_perm = BijectivePerm::new(n, SEED_BASE ^ 0x0550 ^ (dist_idx as u64));
-        let mut warm_dat = 0usize;
-        let mut warm_d_idx = 0usize;
-        for w_burst in 0..8usize {
-            let w_start = w_burst * lookup_batch;
-            warm_perm.for_each_slice(w_start, lookup_batch, |id| {
-                let d = &dats[warm_d_idx % dat_len];
-                warm_d_idx = warm_d_idx.wrapping_add(1);
-                if contains_trie_key_by_id(dist_idx, id, |k| d.contains(k)) {
-                    warm_dat += 1;
-                }
-            });
-        }
-        black_box(warm_dat);
 
-        measure_bench(
-            records,
-            "tries",
-            &format!("tries/dat/{dist_name}/lookup"),
-            "ns/op",
-            lookup_params,
-            || {
-                let start = current_burst_index() * lookup_batch;
-                let mut found = 0usize;
-                let mut q_idx = 0usize;
-                perm.for_each_slice(start, lookup_batch, |id| {
-                    let d = &dats[q_idx % dat_len];
-                    q_idx = q_idx.wrapping_add(1);
-                    if contains_trie_key_by_id(dist_idx, id, |k| d.contains(k)) {
-                        found += 1;
-                    }
-                });
-                debug_assert_eq!(found, lookup_batch);
-                black_box(found);
-            },
-        );
-        drop(dats);
-        drop(_dat_spacers);
+        // 1. DoubleArrayTrie (build_from_sorted + lookup on all 1,000,000 permuted keys).
+        if run_dat {
+            let target_dats = if dist_idx < 2 { 2usize } else { 4usize };
+            let (dist_name, dats, _dat_spacers) = {
+                let (dist_name, packed) = gen_trie_distribution(dist_idx, n);
+                let key_slices = packed.slices();
+                const DAT_SPACERS_KB: [usize; 6] = [1_376, 3_424, 2_368, 4_416, 1_888, 3_936];
+                let num_dat_holes = if dist_idx == 1 { 8usize } else { 6usize };
+                let mut dat_holes: Vec<Vec<u8>> = Vec::with_capacity(num_dat_holes);
+                for _ in 0..num_dat_holes {
+                    dat_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
+                }
+                let dat_anchor = black_box(vec![1u8; 64 * 1024]);
+                drop(dat_holes);
+                let mut dat_state: (Option<DoubleArrayTrie>, Vec<Vec<u8>>) =
+                    (None, Vec::with_capacity(target_dats + 8));
+                measure_bench_with_setup(
+                    records,
+                    "tries",
+                    &format!("tries/dat/{dist_name}/build_sorted"),
+                    "ns/key",
+                    dat_build_params,
+                    &mut dat_state,
+                    |st| {
+                        let _ = st.0.take();
+                        if dist_idx == 1 {
+                            st.1.push(vec![1u8; 352 * 1024]);
+                        }
+                    },
+                    |st| {
+                        let d = DoubleArrayTrie::build_from_sorted(black_box(&key_slices)).unwrap();
+                        black_box(d.len());
+                        st.0 = Some(d);
+                    },
+                );
+                let mut dat_spacers = dat_state.1;
+                let mut built_dats = Vec::with_capacity(target_dats);
+                if let Some(last) = dat_state.0.take() {
+                    built_dats.push(last);
+                }
+                let need_dat_lookup = should_run_bench(&format!("tries/dat/{dist_name}/lookup"));
+                let eff_target_dats = if need_dat_lookup { target_dats } else { 1 };
+                while built_dats.len() < eff_target_dats {
+                    let skb = DAT_SPACERS_KB[built_dats.len()];
+                    dat_spacers.push(vec![1u8; skb * 1024]);
+                    let d = DoubleArrayTrie::build_from_sorted(&key_slices).unwrap();
+                    built_dats.push(d);
+                }
+                dat_spacers.push(dat_anchor);
+                (dist_name, built_dats, dat_spacers)
+            };
+            let dat_len = dats.len();
+            let bytes_per_state = dats[0].mem_size() as f64 / dats[0].total_states().max(1) as f64;
+            record_space_metric(
+                space,
+                &format!("tries/dat_{dist_name}_bytes_per_state"),
+                bytes_per_state,
+            );
+
+            if should_run_bench(&format!("tries/dat/{dist_name}/lookup")) {
+                let mut warm_dat = 0usize;
+                let mut warm_d_idx = 0usize;
+                for w_burst in 0..8usize {
+                    let w_start = w_burst * lookup_batch;
+                    warm_perm.for_each_slice(w_start, lookup_batch, |id| {
+                        let d = &dats[warm_d_idx % dat_len];
+                        warm_d_idx = warm_d_idx.wrapping_add(1);
+                        if contains_trie_key_by_id(dist_idx, id, |k| d.contains(k)) {
+                            warm_dat += 1;
+                        }
+                    });
+                }
+                black_box(warm_dat);
+
+                measure_bench(
+                    records,
+                    "tries",
+                    &format!("tries/dat/{dist_name}/lookup"),
+                    "ns/op",
+                    lookup_params,
+                    || {
+                        let start = current_burst_index() * lookup_batch;
+                        let mut found = 0usize;
+                        let mut q_idx = 0usize;
+                        perm.for_each_slice(start, lookup_batch, |id| {
+                            let d = &dats[q_idx % dat_len];
+                            q_idx = q_idx.wrapping_add(1);
+                            if contains_trie_key_by_id(dist_idx, id, |k| d.contains(k)) {
+                                found += 1;
+                            }
+                        });
+                        debug_assert_eq!(found, lookup_batch);
+                        black_box(found);
+                    },
+                );
+            }
+            drop(dats);
+            drop(_dat_spacers);
+        }
 
         // 2. CsppTrie (build + lookup on all 1,000,000 permuted keys).
-        maybe_repin_self_within_ccd();
-        let (cspps, _cspp_spacers) = {
-            let (_, packed) = gen_trie_distribution(dist_idx, n);
-            let key_len = packed.key_len;
-            let num_lookup_holes = if dist_idx == 2 { 11usize } else { 9usize };
-            let mut lookup_holes: Vec<Vec<u8>> = Vec::with_capacity(num_lookup_holes);
-            for _ in 0..num_lookup_holes {
-                lookup_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
-            }
-            let lookup_anchor = black_box(vec![1u8; 64 * 1024]);
-            drop(lookup_holes);
-            let mut pending: Option<CsppTrie> = None;
-            measure_bench_with_setup(
-                records,
-                "tries",
-                &format!("tries/cspp/{dist_name}/build"),
-                "ns/key",
-                cspp_build_params,
-                &mut pending,
-                |slot| {
-                    let _ = slot.take();
-                },
-                |slot| {
+        if run_cspp {
+            let dist_name = dist_label;
+            let need_cspp_lookup = should_run_bench(&format!("tries/cspp/{dist_name}/lookup"));
+            maybe_repin_self_within_ccd();
+            let (cspps, _cspp_spacers) = {
+                let (_, packed) = gen_trie_distribution(dist_idx, n);
+                let key_len = packed.key_len;
+                let num_lookup_holes = if dist_idx == 2 { 11usize } else { 9usize };
+                let mut lookup_holes: Vec<Vec<u8>> = Vec::with_capacity(num_lookup_holes);
+                for _ in 0..num_lookup_holes {
+                    lookup_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
+                }
+                let lookup_anchor = black_box(vec![1u8; 64 * 1024]);
+                drop(lookup_holes);
+                let mut pending: Option<CsppTrie> = None;
+                measure_bench_with_setup(
+                    records,
+                    "tries",
+                    &format!("tries/cspp/{dist_name}/build"),
+                    "ns/key",
+                    cspp_build_params,
+                    &mut pending,
+                    |slot| {
+                        let _ = slot.take();
+                    },
+                    |slot| {
+                        let mut c = CsppTrie::new(0);
+                        for k in packed.data.chunks_exact(key_len) {
+                            c.insert(black_box(k));
+                        }
+                        black_box(c.num_words());
+                        *slot = Some(c);
+                    },
+                );
+                let cap = pending
+                    .as_ref()
+                    .map(|c| c.mem_get_stat().capacity)
+                    .unwrap_or(16 * 1024 * 1024);
+                let num_replicas = if !need_cspp_lookup {
+                    1usize
+                } else if dist_idx == 2 {
+                    8usize
+                } else {
+                    4usize
+                };
+                let hole_bytes = (cap / 2).max(4096);
+                const BRK_SPACERS_KB: [usize; 8] =
+                    [0, 1_376, 3_424, 5_856, 2_368, 4_416, 1_888, 3_936];
+                let mut spacers = Vec::with_capacity(num_replicas * 2 + 1);
+                let mut cspps = Vec::with_capacity(num_replicas);
+                if let Some(first) = pending.take() {
+                    cspps.push(first);
+                }
+                for rep_idx in cspps.len()..num_replicas {
+                    if rep_idx > 0 {
+                        spacers.push(black_box(vec![1u8; hole_bytes]));
+                    }
+                    let skb = BRK_SPACERS_KB[rep_idx & 7];
+                    if skb > 0 {
+                        spacers.push(black_box(vec![1u8; skb * 1024]));
+                    }
                     let mut c = CsppTrie::new(0);
                     for k in packed.data.chunks_exact(key_len) {
-                        c.insert(black_box(k));
+                        c.insert(k);
                     }
-                    black_box(c.num_words());
-                    *slot = Some(c);
-                },
+                    cspps.push(c);
+                }
+                spacers.push(lookup_anchor);
+                (cspps, spacers)
+            };
+            let cspp_mask = cspps.len() - 1;
+            let stat = cspps[0].mem_get_stat();
+            let active_bytes = stat.used_size.saturating_sub(stat.frag_size);
+            record_space_metric(
+                space,
+                &format!("tries/cspp_{dist_name}_bytes_per_key"),
+                active_bytes as f64 / cspps[0].num_words().max(1) as f64,
             );
-            let cap = pending
-                .as_ref()
-                .map(|c| c.mem_get_stat().capacity)
-                .unwrap_or(16 * 1024 * 1024);
-            let num_replicas = if dist_idx == 2 { 8usize } else { 4usize };
-            let hole_bytes = (cap / 2).max(4096);
-            const BRK_SPACERS_KB: [usize; 8] = [0, 1_376, 3_424, 5_856, 2_368, 4_416, 1_888, 3_936];
-            let mut spacers = Vec::with_capacity(num_replicas * 2 + 1);
-            let mut cspps = Vec::with_capacity(num_replicas);
-            if let Some(first) = pending.take() {
-                cspps.push(first);
-            }
-            for rep_idx in cspps.len()..num_replicas {
-                if rep_idx > 0 {
-                    spacers.push(black_box(vec![1u8; hole_bytes]));
-                }
-                let skb = BRK_SPACERS_KB[rep_idx & 7];
-                if skb > 0 {
-                    spacers.push(black_box(vec![1u8; skb * 1024]));
-                }
-                let mut c = CsppTrie::new(0);
-                for k in packed.data.chunks_exact(key_len) {
-                    c.insert(k);
-                }
-                cspps.push(c);
-            }
-            spacers.push(lookup_anchor);
-            (cspps, spacers)
-        };
-        let cspp_mask = cspps.len() - 1;
-        let stat = cspps[0].mem_get_stat();
-        let active_bytes = stat.used_size.saturating_sub(stat.frag_size);
-        record_space_metric(
-            space,
-            &format!("tries/cspp_{dist_name}_bytes_per_key"),
-            active_bytes as f64 / cspps[0].num_words().max(1) as f64,
-        );
 
-        let cspp_lookup_batch = (n / 200).max(1_000).min(n.max(1));
-        let mut cspp_lookup_params = BenchParams::heavy(num_keys, cspp_lookup_batch as u64, 12);
-        cspp_lookup_params.warmup_calls = 8;
-        cspp_lookup_params.bursts_per_trial = 16;
+            if need_cspp_lookup {
+                let cspp_lookup_batch = (n / 200).max(1_000).min(n.max(1));
+                let mut cspp_lookup_params =
+                    BenchParams::heavy(num_keys, cspp_lookup_batch as u64, 12);
+                cspp_lookup_params.warmup_calls = 8;
+                cspp_lookup_params.bursts_per_trial = 16;
 
-        let mut warm_cspp = 0usize;
-        let mut warm_c_idx = 0usize;
-        for w_burst in 0..8usize {
-            let w_start = w_burst * cspp_lookup_batch;
-            warm_perm.for_each_slice(w_start, cspp_lookup_batch, |id| {
-                let trie = &cspps[warm_c_idx & cspp_mask];
-                warm_c_idx = warm_c_idx.wrapping_add(1);
-                if contains_trie_key_by_id(dist_idx, id, |k| trie.contains(k)) {
-                    warm_cspp += 1;
+                let mut warm_cspp = 0usize;
+                let mut warm_c_idx = 0usize;
+                for w_burst in 0..8usize {
+                    let w_start = w_burst * cspp_lookup_batch;
+                    warm_perm.for_each_slice(w_start, cspp_lookup_batch, |id| {
+                        let trie = &cspps[warm_c_idx & cspp_mask];
+                        warm_c_idx = warm_c_idx.wrapping_add(1);
+                        if contains_trie_key_by_id(dist_idx, id, |k| trie.contains(k)) {
+                            warm_cspp += 1;
+                        }
+                    });
                 }
-            });
+                black_box(warm_cspp);
+
+                measure_bench(
+                    records,
+                    "tries",
+                    &format!("tries/cspp/{dist_name}/lookup"),
+                    "ns/op",
+                    cspp_lookup_params,
+                    || {
+                        let start = current_burst_index() * cspp_lookup_batch;
+                        let mut found = 0usize;
+                        let mut q_idx = 0usize;
+                        perm.for_each_slice(start, cspp_lookup_batch, |id| {
+                            let trie = &cspps[q_idx & cspp_mask];
+                            q_idx = q_idx.wrapping_add(1);
+                            if contains_trie_key_by_id(dist_idx, id, |k| trie.contains(k)) {
+                                found += 1;
+                            }
+                        });
+                        debug_assert_eq!(found, lookup_batch);
+                        black_box(found);
+                    },
+                );
+            }
+            drop(cspps);
+            drop(_cspp_spacers);
         }
-        black_box(warm_cspp);
-
-        measure_bench(
-            records,
-            "tries",
-            &format!("tries/cspp/{dist_name}/lookup"),
-            "ns/op",
-            cspp_lookup_params,
-            || {
-                let start = current_burst_index() * cspp_lookup_batch;
-                let mut found = 0usize;
-                let mut q_idx = 0usize;
-                perm.for_each_slice(start, cspp_lookup_batch, |id| {
-                    let trie = &cspps[q_idx & cspp_mask];
-                    q_idx = q_idx.wrapping_add(1);
-                    if contains_trie_key_by_id(dist_idx, id, |k| trie.contains(k)) {
-                        found += 1;
-                    }
-                });
-                debug_assert_eq!(found, lookup_batch);
-                black_box(found);
-            },
-        );
-        drop(cspps);
-        drop(_cspp_spacers);
     }
 
     // 3. ZiporaTrie (DoubleArray strategy) build + lookup on all 1,000,000 permuted keys.
+    if !should_run_any(&["tries/zipora_trie_da/build", "tries/zipora_trie_da/lookup"]) {
+        return;
+    }
     maybe_repin_self_within_ccd();
     let num_zipora_keys = n as u64;
     let zperm = BijectivePerm::new(n, SEED_BASE ^ 0x0599);
@@ -2360,7 +2733,10 @@ fn bench_hash_maps(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
 
     // 1. ZiporaHashMap u64 (insert >= 1M distinct keys across a 180-degree staggered 2-map ring,
     //    then get all 1M permuted keys across the 2-map ring)
-    {
+    if should_run_any(&[
+        "hash_maps/zipora_hash_map/insert_u64",
+        "hash_maps/zipora_hash_map/get_u64",
+    ]) {
         maybe_repin_self_within_ccd();
         let mut zmap0: ZiporaHashMap<u64, u64> =
             ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap();
@@ -2465,7 +2841,10 @@ fn bench_hash_maps(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
 
     // 2. ZiporaHashMap [u8; 16] (insert >= 1M distinct keys across a 180-degree staggered 2-map ring,
     //    then get all 1M permuted keys across the 2-map ring)
-    {
+    if should_run_any(&[
+        "hash_maps/zipora_hash_map/insert_str16",
+        "hash_maps/zipora_hash_map/get_str16",
+    ]) {
         maybe_repin_self_within_ccd();
         let mut zmap0: ZiporaHashMap<[u8; 16], u64> =
             ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap();
@@ -2569,7 +2948,10 @@ fn bench_hash_maps(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
     }
 
     // 3. GoldHashMap u64 (63.33 MiB buckets + 24 MiB nodes = 87.3 MiB > 32 MiB L3)
-    {
+    if should_run_any(&[
+        "hash_maps/gold_hash_map/insert_u64",
+        "hash_maps/gold_hash_map/get_u64",
+    ]) {
         maybe_repin_self_within_ccd();
         let u64_insert_batch = (n / 500).max(1_000).min(n.max(1));
         let u64_half_batch = (u64_insert_batch / 2).max(1);
@@ -2693,7 +3075,10 @@ fn bench_hash_maps(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
     }
 
     // 4. GoldHashMap [u8; 16] (31.19 MiB buckets + 32 MiB nodes = 63.19 MiB per map, > 126 MiB across 2-map ring)
-    {
+    if should_run_any(&[
+        "hash_maps/gold_hash_map/insert_str16",
+        "hash_maps/gold_hash_map/get_str16",
+    ]) {
         maybe_repin_self_within_ccd();
         let str16_insert_batch = (n / 500).max(1_000).min(n.max(1));
         let str16_half_batch = (str16_insert_batch / 2).max(1);
@@ -3666,11 +4051,7 @@ fn bench_radix_sort_lsd(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
     drop(_lsd_top_anchor);
 }
 
-fn bench_radix_sort_kv(
-    records: &mut Vec<BenchRecord>,
-    primary_core: usize,
-    sizes: SuiteSizes,
-) {
+fn bench_radix_sort_kv(records: &mut Vec<BenchRecord>, primary_core: usize, sizes: SuiteSizes) {
     maybe_repin_self_within_ccd();
     let n = sizes.radix_sort_elements;
     // 3. KeyValueRadixSort<u64, u64> (10^7 (u64, u64) elements)
@@ -3783,79 +4164,81 @@ fn bench_suffix_array(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
         },
     );
     let sa0 = sa_pending.take().unwrap();
-    let _text_spacer = vec![1u8; 1_376 * 1024];
-    let text1 = text0.clone();
-    let _sa_spacer = vec![1u8; 3_424 * 1024];
-    let sa1 = SuffixArray::new(&text1).unwrap();
-    let sas = [sa0, sa1];
-    let texts = [text0, text1];
+    if should_run_bench("suffix_array/search_query") {
+        let _text_spacer = vec![1u8; 1_376 * 1024];
+        let text1 = text0.clone();
+        let _sa_spacer = vec![1u8; 3_424 * 1024];
+        let sa1 = SuffixArray::new(&text1).unwrap();
+        let sas = [sa0, sa1];
+        let texts = [text0, text1];
 
-    // Sample distinct 16-byte substrings uniformly across the entire 10,000,000-byte
-    // text via a stratified bijection (`sa_perm` over `1,000,000` 10-byte windows at
-    // spec size, with 10% perturbed non-matching queries), stepping continuously through
-    // `sa_batch = 1,000` distinct queries per burst across `warmup_calls = 8, trials = 12,
-    // bursts_per_trial = 12` (`152,000 >= 100,000` distinct queries total, zero replay).
-    let num_queries = sizes.suffix_array_queries;
-    let sa_batch = (num_queries / 100).max(500).min(num_queries.max(1));
-    let pat_len = 16usize;
-    let max_start = n - pat_len;
-    let sa_query_seed = SEED_BASE ^ 0x0A01;
-    let sa_perm_len = ((n / 10) / 1000 * 1000).max(1_000);
-    let sa_window = (max_start / sa_perm_len).max(1);
-    let sa_perm = BijectivePerm::new(sa_perm_len, SEED_BASE ^ 0x0A02);
+        // Sample distinct 16-byte substrings uniformly across the entire 10,000,000-byte
+        // text via a stratified bijection (`sa_perm` over `1,000,000` 10-byte windows at
+        // spec size, with 10% perturbed non-matching queries), stepping continuously through
+        // `sa_batch = 1,000` distinct queries per burst across `warmup_calls = 8, trials = 12,
+        // bursts_per_trial = 12` (`152,000 >= 100,000` distinct queries total, zero replay).
+        let num_queries = sizes.suffix_array_queries;
+        let sa_batch = (num_queries / 100).max(500).min(num_queries.max(1));
+        let pat_len = 16usize;
+        let max_start = n - pat_len;
+        let sa_query_seed = SEED_BASE ^ 0x0A01;
+        let sa_perm_len = ((n / 10) / 1000 * 1000).max(1_000);
+        let sa_window = (max_start / sa_perm_len).max(1);
+        let sa_perm = BijectivePerm::new(sa_perm_len, SEED_BASE ^ 0x0A02);
 
-    let mut warm_sa_hits = 0usize;
-    for idx in 0..(sa_batch * 24) {
-        let slot = idx & 1;
-        let txt = &texts[slot];
-        let sa = &sas[slot];
-        let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
-        let mut pat = [0u8; 16];
-        pat.copy_from_slice(&txt[pos..pos + pat_len]);
-        if idx % 10 == 9 {
-            pat[pat_len - 1] = b'~';
+        let mut warm_sa_hits = 0usize;
+        for idx in 0..(sa_batch * 24) {
+            let slot = idx & 1;
+            let txt = &texts[slot];
+            let sa = &sas[slot];
+            let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
+            let mut pat = [0u8; 16];
+            pat.copy_from_slice(&txt[pos..pos + pat_len]);
+            if idx % 10 == 9 {
+                pat[pat_len - 1] = b'~';
+            }
+            let (_, count) = sa.search(black_box(txt), black_box(&pat[..]));
+            warm_sa_hits = warm_sa_hits.wrapping_add(count);
         }
-        let (_, count) = sa.search(black_box(txt), black_box(&pat[..]));
-        warm_sa_hits = warm_sa_hits.wrapping_add(count);
+        black_box(warm_sa_hits);
+
+        let mut sa_search_params = BenchParams::heavy(n as u64, sa_batch as u64, 12);
+        sa_search_params.warmup_calls = 8;
+        sa_search_params.bursts_per_trial = 12;
+
+        measure_bench(
+            records,
+            "suffix_array",
+            "suffix_array/search_query",
+            "ns/op",
+            sa_search_params,
+            || {
+                let base = current_burst_index() * sa_batch;
+                let mut hits = 0usize;
+                let mut q_idx = 0usize;
+                sa_perm.for_each_slice(base, sa_batch, |id| {
+                    let slot = q_idx & 1;
+                    let txt = &texts[slot];
+                    let sa = &sas[slot];
+                    let pos = (id * sa_window + uniform_index_at(sa_query_seed, id, sa_window))
+                        .min(max_start.saturating_sub(1));
+                    let mut pat = [0u8; 16];
+                    pat.copy_from_slice(&txt[pos..pos + pat_len]);
+                    if q_idx % 10 == 9 {
+                        pat[pat_len - 1] = b'~';
+                    }
+                    q_idx = q_idx.wrapping_add(1);
+                    let (_, count) = sa.search(black_box(txt), black_box(&pat[..]));
+                    hits = hits.wrapping_add(count);
+                });
+                black_box(hits);
+            },
+        );
+        drop(sas);
+        drop(texts);
+        drop(_sa_spacer);
+        drop(_text_spacer);
     }
-    black_box(warm_sa_hits);
-
-    let mut sa_search_params = BenchParams::heavy(n as u64, sa_batch as u64, 12);
-    sa_search_params.warmup_calls = 8;
-    sa_search_params.bursts_per_trial = 12;
-
-    measure_bench(
-        records,
-        "suffix_array",
-        "suffix_array/search_query",
-        "ns/op",
-        sa_search_params,
-        || {
-            let base = current_burst_index() * sa_batch;
-            let mut hits = 0usize;
-            let mut q_idx = 0usize;
-            sa_perm.for_each_slice(base, sa_batch, |id| {
-                let slot = q_idx & 1;
-                let txt = &texts[slot];
-                let sa = &sas[slot];
-                let pos = (id * sa_window + uniform_index_at(sa_query_seed, id, sa_window))
-                    .min(max_start.saturating_sub(1));
-                let mut pat = [0u8; 16];
-                pat.copy_from_slice(&txt[pos..pos + pat_len]);
-                if q_idx % 10 == 9 {
-                    pat[pat_len - 1] = b'~';
-                }
-                q_idx = q_idx.wrapping_add(1);
-                let (_, count) = sa.search(black_box(txt), black_box(&pat[..]));
-                hits = hits.wrapping_add(count);
-            });
-            black_box(hits);
-        },
-    );
-    drop(sas);
-    drop(texts);
-    drop(_sa_spacer);
-    drop(_text_spacer);
     drop(_brk_top_anchor);
 }
 
@@ -4099,6 +4482,16 @@ fn main() {
         .map(|w| PathBuf::from(&w[1]))
         .or_else(|| std::env::var("ZIPORA_BENCH_OUT").ok().map(PathBuf::from));
 
+    let cli_filter: Option<String> = args
+        .windows(2)
+        .find(|w| w[0] == "--filter" || w[0] == "--only")
+        .map(|w| w[1].clone())
+        .or_else(|| {
+            args.iter()
+                .find_map(|a| a.strip_prefix("--filter=").map(str::to_string))
+        });
+    init_bench_filter(cli_filter);
+
     let thp_on = args.iter().any(|a| a == "--thp-on")
         || matches!(
             std::env::var("ZIPORA_BENCH_THP").as_deref(),
@@ -4111,6 +4504,9 @@ fn main() {
     let primary_core = select_primary_core(logical_cores);
     pin_current_thread_to_core(primary_core);
     init_self_pin_tracker(primary_core, logical_cores);
+    if has_active_filter() {
+        wait_for_quiet_host_and_repin(12_000, true);
+    }
 
     let mut records = Vec::with_capacity(128);
     let mut space_metrics = BTreeMap::new();
@@ -4122,11 +4518,7 @@ fn main() {
     };
     let tier = if smoke_mode { "smoke" } else { "spec" };
     let cat_filter = std::env::var("ZIPORA_BENCH_CAT").ok();
-    let run_cat = |cat: &str| -> bool {
-        cat_filter
-            .as_deref()
-            .is_none_or(|f| f.is_empty() || f.split(',').any(|p| p == cat))
-    };
+    let run_cat = |cat: &str| -> bool { should_run_category(cat, cat_filter.as_deref()) };
 
     let suite_start = Instant::now();
 
@@ -4166,10 +4558,14 @@ fn main() {
         maybe_repin_self_within_ccd();
     }
     if run_cat("radix_sort") {
-        bench_radix_sort_lsd(&mut records, sizes);
-        maybe_repin_self_within_ccd();
-        bench_radix_sort_kv(&mut records, current_self_pinned_core(), sizes);
-        maybe_repin_self_within_ccd();
+        if should_run_any(&["radix_sort/lsd_u32", "radix_sort/lsd_u64"]) {
+            bench_radix_sort_lsd(&mut records, sizes);
+            maybe_repin_self_within_ccd();
+        }
+        if should_run_bench("radix_sort/kv_u64_u64") {
+            bench_radix_sort_kv(&mut records, current_self_pinned_core(), sizes);
+            maybe_repin_self_within_ccd();
+        }
     }
     if run_cat("suffix_array") {
         bench_suffix_array(&mut records, sizes);
@@ -4230,13 +4626,15 @@ fn main() {
 
     let default_out = if smoke_mode {
         PathBuf::from("target/bench/smoke_bench.json")
+    } else if has_active_filter() || cat_filter.is_some() {
+        PathBuf::from("target/bench/core_bench_filtered.json")
     } else {
         PathBuf::from("target/bench/core_bench.json")
     };
     let latest_out = custom_out.unwrap_or(default_out);
     write_json(&latest_out, &report);
 
-    if save_baseline && !smoke_mode {
+    if save_baseline && !smoke_mode && !has_active_filter() && cat_filter.is_none() {
         let baseline_path = PathBuf::from(format!(
             "benches/baselines/{}/core_bench.json",
             host_metadata.host
