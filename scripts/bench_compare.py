@@ -127,60 +127,50 @@ def wait_for_quiet_host_window(max_wait_sec: float = 35.0) -> Tuple[int, float]:
     return best_nr, best_busy
 
 
-def find_compiled_bench_binary(bench_bin: str) -> Optional[Path]:
-    target_dir = Path(os.environ.get("CARGO_TARGET_DIR", "target")) / "release" / "deps"
-    if not target_dir.is_dir():
-        return None
-    candidates: List[Tuple[float, Path]] = []
-    prefix = f"{bench_bin}-"
-    for entry in target_dir.iterdir():
-        name = entry.name
-        if not name.startswith(prefix):
-            continue
-        if "." in name[len(prefix) :]:
-            continue
-        if entry.is_file() and os.access(entry, os.X_OK):
-            try:
-                candidates.append((entry.stat().st_mtime, entry))
-            except OSError:
-                continue
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1]
-
-
-def resolve_retry_binary(
-    bench_bin: str, host_metadata: Dict[str, Any]
-) -> Optional[Path]:
+def resolve_retry_binary(host_metadata: Dict[str, Any]) -> Path:
     recorded_path = str(host_metadata.get("binary_path", "") or "").strip()
     recorded_sha256 = str(host_metadata.get("binary_sha256", "") or "").strip().lower()
-    if recorded_path:
-        bin_path = Path(recorded_path)
-        if not bin_path.is_file() or not os.access(bin_path, os.X_OK):
-            print(
-                f"ERROR: recorded benchmark binary in host_metadata.binary_path does not exist or is not executable: {bin_path}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        if recorded_sha256:
-            try:
-                actual_sha256 = hashlib.sha256(bin_path.read_bytes()).hexdigest().lower()
-            except OSError as exc:
-                print(
-                    f"ERROR: failed to read recorded benchmark binary {bin_path}: {exc}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            if actual_sha256 != recorded_sha256:
-                print(
-                    f"ERROR: recorded benchmark binary {bin_path} SHA-256 mismatch "
-                    f"(expected {recorded_sha256}, found {actual_sha256}); refusing to retry with a different binary.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-        return bin_path
-    return find_compiled_bench_binary(bench_bin)
+    if not recorded_path:
+        print(
+            "ERROR: missing or empty host_metadata.binary_path in current benchmark JSON; "
+            "refusing to run an unverified confirmation retry.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if (
+        len(recorded_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in recorded_sha256)
+    ):
+        print(
+            "ERROR: missing or invalid host_metadata.binary_sha256 in current benchmark JSON; "
+            "refusing to run an unverified confirmation retry.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    bin_path = Path(recorded_path)
+    if not bin_path.is_file() or not os.access(bin_path, os.X_OK):
+        print(
+            f"ERROR: recorded benchmark binary in host_metadata.binary_path does not exist or is not executable: {bin_path}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        actual_sha256 = hashlib.sha256(bin_path.read_bytes()).hexdigest().lower()
+    except OSError as exc:
+        print(
+            f"ERROR: failed to read recorded benchmark binary {bin_path}: {exc}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if actual_sha256 != recorded_sha256:
+        print(
+            f"ERROR: recorded benchmark binary {bin_path} SHA-256 mismatch "
+            f"(expected {recorded_sha256}, found {actual_sha256}); refusing to retry with a different binary.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return bin_path
 
 
 def run_isolated_retry(
@@ -190,12 +180,6 @@ def run_isolated_retry(
     total_attempts: int,
     host_metadata: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    if suite == "core_bench":
-        bench_bin = "core_bench"
-    elif suite == "competitor_bench":
-        bench_bin = "competitor_bench"
-    else:
-        bench_bin = "e2e_search_bench"
     target_root = Path(os.environ.get("CARGO_TARGET_DIR", "target"))
     retry_out = target_root / "bench" / f"{suite}_retry_{attempt}.json"
     if retry_out.exists():
@@ -204,7 +188,7 @@ def run_isolated_retry(
         except OSError:
             pass
 
-    compiled_bin = resolve_retry_binary(bench_bin, host_metadata)
+    compiled_bin = resolve_retry_binary(host_metadata)
     nr, busy = wait_for_quiet_host_window(max_wait_sec=35.0)
     filter_arg = ",".join(bench_names)
     print(
@@ -218,19 +202,7 @@ def run_isolated_retry(
     if rustflags:
         env["RUSTFLAGS"] = rustflags
 
-    if compiled_bin is not None:
-        cmd = [str(compiled_bin), "--output", str(retry_out)]
-    else:
-        cmd = [
-            "cargo",
-            "bench",
-            "--locked",
-            "--bench",
-            bench_bin,
-            "--",
-            "--output",
-            str(retry_out),
-        ]
+    cmd = [str(compiled_bin), "--output", str(retry_out)]
     if suite in ("core_bench", "competitor_bench") and bench_names:
         cmd.extend(["--filter", filter_arg])
 
