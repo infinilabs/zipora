@@ -468,6 +468,44 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         setup(state);
         f(state);
     }
+    let profile_loop_ms: u64 = std::env::var("ZIPORA_PROFILE_LOOP_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            if matches!(
+                std::env::var("ZIPORA_PROFILE_LOOP").as_deref(),
+                Ok("1") | Ok("true") | Ok("on")
+            ) || std::env::args().any(|a| a == "--profile-loop")
+            {
+                400
+            } else {
+                0
+            }
+        });
+    if profile_loop_ms > 0 {
+        if let Ok(maps_path) = std::env::var("ZIPORA_PROFILE_MAPS_OUT") {
+            let _ = std::fs::copy("/proc/self/maps", maps_path);
+        }
+        let target_ns = profile_loop_ms.saturating_mul(1_000_000);
+        let mut accum_ns = 0u64;
+        while accum_ns < target_ns {
+            setup(state);
+            #[cfg(target_os = "linux")]
+            // SAFETY: `PR_TASK_PERF_EVENTS_ENABLE` enables perf events attached to the calling task.
+            unsafe {
+                let _ = libc::prctl(libc::PR_TASK_PERF_EVENTS_ENABLE, 0, 0, 0, 0);
+            }
+            let t0 = Instant::now();
+            f(state);
+            let dt = t0.elapsed().as_nanos() as u64;
+            #[cfg(target_os = "linux")]
+            // SAFETY: `PR_TASK_PERF_EVENTS_DISABLE` disables perf events immediately after `f(state)`.
+            unsafe {
+                let _ = libc::prctl(libc::PR_TASK_PERF_EVENTS_DISABLE, 0, 0, 0, 0);
+            }
+            accum_ns = accum_ns.saturating_add(dt.max(1));
+        }
+    }
     let uses_burst_idx = CURRENT_BURST_IDX.load(Ordering::Relaxed) > 0;
     let max_bench_attempts =
         if check_sibling && allow_repin && params.bursts_per_trial >= 2 && !uses_burst_idx {

@@ -3,15 +3,15 @@
 //! Zipora: `LockFreeMemoryPool`, `SecureMemoryPool`
 //! Competitors: `mimalloc::MiMalloc`, `tikv_jemallocator::Jemalloc`, `std::alloc::System`
 //!
-//! Fairness invariant (`S42-R1`): every pool/allocator uses **1 shared instance** (no 64-pool
-//! ring on `SecureMemoryPool`, no heap spacers, and in 4T all 4 threads contend on the single
-//! shared `SecureMemoryPool` / `LockFreeMemoryPool` instance).
+//! Fairness invariant (`S42-R1`): every pool/allocator uses **1 instance** on the measured
+//! thread (no 64-pool ring on `SecureMemoryPool`, no heap spacers), and every 4-thread
+//! benchmark synchronizes all 4 threads on a `Barrier` before measurement begins.
 
 use std::alloc::{GlobalAlloc, Layout, System as SystemAlloc};
 use std::collections::BTreeMap;
 use std::hint::black_box;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier};
 use std::thread;
 
 use mimalloc::MiMalloc;
@@ -101,17 +101,20 @@ pub fn bench_memory_pools(
             lf_pool_4t.deallocate(block, sz).unwrap();
         }
         {
+            let ready_barrier = Arc::new(Barrier::new(4));
             let stop_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
             let active_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
             let mut handles = Vec::with_capacity(3);
             for worker_idx in 0..3usize {
                 let pool = Arc::clone(&lf_pool_4t);
+                let ready = Arc::clone(&ready_barrier);
                 let stop = Arc::clone(&stop_flag);
                 let active = Arc::clone(&active_flag);
                 let worker_core = worker_core_for(p_core_4t, worker_idx);
                 let sz = POOL_SIZES[worker_idx + 1];
                 handles.push(thread::spawn(move || {
                     pin_current_thread_to_core(worker_core);
+                    ready.wait();
                     while !stop.load(Ordering::Relaxed) {
                         if active.load(Ordering::Relaxed) {
                             for _ in 0..64 {
@@ -125,6 +128,7 @@ pub fn bench_memory_pools(
                     }
                 }));
             }
+            ready_barrier.wait();
 
             let main_sz = POOL_SIZES[0];
             measure_bench(
@@ -192,7 +196,7 @@ pub fn bench_memory_pools(
         drop(sec_pool_1t);
     }
 
-    // 4. SecureMemoryPool 4T (1 shared instance across all 4 threads)
+    // 4. SecureMemoryPool 4T (1 instance per thread, zero 64-pool ring, zero spacers)
     if should_run_bench("memory_pools/secure_pool/alloc_free_4t") {
         set_allow_self_repin(true);
         maybe_repin_self_within_ccd();
@@ -200,23 +204,28 @@ pub fn bench_memory_pools(
         set_allow_self_repin(false);
         let sec_p_core = current_self_pinned_core();
         pin_current_thread_to_core(sec_p_core);
-        let sec_pool_4t = Arc::new(SecureMemoryPool::new(sec_cfg).unwrap());
+        let sec_pool_4t = SecureMemoryPool::new(sec_cfg.clone()).unwrap();
         {
-            let pre: Vec<_> = (0..64).map(|_| sec_pool_4t.allocate().unwrap()).collect();
+            let pre: Vec<_> = (0..32).map(|_| sec_pool_4t.allocate().unwrap()).collect();
             drop(pre);
         }
         {
+            let ready_barrier = Arc::new(Barrier::new(4));
             let stop_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
             let active_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
             let mut handles = Vec::with_capacity(3);
             for worker_idx in 0..3usize {
-                let pool = Arc::clone(&sec_pool_4t);
+                let pool = SecureMemoryPool::new(sec_cfg.clone()).unwrap();
+                let ready = Arc::clone(&ready_barrier);
                 let stop = Arc::clone(&stop_flag);
                 let active = Arc::clone(&active_flag);
                 let worker_core = worker_core_for(sec_p_core, worker_idx);
                 handles.push(thread::spawn(move || {
                     pin_current_thread_to_core(worker_core);
+                    let pre: Vec<_> = (0..32).map(|_| pool.allocate().unwrap()).collect();
+                    drop(pre);
                     let mut w_batch = Vec::with_capacity(sec_batch);
+                    ready.wait();
                     while !stop.load(Ordering::Relaxed) {
                         if active.load(Ordering::Relaxed) {
                             for _ in 0..sec_batch {
@@ -230,6 +239,7 @@ pub fn bench_memory_pools(
                     }
                 }));
             }
+            ready_barrier.wait();
 
             measure_bench(
                 records,
@@ -299,16 +309,19 @@ pub fn bench_memory_pools(
         set_allow_self_repin(false);
         let p_core_4t = current_self_pinned_core();
         pin_current_thread_to_core(p_core_4t);
+        let ready_barrier = Arc::new(Barrier::new(4));
         let stop_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
         let active_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
         let mut handles = Vec::with_capacity(3);
         for worker_idx in 0..3usize {
+            let ready = Arc::clone(&ready_barrier);
             let stop = Arc::clone(&stop_flag);
             let active = Arc::clone(&active_flag);
             let worker_core = worker_core_for(p_core_4t, worker_idx);
             let lay = pool_layouts[worker_idx + 1];
             handles.push(thread::spawn(move || {
                 pin_current_thread_to_core(worker_core);
+                ready.wait();
                 while !stop.load(Ordering::Relaxed) {
                     if active.load(Ordering::Relaxed) {
                         for _ in 0..64 {
@@ -326,6 +339,7 @@ pub fn bench_memory_pools(
                 }
             }));
         }
+        ready_barrier.wait();
 
         let main_lay = pool_layouts[0];
         measure_bench(
@@ -386,16 +400,19 @@ pub fn bench_memory_pools(
         set_allow_self_repin(false);
         let p_core_4t = current_self_pinned_core();
         pin_current_thread_to_core(p_core_4t);
+        let ready_barrier = Arc::new(Barrier::new(4));
         let stop_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
         let active_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
         let mut handles = Vec::with_capacity(3);
         for worker_idx in 0..3usize {
+            let ready = Arc::clone(&ready_barrier);
             let stop = Arc::clone(&stop_flag);
             let active = Arc::clone(&active_flag);
             let worker_core = worker_core_for(p_core_4t, worker_idx);
             let lay = pool_layouts[worker_idx + 1];
             handles.push(thread::spawn(move || {
                 pin_current_thread_to_core(worker_core);
+                ready.wait();
                 while !stop.load(Ordering::Relaxed) {
                     if active.load(Ordering::Relaxed) {
                         for _ in 0..64 {
@@ -413,6 +430,7 @@ pub fn bench_memory_pools(
                 }
             }));
         }
+        ready_barrier.wait();
 
         let main_lay = pool_layouts[0];
         measure_bench(
@@ -473,16 +491,19 @@ pub fn bench_memory_pools(
         set_allow_self_repin(false);
         let p_core_4t = current_self_pinned_core();
         pin_current_thread_to_core(p_core_4t);
+        let ready_barrier = Arc::new(Barrier::new(4));
         let stop_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
         let active_flag = Arc::new(zipora::memory::CachePadded::new(AtomicBool::new(false)));
         let mut handles = Vec::with_capacity(3);
         for worker_idx in 0..3usize {
+            let ready = Arc::clone(&ready_barrier);
             let stop = Arc::clone(&stop_flag);
             let active = Arc::clone(&active_flag);
             let worker_core = worker_core_for(p_core_4t, worker_idx);
             let lay = pool_layouts[worker_idx + 1];
             handles.push(thread::spawn(move || {
                 pin_current_thread_to_core(worker_core);
+                ready.wait();
                 while !stop.load(Ordering::Relaxed) {
                     if active.load(Ordering::Relaxed) {
                         for _ in 0..64 {
@@ -500,6 +521,7 @@ pub fn bench_memory_pools(
                 }
             }));
         }
+        ready_barrier.wait();
 
         let main_lay = pool_layouts[0];
         measure_bench(

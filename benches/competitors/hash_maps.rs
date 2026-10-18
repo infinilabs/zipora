@@ -10,7 +10,7 @@
 //! - Every implementation is pre-allocated for `1,000,000` entries (~2M hash slots) so
 //!   no map rehashes during `insert` or `get`.
 //! - Every implementation executes the **exact same `get_batch = 4,000` keys per burst**,
-//!   the **exact same `prefill = n - 16 * get_batch` insert window**, and the **exact same
+//!   the **exact same `prefill = n - 12 * get_batch` insert window**, and the **exact same
 //!   `BijectivePerm` lookup stream** via shared generic `run_insert_bench` / `run_get_bench`
 //!   drivers with zero per-side heap spacers.
 
@@ -69,7 +69,7 @@ fn run_insert_bench<K, M, FMake, FKey, FIns, FLen, FClear>(
         insert_params,
         &mut map,
         |m| {
-            if len_fn(m) >= n {
+            if len_fn(m) > prefill {
                 clear_fn(m);
                 for i in 0..prefill {
                     insert_fn(m, make_key(i), i as u64);
@@ -190,7 +190,7 @@ pub fn bench_hash_maps(
     get_params.warmup_calls = 12;
     get_params.bursts_per_trial = 18;
 
-    let prefill = n.saturating_sub(16 * get_batch);
+    let prefill = n.saturating_sub(insert_params.bursts_per_trial * get_batch);
 
     // 1. ZiporaHashMap u64 (1 instance)
     if should_run_any(&[
