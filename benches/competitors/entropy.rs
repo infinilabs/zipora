@@ -2,13 +2,15 @@
 //!
 //! Zipora: `HuffmanEncoder` O0, `ContextualHuffmanEncoder` O1/O2, `FseEncoder`,
 //!         `Rans64Encoder<ParallelX1>`, `Rans64Encoder<ParallelX4>`
-//! Competitors: `huffman-compress`, `constriction` (ANS), `zstd` (levels 1 & 3)
+//! Competitors: `huffman-compress`, `constriction` (ANS), `libzstd` raw `huff0` and `FSE`
+//!              entropy stages (`S42-R5`), and `zstd` whole-block (LZ77+entropy levels 1 & 3)
 //!
 //! Fairness invariant (`S42-R1`): every implementation is benchmarked on **1 instance**
 //! on the calling thread over the exact same 64 KiB `block` with zero multi-instance
 //! rings or heap spacers.
 
 use std::collections::BTreeMap;
+use std::ffi::c_void;
 use std::hint::black_box;
 
 use bit_vec::BitVec as HuffmanBitVec;
@@ -26,6 +28,206 @@ use zipora::entropy::huffman::{
 use zipora::entropy::rans::{ParallelX1, ParallelX4, Rans64Decoder, Rans64Encoder};
 
 use crate::common::*;
+
+// Raw `libzstd` (`zstd-sys`) entropy-stage symbols (`huff0` and `FSE` tANS) for `S42-R5`.
+unsafe extern "C" {
+    fn HUF_isError(code: usize) -> u32;
+    fn HUF_compress4X_repeat(
+        dst: *mut c_void, dst_size: usize, src: *const c_void, src_size: usize,
+        max_symbol_value: u32, table_log: u32, work_space: *mut c_void, wksp_size: usize,
+        huf_table: *mut usize, repeat: *mut u32, flags: i32,
+    ) -> usize;
+    fn HUF_decompress4X_hufOnly_wksp(
+        dctx: *mut u32, dst: *mut c_void, dst_size: usize, c_src: *const c_void,
+        c_src_size: usize, work_space: *mut c_void, wksp_size: usize, flags: i32,
+    ) -> usize;
+    fn HIST_count_wksp(
+        count: *mut u32, max_symbol_value_ptr: *mut u32, src: *const c_void, src_size: usize,
+        work_space: *mut u32, wksp_size: usize,
+    ) -> usize;
+    fn FSE_isError(code: usize) -> u32;
+    fn FSE_optimalTableLog(max_table_log: u32, src_size: usize, max_symbol_value: u32) -> u32;
+    fn FSE_normalizeCount(
+        normalized_counter: *mut i16, table_log: u32, count: *const u32, src_size: usize,
+        max_symbol_value: u32, use_low_prob_count: u32,
+    ) -> usize;
+    fn FSE_writeNCount(
+        buffer: *mut c_void, buffer_size: usize, normalized_counter: *const i16,
+        max_symbol_value: u32, table_log: u32,
+    ) -> usize;
+    fn FSE_buildCTable_wksp(
+        ct: *mut u32, normalized_counter: *const i16, max_symbol_value: u32, table_log: u32,
+        work_space: *mut c_void, wksp_size: usize,
+    ) -> usize;
+    fn FSE_compress_usingCTable(
+        dst: *mut c_void, dst_capacity: usize, src: *const c_void, src_size: usize, ct: *const u32,
+    ) -> usize;
+    fn FSE_decompress_wksp_bmi2(
+        dst: *mut c_void, dst_capacity: usize, c_src: *const c_void, c_src_size: usize,
+        max_log: u32, work_space: *mut c_void, wksp_size: usize, bmi2: i32,
+    ) -> usize;
+}
+
+struct ZstdHuf0Workspace {
+    comp_wksp: Vec<u64>,
+    ctable: [usize; 258],
+    dtable: [u32; 4097],
+    decomp_wksp: [u64; 512],
+}
+
+impl ZstdHuf0Workspace {
+    fn new() -> Self {
+        let mut dtable = [0u32; 4097];
+        dtable[0] = 12 * 0x0100_0001;
+        Self {
+            comp_wksp: vec![0u64; 2048],
+            ctable: [0usize; 258],
+            dtable,
+            decomp_wksp: [0u64; 512],
+        }
+    }
+
+    #[inline]
+    fn compress(&mut self, src: &[u8], dst: &mut [u8]) -> usize {
+        let mut repeat: u32 = 0; // HUF_repeat_none
+        // SAFETY: All buffers are sized above `HUF_WORKSPACE_SIZE` and `HUF_CTABLE_SIZE_ST(255)`,
+        // 8-byte aligned, and `dst` is slice-bounded.
+        let written = unsafe {
+            HUF_compress4X_repeat(
+                dst.as_mut_ptr().cast::<c_void>(),
+                dst.len(),
+                src.as_ptr().cast::<c_void>(),
+                src.len(),
+                255,
+                11,
+                self.comp_wksp.as_mut_ptr().cast::<c_void>(),
+                self.comp_wksp.len() * std::mem::size_of::<u64>(),
+                self.ctable.as_mut_ptr(),
+                &mut repeat,
+                1, // HUF_flags_bmi2
+            )
+        };
+        assert!(unsafe { HUF_isError(written) } == 0 && written > 0);
+        written
+    }
+
+    #[inline]
+    fn decompress(&mut self, c_src: &[u8], dst: &mut [u8]) -> usize {
+        self.dtable[0] = 12 * 0x0100_0001;
+        // SAFETY: `dtable` has `HUF_DTABLE_SIZE(12) == 4097` words and `decomp_wksp` exceeds
+        // `HUF_DECOMPRESS_WORKSPACE_SIZE` (4096 > 2560 bytes).
+        let decoded = unsafe {
+            HUF_decompress4X_hufOnly_wksp(
+                self.dtable.as_mut_ptr(),
+                dst.as_mut_ptr().cast::<c_void>(),
+                dst.len(),
+                c_src.as_ptr().cast::<c_void>(),
+                c_src.len(),
+                self.decomp_wksp.as_mut_ptr().cast::<c_void>(),
+                self.decomp_wksp.len() * std::mem::size_of::<u64>(),
+                1, // HUF_flags_bmi2
+            )
+        };
+        assert!(unsafe { HUF_isError(decoded) } == 0 && decoded == dst.len());
+        decoded
+    }
+}
+
+struct ZstdFseWorkspace {
+    hist_wksp: [u32; 1024],
+    count: [u32; 256],
+    norm: [i16; 256],
+    ctable: [u32; 4096],
+    ctable_wksp: [u64; 2048],
+    decomp_wksp: [u64; 4096],
+}
+
+impl ZstdFseWorkspace {
+    fn new() -> Self {
+        Self {
+            hist_wksp: [0u32; 1024],
+            count: [0u32; 256],
+            norm: [0i16; 256],
+            ctable: [0u32; 4096],
+            ctable_wksp: [0u64; 2048],
+            decomp_wksp: [0u64; 4096],
+        }
+    }
+
+    #[inline]
+    fn compress(&mut self, src: &[u8], dst: &mut [u8]) -> usize {
+        let mut max_symbol: u32 = 255;
+        // SAFETY: Buffers are statically sized above `HIST_WKSP_SIZE_U32`, `FSE_CTABLE_SIZE_U32(12, 255)`,
+        // and `FSE_BUILD_CTABLE_WORKSPACE_SIZE(255, 12)`, and `dst` is slice-bounded.
+        unsafe {
+            let max_count = HIST_count_wksp(
+                self.count.as_mut_ptr(),
+                &mut max_symbol,
+                src.as_ptr().cast::<c_void>(),
+                src.len(),
+                self.hist_wksp.as_mut_ptr(),
+                self.hist_wksp.len() * std::mem::size_of::<u32>(),
+            );
+            assert!(FSE_isError(max_count) == 0 && max_count < src.len() && max_count > 1);
+            let table_log = FSE_optimalTableLog(12, src.len(), max_symbol);
+            let norm_log = FSE_normalizeCount(
+                self.norm.as_mut_ptr(),
+                table_log,
+                self.count.as_ptr(),
+                src.len(),
+                max_symbol,
+                1,
+            );
+            assert!(FSE_isError(norm_log) == 0);
+            let h_size = FSE_writeNCount(
+                dst.as_mut_ptr().cast::<c_void>(),
+                dst.len(),
+                self.norm.as_ptr(),
+                max_symbol,
+                 norm_log as u32,
+            );
+            assert!(FSE_isError(h_size) == 0 && h_size < dst.len());
+            let build_rc = FSE_buildCTable_wksp(
+                self.ctable.as_mut_ptr(),
+                self.norm.as_ptr(),
+                max_symbol,
+                norm_log as u32,
+                self.ctable_wksp.as_mut_ptr().cast::<c_void>(),
+                self.ctable_wksp.len() * std::mem::size_of::<u64>(),
+            );
+            assert!(FSE_isError(build_rc) == 0);
+            let c_size = FSE_compress_usingCTable(
+                dst[h_size..].as_mut_ptr().cast::<c_void>(),
+                dst.len() - h_size,
+                src.as_ptr().cast::<c_void>(),
+                src.len(),
+                self.ctable.as_ptr(),
+            );
+            assert!(FSE_isError(c_size) == 0 && c_size > 0);
+            h_size + c_size
+        }
+    }
+
+    #[inline]
+    fn decompress(&mut self, c_src: &[u8], dst: &mut [u8]) -> usize {
+        // SAFETY: `decomp_wksp` (`16 KiB`, 8-byte aligned) exceeds `FSE_DECOMPRESS_WKSP_SIZE(12, 255)`
+        // and `c_src` / `dst` are valid byte slices.
+        let decoded = unsafe {
+            FSE_decompress_wksp_bmi2(
+                dst.as_mut_ptr().cast::<c_void>(),
+                dst.len(),
+                c_src.as_ptr().cast::<c_void>(),
+                c_src.len(),
+                12,
+                self.decomp_wksp.as_mut_ptr().cast::<c_void>(),
+                self.decomp_wksp.len() * std::mem::size_of::<u64>(),
+                1,
+            )
+        };
+        assert!(unsafe { FSE_isError(decoded) } == 0 && decoded == dst.len());
+        decoded
+    }
+}
 
 pub fn bench_entropy(
     records: &mut Vec<BenchRecord>,
@@ -386,7 +588,99 @@ pub fn bench_entropy(
         );
     }
 
-    // 8. Competitor: zstd levels 1 and 3 (64 KiB whole-block compress / decompress with reused CCtx/DCtx)
+    // 8. Competitor: libzstd raw huff0 (4-stream Order-0 Huffman stage, 1 instance)
+    {
+        let mut huf0_wksp = ZstdHuf0Workspace::new();
+        let max_dst = block_size + (block_size >> 8) + 256;
+        let mut huf0_compressed = vec![0u8; max_dst];
+        let huf0_len = huf0_wksp.compress(&block, &mut huf0_compressed);
+        huf0_compressed.truncate(huf0_len);
+        let mut huf0_check = vec![0u8; block_size];
+        huf0_wksp.decompress(&huf0_compressed, &mut huf0_check);
+        assert_eq!(huf0_check, block);
+
+        record_space_metric(
+            space,
+            "entropy/zstd_huf0_bits_per_byte",
+            (huf0_compressed.len() as f64 * 8.0) / (block_size as f64),
+        );
+
+        let mut huf0_comp_buf = vec![0u8; max_dst];
+        let mut huf0_decomp_buf = vec![0u8; block_size];
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/zstd_huf0/encode_64kib",
+            "ns/byte",
+            params,
+            || {
+                let written = huf0_wksp.compress(black_box(&block), &mut huf0_comp_buf);
+                black_box(written);
+            },
+        );
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/zstd_huf0/decode_64kib",
+            "ns/byte",
+            params,
+            || {
+                let decoded =
+                    huf0_wksp.decompress(black_box(&huf0_compressed), &mut huf0_decomp_buf);
+                black_box(decoded);
+            },
+        );
+    }
+
+    // 9. Competitor: libzstd raw FSE (tANS Order-0 entropy stage, 1 instance)
+    {
+        let mut fse_wksp = ZstdFseWorkspace::new();
+        let max_dst = block_size + (block_size >> 7) + 1024;
+        let mut zfse_compressed = vec![0u8; max_dst];
+        let zfse_len = fse_wksp.compress(&block, &mut zfse_compressed);
+        zfse_compressed.truncate(zfse_len);
+        let mut zfse_check = vec![0u8; block_size];
+        fse_wksp.decompress(&zfse_compressed, &mut zfse_check);
+        assert_eq!(zfse_check, block);
+
+        record_space_metric(
+            space,
+            "entropy/zstd_fse_bits_per_byte",
+            (zfse_compressed.len() as f64 * 8.0) / (block_size as f64),
+        );
+
+        let mut zfse_comp_buf = vec![0u8; max_dst];
+        let mut zfse_decomp_buf = vec![0u8; block_size];
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/zstd_fse/encode_64kib",
+            "ns/byte",
+            params,
+            || {
+                let written = fse_wksp.compress(black_box(&block), &mut zfse_comp_buf);
+                black_box(written);
+            },
+        );
+
+        measure_bench(
+            records,
+            "entropy",
+            "entropy/zstd_fse/decode_64kib",
+            "ns/byte",
+            params,
+            || {
+                let decoded =
+                    fse_wksp.decompress(black_box(&zfse_compressed), &mut zfse_decomp_buf);
+                black_box(decoded);
+            },
+        );
+    }
+
+    // 10. Competitor: zstd levels 1 and 3 (64 KiB whole-block LZ77+entropy with reused CCtx/DCtx)
     {
         let mut zstd_l1_comp = zstd::bulk::Compressor::new(1).unwrap();
         let mut zstd_l3_comp = zstd::bulk::Compressor::new(3).unwrap();

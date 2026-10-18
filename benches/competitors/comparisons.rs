@@ -153,7 +153,23 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
         "0.13.3",
         &["default"],
         "zstd::bulk::Compressor::new(level).compress(&[u8]) & zstd::bulk::Decompressor::new().decompress(&[u8], capacity)",
-        "Official libzstd C binding at levels 1 and 3 with reused ZSTD_CCtx / ZSTD_DCtx (LZ77 + FSE + 4-stream Huffman whole-block compressor)",
+        "Whole-block LZ77 + FSE + 4-stream Huffman compressor at levels 1 and 3 with reused ZSTD_CCtx / ZSTD_DCtx (not an order-0 coder; raw huff0/FSE stages are benchmarked separately under zstd_huf0 and zstd_fse)",
+    ),
+    (
+        "zstd_huf0",
+        "zstd-sys",
+        "2.0.15+zstd.1.5.7",
+        &["bmi2"],
+        "HUF_compress4X_repeat & HUF_decompress4X_hufOnly_wksp (HUF_flags_bmi2 = 1)",
+        "Raw libzstd huff0 4-stream Order-0 Huffman entropy stage (table build + header + 4X stream encode/decode, no LZ77)",
+    ),
+    (
+        "zstd_fse",
+        "zstd-sys",
+        "2.0.15+zstd.1.5.7",
+        &["bmi2"],
+        "HIST_count_wksp + FSE_normalizeCount + FSE_writeNCount + FSE_buildCTable_wksp + FSE_compress_usingCTable & FSE_decompress_wksp_bmi2",
+        "Raw libzstd FSE (Finite State Entropy / tANS) Order-0 entropy stage (table build + header + stream encode/decode, no LZ77)",
     ),
     (
         "constriction",
@@ -177,7 +193,15 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
         "0.4.1",
         &[],
         "stream_vbyte::encode::encode::<Scalar> & stream_vbyte::decode::decode::<Scalar>",
-        "stream-vbyte v0.4.1 gates x86_ssse3/x86_sse41 behind unstable #![feature(portable_simd)]; benchmarked on stable rustc with Scalar + delta pass",
+        "stream-vbyte v0.4.1 Scalar backend + delta pass (baseline reference; see stream-vbyte-simd for SSSE3/SSE4.1)",
+    ),
+    (
+        "stream-vbyte-simd",
+        "stream-vbyte",
+        "0.4.1",
+        &["ssse3", "sse4.1"],
+        "stream_vbyte::encode::encode::<SvbCrateSimd> & stream_vbyte::decode::decode::<SvbCrateSimd>",
+        "stream-vbyte v0.4.1 Encoder/Decoder trait implementation using stable-Rust SSE4.1/SSSE3 intrinsics matching upstream x86::Sse41 / x86::Ssse3",
     ),
     (
         "bitpacking",
@@ -461,9 +485,11 @@ pub fn build_same_run_comparisons(
         sp("entropy/rans64_x1_bits_per_byte", 0.0),
         sp("entropy/rans64_x4_bits_per_byte", 0.0),
     );
-    let (hc_bpb, cons_bpb, zstd_l1_bpb, zstd_l3_bpb) = (
+    let (hc_bpb, cons_bpb, zstd_huf0_bpb, zstd_fse_bpb, zstd_l1_bpb, zstd_l3_bpb) = (
         sp("entropy/huffman_compress_bits_per_byte", 0.0),
         sp("entropy/constriction_ans_bits_per_byte", 0.0),
+        sp("entropy/zstd_huf0_bits_per_byte", 0.0),
+        sp("entropy/zstd_fse_bits_per_byte", 0.0),
         sp("entropy/zstd_l1_bits_per_byte", 0.0),
         sp("entropy/zstd_l3_bits_per_byte", 0.0),
     );
@@ -476,8 +502,9 @@ pub fn build_same_run_comparisons(
     ] {
         for (c_prefix, c_label, c_bpb) in [
             ("entropy/huffman_compress", "huffman-compress", hc_bpb),
-            ("entropy/zstd_l1", "zstd (level 1)", zstd_l1_bpb),
-            ("entropy/zstd_l3", "zstd (level 3)", zstd_l3_bpb),
+            ("entropy/zstd_huf0", "libzstd::huff0 (4X)", zstd_huf0_bpb),
+            ("entropy/zstd_l1", "zstd (level 1, LZ77+entropy)", zstd_l1_bpb),
+            ("entropy/zstd_l3", "zstd (level 3, LZ77+entropy)", zstd_l3_bpb),
         ] {
             push_comparison(&mut out, records, "entropy", &format!("encode_64kib ({z_var})"), z_enc, z_var, &format!("{c_prefix}/encode_64kib"), c_label, "ns/byte", "bits_per_byte", z_bpb, c_bpb);
             push_comparison(&mut out, records, "entropy", &format!("decode_64kib ({z_var})"), z_dec, z_var, &format!("{c_prefix}/decode_64kib"), c_label, "ns/byte", "bits_per_byte", z_bpb, c_bpb);
@@ -491,8 +518,9 @@ pub fn build_same_run_comparisons(
     ] {
         for (c_prefix, c_label, c_bpb) in [
             ("entropy/constriction_ans", "constriction::DefaultAnsCoder", cons_bpb),
-            ("entropy/zstd_l1", "zstd (level 1)", zstd_l1_bpb),
-            ("entropy/zstd_l3", "zstd (level 3)", zstd_l3_bpb),
+            ("entropy/zstd_fse", "libzstd::FSE (tANS)", zstd_fse_bpb),
+            ("entropy/zstd_l1", "zstd (level 1, LZ77+entropy)", zstd_l1_bpb),
+            ("entropy/zstd_l3", "zstd (level 3, LZ77+entropy)", zstd_l3_bpb),
         ] {
             push_comparison(&mut out, records, "entropy", &format!("encode_64kib ({z_var})"), z_enc, z_var, &format!("{c_prefix}/encode_64kib"), c_label, "ns/byte", "bits_per_byte", z_bpb, c_bpb);
             push_comparison(&mut out, records, "entropy", &format!("decode_64kib ({z_var})"), z_dec, z_var, &format!("{c_prefix}/decode_64kib"), c_label, "ns/byte", "bits_per_byte", z_bpb, c_bpb);
@@ -503,10 +531,12 @@ pub fn build_same_run_comparisons(
     let svb_bpi = sp("int_codecs/stream_vbyte_bits_per_int", 0.0);
     let gv_bpi = sp("int_codecs/group_varint_bits_per_int", 0.0);
     let svb_crate_bpi = sp("int_codecs/stream_vbyte_crate_bits_per_int", 0.0);
+    let svb_simd_bpi = sp("int_codecs/stream_vbyte_simd_bits_per_int", svb_crate_bpi);
     let bp_bpi = sp("int_codecs/bitpacking_4x_bits_per_int", 0.0);
 
     for (comp_prefix, comp_label, comp_bpi) in [
         ("int_codecs/stream_vbyte_crate", "stream_vbyte::Scalar", svb_crate_bpi),
+        ("int_codecs/stream_vbyte_simd", "stream_vbyte::Ssse3/Sse41", svb_simd_bpi),
         ("int_codecs/bitpacking_4x", "bitpacking::BitPacker4x", bp_bpi),
     ] {
         for op in ["encode_deltas", "decode_into", "decode_deltas"] {
