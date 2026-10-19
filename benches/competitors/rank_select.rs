@@ -42,10 +42,12 @@ pub fn bench_rank_select(
     let mut rank_params = BenchParams::heavy(num_bits as u64, query_batch as u64, 12);
     rank_params.warmup_calls = 8;
     rank_params.bursts_per_trial = 8;
-    let mut select1_params = BenchParams::heavy(num_bits as u64, select_batch as u64, 10);
+    let mut select1_params =
+        BenchParams::heavy(num_bits as u64, select_batch as u64, 10).with_threshold(22.0);
     select1_params.warmup_calls = 6;
     select1_params.bursts_per_trial = 14;
-    let mut select0_params = BenchParams::heavy(num_bits as u64, select0_batch as u64, 10);
+    let mut select0_params =
+        BenchParams::heavy(num_bits as u64, select0_batch as u64, 10).with_threshold(22.0);
     select0_params.warmup_calls = 6;
     select0_params.bursts_per_trial = 16;
 

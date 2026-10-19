@@ -358,6 +358,7 @@ fn push_comparison(
     });
 }
 
+#[rustfmt::skip]
 pub fn build_same_run_comparisons(
     records: &[BenchRecord],
     space: &BTreeMap<String, f64>,

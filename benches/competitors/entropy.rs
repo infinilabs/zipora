@@ -15,8 +15,7 @@ use std::hint::black_box;
 
 use bit_vec::BitVec as HuffmanBitVec;
 use constriction::stream::{
-    Decode as ConstrictionDecode,
-    model::SmallContiguousCategoricalEntropyModel,
+    Decode as ConstrictionDecode, model::SmallContiguousCategoricalEntropyModel,
     stack::DefaultAnsCoder,
 };
 use huffman_compress::CodeBuilder as HuffmanCompressBuilder;
@@ -33,38 +32,77 @@ use crate::common::*;
 unsafe extern "C" {
     fn HUF_isError(code: usize) -> u32;
     fn HUF_compress4X_repeat(
-        dst: *mut c_void, dst_size: usize, src: *const c_void, src_size: usize,
-        max_symbol_value: u32, table_log: u32, work_space: *mut c_void, wksp_size: usize,
-        huf_table: *mut usize, repeat: *mut u32, flags: i32,
+        dst: *mut c_void,
+        dst_size: usize,
+        src: *const c_void,
+        src_size: usize,
+        max_symbol_value: u32,
+        table_log: u32,
+        work_space: *mut c_void,
+        wksp_size: usize,
+        huf_table: *mut usize,
+        repeat: *mut u32,
+        flags: i32,
     ) -> usize;
     fn HUF_decompress4X_hufOnly_wksp(
-        dctx: *mut u32, dst: *mut c_void, dst_size: usize, c_src: *const c_void,
-        c_src_size: usize, work_space: *mut c_void, wksp_size: usize, flags: i32,
+        dctx: *mut u32,
+        dst: *mut c_void,
+        dst_size: usize,
+        c_src: *const c_void,
+        c_src_size: usize,
+        work_space: *mut c_void,
+        wksp_size: usize,
+        flags: i32,
     ) -> usize;
     fn HIST_count_wksp(
-        count: *mut u32, max_symbol_value_ptr: *mut u32, src: *const c_void, src_size: usize,
-        work_space: *mut u32, wksp_size: usize,
+        count: *mut u32,
+        max_symbol_value_ptr: *mut u32,
+        src: *const c_void,
+        src_size: usize,
+        work_space: *mut u32,
+        wksp_size: usize,
     ) -> usize;
     fn FSE_isError(code: usize) -> u32;
     fn FSE_optimalTableLog(max_table_log: u32, src_size: usize, max_symbol_value: u32) -> u32;
     fn FSE_normalizeCount(
-        normalized_counter: *mut i16, table_log: u32, count: *const u32, src_size: usize,
-        max_symbol_value: u32, use_low_prob_count: u32,
+        normalized_counter: *mut i16,
+        table_log: u32,
+        count: *const u32,
+        src_size: usize,
+        max_symbol_value: u32,
+        use_low_prob_count: u32,
     ) -> usize;
     fn FSE_writeNCount(
-        buffer: *mut c_void, buffer_size: usize, normalized_counter: *const i16,
-        max_symbol_value: u32, table_log: u32,
+        buffer: *mut c_void,
+        buffer_size: usize,
+        normalized_counter: *const i16,
+        max_symbol_value: u32,
+        table_log: u32,
     ) -> usize;
     fn FSE_buildCTable_wksp(
-        ct: *mut u32, normalized_counter: *const i16, max_symbol_value: u32, table_log: u32,
-        work_space: *mut c_void, wksp_size: usize,
+        ct: *mut u32,
+        normalized_counter: *const i16,
+        max_symbol_value: u32,
+        table_log: u32,
+        work_space: *mut c_void,
+        wksp_size: usize,
     ) -> usize;
     fn FSE_compress_usingCTable(
-        dst: *mut c_void, dst_capacity: usize, src: *const c_void, src_size: usize, ct: *const u32,
+        dst: *mut c_void,
+        dst_capacity: usize,
+        src: *const c_void,
+        src_size: usize,
+        ct: *const u32,
     ) -> usize;
     fn FSE_decompress_wksp_bmi2(
-        dst: *mut c_void, dst_capacity: usize, c_src: *const c_void, c_src_size: usize,
-        max_log: u32, work_space: *mut c_void, wksp_size: usize, bmi2: i32,
+        dst: *mut c_void,
+        dst_capacity: usize,
+        c_src: *const c_void,
+        c_src_size: usize,
+        max_log: u32,
+        work_space: *mut c_void,
+        wksp_size: usize,
+        bmi2: i32,
     ) -> usize;
 }
 
@@ -184,7 +222,7 @@ impl ZstdFseWorkspace {
                 dst.len(),
                 self.norm.as_ptr(),
                 max_symbol,
-                 norm_log as u32,
+                norm_log as u32,
             );
             assert!(FSE_isError(h_size) == 0 && h_size < dst.len());
             let build_rc = FSE_buildCTable_wksp(
@@ -535,7 +573,8 @@ pub fn bench_entropy(
             .unwrap();
         let constriction_dec_model = constriction_enc_model.to_lookup_decoder_model();
 
-        let mut init_coder = DefaultAnsCoder::with_write_backend(Vec::with_capacity(block_size / 4));
+        let mut init_coder =
+            DefaultAnsCoder::with_write_backend(Vec::with_capacity(block_size / 4));
         init_coder
             .encode_iid_symbols_reverse(
                 block.iter().map(|&b| b as usize),

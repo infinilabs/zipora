@@ -417,3 +417,25 @@ pub fn gen_radix_kv_template(n: usize) -> Vec<(u64, u64)> {
     }
     template_kv
 }
+
+/// Consolidates glibc `fastbins` and returns unused top-of-heap / interior pages
+/// to the OS via `libc::malloc_trim(0)` (after equalizing glibc's dynamic
+/// `mmap_threshold` on first call) so full-suite runs and isolated `--filter`
+/// retries start each multi-megabyte benchmark from the same clean allocator state.
+pub fn trim_allocator_arena() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        use std::sync::Once;
+        static INIT_MMAP_THRESHOLD: Once = Once::new();
+        INIT_MMAP_THRESHOLD.call_once(|| {
+            let v: Vec<u8> = Vec::with_capacity(24 * 1024 * 1024);
+            std::hint::black_box(v.as_ptr());
+            drop(v);
+        });
+        // SAFETY: `libc::malloc_trim(0)` is thread-safe and releases unused pages from
+        // glibc's arenas back to the OS.
+        unsafe {
+            libc::malloc_trim(0);
+        }
+    }
+}

@@ -71,7 +71,7 @@ fn main() {
         wait_for_quiet_host_and_repin(12_000, true);
     }
 
-    let mut records = Vec::with_capacity(128);
+    let mut records = Vec::with_capacity(256);
     let mut space_metrics = BTreeMap::new();
 
     let sizes = if smoke_mode {

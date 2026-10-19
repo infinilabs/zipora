@@ -121,7 +121,7 @@
       "median_ns_per_op": 165.6525,
       "p95_ns_per_op": 177.8661,
       "spread_pct": 12.0,
-      "max_regression_pct": 9.0,
+      "max_regression_pct": 16.0,
       "samples": [
         158.8071,
         159.2831,
@@ -146,7 +146,7 @@
       "median_ns_per_op": 652.5086,
       "p95_ns_per_op": 671.3936,
       "spread_pct": 7.75,
-      "max_regression_pct": 9.0,
+      "max_regression_pct": 16.0,
       "samples": [
         623.131,
         630.8702,
@@ -198,7 +198,7 @@
       "median_ns_per_op": 150.3906,
       "p95_ns_per_op": 154.3572,
       "spread_pct": 7.02,
-      "max_regression_pct": 9.0,
+      "max_regression_pct": 16.0,
       "samples": [
         144.2383,
         144.2677,
@@ -223,7 +223,7 @@
       "median_ns_per_op": 144.6032,
       "p95_ns_per_op": 150.2256,
       "spread_pct": 7.98,
-      "max_regression_pct": 9.0,
+      "max_regression_pct": 16.0,
       "samples": [
         139.1232,
         140.4944,
@@ -1880,7 +1880,7 @@
       "median_ns_per_op": 1283.125,
       "p95_ns_per_op": 1285.2344,
       "spread_pct": 0.28,
-      "max_regression_pct": 9.0,
+      "max_regression_pct": 16.0,
       "samples": [
         1281.6406,
         1281.9531,

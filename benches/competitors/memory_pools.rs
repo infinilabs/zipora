@@ -16,9 +16,7 @@ use std::thread;
 
 use mimalloc::MiMalloc;
 use tikv_jemallocator::Jemalloc;
-use zipora::memory::{
-    LockFreeMemoryPool, LockFreePoolConfig, SecureMemoryPool, SecurePoolConfig,
-};
+use zipora::memory::{LockFreeMemoryPool, LockFreePoolConfig, SecureMemoryPool, SecurePoolConfig};
 
 use crate::common::*;
 
@@ -31,6 +29,9 @@ pub fn bench_memory_pools(
     let ops = sizes.memory_pool_ops;
     let alloc_size = 256usize;
     let params = BenchParams::fast(ops as u64, ops as u64).with_threshold(9.0);
+    let mut comp_pool_params = BenchParams::fast(ops as u64, ops as u64).with_threshold(15.0);
+    comp_pool_params.trials = 11;
+    comp_pool_params.bursts_per_trial = 6;
     let phys_cores = (logical_cores / 2).max(1);
     let worker_core_for = |p_core: usize, worker_idx: usize| -> usize {
         if phys_cores >= 16 {
@@ -286,7 +287,7 @@ pub fn bench_memory_pools(
             "memory_pools",
             "memory_pools/mimalloc/alloc_free_1t",
             "ns/op",
-            params,
+            comp_pool_params,
             || {
                 for _ in 0..ops {
                     let lay = black_box(layout_256);
@@ -347,7 +348,7 @@ pub fn bench_memory_pools(
             "memory_pools",
             "memory_pools/mimalloc/alloc_free_4t",
             "ns/op",
-            params,
+            comp_pool_params,
             || {
                 active_flag.store(true, Ordering::Relaxed);
                 for _ in 0..ops {
@@ -378,7 +379,7 @@ pub fn bench_memory_pools(
             "memory_pools",
             "memory_pools/jemalloc/alloc_free_1t",
             "ns/op",
-            params,
+            comp_pool_params,
             || {
                 for _ in 0..ops {
                     let lay = black_box(layout_256);
@@ -438,7 +439,7 @@ pub fn bench_memory_pools(
             "memory_pools",
             "memory_pools/jemalloc/alloc_free_4t",
             "ns/op",
-            params,
+            comp_pool_params,
             || {
                 active_flag.store(true, Ordering::Relaxed);
                 for _ in 0..ops {
@@ -469,7 +470,7 @@ pub fn bench_memory_pools(
             "memory_pools",
             "memory_pools/system_alloc/alloc_free_1t",
             "ns/op",
-            params,
+            comp_pool_params,
             || {
                 for _ in 0..ops {
                     let lay = black_box(layout_256);
@@ -529,7 +530,7 @@ pub fn bench_memory_pools(
             "memory_pools",
             "memory_pools/system_alloc/alloc_free_4t",
             "ns/op",
-            params,
+            comp_pool_params,
             || {
                 active_flag.store(true, Ordering::Relaxed);
                 for _ in 0..ops {

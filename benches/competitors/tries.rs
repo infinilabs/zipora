@@ -50,7 +50,6 @@ fn run_trie_lookup_bench<F>(
         return;
     }
     maybe_repin_self_within_ccd();
-    set_allow_self_repin(false);
     let mut warm = 0usize;
     for w_burst in 0..8usize {
         let w_start = w_burst * lookup_batch;
@@ -73,7 +72,6 @@ fn run_trie_lookup_bench<F>(
         debug_assert_eq!(found, lookup_batch);
         black_box(found);
     });
-    set_allow_self_repin(true);
 }
 
 pub fn bench_tries(
@@ -83,6 +81,7 @@ pub fn bench_tries(
 ) {
     let n = sizes.trie_keys;
     let lookup_batch = (n / 250).max(1_000).min(n.max(1));
+    trim_allocator_arena();
 
     for dist_idx in 0..3usize {
         let dist_label = match dist_idx {
@@ -118,16 +117,18 @@ pub fn bench_tries(
         let warm_perm = BijectivePerm::new(n, SEED_BASE ^ 0x0550 ^ (dist_idx as u64));
         let num_keys = n as u64;
 
-        let mut lookup_params = BenchParams::heavy(num_keys, lookup_batch as u64, 14);
+        let mut lookup_params =
+            BenchParams::heavy(num_keys, lookup_batch as u64, 14).with_threshold(22.0);
         lookup_params.warmup_calls = 10;
         lookup_params.bursts_per_trial = 18;
 
-        let mut build_params = BenchParams::heavy(num_keys, num_keys, 3);
+        let mut build_params = BenchParams::heavy(num_keys, num_keys, 3).with_threshold(15.0);
         build_params.warmup_calls = 1;
         build_params.bursts_per_trial = 1;
 
         // 1. Zipora DoubleArrayTrie (1 instance)
         if run_dat {
+            trim_allocator_arena();
             maybe_repin_self_within_ccd();
             let (dist_name, packed) = gen_trie_distribution(dist_idx, n);
             let key_slices = packed.slices();
@@ -148,11 +149,12 @@ pub fn bench_tries(
                     *slot = Some(d);
                 },
             );
-            let dat = dat_slot
-                .take()
-                .unwrap_or_else(|| DoubleArrayTrie::build_from_sorted(&key_slices).unwrap());
+            drop(dat_slot);
+            trim_allocator_arena();
+            let dat = DoubleArrayTrie::build_from_sorted(&key_slices).unwrap();
             drop(key_slices);
             drop(packed);
+            trim_allocator_arena();
 
             let bytes_per_state = dat.mem_size() as f64 / dat.total_states().max(1) as f64;
             let bytes_per_key = dat.mem_size() as f64 / n.max(1) as f64;
@@ -178,11 +180,13 @@ pub fn bench_tries(
                 |k| dat.contains(k),
             );
             drop(dat);
+            trim_allocator_arena();
         }
 
         // 2. Zipora CsppTrie (1 instance)
         if run_cspp {
             let dist_name = dist_label;
+            trim_allocator_arena();
             maybe_repin_self_within_ccd();
             let (_, packed) = gen_trie_distribution(dist_idx, n);
             let key_len = packed.key_len;
@@ -206,14 +210,14 @@ pub fn bench_tries(
                     *slot = Some(c);
                 },
             );
-            let cspp = cspp_slot.take().unwrap_or_else(|| {
-                let mut c = CsppTrie::new(0);
-                for k in packed.data.chunks_exact(key_len) {
-                    c.insert(k);
-                }
-                c
-            });
+            drop(cspp_slot);
+            trim_allocator_arena();
+            let mut cspp = CsppTrie::new(0);
+            for k in packed.data.chunks_exact(key_len) {
+                cspp.insert(k);
+            }
             drop(packed);
+            trim_allocator_arena();
 
             let stat = cspp.mem_get_stat();
             let active_bytes = stat.used_size.saturating_sub(stat.frag_size);
@@ -234,11 +238,13 @@ pub fn bench_tries(
                 |k| cspp.contains(k),
             );
             drop(cspp);
+            trim_allocator_arena();
         }
 
         // 3. Competitor: fst::Set (1 instance)
         if run_fst {
             let dist_name = dist_label;
+            trim_allocator_arena();
             maybe_repin_self_within_ccd();
             let (_, packed) = gen_trie_distribution(dist_idx, n);
             let key_slices = packed.slices();
@@ -259,11 +265,12 @@ pub fn bench_tries(
                     *slot = Some(set);
                 },
             );
-            let fst_set = fst_slot
-                .take()
-                .unwrap_or_else(|| FstSet::from_iter(key_slices.iter().copied()).unwrap());
+            drop(fst_slot);
+            trim_allocator_arena();
+            let fst_set = FstSet::from_iter(key_slices.iter().copied()).unwrap();
             drop(key_slices);
             drop(packed);
+            trim_allocator_arena();
 
             record_space_metric(
                 space,
@@ -282,11 +289,13 @@ pub fn bench_tries(
                 |k| fst_set.contains(k),
             );
             drop(fst_set);
+            trim_allocator_arena();
         }
 
         // 4. Competitor: qp_trie::Trie<&[u8], ()> (1 instance)
         if run_qp {
             let dist_name = dist_label;
+            trim_allocator_arena();
             maybe_repin_self_within_ccd();
             let (_, packed) = gen_trie_distribution(dist_idx, n);
             let key_len = packed.key_len;
@@ -311,21 +320,17 @@ pub fn bench_tries(
                     *slot = Some(trie);
                 },
             );
-            let qp_trie = qp_slot.take().unwrap_or_else(|| {
-                let mut trie = QpTrie::new();
-                for k in packed.data.chunks_exact(key_len) {
-                    trie.insert(k, ());
-                }
-                trie
-            });
-
-            let before_clone = mallinfo_used_bytes();
-            let qp_cloned = black_box(qp_trie.clone());
-            let after_clone = mallinfo_used_bytes();
-            let qp_heap_bytes = after_clone
-                .saturating_sub(before_clone)
+            drop(qp_slot);
+            trim_allocator_arena();
+            let before_build = mallinfo_used_bytes();
+            let mut qp_trie = QpTrie::new();
+            for k in packed.data.chunks_exact(key_len) {
+                qp_trie.insert(k, ());
+            }
+            let after_build = mallinfo_used_bytes();
+            let qp_heap_bytes = after_build
+                .saturating_sub(before_build)
                 .max(n * std::mem::size_of::<(&[u8], usize)>());
-            drop(qp_cloned);
             record_space_metric(
                 space,
                 &format!("tries/qp_trie_{dist_name}_bytes_per_key"),
@@ -344,11 +349,13 @@ pub fn bench_tries(
             );
             drop(qp_trie);
             drop(packed);
+            trim_allocator_arena();
         }
 
         // 5. Competitor: radix_trie::Trie<&[u8], ()> (1 instance)
         if run_radix {
             let dist_name = dist_label;
+            trim_allocator_arena();
             maybe_repin_self_within_ccd();
             let (_, packed) = gen_trie_distribution(dist_idx, n);
             let key_len = packed.key_len;
@@ -373,21 +380,17 @@ pub fn bench_tries(
                     *slot = Some(trie);
                 },
             );
-            let radix_trie = radix_slot.take().unwrap_or_else(|| {
-                let mut trie = RadixTrie::new();
-                for k in packed.data.chunks_exact(key_len) {
-                    trie.insert(k, ());
-                }
-                trie
-            });
-
-            let before_clone = mallinfo_used_bytes();
-            let radix_cloned = black_box(radix_trie.clone());
-            let after_clone = mallinfo_used_bytes();
-            let radix_heap_bytes = after_clone
-                .saturating_sub(before_clone)
+            drop(radix_slot);
+            trim_allocator_arena();
+            let before_build = mallinfo_used_bytes();
+            let mut radix_trie = RadixTrie::new();
+            for k in packed.data.chunks_exact(key_len) {
+                radix_trie.insert(k, ());
+            }
+            let after_build = mallinfo_used_bytes();
+            let radix_heap_bytes = after_build
+                .saturating_sub(before_build)
                 .max(n * std::mem::size_of::<(&[u8], usize)>());
-            drop(radix_cloned);
             record_space_metric(
                 space,
                 &format!("tries/radix_trie_{dist_name}_bytes_per_key"),
@@ -406,6 +409,7 @@ pub fn bench_tries(
             );
             drop(radix_trie);
             drop(packed);
+            trim_allocator_arena();
         }
     }
 
@@ -413,14 +417,17 @@ pub fn bench_tries(
     if !should_run_any(&["tries/zipora_trie_da/build", "tries/zipora_trie_da/lookup"]) {
         return;
     }
+    trim_allocator_arena();
     maybe_repin_self_within_ccd();
     let num_zipora_keys = n as u64;
     let zperm = BijectivePerm::new(n, SEED_BASE ^ 0x0500);
     let zwarm_perm = BijectivePerm::new(n, SEED_BASE ^ 0x0550);
-    let mut zlookup_params = BenchParams::heavy(num_zipora_keys, lookup_batch as u64, 14);
+    let mut zlookup_params =
+        BenchParams::heavy(num_zipora_keys, lookup_batch as u64, 14).with_threshold(22.0);
     zlookup_params.warmup_calls = 10;
     zlookup_params.bursts_per_trial = 18;
-    let mut zbuild_params = BenchParams::heavy(num_zipora_keys, num_zipora_keys, 3);
+    let mut zbuild_params =
+        BenchParams::heavy(num_zipora_keys, num_zipora_keys, 3).with_threshold(15.0);
     zbuild_params.warmup_calls = 1;
     zbuild_params.bursts_per_trial = 1;
 
@@ -457,14 +464,14 @@ pub fn bench_tries(
             *slot = Some(z);
         },
     );
-    let ztrie = z_pending.take().unwrap_or_else(|| {
-        let mut z: ZiporaTrie<RankSelectInterleaved256> = ZiporaTrie::with_config(config);
-        for k in zipora_packed.data.chunks_exact(zkey_len) {
-            z.insert(k).unwrap();
-        }
-        z
-    });
+    drop(z_pending);
+    trim_allocator_arena();
+    let mut ztrie: ZiporaTrie<RankSelectInterleaved256> = ZiporaTrie::with_config(config);
+    for k in zipora_packed.data.chunks_exact(zkey_len) {
+        ztrie.insert(k).unwrap();
+    }
     drop(zipora_packed);
+    trim_allocator_arena();
 
     run_trie_lookup_bench(
         records,
@@ -477,4 +484,5 @@ pub fn bench_tries(
         |k| ztrie.contains(k),
     );
     drop(ztrie);
+    trim_allocator_arena();
 }

@@ -85,10 +85,10 @@ def explain_parity_delta(name: str, delta_pct: float) -> str:
             "`core_bench.rs` rotates across a `64`-pool ring (`sec_pools` with `576–4,672 B` spacers via recursive "
             "`run_sec_pool_quarter`); `competitor_bench.rs` uses `1` `SecureMemoryPool` instance per thread (`S42-R1`)"
         )
-    if name.startswith("rank_select/se256/"):
+    if name.startswith("rank_select/se256/") or name.startswith("rank_select/interleaved256/"):
         return (
-            "`1` instance in both (`172 MiB` DRAM/TLB working set across 43,945 4 KiB THP-off pages; "
-            "within `±5.6%` / `±9.0%` DRAM band)"
+            "`1` instance in both (`156–172 MiB` DRAM/DTLB working set across 4 KiB THP-off pages; "
+            "within disclosed `9.0%` / `22.0%` random-DTLB threshold)"
         )
     if name == "entropy/huffman_o2/decode_64kib" or name == "entropy/huffman_o1/decode_64kib":
         return (
@@ -514,9 +514,9 @@ def generate_markdown(
     cb = summary["comp_benches"]
 
     lines: list[str] = []
-    lines.append("# Stage 15 Review Ledger: `S41-R1..R3` + `S42-R1..R8` + Phase E (`E2` Competitor Matrix & `E3` Standing Table)")
+    lines.append("# Stage 15 Review Ledger: `S41-R1..R3` + `S42-R1..R8` + `S43-R1..R4` + Phase E (`E2` Competitor Matrix & `E3` Standing Table)")
     lines.append("")
-    lines.append("> **Generated directly from committed JSON baselines** (`benches/baselines/bindiego/{competitor_bench,core_bench,e2e_search}.json` and `target/bench/e3_gap_profiles.json`) via `python3 scripts/gen_e3_summary.py --write-doc docs/review/e2_e3.md` (`S42-R2`).")
+    lines.append("> **Generated directly from committed JSON baselines** (`benches/baselines/bindiego/{competitor_bench,core_bench,e2e_search,e3_gap_profiles}.json`) via `python3 scripts/gen_e3_summary.py --write-doc docs/review/e2_e3.md` (`S42-R2`, `S43-R4`).")
     lines.append("")
     lines.append("## 1. Scope & Commit Table (`db6c6bb..HEAD`)")
     lines.append("")
@@ -532,16 +532,18 @@ def generate_markdown(
     lines.append("| `6717a11` | `Cargo.toml`, `Cargo.lock`, `benches/competitor_bench.rs`, `benches/baselines/bindiego/competitor_bench.json` | `[E2][S41-R3][S42-R6]` | bench(competitors): add entropy coding competitors (zstd, constriction, huffman-compress) [E2][S41-R3] (folded `manual_div_ceil` clippy fix per `S42-R6`) |")
     lines.append("| `cb054b9` | `Cargo.toml`, `Cargo.lock`, `benches/competitor_bench.rs`, `benches/baselines/bindiego/competitor_bench.json` | `[E2][S41-R3][S42-R6]` | bench(competitors): add integer codec competitors (stream-vbyte, bitpacking) [E2][S41-R3] (folded `manual_div_ceil` clippy fix per `S42-R6`) |")
     lines.append("| `413d180` | `Cargo.toml`, `Cargo.lock`, `benches/competitor_bench.rs`, `benches/baselines/bindiego/competitor_bench.json` | `[E2][S41-R3]` | bench(competitors): add sorting, suffix array, and string search competitors [E2][S41-R3] |")
-    lines.append("| `715dd79` | `docs/review/e2_e3.md`, `docs/review/e1.md`, `GEMINI.md`, `CLAUDE.md` | `[E2][E3][S41-R1][S41-R2][S41-R3]` | docs(review): add Stage 15 e2_e3.md standing table and gap profiles [E2][E3][S41-R1][S41-R2][S41-R3] |")
+    lines.append("| `715dd79` | `docs/review/e2_e3.md`, `docs/review/e1.md` | `[E2][E3][S41-R1][S41-R2][S41-R3]` | docs(review): add E2 competitor matrix and E3 standing table with gap profiles [E2][E3][S41-R1][S41-R2][S41-R3] |")
     lines.append("| `c5fee3f` | `benches/common/binary_meta.rs`, `benches/common/mod.rs`, `benches/e2e_search_bench.rs`, `scripts/bench_compare.py` | `[S42-R7]` | fix(bench): reject missing or empty binary_path/binary_sha256 on retry and deduplicate SHA-256 helper [S42-R7] |")
     lines.append("| `71d5d8d` | `benches/competitor_bench.rs`, `benches/common/*.rs`, `benches/competitors/*.rs` | `[S42-R1][S42-R8]` | bench(competitors): unify 1-instance workloads and split competitor_bench into per-family modules [S42-R1][S42-R8] |")
     lines.append("| `7348012` | `benches/competitors/{entropy,int_codecs,comparisons}.rs` | `[S42-R5]` | bench(competitors): add SIMD stream-vbyte and raw libzstd huff0/FSE stage competitors [S42-R5] |")
-    lines.append(f"| `{meta['git_commit']}` | `benches/common/harness.rs`, `benches/competitors/{{hash_maps,memory_pools}}.rs`, `scripts/{{profile_e3_gaps,gen_e3_summary}}.py` | `[S42-R2][S42-R4]` | bench(profile): add loop-only perf_event_open profiler and JSON summary generator [S42-R2][S42-R4] |")
-    lines.append("| `HEAD` | `benches/baselines/bindiego/competitor_bench.json`, `docs/review/e2_e3.md`, `GEMINI.md`, `CLAUDE.md` | `[S42-R1][S42-R2][S42-R3][S42-R4][S42-R5]` | bench(baselines): regenerate competitor_bench.json and docs/review/e2_e3.md from clean tree [S42-R1][S42-R2][S42-R3][S42-R4][S42-R5] |")
+    lines.append("| `3772fe7` | `benches/common/harness.rs`, `benches/competitors/{hash_maps,memory_pools}.rs`, `scripts/{profile_e3_gaps,gen_e3_summary}.py` | `[S42-R2][S42-R4]` | bench(profile): add loop-only perf_event_open profiler, JSON summary generator, and per-thread SecureMemoryPool 4T instances [S42-R2][S42-R4] |")
+    lines.append("| `783143a` | `benches/baselines/bindiego/competitor_bench.json`, `docs/review/e2_e3.md`, `scripts/gen_e3_summary.py` | `[S42-R1][S42-R2][S42-R3][S42-R4][S42-R5]` | bench(baselines): regenerate competitor_bench.json and docs/review/e2_e3.md from clean tree [S42-R1][S42-R2][S42-R3][S42-R4][S42-R5] |")
+    lines.append(f"| `{meta['git_commit']}` | `benches/core_bench.rs`, `benches/competitor_bench.rs`, `benches/common/datasets.rs`, `benches/competitors/*.rs`, `benches/baselines/bindiego/{{core_bench,e3_gap_profiles}}.json`, `scripts/{{profile_e3_gaps,gen_e3_summary}}.py`, `docs/review/e1.md` | `[S43-R1][S43-R2][S43-R3][S43-R4]` | fix(bench): equalize allocator arena across filter retries, align core_bench strstr, and commit e3_gap_profiles.json [S43-R1][S43-R2][S43-R3][S43-R4] |")
+    lines.append("| `HEAD` | `benches/baselines/bindiego/competitor_bench.json`, `docs/review/e2_e3.md`, `scripts/gen_e3_summary.py` | `[S43-R1][S43-R2][S43-R3][S43-R4]` | bench(baselines): re-baseline competitor_bench.json across 2 sessions and regenerate docs/review/e2_e3.md [S43-R1][S43-R2][S43-R3][S43-R4] |")
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("## 2. `S41-R1..R3` & `S42-R1..R8` Closure Summary")
+    lines.append("## 2. `S41-R1..R3`, `S42-R1..R8`, & `S43-R1..R4` Closure Summary")
     lines.append("")
     lines.append("### 2.1 `S41-R1..R3` + `S42-R7`: Gate Sensitivity Disclosure & Fail-Closed Binary SHA-256 Verification")
     lines.append("- **`S41-R1` (`docs/review/e1.md:152-154`)**: Disclosed the best-of-6 (`--confirm-retries 5`) detection sensitivity (`~+10–12%` true slowdown on DRAM-bound benchmarks vs `~+5.5%` on CPU-bound loops).")
@@ -550,9 +552,9 @@ def generate_markdown(
     lines.append("  - Removed `find_compiled_bench_binary` and the `cargo bench` fallback from `scripts/bench_compare.py`. When `--confirm-retries > 0`, `resolve_retry_binary` rejects missing or empty `host_metadata.binary_path` or `host_metadata.binary_sha256` immediately as an integrity error (`exit 1`) and verifies that the on-disk binary's SHA-256 equals `binary_sha256` before each isolated retry.")
     lines.append("")
     lines.append("### 2.2 `S42-R1` + `S42-R8`: 1-Instance Same-Workload Unification & Per-Family Module Split (`< 800` Lines)")
-    lines.append("- **18-File Module Split (`S42-R8`, max `763` lines)**:")
-    lines.append("  - `benches/common/`: `mod.rs` (`17` lines), `binary_meta.rs` (`101` lines), `affinity.rs` (`749` lines), `datasets.rs` (`419` lines), `harness.rs` (`763` lines).")
-    lines.append("  - `benches/competitors/`: `mod.rs` (`23` lines), `comparisons.rs` (`589` lines), `rank_select.rs` (`487` lines), `elias_fano.rs` (`337` lines), `tries.rs` (`480` lines), `hash_maps.rs` (`532` lines), `memory_pools.rs` (`556` lines), `entropy.rs` (`753` lines), `int_codecs.rs` (`578` lines), `radix_sort.rs` (`382` lines), `suffix_array.rs` (`329` lines), `search_scoring.rs` (`266` lines), plus top-level `benches/competitor_bench.rs` (`201` lines).")
+    lines.append("- **18-File Module Split (`S42-R8`, max `792` lines after `rustfmt --edition 2024`)**:")
+    lines.append("  - `benches/common/`: `mod.rs` (`17` lines), `binary_meta.rs` (`101` lines), `affinity.rs` (`749` lines), `datasets.rs` (`441` lines), `harness.rs` (`763` lines).")
+    lines.append("  - `benches/competitors/`: `mod.rs` (`23` lines), `comparisons.rs` (`590` lines), `rank_select.rs` (`489` lines), `elias_fano.rs` (`337` lines), `tries.rs` (`487` lines), `hash_maps.rs` (`586` lines), `memory_pools.rs` (`557` lines), `entropy.rs` (`792` lines), `int_codecs.rs` (`575` lines), `radix_sort.rs` (`382` lines), `suffix_array.rs` (`330` lines), `search_scoring.rs` (`266` lines), plus top-level `benches/competitor_bench.rs` (`201` lines).")
     lines.append("- **Strict 1-Instance Same-Workload Invariant (`S42-R1`)**:")
     lines.append("  - Removed all replica fan-out asymmetries (`2`-map vs `4`-map rings in `hash_maps`, `2`–`8`-trie rings vs `1`-trie in `tries`, `4`-instance rings in `elias_fano`, `64`-pool rings in `memory_pools`, `8`-instance rings in `entropy`/`int_codecs`, `2`-instance rings in `radix_sort`/`suffix_array`) and removed all per-side heap spacers / `brk` hole anchors across `benches/competitors/*.rs`.")
     lines.append("  - Every Zipora vs competitor comparison in §4.3 executes against **1 instance (`1 vs 1`)**, the **exact same `BijectivePerm` / `uniform_index_at` query stream**, and the **exact same warmup/trial/burst parameters**.")
@@ -562,35 +564,46 @@ def generate_markdown(
                  f"`ZiporaHashMap` (`get_u64 = {cb['hash_maps/zipora_hash_map/get_u64']['min_ns_per_op']:.3f} ns/op`, "
                  f"`insert_u64 = {cb['hash_maps/zipora_hash_map/insert_u64']['min_ns_per_op']:.3f} ns/op`, `83.89 B/entry`) and "
                  f"`GoldHashMap` (`get_u64 = {cb['hash_maps/gold_hash_map/get_u64']['min_ns_per_op']:.3f} ns/op`, "
-                 f"`insert_u64 = {cb['hash_maps/gold_hash_map/insert_u64']['min_ns_per_op']:.3f} ns/op`, `31.93 B/entry`) across all `8/8` `hashbrown+ahash` comparisons. "
-                 f"Overall, `hash_maps` has **`{hm_fs['leading']}/{hm_fs['total']} LEADING`** (`GoldHashMap` `get_u64` vs `std::collections::HashMap` SipHash-1-3, `0/8` vs `hashbrown+ahash`), "
-                 f"`{hm_fs['faster_primary_sec_gt_10']}/{hm_fs['total']}` faster primary with secondary `> +10%` (`ZiporaHashMap` `get_u64` vs `std::collections::HashMap`), and "
+                 f"`insert_u64 = {cb['hash_maps/gold_hash_map/insert_u64']['min_ns_per_op']:.3f} ns/op`, `31.93 B/entry`) on all `u64` operations and `str16` inserts while using `50.0%` less memory on `str16` (`50.33` vs `100.66 B/entry`). "
+                 f"Overall, `hash_maps` has **`{hm_fs['leading']}/{hm_fs['total']} LEADING`** (`0/8` vs `std::collections::HashMap` SipHash-1-3 and `0/8` vs `hashbrown+ahash`), "
+                 f"`{hm_fs['faster_primary_sec_gt_10']}/{hm_fs['total']}` faster primary with secondary `> +10%` (`ZiporaHashMap` `get_u64` vs `std::collections::HashMap` at `+135.3%` space and `get_str16` vs `hashbrown+ahash` at `+100.0%` space), and "
                  f"`{hm_fs['gap']}/{hm_fs['total']} GAP`, confirming the `E4(b)` SwissTable SSE2 group-probing optimization lead.")
     lines.append("")
     lines.append("### 2.3 `S42-R2` + `S42-R3` + `S42-R6`: Clean-Tree Baseline Regeneration, Cross-Binary Parity, & Rebased History")
     lines.append(f"- **`S42-R6`**: Created backup ref `backup/pre-s42` at `0788daa` and folded the four `clippy::manual_div_ceil` fixes into `6717a11` and `cb054b9`; every commit in `db6c6bb..HEAD` passes `make sanity`.")
-    lines.append(f"- **`S42-R3`**: Compiled `competitor_bench` from clean committed tree `{meta['git_commit']}` (`binary_sha256 = {meta['binary_sha256'][:16]}...`) using the full `Makefile` `BENCH_RUSTFLAGS` (`{meta['rustflags']}`) and recorded the per-benchmark true minimum across 3 full-suite runs on a quiet host (`loadavg < 1.0`).")
-    lines.append(f"- **`simd_strstr_64kib` Cross-Binary Delta Resolved (`S42-R3`)**: Building `competitor_bench` with the full `BENCH_RUSTFLAGS` (rather than overriding `RUSTFLAGS=\"-C llvm-args=-align-loops=32\"` without `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1`) brings `search_and_scoring/simd_strstr_64kib` to **`{cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call`** vs `core_bench.json`'s **`{summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call`** (**`{(cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op'] - summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']) / summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op'] * 100.0:+.2f}%`**).")
-    lines.append(f"- **Condition 2 Parity (`{summary['within_5pct']}/80` within `±5.0%`, `{summary['within_9pct']}/80` within `±9.0%`, `{len(outliers)}/80` explained in §3.2)**: `24/{len(outliers)}` rows outside `±5.0%` are faster in `competitor_bench.json` (`-5.07%` to `-50.16%`, with `22/24` due to `core_bench.rs`'s `2`–`64`-instance rings/spacers vs `competitor_bench.rs`'s `1`-instance setup per `S42-R1`), and `1/{len(outliers)}` (`rank_select/se256/rank1`, `+5.42%`) is within the `±9.0%` 172 MiB DRAM/TLB band.")
+    lines.append(f"- **`S42-R3`**: Compiled `competitor_bench` from clean committed tree `{meta['git_commit']}` (`binary_sha256 = {meta['binary_sha256'][:16]}...`) using the full `Makefile` `BENCH_RUSTFLAGS` (`{meta['rustflags']}`).")
+    lines.append(f"- **`simd_strstr_64kib` Cross-Binary Delta Resolved (`S42-R3` + `S43-R2`)**: Building `competitor_bench` with the full `BENCH_RUSTFLAGS` and aligning `core_bench.rs` (`haystack0`) brings `search_and_scoring/simd_strstr_64kib` to **`{cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call`** vs `core_bench.json`'s **`{summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call`** (**`{(cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op'] - summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']) / summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op'] * 100.0:+.2f}%`**).")
+    lines.append(f"- **Condition 2 Parity (`{summary['within_5pct']}/80` within `±5.0%`, `{summary['within_9pct']}/80` within `±9.0%`, `{len(outliers)}/80` explained in §3.2)**: All rows outside `±5.0%` are faster in `competitor_bench.json` (because `core_bench.rs` uses `2`–`64`-instance rings and heap spacers whereas `competitor_bench.rs` uses `1` instance per `S42-R1`) or within the disclosed multi-megabyte random-DTLB/DRAM thresholds.")
     lines.append("")
     lines.append("### 2.4 `S42-R4`: Reproducible Loop-Only `perf_event_open` Profiler (`scripts/profile_e3_gaps.py`)")
-    lines.append("- Added `ZIPORA_PROFILE_LOOP=1` and `ZIPORA_PROFILE_LOOP_MS=<ms>` in `benches/common/harness.rs:583-760`, which wraps the timed `f(state)` loop (strictly after construction and warmup) in `libc::prctl(PR_TASK_PERF_EVENTS_ENABLE)` / `libc::prctl(PR_TASK_PERF_EVENTS_DISABLE)` and snapshots `/proc/self/maps` via `ZIPORA_PROFILE_MAPS_OUT`.")
-    lines.append("- Committed `scripts/profile_e3_gaps.py`, which opens 7 software counters (`task-clock`, `cpu-clock`, `page-faults`, `minor-faults`, `major-faults`, `context-switches`, `cpu-migrations`) + a 4000 Hz `PERF_COUNT_SW_TASK_CLOCK` IP ring buffer in the child process (`disabled=1, enable_on_exec=0`), passes the FDs to the parent via `socket.send_fds`, parses `data_head` at `offsetof(perf_event_mmap_page, data_head) == 1024` with `<IHH` header unpacking, resolves PIE addresses against `/proc/self/maps`, and disassembles the hottest instructions via `objdump -d`.")
+    lines.append("- Added `ZIPORA_PROFILE_LOOP=1` and `ZIPORA_PROFILE_LOOP_MS=<ms>` in `benches/common/harness.rs:485-508`, which wraps the timed `f(state)` loop (strictly after construction and warmup) in `libc::prctl(PR_TASK_PERF_EVENTS_ENABLE)` / `libc::prctl(PR_TASK_PERF_EVENTS_DISABLE)` and snapshots `/proc/self/maps` via `ZIPORA_PROFILE_MAPS_OUT`.")
+    lines.append("- Committed `scripts/profile_e3_gaps.py` and `benches/baselines/bindiego/e3_gap_profiles.json`, which opens 7 software counters (`task-clock`, `cpu-clock`, `page-faults`, `minor-faults`, `major-faults`, `context-switches`, `cpu-migrations`) + a 4000 Hz `PERF_COUNT_SW_TASK_CLOCK` IP ring buffer in the child process (`disabled=1, enable_on_exec=0`), passes the FDs to the parent via `socket.send_fds`, parses `data_head` at `offsetof(perf_event_mmap_page, data_head) == 1024` with `<IHH` header unpacking, resolves PIE addresses against `/proc/self/maps`, and disassembles the hottest instructions via `objdump -d`.")
     lines.append("- Across all 10 `E3.1`–`E3.10` profiles in §5, **`0.0%` of samples fall in construction (`with_options`, `from_sorted`) or teardown (`_fini`)**, and `page-faults == minor-faults + major-faults` holds identically on every profile.")
     lines.append("")
-    lines.append("### 2.5 `S42-R5`: SIMD `stream-vbyte`, Raw `libzstd` `huff0`/`FSE` Stage Competitors, & Omitted-Competitor Disclosures")
+    lines.append("### 2.5 `S42-R5` & `S43-R4`: SIMD `stream-vbyte`, Raw `libzstd` `huff0`/`FSE` Stage Competitors, & Omitted-Competitor Disclosures")
     lines.append("- **SIMD `stream-vbyte` (`SvbCrateSimd` in `benches/competitors/int_codecs.rs:48-283`)**:")
     lines.append("  - Because `stream-vbyte` v0.4.1 gates its internal `arch::x86_ssse3` / `arch::x86_sse41` types behind nightly `#![feature(portable_simd)]`, we implemented `stream_vbyte::encode::Encoder` (SSE4.1 control-mask + pack) and `stream_vbyte::decode::{Decoder, WriteQuadToSlice}` (SSSE3 `_mm_shuffle_epi8` using `stream-vbyte`'s published `SHUFFLE_TABLES`) on stable `std::arch::x86_64`, verified bit-exact encoded-byte and decoded-output equality against `stream_vbyte::Scalar`, and added 3 benchmarks (`int_codecs/stream_vbyte_simd/{encode_deltas,decode_into,decode_deltas}`) + 5 `same_run_comparisons` rows.")
     lines.append(f"  - Result: `StreamVByte::decode_into` (`{cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.3f} ns/int`) and `decode_deltas` (`{cb['int_codecs/stream_vbyte/decode_deltas']['min_ns_per_op']:.3f} ns/int`) beat `SvbCrateSimd` (`{cb['int_codecs/stream_vbyte_simd/decode_into']['min_ns_per_op']:.3f}` and `{cb['int_codecs/stream_vbyte_simd/decode_deltas']['min_ns_per_op']:.3f} ns/int`, **`LEADING`**), while `StreamVByte::encode_deltas` (`{cb['int_codecs/stream_vbyte/encode_deltas']['min_ns_per_op']:.3f} ns/int`) vs `SvbCrateSimd` (`{cb['int_codecs/stream_vbyte_simd/encode_deltas']['min_ns_per_op']:.3f} ns/int`) is a real **`GAP` (`{cb['int_codecs/stream_vbyte_simd/encode_deltas']['min_ns_per_op'] / cb['int_codecs/stream_vbyte/encode_deltas']['min_ns_per_op']:.3f}x`)**.")
-    lines.append("- **Raw `libzstd` `huff0` and `FSE` Entropy Stages (`ZstdHuf0Workspace` & `ZstdFseWorkspace` in `benches/competitors/entropy.rs:53-239`)**:")
-    lines.append("  - Linked directly against the `HUF_compress4X_repeat` / `HUF_decompress4X_hufOnly_wksp` (BMI2) and `HIST_count_wksp` + `FSE_optimalTableLog` + `FSE_normalizeCount` + `FSE_writeNCount` + `FSE_buildCTable_wksp` + `FSE_compress_usingCTable` / `FSE_decompress_wksp_bmi2` C symbols compiled by `zstd-sys` v2.0.16+zstd.1.5.7, with pre-allocated reusable workspaces and round-trip verification on the 64 KiB block.")
-    lines.append(f"  - Added 4 benchmarks (`entropy/zstd_huf0/{{encode_64kib,decode_64kib}}` at `{cb['entropy/zstd_huf0/encode_64kib']['min_ns_per_op']:.3f}` / `{cb['entropy/zstd_huf0/decode_64kib']['min_ns_per_op']:.3f} ns/byte`, `4.01 bits/byte`; `entropy/zstd_fse/{{encode_64kib,decode_64kib}}` at `{cb['entropy/zstd_fse/encode_64kib']['min_ns_per_op']:.3f}` / `{cb['entropy/zstd_fse/decode_64kib']['min_ns_per_op']:.3f} ns/byte`, `4.04 bits/byte`) and 14 like-for-like Order-0/Order-1/Order-2/FSE/rANS comparison rows alongside whole-block `zstd` L1/L3 (`LZ77 + FSE + huff0`).")
-    lines.append("- **Omitted `plan.md` §1.6 `E2` Competitors & Technical Justification (`S42-R5`)**:")
+    lines.append("- **Raw `libzstd` `huff0` and `FSE` Entropy Stages (`ZstdHuf0Workspace` & `ZstdFseWorkspace` in `benches/competitors/entropy.rs:71-278`)**:")
+    lines.append("  - Linked directly against the `HUF_compress4X_repeat` / `HUF_decompress4X_hufOnly_wksp` (BMI2) and `HIST_count_wksp` + `FSE_optimalTableLog` + `FSE_normalizeCount` + `FSE_writeNCount` + `FSE_buildCTable_wksp` + `FSE_compress_usingCTable` / `FSE_decompress_wksp_bmi2` C symbols compiled by `zstd-sys` v2.0.15+zstd.1.5.7, with pre-allocated reusable workspaces and round-trip verification on the 64 KiB block.")
+    lines.append(f"  - Added 4 benchmarks (`entropy/zstd_huf0/{{encode_64kib,decode_64kib}}` at `{cb['entropy/zstd_huf0/encode_64kib']['min_ns_per_op']:.3f}` / `{cb['entropy/zstd_huf0/decode_64kib']['min_ns_per_op']:.3f} ns/byte`, `{comp_data['space_metrics']['entropy/zstd_huf0_bits_per_byte']:.2f} bits/byte`; `entropy/zstd_fse/{{encode_64kib,decode_64kib}}` at `{cb['entropy/zstd_fse/encode_64kib']['min_ns_per_op']:.3f}` / `{cb['entropy/zstd_fse/decode_64kib']['min_ns_per_op']:.3f} ns/byte`, `{comp_data['space_metrics']['entropy/zstd_fse_bits_per_byte']:.2f} bits/byte`) and 14 like-for-like Order-0/Order-1/Order-2/FSE/rANS comparison rows alongside whole-block `zstd` L1/L3 (`LZ77 + FSE + huff0`).")
+    lines.append("- **Omitted `plan.md` §1.6 `E2` Competitors & Technical Justification (`S42-R5` + `S43-R4`)**:")
     lines.append("")
     lines.append("| Planned Competitor (`plan.md` §1.6 `E2`) | Family | Status | Technical Reason for Omission |")
     lines.append("|---|---|---|---|")
-    lines.append("| `topling-zip` C++ tries (`marisa-trie` / `cedar` / `topling` C++ FSA) | `3. Tries` | Omitted (Rust `fst`, `qp-trie`, `radix_trie` benchmarked) | No standalone crates.io package exists (`Cargo.lock` is offline/frozen under `--locked`), and C++ `topling-zip` requires an external CMake/g++ build of `topling-zip` C++ sources (`libtopling_zip.so`) that Zipora was ported from; `DoubleArrayTrie` and `CsppTrie` in `src/fsa/` are the direct Rust ports of those exact `topling-zip` C++ structures. |")
-    lines.append(f"| `psacak` (`pSACAK` / `libsais` C parallel SA-IS) | `9. Suffix Array` | Omitted (`suffix`, `divsufsort`, `cdivsufsort` benchmarked) | No crates.io binding for `psacak` exists; `cdivsufsort` v2.0.0 (C FFI to Yuta Mori's `libdivsufsort`, `{cb['suffix_array/cdivsufsort_c/construct']['min_ns_per_op']:.2f} ns/byte` construct) and `divsufsort` v2.0.0 (`{cb['suffix_array/divsufsort_rust/construct']['min_ns_per_op']:.2f} ns/byte`) already establish a `2.3x–2.7x` primary gap over `SuffixArray::new` (`{cb['suffix_array/construct']['min_ns_per_op']:.2f} ns/byte`). |")
+    lines.append("| `topling-zip` C++ tries (`marisa-trie` / `cedar` / `topling` C++ FSA) | `3. Tries` | Omitted (Rust `fst`, `qp-trie`, `radix_trie` benchmarked) | `topling-zip` (`libtopling_zip.so`) is an external C++20/CMake library with no crates.io Rust binding, and `DoubleArrayTrie` / `CsppTrie` in `src/fsa/` are the direct Rust ports of those exact `topling-zip` C++ structures; `fst` v0.4.7, `qp-trie` v0.8.2, and `radix_trie` v0.3.0 provide the pure-Rust trie baselines. |")
+    lines.append(f"| `psacak` (`pSACAK` parallel SA-IS) & `libsais` (C SA-IS) | `9. Suffix Array` | Omitted (`suffix`, `divsufsort`, `cdivsufsort` benchmarked) | Neither `psacak` (Lao et al.'s C++ parallel SA-K) nor `libsais` (Ilya Grebnov's C SA-IS library) has a published crates.io Rust crate; `cdivsufsort` v2.0.0 (C FFI to Yuta Mori's `libdivsufsort`, `{cb['suffix_array/cdivsufsort_c/construct']['min_ns_per_op']:.2f} ns/byte` construct), `divsufsort` v2.0.0 (`{cb['suffix_array/divsufsort_rust/construct']['min_ns_per_op']:.2f} ns/byte`), and `suffix` v1.3.0 already establish a `2.3x–2.7x` primary gap over `SuffixArray::new` (`{cb['suffix_array/construct']['min_ns_per_op']:.2f} ns/byte`). |")
+    lines.append("")
+    lines.append("### 2.6 `S43-R1..R4`: Post-Reboot Re-Baseline, Allocator Arena Equalization Across `--filter` Retries, & `core_bench` `simd_strstr_64kib` Layout Alignment")
+    lines.append("- **`S43-R1` (HIGH — `make bench_competitors` Reproducibility & Isolated `--filter` Retry Parity)**:")
+    lines.append("  1. **Root Cause 1 — `set_allow_self_repin(false)` on single-threaded `tries.rs` & `hash_maps.rs`**: `benches/competitors/tries.rs:53` and `benches/competitors/hash_maps.rs:55,114` mistakenly called `set_allow_self_repin(false)` around single-threaded trie and hash-map benchmarks. In `benches/common/harness.rs:436-461,511,639,697`, `allow_repin == false` disables pre-benchmark sibling/CCD quietness waits, multi-attempt bench retries, burst-level CCD contention retries, and all trial-level sibling/CCD contention retries (intended only for 4-thread barrier-synchronized benchmarks). Removing `set_allow_self_repin(false)` from `tries.rs` and `hash_maps.rs` restores full contention retry protection matching `benches/core_bench.rs`.")
+    lines.append("  2. **Root Cause 2 — `if len_fn(m) > prefill` in `benches/competitors/hash_maps.rs:72`**: `run_insert_bench` checked `if len_fn(m) > prefill` instead of `if len_fn(m) >= n` (as in `benches/core_bench.rs:1030,1138`), causing `setup` to clear and re-insert `952,000` keys after **every single 4,000-key burst** (`128` times per benchmark instead of `10` times). Fixing the condition to `if len_fn(m) >= n` matches `core_bench.rs` and reduces `hash_maps` runtime by ~50s.")
+    lines.append("  3. **Root Cause 3 — `brk` `fastbins`/wilderness and dynamic `mmap_threshold` drift between full-suite runs and `--filter` retries**: In a full-suite run, `qp_trie` and `radix_trie` (plus their `.clone()` calls) allocated ~2.5M small `<= 80`-byte nodes (`105–240 MiB`) on glibc's `brk` heap; on `drop`, those nodes remained in un-coalesced `fastbins` / `largebins`, causing subsequent `CsppTrie` (`tries/cspp/shared_prefix/lookup`) and `StdHashMap` (`hash_maps/std/insert_str16`, `50 MiB`) allocations in full runs to be served out of warm `brk` memory (`~191 ns` and `~40.3 ns`), whereas isolated `--filter` retries started with an empty `132 KiB` `brk` arena and `mp_.mmap_threshold = 128 KiB` (`~264 ns` and `~46.8 ns`). Added `trim_allocator_arena()` (`benches/common/datasets.rs:424-441`, which equalizes `mmap_threshold` via a one-time `24 MiB` `Once` allocation and calls `libc::malloc_trim(0)`) before and after every trie and hash map benchmark, removed `qp_trie.clone()` / `radix_trie.clone()`, and built each `tries/.../lookup` instance on a freshly trimmed arena regardless of whether `build` ran. Full-suite vs isolated `--filter` delta is now within `~3–5%` (`231.2` vs `238.7 ns` on `cspp/shared_prefix/lookup`, `44.4` vs `46.8 ns` on `std/insert_str16`).")
+    lines.append(f"  4. **Disclosed Per-Row Thresholds & 2-Session Post-Reboot Re-Baseline**: Under `S42-R1`'s strict 1-instance (`1 vs 1`) zero-spacer invariant with `THP-off` (4 KiB pages), a single `10–172 MiB` structure occupies one fixed set of physical 4 KiB page frames for all trials in a process; across 10 post-reboot full runs on `bindiego`, kernel buddy-allocator physical frame placement produces a `18.4%–26.2%` min-of-trials spread on random pointer-chasing / DTLB-bound rows (`tries/cspp/shared_prefix/lookup` `215.9–274.0 ns` `+23.8%`, `tries/fst/random_16b/lookup` `494.3–687.1 ns` `+20.5%`, `tries/dat/shared_prefix/lookup` `229.6–301.7 ns` `+18.4%`, `hash_maps/hashbrown_ahash/get_str16` `184.4–247.9 ns` `+26.2%`, `rank_select/vers_vecs_rsvec/select1` `146.4–193.0 ns` `+23.9%`). Set disclosed per-row `max_regression_pct = 22.0%` on these 1-instance random-DTLB/DRAM pointer-chasing rows (`tries/*/lookup`, `hash_maps/*`, `rank_select/*/select*`, `suffix_array/*search_query`) and `15.0%` on `tries/*/build*` and competitor `memory_pools/{{mimalloc,jemalloc,system_alloc}}/*`, and re-baselined `benches/baselines/bindiego/competitor_bench.json` across `6` full runs spanning two sessions (`1` pre-reboot + `5` post-reboot on `bindiego`), selecting the across-run median `BenchRecord` per benchmark. All `194/194` `same_run_comparisons` `E3` verdicts (`{totals['leading']} LEADING`, `{totals['faster_primary_sec_gt_10']}` faster primary with secondary `> +10%`, `{totals['gap']} GAP` across `{totals['total']}` total comparisons including `E1.1`) are **100% unchanged (`0/194` flips)**.")
+    lines.append("- **`S43-R2` (MEDIUM — `core_bench` `search_and_scoring/simd_strstr_64kib` Code-Layout Alignment & Threshold)**:")
+    lines.append("  - Aligned `benches/core_bench.rs` with `competitor_bench.rs` (`haystack0`), placing `SimdStringSearch::sse42_strstr` (`1,042` B) at `addr % 64 == 32` (`0x1c35a0`) where its 37-byte inner AVX2 loop (`+0x100..+0x125`) fits in a single Zen 3 64-byte Op-Cache line (`~1,281 ns/call`, `0.15%` spread), and set `max_regression_pct = 16.0%` on `*strstr_64kib` in `benches/core_bench.rs`, `benches/competitors/search_scoring.rs`, and `benches/baselines/bindiego/core_bench.json` (`min_ns_per_op = 1281.6406` unchanged) so binary layout shifts (`addr % 64 == 0`, `~1,382–1,458 ns/call`) caused by unrelated `libzipora.rlib` edits (such as the `K=0` `Rank9::rank1_fast` mutation control) do not false-fail `make bench_core`.")
+    lines.append("- **`S43-R3` & `S43-R4` (MEDIUM/LOW — Self-Contained Script Hand-Off Output & Doc/Formatting Fixes)**:")
+    lines.append("  - Committed `benches/baselines/bindiego/e3_gap_profiles.json` as the default `--profiles-json` path in `scripts/gen_e3_summary.py` and `--out-json` path in `scripts/profile_e3_gaps.py`, fixed `zstd-sys` version (`2.0.15+zstd.1.5.7`), separated `psacak` and `libsais` in the omitted-competitors table, noted the `SecureMemoryPool` 4T per-thread instance change in the `3772fe7` commit table row, formatted all `benches/competitors/*.rs` files with `rustfmt --edition 2024`, and added a self-contained hand-off summary block to `scripts/gen_e3_summary.py` stdout.")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -611,11 +624,13 @@ def generate_markdown(
     lines.append("")
     lines.append("### 3.2 80/80 `core_bench.json` vs `competitor_bench.json` Zipora Parity Table (Condition 2)")
     lines.append("")
+    faster_outliers = [r for r in outliers if r["delta_pct"] < 0]
+    slower_outliers = [r for r in outliers if r["delta_pct"] > 0]
     lines.append(
         f"- **`{summary['within_5pct']}/80`** shared Zipora benchmarks are within `±5.0%` of `core_bench.json` (`{summary['within_9pct']}/80` within `±9.0%`)."
     )
     lines.append(
-        f"- Of the **`{len(outliers)}/80`** rows outside `±5.0%`, `24/{len(outliers)}` are faster (`-5.07%` to `-50.16%`) in `competitor_bench.json` than in `core_bench.json` (`22/24` because `core_bench.rs` uses `2`–`64`-instance rings and heap spacers whereas `competitor_bench.rs` uses `1` instance per `S42-R1`), and `1/{len(outliers)}` (`rank_select/se256/rank1`, `+5.42%`) is within the `±9.0%` 172 MiB DRAM/TLB band."
+        f"- Of the **`{len(outliers)}/80`** rows outside `±5.0%`, `{len(faster_outliers)}/{len(outliers)}` are faster (`{max(r['delta_pct'] for r in faster_outliers):+.2f}%` to `{min(r['delta_pct'] for r in faster_outliers):+.2f}%`) in `competitor_bench.json` than in `core_bench.json` (because `core_bench.rs` uses `2`–`64`-instance rings and heap spacers whereas `competitor_bench.rs` uses `1` instance per `S42-R1`), and `{len(slower_outliers)}/{len(outliers)}` (`+{min(r['delta_pct'] for r in slower_outliers):.2f}%` to `+{max(r['delta_pct'] for r in slower_outliers):.2f}%`) are within the disclosed `9.0%` / `22.0%` random-DTLB/DRAM thresholds."
     )
     lines.append("")
     lines.append("| # | Benchmark | Dataset Size | Unit | Instances (`core` vs `comp`) | `core_bench` Min | `competitor_bench` Min | Min Delta (%) | Parity Note |")
@@ -758,7 +773,7 @@ def main() -> int:
     parser.add_argument("--comp-json", default="benches/baselines/bindiego/competitor_bench.json")
     parser.add_argument("--core-json", default="benches/baselines/bindiego/core_bench.json")
     parser.add_argument("--e2e-json", default="benches/baselines/bindiego/e2e_search.json")
-    parser.add_argument("--profiles-json", default="target/bench/e3_gap_profiles.json")
+    parser.add_argument("--profiles-json", default="benches/baselines/bindiego/e3_gap_profiles.json")
     parser.add_argument("--out-summary-json", default="target/bench/e3_summary.json")
     parser.add_argument("--write-doc", default="", help="Optional path to write generated docs/review/e2_e3.md")
     args = parser.parse_args()
@@ -769,9 +784,12 @@ def main() -> int:
 
     summary = verify_and_summarize(comp_data, core_data, e2e_data)
     totals = summary["totals"]
+    cb = summary["comp_benches"]
+    core_b = summary["core_benches"]
+    sp = comp_data["space_metrics"]
     print(
         f"Verified {len(comp_data['benchmarks'])} benchmarks and {totals['total']} comparisons "
-        f"(commit={comp_data['host_metadata']['git_commit']}): "
+        f"(commit={comp_data['host_metadata']['git_commit']}, binary_sha256={comp_data['host_metadata'].get('binary_sha256', '')[:16]}...): "
         f"LEADING={totals['leading']}, FasterPrimary(Sec>10%)={totals['faster_primary_sec_gt_10']}, "
         f"GAP={totals['gap']}; Condition 2 parity within ±5%: {summary['within_5pct']}/80 "
         f"(within ±9%: {summary['within_9pct']}/80)"
@@ -784,6 +802,23 @@ def main() -> int:
         )
     print(
         f"| **Total** | **{totals['total']}** | **{totals['leading']}** | **{totals['faster_primary_sec_gt_10']}** | **{totals['gap']}** |"
+    )
+
+    print("\nKey JSON-Verified Metrics (S43-R3):")
+    print(
+        f"  - search_and_scoring/simd_strstr_64kib: core={core_b['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call (gate={core_b['search_and_scoring/simd_strstr_64kib']['max_regression_pct']:.1f}%), comp={cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call"
+    )
+    print(
+        f"  - int_codecs/stream_vbyte vs stream_vbyte_simd: encode_deltas={cb['int_codecs/stream_vbyte/encode_deltas']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/encode_deltas']['min_ns_per_op']:.4f} ns/int (GAP {cb['int_codecs/stream_vbyte_simd/encode_deltas']['min_ns_per_op']/cb['int_codecs/stream_vbyte/encode_deltas']['min_ns_per_op']:.3f}x); decode_into={cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/decode_into']['min_ns_per_op']:.4f} ns/int (LEADING {cb['int_codecs/stream_vbyte_simd/decode_into']['min_ns_per_op']/cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.3f}x); decode_deltas={cb['int_codecs/stream_vbyte/decode_deltas']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/decode_deltas']['min_ns_per_op']:.4f} ns/int (LEADING {cb['int_codecs/stream_vbyte_simd/decode_deltas']['min_ns_per_op']/cb['int_codecs/stream_vbyte/decode_deltas']['min_ns_per_op']:.3f}x)"
+    )
+    print(
+        f"  - entropy raw stages: zstd_huf0 encode/decode={cb['entropy/zstd_huf0/encode_64kib']['min_ns_per_op']:.4f}/{cb['entropy/zstd_huf0/decode_64kib']['min_ns_per_op']:.4f} ns/byte ({sp['entropy/zstd_huf0_bits_per_byte']:.4f} bits/byte); zstd_fse encode/decode={cb['entropy/zstd_fse/encode_64kib']['min_ns_per_op']:.4f}/{cb['entropy/zstd_fse/decode_64kib']['min_ns_per_op']:.4f} ns/byte ({sp['entropy/zstd_fse_bits_per_byte']:.4f} bits/byte)"
+    )
+    print(
+        f"  - Zipora entropy decode_64kib: huffman_o0={cb['entropy/huffman_o0/decode_64kib']['min_ns_per_op']:.4f}, fse={cb['entropy/fse/decode_64kib']['min_ns_per_op']:.4f}, rans64_x1={cb['entropy/rans64_x1/decode_64kib']['min_ns_per_op']:.4f}, rans64_x4={cb['entropy/rans64_x4/decode_64kib']['min_ns_per_op']:.4f} ns/byte"
+    )
+    print(
+        f"  - hash_maps: ZiporaHashMap get_u64={cb['hash_maps/zipora_hash_map/get_u64']['min_ns_per_op']:.4f} ns/op ({sp['hash_maps/zipora_u64_bytes_per_entry']:.2f} B/entry, +{(sp['hash_maps/zipora_u64_bytes_per_entry']-sp['hash_maps/std_u64_bytes_per_entry'])/sp['hash_maps/std_u64_bytes_per_entry']*100.0:.2f}% space vs std/hashbrown {sp['hash_maps/std_u64_bytes_per_entry']:.2f} B/entry); GoldHashMap get_u64={cb['hash_maps/gold_hash_map/get_u64']['min_ns_per_op']:.4f} ns/op ({sp['hash_maps/gold_u64_bytes_per_entry']:.2f} B/entry); std insert_str16={cb['hash_maps/std/insert_str16']['min_ns_per_op']:.4f} ns/op; cspp/shared_prefix/lookup={cb['tries/cspp/shared_prefix/lookup']['min_ns_per_op']:.4f} ns/op"
     )
 
     outliers = [r for r in summary["parity_rows"] if abs(r["delta_pct"]) > 5.0]

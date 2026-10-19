@@ -439,7 +439,7 @@ def main() -> int:
     parser.add_argument("--filter", default="", help="Benchmark name for single-benchmark mode")
     parser.add_argument("--loop-ms", type=int, default=400, help="Target loop duration in ms inside f(state)")
     parser.add_argument("--all-e3", action="store_true", help="Profile all 10 E3.1-E3.10 gap benchmarks")
-    parser.add_argument("--out-json", default="target/bench/e3_gap_profiles.json")
+    parser.add_argument("--out-json", default="benches/baselines/bindiego/e3_gap_profiles.json")
     args = parser.parse_args()
 
     binary_path = args.binary or find_competitor_bench_binary(Path(args.baseline))

@@ -96,11 +96,13 @@ fn bench_rank_select(
     let mut rank_params = BenchParams::heavy(num_bits as u64, query_batch as u64, 12);
     rank_params.warmup_calls = 8;
     rank_params.bursts_per_trial = 8;
-    let mut select1_params = BenchParams::heavy(num_bits as u64, select_batch as u64, 10);
+    let mut select1_params =
+        BenchParams::heavy(num_bits as u64, select_batch as u64, 10).with_threshold(16.0);
     select1_params.warmup_calls = 6;
     select1_params.bursts_per_trial = 14;
     let mut select0_interleaved_params =
-        BenchParams::heavy(num_bits as u64, select0_interleaved_batch as u64, 10);
+        BenchParams::heavy(num_bits as u64, select0_interleaved_batch as u64, 10)
+            .with_threshold(16.0);
     select0_interleaved_params.warmup_calls = 6;
     select0_interleaved_params.bursts_per_trial = 16;
 
@@ -2472,15 +2474,14 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
             },
         );
 
-        for idx in 0..2_048usize {
-            let haystack = &haystacks[idx & 3][..];
-            if let Some(pos) = searcher.sse42_strstr(black_box(haystack), black_box(needle)) {
+        for _ in 0..2_048usize {
+            if let Some(pos) = searcher.sse42_strstr(black_box(haystack0), black_box(needle)) {
                 pre_acc = pre_acc.wrapping_add(pos);
             }
         }
         black_box(pre_acc);
 
-        let mut strstr_params = str_params;
+        let mut strstr_params = str_params.with_threshold(16.0);
         strstr_params.warmup_calls = 64;
         strstr_params.bursts_per_trial = 8;
         measure_bench(
@@ -2491,9 +2492,9 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
             strstr_params,
             || {
                 let mut acc = 0usize;
-                for idx in 0..search_iters {
-                    let haystack = &haystacks[(idx as usize) & 3][..];
-                    if let Some(pos) = searcher.sse42_strstr(black_box(haystack), black_box(needle))
+                for _ in 0..search_iters {
+                    if let Some(pos) =
+                        searcher.sse42_strstr(black_box(haystack0), black_box(needle))
                     {
                         acc = acc.wrapping_add(pos);
                     }

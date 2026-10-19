@@ -1,0 +1,715 @@
+{
+  "binary_path": "target/release/deps/competitor_bench-0397c336e0e0a8d1",
+  "profiles": [
+    {
+      "benchmark": "rank_select/interleaved256/rank1",
+      "category": "rank_select",
+      "loop_ms": 400,
+      "sampler": "perf_event_open(PERF_TYPE_SOFTWARE / PERF_COUNT_SW_TASK_CLOCK @ 4000 Hz, gated via prctl(PR_TASK_PERF_EVENTS_ENABLE/DISABLE) around f(state))",
+      "counters": {
+        "task-clock": 413608856,
+        "cpu-clock": 413025049,
+        "page-faults": 0,
+        "minor-faults": 0,
+        "major-faults": 0,
+        "context-switches": 0,
+        "cpu-migrations": 0
+      },
+      "total_samples": 1615,
+      "top_symbols": [
+        {
+          "symbol": "competitor_bench::competitors::rank_select::bench_rank_select",
+          "samples": 1613,
+          "pct": 99.88
+        },
+        {
+          "symbol": "libc.so.6+0x1146ea",
+          "samples": 1,
+          "pct": 0.06
+        },
+        {
+          "symbol": "libc.so.6+0xdeb6e",
+          "samples": 1,
+          "pct": 0.06
+        }
+      ],
+      "top_instructions": [
+        {
+          "rel_ip": "0x237e61",
+          "samples": 1423,
+          "pct": 88.11,
+          "instruction": "movzbl 0x4(%rdi,%r8,1),%r10d"
+        },
+        {
+          "rel_ip": "0x237e4c",
+          "samples": 78,
+          "pct": 4.83,
+          "instruction": "shl    $0x6,%rdi"
+        },
+        {
+          "rel_ip": "0x237e74",
+          "samples": 32,
+          "pct": 1.98,
+          "instruction": "xor    %r8d,%r8d"
+        },
+        {
+          "rel_ip": "0x237dfa",
+          "samples": 13,
+          "pct": 0.8,
+          "instruction": "shr    $0x1f,%rdx"
+        },
+        {
+          "rel_ip": "0x237e47",
+          "samples": 10,
+          "pct": 0.62,
+          "instruction": "prefetcht0 (%r11,%r8,1)"
+        }
+      ],
+      "section_id": "E3.1",
+      "title": "Rank/Select (`RankSelectInterleaved256::rank1`, 1 Gbit)"
+    },
+    {
+      "benchmark": "elias_fano/uniform/ef_select",
+      "category": "elias_fano",
+      "loop_ms": 400,
+      "sampler": "perf_event_open(PERF_TYPE_SOFTWARE / PERF_COUNT_SW_TASK_CLOCK @ 4000 Hz, gated via prctl(PR_TASK_PERF_EVENTS_ENABLE/DISABLE) around f(state))",
+      "counters": {
+        "task-clock": 404423967,
+        "cpu-clock": 404313684,
+        "page-faults": 0,
+        "minor-faults": 0,
+        "major-faults": 0,
+        "context-switches": 0,
+        "cpu-migrations": 0
+      },
+      "total_samples": 1405,
+      "top_symbols": [
+        {
+          "symbol": "<zipora::succinct::elias_fano::basic::EliasFano>::get",
+          "samples": 1298,
+          "pct": 92.38
+        },
+        {
+          "symbol": "competitor_bench::competitors::elias_fano::bench_elias_fano",
+          "samples": 106,
+          "pct": 7.54
+        },
+        {
+          "symbol": "<std::time::Instant>::elapsed",
+          "samples": 1,
+          "pct": 0.07
+        }
+      ],
+      "top_instructions": [
+        {
+          "rel_ip": "0x3c72e9",
+          "samples": 222,
+          "pct": 15.8,
+          "instruction": "mov    0x0(%rbp),%eax"
+        },
+        {
+          "rel_ip": "0x3c7050",
+          "samples": 148,
+          "pct": 10.53,
+          "instruction": "mov    0x8(%r8,%rdx,8),%rdx"
+        },
+        {
+          "rel_ip": "0x3c72c4",
+          "samples": 111,
+          "pct": 7.9,
+          "instruction": "xor    %r9d,%r9d"
+        },
+        {
+          "rel_ip": "0x3c7280",
+          "samples": 99,
+          "pct": 7.05,
+          "instruction": "jae    3c731b <<zipora::succinct::elias_fano::basic::EliasFano>::get+0x33b>"
+        },
+        {
+          "rel_ip": "0x3c72cf",
+          "samples": 89,
+          "pct": 6.33,
+          "instruction": "jb     3c72e2 <<zipora::succinct::elias_fano::basic::EliasFano>::get+0x302>"
+        }
+      ],
+      "section_id": "E3.2",
+      "title": "Elias-Fano (`EliasFano::get`, 100k uniform)"
+    },
+    {
+      "benchmark": "tries/dat/url_paths/lookup",
+      "category": "tries",
+      "loop_ms": 400,
+      "sampler": "perf_event_open(PERF_TYPE_SOFTWARE / PERF_COUNT_SW_TASK_CLOCK @ 4000 Hz, gated via prctl(PR_TASK_PERF_EVENTS_ENABLE/DISABLE) around f(state))",
+      "counters": {
+        "task-clock": 401997086,
+        "cpu-clock": 401904553,
+        "page-faults": 0,
+        "minor-faults": 0,
+        "major-faults": 0,
+        "context-switches": 0,
+        "cpu-migrations": 0
+      },
+      "total_samples": 1600,
+      "top_symbols": [
+        {
+          "symbol": "competitor_bench::competitors::tries::run_trie_lookup_bench::<competitor_bench::competitors::tries::bench_tries::{closure#3}>::{closure#0}",
+          "samples": 1598,
+          "pct": 99.88
+        },
+        {
+          "symbol": "competitor_bench::common::harness::measure_bench::<competitor_bench::competitors::tries::run_trie_lookup_bench<competitor_bench::competitors::tries::bench_tries::{closure#3}>::{closure#1}>::{closure#1}",
+          "samples": 2,
+          "pct": 0.12
+        }
+      ],
+      "top_instructions": [
+        {
+          "rel_ip": "0x1b3871",
+          "samples": 1282,
+          "pct": 80.12,
+          "instruction": "jne    1b39c4 <competitor_bench::competitors::tries::run_trie_lookup_bench::<competitor_bench::competitors::tries::bench_tries::{closure#3}>::{closure#0}+0x6c4>"
+        },
+        {
+          "rel_ip": "0x1b39a7",
+          "samples": 280,
+          "pct": 17.5,
+          "instruction": "jns    1b39c4 <competitor_bench::competitors::tries::run_trie_lookup_bench::<competitor_bench::competitors::tries::bench_tries::{closure#3}>::{closure#0}+0x6c4>"
+        },
+        {
+          "rel_ip": "0x1b386c",
+          "samples": 23,
+          "pct": 1.44,
+          "instruction": "cmp    %r9d,0x4(%rsi,%rdi,8)"
+        },
+        {
+          "rel_ip": "0x1b370f",
+          "samples": 3,
+          "pct": 0.19,
+          "instruction": "imul   $0x1999999a,%r12,%rdi"
+        },
+        {
+          "rel_ip": "0x1b3673",
+          "samples": 2,
+          "pct": 0.12,
+          "instruction": "or     $0x30,%sil"
+        }
+      ],
+      "section_id": "E3.3",
+      "title": "Tries (`DoubleArrayTrie::get`, 1M `url_paths`)"
+    },
+    {
+      "benchmark": "hash_maps/zipora_hash_map/get_u64",
+      "category": "hash_maps",
+      "loop_ms": 400,
+      "sampler": "perf_event_open(PERF_TYPE_SOFTWARE / PERF_COUNT_SW_TASK_CLOCK @ 4000 Hz, gated via prctl(PR_TASK_PERF_EVENTS_ENABLE/DISABLE) around f(state))",
+      "counters": {
+        "task-clock": 413972838,
+        "cpu-clock": 413367111,
+        "page-faults": 0,
+        "minor-faults": 0,
+        "major-faults": 0,
+        "context-switches": 0,
+        "cpu-migrations": 0
+      },
+      "total_samples": 1453,
+      "top_symbols": [
+        {
+          "symbol": "competitor_bench::competitors::hash_maps::bench_hash_maps::{closure#8}",
+          "samples": 1374,
+          "pct": 94.56
+        },
+        {
+          "symbol": "competitor_bench::common::harness::measure_bench::<competitor_bench::competitors::hash_maps::run_get_bench<u64, zipora::hash_map::zipora_hash_map::ZiporaHashMap<u64, u64>, competitor_bench::competitors::hash_maps::bench_hash_maps::{closure#6}, competitor_bench::common::datasets::make_u64_key, competitor_bench::competitors::hash_maps::bench_hash_maps::{closure#7}, competitor_bench::competitors::hash_maps::bench_hash_maps::{closure#8}>::{closure#1}>::{closure#1}",
+          "samples": 77,
+          "pct": 5.3
+        },
+        {
+          "symbol": "libc.so.6+0xdeb67",
+          "samples": 1,
+          "pct": 0.07
+        },
+        {
+          "symbol": "libc.so.6+0x1146e3",
+          "samples": 1,
+          "pct": 0.07
+        }
+      ],
+      "top_instructions": [
+        {
+          "rel_ip": "0x1c6ce9",
+          "samples": 1212,
+          "pct": 83.41,
+          "instruction": "cmp    $0xffffffffffffffff,%rax"
+        },
+        {
+          "rel_ip": "0x1c6d03",
+          "samples": 36,
+          "pct": 2.48,
+          "instruction": "je     1c6cc0 <competitor_bench::competitors::hash_maps::bench_hash_maps::{closure#8}+0xc0>"
+        },
+        {
+          "rel_ip": "0x1c6cc3",
+          "samples": 25,
+          "pct": 1.72,
+          "instruction": "cmp    %r11,%rcx"
+        },
+        {
+          "rel_ip": "0x1c6c2c",
+          "samples": 10,
+          "pct": 0.69,
+          "instruction": "mov    %rdx,%rax"
+        },
+        {
+          "rel_ip": "0x1c6d00",
+          "samples": 9,
+          "pct": 0.62,
+          "instruction": "cmpb   $0x0,(%rdi)"
+        }
+      ],
+      "section_id": "E3.4",
+      "title": "Hash Maps (`ZiporaHashMap::get`, 1M `u64`)"
+    },
+    {
+      "benchmark": "memory_pools/lockfree_pool/alloc_free_1t",
+      "category": "memory_pools",
+      "loop_ms": 400,
+      "sampler": "perf_event_open(PERF_TYPE_SOFTWARE / PERF_COUNT_SW_TASK_CLOCK @ 4000 Hz, gated via prctl(PR_TASK_PERF_EVENTS_ENABLE/DISABLE) around f(state))",
+      "counters": {
+        "task-clock": 418766038,
+        "cpu-clock": 417891876,
+        "page-faults": 0,
+        "minor-faults": 0,
+        "major-faults": 0,
+        "context-switches": 0,
+        "cpu-migrations": 0
+      },
+      "total_samples": 1617,
+      "top_symbols": [
+        {
+          "symbol": "<zipora::memory::lockfree_pool::LockFreeMemoryPool>::deallocate",
+          "samples": 952,
+          "pct": 58.87
+        },
+        {
+          "symbol": "<zipora::memory::lockfree_pool::LockFreeMemoryPool>::pop_fast_bin",
+          "samples": 324,
+          "pct": 20.04
+        },
+        {
+          "symbol": "<zipora::memory::lockfree_pool::LockFreeMemoryPool>::allocate",
+          "samples": 262,
+          "pct": 16.2
+        },
+        {
+          "symbol": "competitor_bench::common::harness::measure_bench::<competitor_bench::competitors::memory_pools::bench_memory_pools::{closure#1}>::{closure#1}",
+          "samples": 78,
+          "pct": 4.82
+        },
+        {
+          "symbol": "<std::time::Instant>::elapsed",
+          "samples": 1,
+          "pct": 0.06
+        }
+      ],
+      "top_instructions": [
+        {
+          "rel_ip": "0x3d551d",
+          "samples": 188,
+          "pct": 11.63,
+          "instruction": "ret"
+        },
+        {
+          "rel_ip": "0x3d5abd",
+          "samples": 113,
+          "pct": 6.99,
+          "instruction": "je     3d5bee <<zipora::memory::lockfree_pool::LockFreeMemoryPool>::pop_fast_bin+0x1ee>"
+        },
+        {
+          "rel_ip": "0x3d54e0",
+          "samples": 110,
+          "pct": 6.8,
+          "instruction": "mov    0x1c0(%rsi),%rax"
+        },
+        {
+          "rel_ip": "0x3d5246",
+          "samples": 105,
+          "pct": 6.49,
+          "instruction": "je     3d54db <<zipora::memory::lockfree_pool::LockFreeMemoryPool>::deallocate+0x51b>"
+        },
+        {
+          "rel_ip": "0x3d5bf2",
+          "samples": 79,
+          "pct": 4.89,
+          "instruction": "mov    0x1c0(%r14),%rax"
+        }
+      ],
+      "section_id": "E3.5",
+      "title": "Memory Pools (`LockFreeMemoryPool` 256B `alloc`+`free` 1T)"
+    },
+    {
+      "benchmark": "entropy/huffman_o0/decode_64kib",
+      "category": "entropy",
+      "loop_ms": 400,
+      "sampler": "perf_event_open(PERF_TYPE_SOFTWARE / PERF_COUNT_SW_TASK_CLOCK @ 4000 Hz, gated via prctl(PR_TASK_PERF_EVENTS_ENABLE/DISABLE) around f(state))",
+      "counters": {
+        "task-clock": 410351318,
+        "cpu-clock": 409812584,
+        "page-faults": 0,
+        "minor-faults": 0,
+        "major-faults": 0,
+        "context-switches": 0,
+        "cpu-migrations": 0
+      },
+      "total_samples": 1609,
+      "top_symbols": [
+        {
+          "symbol": "<zipora::entropy::huffman::decoder::HuffmanDecoder>::decode",
+          "samples": 1609,
+          "pct": 100.0
+        }
+      ],
+      "top_instructions": [
+        {
+          "rel_ip": "0x3e56fb",
+          "samples": 139,
+          "pct": 8.64,
+          "instruction": "je     3e5712 <<zipora::entropy::huffman::decoder::HuffmanDecoder>::decode+0x2d2>"
+        },
+        {
+          "rel_ip": "0x3e587d",
+          "samples": 132,
+          "pct": 8.2,
+          "instruction": "je     3e588b <<zipora::entropy::huffman::decoder::HuffmanDecoder>::decode+0x44b>"
+        },
+        {
+          "rel_ip": "0x3e58d9",
+          "samples": 124,
+          "pct": 7.71,
+          "instruction": "je     3e58e9 <<zipora::entropy::huffman::decoder::HuffmanDecoder>::decode+0x4a9>"
+        },
+        {
+          "rel_ip": "0x3e568d",
+          "samples": 117,
+          "pct": 7.27,
+          "instruction": "je     3e56a4 <<zipora::entropy::huffman::decoder::HuffmanDecoder>::decode+0x264>"
+        },
+        {
+          "rel_ip": "0x3e5821",
+          "samples": 112,
+          "pct": 6.96,
+          "instruction": "je     3e582f <<zipora::entropy::huffman::decoder::HuffmanDecoder>::decode+0x3ef>"
+        }
+      ],
+      "section_id": "E3.6",
+      "title": "Entropy Coding (`HuffmanDecoder::decode` O0, 64 KiB)"
+    },
+    {
+      "benchmark": "int_codecs/stream_vbyte/encode_deltas",
+      "category": "int_codecs",
+      "loop_ms": 400,
+      "sampler": "perf_event_open(PERF_TYPE_SOFTWARE / PERF_COUNT_SW_TASK_CLOCK @ 4000 Hz, gated via prctl(PR_TASK_PERF_EVENTS_ENABLE/DISABLE) around f(state))",
+      "counters": {
+        "task-clock": 410923066,
+        "cpu-clock": 410264966,
+        "page-faults": 0,
+        "minor-faults": 0,
+        "major-faults": 0,
+        "context-switches": 0,
+        "cpu-migrations": 0
+      },
+      "total_samples": 1603,
+      "top_symbols": [
+        {
+          "symbol": "<zipora::compression::stream_vbyte::StreamVByte>::encode_raw",
+          "samples": 589,
+          "pct": 36.74
+        },
+        {
+          "symbol": "libc.so.6+0x168886",
+          "samples": 491,
+          "pct": 30.63
+        },
+        {
+          "symbol": "<zipora::compression::stream_vbyte::StreamVByte>::encode_deltas",
+          "samples": 267,
+          "pct": 16.66
+        },
+        {
+          "symbol": "libc.so.6+0x168840",
+          "samples": 125,
+          "pct": 7.8
+        },
+        {
+          "symbol": "libc.so.6+0x168843",
+          "samples": 101,
+          "pct": 6.3
+        },
+        {
+          "symbol": "libc.so.6+0x168894",
+          "samples": 28,
+          "pct": 1.75
+        },
+        {
+          "symbol": "libc.so.6+0x16887d",
+          "samples": 1,
+          "pct": 0.06
+        },
+        {
+          "symbol": "libc.so.6+0x168878",
+          "samples": 1,
+          "pct": 0.06
+        }
+      ],
+      "top_instructions": [
+        {
+          "rel_ip": "0x3c2709",
+          "samples": 141,
+          "pct": 8.8,
+          "instruction": "inc    %rbp"
+        },
+        {
+          "rel_ip": "0x3c2711",
+          "samples": 109,
+          "pct": 6.8,
+          "instruction": "mov    %ebx,%r13d"
+        },
+        {
+          "rel_ip": "0x3c220f",
+          "samples": 73,
+          "pct": 4.55,
+          "instruction": "ja     3c24d1 <<zipora::compression::stream_vbyte::StreamVByte>::encode_raw+0x3d1>"
+        },
+        {
+          "rel_ip": "0x3c21ef",
+          "samples": 40,
+          "pct": 2.5,
+          "instruction": "inc    %r14"
+        },
+        {
+          "rel_ip": "0x3c231b",
+          "samples": 33,
+          "pct": 2.06,
+          "instruction": "jb     3c2339 <<zipora::compression::stream_vbyte::StreamVByte>::encode_raw+0x239>"
+        }
+      ],
+      "section_id": "E3.7",
+      "title": "Integer Codecs (`StreamVByte::encode_deltas`, 100k `u32`)"
+    },
+    {
+      "benchmark": "radix_sort/lsd_u64",
+      "category": "radix_sort",
+      "loop_ms": 400,
+      "sampler": "perf_event_open(PERF_TYPE_SOFTWARE / PERF_COUNT_SW_TASK_CLOCK @ 4000 Hz, gated via prctl(PR_TASK_PERF_EVENTS_ENABLE/DISABLE) around f(state))",
+      "counters": {
+        "task-clock": 711449143,
+        "cpu-clock": 711441461,
+        "page-faults": 39064,
+        "minor-faults": 39064,
+        "major-faults": 0,
+        "context-switches": 0,
+        "cpu-migrations": 0
+      },
+      "total_samples": 2446,
+      "top_symbols": [
+        {
+          "symbol": "<zipora::algorithms::radix_sort::lsd::RadixSort>::sort_u64_sequential",
+          "samples": 2446,
+          "pct": 100.0
+        }
+      ],
+      "top_instructions": [
+        {
+          "rel_ip": "0x3c5d20",
+          "samples": 1674,
+          "pct": 68.44,
+          "instruction": "inc    %rdi"
+        },
+        {
+          "rel_ip": "0x3c5d11",
+          "samples": 210,
+          "pct": 8.59,
+          "instruction": "cmp    0x10(%rsp),%rdi"
+        },
+        {
+          "rel_ip": "0x3c5be1",
+          "samples": 94,
+          "pct": 3.84,
+          "instruction": "and    %r14,%rdx"
+        },
+        {
+          "rel_ip": "0x3c5be9",
+          "samples": 75,
+          "pct": 3.07,
+          "instruction": "shrx   %r13,0x18(%rax),%rdx"
+        },
+        {
+          "rel_ip": "0x3c5bfb",
+          "samples": 66,
+          "pct": 2.7,
+          "instruction": "cmp    %rcx,%rax"
+        }
+      ],
+      "section_id": "E3.8",
+      "title": "Radix Sort (`RadixSort::sort_u64`, 10M `u64`)"
+    },
+    {
+      "benchmark": "suffix_array/construct",
+      "category": "suffix_array",
+      "loop_ms": 400,
+      "sampler": "perf_event_open(PERF_TYPE_SOFTWARE / PERF_COUNT_SW_TASK_CLOCK @ 4000 Hz, gated via prctl(PR_TASK_PERF_EVENTS_ENABLE/DISABLE) around f(state))",
+      "counters": {
+        "task-clock": 1679324293,
+        "cpu-clock": 1679317800,
+        "page-faults": 57077,
+        "minor-faults": 57077,
+        "major-faults": 0,
+        "context-switches": 0,
+        "cpu-migrations": 0
+      },
+      "total_samples": 6206,
+      "top_symbols": [
+        {
+          "symbol": "zipora::algorithms::suffix_array::sais_induce",
+          "samples": 3713,
+          "pct": 59.83
+        },
+        {
+          "symbol": "zipora::algorithms::suffix_array::sais_core",
+          "samples": 2334,
+          "pct": 37.61
+        },
+        {
+          "symbol": "<zipora::algorithms::suffix_array::SuffixArrayBuilder>::build",
+          "samples": 82,
+          "pct": 1.32
+        },
+        {
+          "symbol": "<zipora::algorithms::suffix_array::SuffixArrayBuilder>::select_algorithm",
+          "samples": 23,
+          "pct": 0.37
+        },
+        {
+          "symbol": "libc.so.6+0x1692ce",
+          "samples": 14,
+          "pct": 0.23
+        },
+        {
+          "symbol": "libc.so.6+0x1692c4",
+          "samples": 13,
+          "pct": 0.21
+        },
+        {
+          "symbol": "libc.so.6+0x1692c0",
+          "samples": 9,
+          "pct": 0.15
+        },
+        {
+          "symbol": "libc.so.6+0x1692d3",
+          "samples": 6,
+          "pct": 0.1
+        }
+      ],
+      "top_instructions": [
+        {
+          "rel_ip": "0x3ea2fb",
+          "samples": 1125,
+          "pct": 18.13,
+          "instruction": "cmp    %rdi,0x10(%rsp)"
+        },
+        {
+          "rel_ip": "0x3ea227",
+          "samples": 1057,
+          "pct": 17.03,
+          "instruction": "cmp    %rdi,0x10(%rsp)"
+        },
+        {
+          "rel_ip": "0x3ea912",
+          "samples": 651,
+          "pct": 10.49,
+          "instruction": "jne    3ea940 <zipora::algorithms::suffix_array::sais_core+0x500>"
+        },
+        {
+          "rel_ip": "0x3ead5f",
+          "samples": 618,
+          "pct": 9.96,
+          "instruction": "cmp    %r12,0x10(%rsp)"
+        },
+        {
+          "rel_ip": "0x3ea213",
+          "samples": 420,
+          "pct": 6.77,
+          "instruction": "jne    3ea1e0 <zipora::algorithms::suffix_array::sais_induce+0xe0>"
+        }
+      ],
+      "section_id": "E3.9",
+      "title": "Suffix Array (`SuffixArray::new`, 10M bytes)"
+    },
+    {
+      "benchmark": "search_and_scoring/simd_strchr_64kib",
+      "category": "search_and_scoring",
+      "loop_ms": 400,
+      "sampler": "perf_event_open(PERF_TYPE_SOFTWARE / PERF_COUNT_SW_TASK_CLOCK @ 4000 Hz, gated via prctl(PR_TASK_PERF_EVENTS_ENABLE/DISABLE) around f(state))",
+      "counters": {
+        "task-clock": 425536045,
+        "cpu-clock": 424281435,
+        "page-faults": 0,
+        "minor-faults": 0,
+        "major-faults": 0,
+        "context-switches": 0,
+        "cpu-migrations": 0
+      },
+      "total_samples": 1627,
+      "top_symbols": [
+        {
+          "symbol": "<zipora::string::simd_search::SimdStringSearch>::sse42_strchr",
+          "samples": 1620,
+          "pct": 99.57
+        },
+        {
+          "symbol": "competitor_bench::competitors::search_scoring::bench_search_and_scoring",
+          "samples": 6,
+          "pct": 0.37
+        },
+        {
+          "symbol": "0x7f0706772c2c",
+          "samples": 1,
+          "pct": 0.06
+        }
+      ],
+      "top_instructions": [
+        {
+          "rel_ip": "0x3c3307",
+          "samples": 713,
+          "pct": 43.82,
+          "instruction": "je     3c32e0 <<zipora::string::simd_search::SimdStringSearch>::sse42_strchr+0x80>"
+        },
+        {
+          "rel_ip": "0x3c32e4",
+          "samples": 432,
+          "pct": 26.55,
+          "instruction": "cmp    $0x20,%r10"
+        },
+        {
+          "rel_ip": "0x3c32e8",
+          "samples": 427,
+          "pct": 26.24,
+          "instruction": "je     3c3353 <<zipora::string::simd_search::SimdStringSearch>::sse42_strchr+0xf3>"
+        },
+        {
+          "rel_ip": "0x3c32f8",
+          "samples": 17,
+          "pct": 1.04,
+          "instruction": "add    $0xffffffffffffffe0,%r8"
+        },
+        {
+          "rel_ip": "0x3c330b",
+          "samples": 8,
+          "pct": 0.49,
+          "instruction": "tzcnt  %r10d,%edx"
+        }
+      ],
+      "section_id": "E3.10",
+      "title": "String Search (`SimdStringSearch::sse42_strchr`, 64 KiB)"
+    }
+  ]
+}

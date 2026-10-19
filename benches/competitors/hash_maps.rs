@@ -51,8 +51,8 @@ fn run_insert_bench<K, M, FMake, FKey, FIns, FLen, FClear>(
     if !should_run_bench(name) {
         return;
     }
+    trim_allocator_arena();
     maybe_repin_self_within_ccd();
-    set_allow_self_repin(false);
     let mut map = make_map();
     for i in 0..n {
         insert_fn(&mut map, make_key(i), i as u64);
@@ -69,7 +69,7 @@ fn run_insert_bench<K, M, FMake, FKey, FIns, FLen, FClear>(
         insert_params,
         &mut map,
         |m| {
-            if len_fn(m) > prefill {
+            if len_fn(m) >= n {
                 clear_fn(m);
                 for i in 0..prefill {
                     insert_fn(m, make_key(i), i as u64);
@@ -86,7 +86,8 @@ fn run_insert_bench<K, M, FMake, FKey, FIns, FLen, FClear>(
             black_box(len_fn(m));
         },
     );
-    set_allow_self_repin(true);
+    drop(map);
+    trim_allocator_arena();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -110,8 +111,8 @@ fn run_get_bench<K, M, FMake, FKey, FIns, FGet>(
     if !should_run_bench(name) {
         return;
     }
+    trim_allocator_arena();
     maybe_repin_self_within_ccd();
-    set_allow_self_repin(false);
     let mut map = make_map();
     for id in 0..n {
         insert_fn(&mut map, make_key(id), id as u64);
@@ -126,26 +127,20 @@ fn run_get_bench<K, M, FMake, FKey, FIns, FGet>(
         });
     }
     black_box(warm_sum);
-    measure_bench(
-        records,
-        "hash_maps",
-        name,
-        "ns/op",
-        get_params,
-        || {
-            let b_idx = current_burst_index();
-            let start = b_idx * get_batch;
-            let mut sum = 0u64;
-            perm.for_each_slice(start, get_batch, |id| {
-                let k = make_key(id);
-                if let Some(v) = get_fn(&map, black_box(&k)) {
-                    sum = sum.wrapping_add(v);
-                }
-            });
-            black_box(sum);
-        },
-    );
-    set_allow_self_repin(true);
+    measure_bench(records, "hash_maps", name, "ns/op", get_params, || {
+        let b_idx = current_burst_index();
+        let start = b_idx * get_batch;
+        let mut sum = 0u64;
+        perm.for_each_slice(start, get_batch, |id| {
+            let k = make_key(id);
+            if let Some(v) = get_fn(&map, black_box(&k)) {
+                sum = sum.wrapping_add(v);
+            }
+        });
+        black_box(sum);
+    });
+    drop(map);
+    trim_allocator_arena();
 }
 
 pub fn bench_hash_maps(
@@ -158,6 +153,7 @@ pub fn bench_hash_maps(
     let cap = (n * 2).next_power_of_two();
     let u64_perm = BijectivePerm::new(n, SEED_BASE ^ 0x0601);
     let str16_perm = BijectivePerm::new(n, SEED_BASE ^ 0x0602);
+    trim_allocator_arena();
 
     let make_zconfig = || ZiporaHashMapConfig {
         initial_capacity: cap,
@@ -182,11 +178,11 @@ pub fn bench_hash_maps(
         ..GoldHashMapConfig::default()
     };
 
-    let mut insert_params = BenchParams::heavy(n as u64, get_batch as u64, 10);
+    let mut insert_params = BenchParams::heavy(n as u64, get_batch as u64, 10).with_threshold(22.0);
     insert_params.warmup_calls = 8;
     insert_params.bursts_per_trial = 12;
 
-    let mut get_params = BenchParams::heavy(n as u64, get_batch as u64, 14);
+    let mut get_params = BenchParams::heavy(n as u64, get_batch as u64, 14).with_threshold(22.0);
     get_params.warmup_calls = 12;
     get_params.bursts_per_trial = 18;
 
@@ -209,7 +205,10 @@ pub fn bench_hash_maps(
             prefill,
             get_batch,
             insert_params,
-            || ZiporaHashMap::<u64, u64>::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap(),
+            || {
+                ZiporaHashMap::<u64, u64>::with_config_and_hasher(make_zconfig(), make_hasher())
+                    .unwrap()
+            },
             make_u64_key,
             |m, k, v| {
                 m.insert(k, v).unwrap();
@@ -224,7 +223,10 @@ pub fn bench_hash_maps(
             get_batch,
             &u64_perm,
             get_params,
-            || ZiporaHashMap::<u64, u64>::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap(),
+            || {
+                ZiporaHashMap::<u64, u64>::with_config_and_hasher(make_zconfig(), make_hasher())
+                    .unwrap()
+            },
             make_u64_key,
             |m, k, v| {
                 m.insert(k, v).unwrap();
@@ -250,7 +252,13 @@ pub fn bench_hash_maps(
             prefill,
             get_batch,
             insert_params,
-            || ZiporaHashMap::<[u8; 16], u64>::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap(),
+            || {
+                ZiporaHashMap::<[u8; 16], u64>::with_config_and_hasher(
+                    make_zconfig(),
+                    make_hasher(),
+                )
+                .unwrap()
+            },
             make_str16_key,
             |m, k, v| {
                 m.insert(k, v).unwrap();
@@ -265,7 +273,13 @@ pub fn bench_hash_maps(
             get_batch,
             &str16_perm,
             get_params,
-            || ZiporaHashMap::<[u8; 16], u64>::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap(),
+            || {
+                ZiporaHashMap::<[u8; 16], u64>::with_config_and_hasher(
+                    make_zconfig(),
+                    make_hasher(),
+                )
+                .unwrap()
+            },
             make_str16_key,
             |m, k, v| {
                 m.insert(k, v).unwrap();
@@ -380,7 +394,12 @@ pub fn bench_hash_maps(
             prefill,
             get_batch,
             insert_params,
-            || HashbrownMap::<u64, u64, ahash::RandomState>::with_capacity_and_hasher(n, make_hasher()),
+            || {
+                HashbrownMap::<u64, u64, ahash::RandomState>::with_capacity_and_hasher(
+                    n,
+                    make_hasher(),
+                )
+            },
             make_u64_key,
             |m, k, v| {
                 m.insert(k, v);
@@ -395,7 +414,12 @@ pub fn bench_hash_maps(
             get_batch,
             &u64_perm,
             get_params,
-            || HashbrownMap::<u64, u64, ahash::RandomState>::with_capacity_and_hasher(n, make_hasher()),
+            || {
+                HashbrownMap::<u64, u64, ahash::RandomState>::with_capacity_and_hasher(
+                    n,
+                    make_hasher(),
+                )
+            },
             make_u64_key,
             |m, k, v| {
                 m.insert(k, v);
@@ -424,7 +448,12 @@ pub fn bench_hash_maps(
             prefill,
             get_batch,
             insert_params,
-            || HashbrownMap::<[u8; 16], u64, ahash::RandomState>::with_capacity_and_hasher(n, make_hasher()),
+            || {
+                HashbrownMap::<[u8; 16], u64, ahash::RandomState>::with_capacity_and_hasher(
+                    n,
+                    make_hasher(),
+                )
+            },
             make_str16_key,
             |m, k, v| {
                 m.insert(k, v);
@@ -439,7 +468,12 @@ pub fn bench_hash_maps(
             get_batch,
             &str16_perm,
             get_params,
-            || HashbrownMap::<[u8; 16], u64, ahash::RandomState>::with_capacity_and_hasher(n, make_hasher()),
+            || {
+                HashbrownMap::<[u8; 16], u64, ahash::RandomState>::with_capacity_and_hasher(
+                    n,
+                    make_hasher(),
+                )
+            },
             make_str16_key,
             |m, k, v| {
                 m.insert(k, v);
@@ -465,7 +499,12 @@ pub fn bench_hash_maps(
             prefill,
             get_batch,
             insert_params,
-            || DeterministicStdHashMap::<u64, u64>::with_capacity_and_hasher(n, BuildHasherDefault::default()),
+            || {
+                DeterministicStdHashMap::<u64, u64>::with_capacity_and_hasher(
+                    n,
+                    BuildHasherDefault::default(),
+                )
+            },
             make_u64_key,
             |m, k, v| {
                 m.insert(k, v);
@@ -480,7 +519,12 @@ pub fn bench_hash_maps(
             get_batch,
             &u64_perm,
             get_params,
-            || DeterministicStdHashMap::<u64, u64>::with_capacity_and_hasher(n, BuildHasherDefault::default()),
+            || {
+                DeterministicStdHashMap::<u64, u64>::with_capacity_and_hasher(
+                    n,
+                    BuildHasherDefault::default(),
+                )
+            },
             make_u64_key,
             |m, k, v| {
                 m.insert(k, v);
@@ -506,7 +550,12 @@ pub fn bench_hash_maps(
             prefill,
             get_batch,
             insert_params,
-            || DeterministicStdHashMap::<[u8; 16], u64>::with_capacity_and_hasher(n, BuildHasherDefault::default()),
+            || {
+                DeterministicStdHashMap::<[u8; 16], u64>::with_capacity_and_hasher(
+                    n,
+                    BuildHasherDefault::default(),
+                )
+            },
             make_str16_key,
             |m, k, v| {
                 m.insert(k, v);
@@ -521,7 +570,12 @@ pub fn bench_hash_maps(
             get_batch,
             &str16_perm,
             get_params,
-            || DeterministicStdHashMap::<[u8; 16], u64>::with_capacity_and_hasher(n, BuildHasherDefault::default()),
+            || {
+                DeterministicStdHashMap::<[u8; 16], u64>::with_capacity_and_hasher(
+                    n,
+                    BuildHasherDefault::default(),
+                )
+            },
             make_str16_key,
             |m, k, v| {
                 m.insert(k, v);

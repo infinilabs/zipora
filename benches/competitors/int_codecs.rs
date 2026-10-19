@@ -108,8 +108,12 @@ impl Encoder for SvbCrateSimd {
         const ONES: [u8; 16] = [1; 16];
         const SHIFT: u32 = 1 | (1 << 9) | (1 << 18);
         const SHIFTS: [u32; 4] = [SHIFT; 4];
-        const LANECODES: [u8; 16] = [0, 3, 2, 3, 1, 3, 2, 3, 128, 128, 128, 128, 128, 128, 128, 128];
-        const GATHER_HI: [u8; 16] = [15, 11, 7, 3, 15, 11, 7, 3, 128, 128, 128, 128, 128, 128, 128, 128];
+        const LANECODES: [u8; 16] = [
+            0, 3, 2, 3, 1, 3, 2, 3, 128, 128, 128, 128, 128, 128, 128, 128,
+        ];
+        const GATHER_HI: [u8; 16] = [
+            15, 11, 7, 3, 15, 11, 7, 3, 128, 128, 128, 128, 128, 128, 128, 128,
+        ];
         const CONCAT: u32 = 1 | (1 << 10) | (1 << 20) | (1 << 30);
         const SUM: u32 = 1 | (1 << 8) | (1 << 16) | (1 << 24);
         const AGGREGATORS: [u32; 4] = [CONCAT, SUM, 0, 0];
@@ -150,7 +154,7 @@ impl Encoder for SvbCrateSimd {
                     output[bytes_encoded..bytes_encoded + 16]
                         .as_mut_ptr()
                         .cast::<__m128i>(),
-                encoded,
+                    encoded,
                 );
 
                 *control_byte = code;
@@ -177,8 +181,7 @@ impl Decoder for SvbCrateSimd {
     ) -> (usize, usize) {
         let mut bytes_read = 0usize;
         let mut nums_decoded = nums_already_decoded;
-        let control_byte_limit =
-            control_bytes_to_decode.min(control_bytes.len().saturating_sub(3));
+        let control_byte_limit = control_bytes_to_decode.min(control_bytes.len().saturating_sub(3));
 
         for &control_byte in &control_bytes[..control_byte_limit] {
             let length = SVB_CRATE_DECODE_LEN_TABLE[control_byte as usize];
@@ -377,11 +380,8 @@ pub fn bench_int_codecs(
             params,
             || {
                 let mut out = vec![0u32; n];
-                let consumed = svb_crate_decode::<SvbCrateScalar>(
-                    black_box(&svb_crate_encoded),
-                    n,
-                    &mut out,
-                );
+                let consumed =
+                    svb_crate_decode::<SvbCrateScalar>(black_box(&svb_crate_encoded), n, &mut out);
                 let mut acc = 0u32;
                 for v in &mut out {
                     acc = acc.wrapping_add(*v);
@@ -460,11 +460,8 @@ pub fn bench_int_codecs(
                 || {
                     for _ in 0..16usize {
                         let mut out = vec![0u32; n];
-                        let consumed = svb_crate_decode::<SvbCrateSimd>(
-                            black_box(&simd_encoded),
-                            n,
-                            &mut out,
-                        );
+                        let consumed =
+                            svb_crate_decode::<SvbCrateSimd>(black_box(&simd_encoded), n, &mut out);
                         let mut acc = 0u32;
                         for v in &mut out {
                             acc = acc.wrapping_add(*v);

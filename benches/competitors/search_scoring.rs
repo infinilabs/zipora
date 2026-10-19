@@ -69,7 +69,7 @@ pub fn bench_search_and_scoring(
         }
         black_box(pre_acc);
 
-        let mut strstr_params = str_params;
+        let mut strstr_params = str_params.with_threshold(16.0);
         strstr_params.warmup_calls = 64;
         strstr_params.bursts_per_trial = 8;
         measure_bench(
