@@ -62,6 +62,7 @@ pub fn bench_rank_select(
 
     // 1a. Zipora Rank9 (1 instance)
     if should_run_bench("rank_select/rank9/rank1") {
+        trim_allocator_arena();
         maybe_repin_self_within_ccd();
         let words = base_words.clone();
         let r9 = Rank9::new(BitVector::from_blocks(words, num_bits)).unwrap();
@@ -95,6 +96,7 @@ pub fn bench_rank_select(
         "rank_select/interleaved256/select1",
         "rank_select/interleaved256/select0",
     ]) {
+        trim_allocator_arena();
         maybe_repin_self_within_ccd();
         let words = base_words.clone();
         let rsi = RankSelectInterleaved256::new(BitVector::from_blocks(words, num_bits)).unwrap();
@@ -164,6 +166,7 @@ pub fn bench_rank_select(
         "rank_select/se256/select1",
         "rank_select/se256/select0",
     ]) {
+        trim_allocator_arena();
         maybe_repin_self_within_ccd();
         let words = base_words.clone();
         let rs_se = RankSelectSE256::new(BitVector::from_blocks(words, num_bits)).unwrap();
@@ -234,6 +237,7 @@ pub fn bench_rank_select(
         "rank_select/sucds_rank9sel/select1",
         "rank_select/sucds_rank9sel/select0",
     ]) {
+        trim_allocator_arena();
         maybe_repin_self_within_ccd();
         let mut sbv = SucdsBitVector::with_capacity(num_bits);
         for &w in &base_words {
@@ -322,6 +326,7 @@ pub fn bench_rank_select(
         "rank_select/vers_vecs_rsvec/select1",
         "rank_select/vers_vecs_rsvec/select0",
     ]) {
+        trim_allocator_arena();
         maybe_repin_self_within_ccd();
         let words = base_words.clone();
         let vers_rs = VersRsVec::from_bit_vec(VersBitVec::from_vec(words));
@@ -407,6 +412,7 @@ pub fn bench_rank_select(
         "rank_select/bitm_rs101111/select1",
         "rank_select/bitm_rs101111/select0",
     ]) {
+        trim_allocator_arena();
         maybe_repin_self_within_ccd();
         let words = base_words;
         let (bitm_rs, _) =

@@ -314,44 +314,7 @@ pub fn round2(val: f64) -> f64 {
 }
 
 pub fn record_space_metric(space: &mut BTreeMap<String, f64>, key: &str, val: f64) {
-    space.insert(key.to_string(), val);
-}
-
-pub fn record_samples(
-    records: &mut Vec<BenchRecord>,
-    category: &str,
-    name: &str,
-    unit: &str,
-    params: BenchParams,
-    samples: &mut [f64],
-) {
-    samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let total_trials = samples.len();
-    let min_ns = samples[0];
-    let median_ns = samples[total_trials / 2];
-    let p95_idx = ((total_trials as f64 * 0.95).floor() as usize).min(total_trials - 1);
-    let p95_ns = samples[p95_idx];
-    let spread_pct = if min_ns > 0.0 {
-        ((p95_ns - min_ns) / min_ns) * 100.0
-    } else {
-        0.0
-    };
-    let rounded_samples: Vec<f64> = samples.iter().copied().map(round4).collect();
-
-    records.push(BenchRecord {
-        name: name.to_string(),
-        category: category.to_string(),
-        unit: unit.to_string(),
-        dataset_size: params.dataset_size,
-        ops_per_iter: params.ops_per_iter,
-        trials: total_trials,
-        min_ns_per_op: round4(min_ns),
-        median_ns_per_op: round4(median_ns),
-        p95_ns_per_op: round4(p95_ns),
-        spread_pct: round2(spread_pct),
-        max_regression_pct: params.max_regression_pct,
-        samples: rounded_samples,
-    });
+    super::datasets::record_prealloc_space_metric(space, key, val);
 }
 
 pub fn measure_bench<F>(
@@ -421,13 +384,10 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
     );
 
     if !should_run_bench(name) {
-        if params.trials <= 4 {
-            CURRENT_BURST_IDX.store(0, Ordering::Relaxed);
-            setup(state);
-            f(state);
-        }
         return;
     }
+    let (name_owned, category_owned, unit_owned, mut rounded_samples) =
+        super::datasets::take_prealloc_record_buffers(name, category, unit);
 
     let filtered_mode = has_active_filter();
     let check_preempt = true;
@@ -435,7 +395,7 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
     let allow_repin = is_self_repin_allowed();
     if allow_repin {
         if filtered_mode {
-            wait_for_quiet_host_and_repin(8_000, true);
+            wait_for_quiet_host_and_repin(8_000, false);
         } else {
             maybe_repin_self_within_ccd();
         }
@@ -752,12 +712,34 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         break;
     }
 
-    record_samples(
-        records,
-        category,
-        name,
-        unit,
-        params,
-        &mut samples[..params.trials],
-    );
+    let s_slice = &mut samples[..params.trials];
+    s_slice.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let total_trials = s_slice.len();
+    let min_ns = s_slice[0];
+    let median_ns = s_slice[total_trials / 2];
+    let p95_idx = ((total_trials as f64 * 0.95).floor() as usize).min(total_trials - 1);
+    let p95_ns = s_slice[p95_idx];
+    let spread_pct = if min_ns > 0.0 {
+        ((p95_ns - min_ns) / min_ns) * 100.0
+    } else {
+        0.0
+    };
+    for &s in s_slice.iter() {
+        rounded_samples.push(round4(s));
+    }
+
+    records.push(BenchRecord {
+        name: name_owned,
+        category: category_owned,
+        unit: unit_owned,
+        dataset_size: params.dataset_size,
+        ops_per_iter: params.ops_per_iter,
+        trials: total_trials,
+        min_ns_per_op: round4(min_ns),
+        median_ns_per_op: round4(median_ns),
+        p95_ns_per_op: round4(p95_ns),
+        spread_pct: round2(spread_pct),
+        max_regression_pct: params.max_regression_pct,
+        samples: rounded_samples,
+    });
 }

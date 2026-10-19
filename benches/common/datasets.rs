@@ -418,22 +418,142 @@ pub fn gen_radix_kv_template(n: usize) -> Vec<(u64, u64)> {
     template_kv
 }
 
-/// Consolidates glibc `fastbins` and returns unused top-of-heap / interior pages
-/// to the OS via `libc::malloc_trim(0)` (after equalizing glibc's dynamic
-/// `mmap_threshold` on first call) so full-suite runs and isolated `--filter`
-/// retries start each multi-megabyte benchmark from the same clean allocator state.
-pub fn trim_allocator_arena() {
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
+
+struct PreallocBenchBuffers {
+    record_pool: Vec<(String, String, String, Vec<f64>)>,
+    space_pool: Vec<(String, f64)>,
+    space_used: usize,
+}
+
+static PREALLOC_BUFFERS: OnceLock<Mutex<PreallocBenchBuffers>> = OnceLock::new();
+
+fn get_prealloc_buffers() -> &'static Mutex<PreallocBenchBuffers> {
+    PREALLOC_BUFFERS.get_or_init(|| {
+        let mut record_pool = Vec::with_capacity(512);
+        for _ in 0..512 {
+            record_pool.push((
+                String::with_capacity(128),
+                String::with_capacity(64),
+                String::with_capacity(32),
+                Vec::with_capacity(32),
+            ));
+        }
+        let mut space_pool = Vec::with_capacity(256);
+        for _ in 0..256 {
+            space_pool.push((String::with_capacity(128), 0.0));
+        }
+        Mutex::new(PreallocBenchBuffers {
+            record_pool,
+            space_pool,
+            space_used: 0,
+        })
+    })
+}
+
+/// Pops a pre-allocated `(name, category, unit, samples)` buffer tuple from the bottom-of-`brk`
+/// pool initialized by [`init_bench_allocator_policy`], so `measure_bench_inner` performs zero
+/// heap allocations while a benchmark's multi-megabyte data structure is alive on `brk`.
+pub fn take_prealloc_record_buffers(
+    name: &str,
+    category: &str,
+    unit: &str,
+) -> (String, String, String, Vec<f64>) {
+    init_bench_allocator_policy();
+    let mut guard = get_prealloc_buffers().lock().unwrap();
+    if let Some((mut n_buf, mut c_buf, mut u_buf, mut s_buf)) = guard.record_pool.pop() {
+        n_buf.clear();
+        assert!(n_buf.capacity() >= name.len());
+        n_buf.push_str(name);
+        c_buf.clear();
+        assert!(c_buf.capacity() >= category.len());
+        c_buf.push_str(category);
+        u_buf.clear();
+        assert!(u_buf.capacity() >= unit.len());
+        u_buf.push_str(unit);
+        s_buf.clear();
+        (n_buf, c_buf, u_buf, s_buf)
+    } else {
+        (
+            name.to_string(),
+            category.to_string(),
+            unit.to_string(),
+            Vec::with_capacity(32),
+        )
+    }
+}
+
+/// Records a `(key, val)` space metric into the pre-allocated bottom-of-`brk` buffer pool
+/// without allocating `String` or `BTreeMap` nodes while benchmark data structures are on `brk`.
+pub fn record_prealloc_space_metric(space: &mut BTreeMap<String, f64>, key: &str, val: f64) {
+    init_bench_allocator_policy();
+    let mut guard = get_prealloc_buffers().lock().unwrap();
+    let idx = guard.space_used;
+    if idx < guard.space_pool.len() {
+        let (k_buf, v_slot) = &mut guard.space_pool[idx];
+        k_buf.clear();
+        assert!(k_buf.capacity() >= key.len());
+        k_buf.push_str(key);
+        *v_slot = val;
+        guard.space_used = idx + 1;
+    } else {
+        drop(guard);
+        space.insert(key.to_string(), val);
+    }
+}
+
+/// Flushes all pre-allocated space metrics recorded via [`record_prealloc_space_metric`] into
+/// the output `BTreeMap` after all benchmarks have completed.
+pub fn flush_prealloc_space_metrics(space: &mut BTreeMap<String, f64>) {
+    if let Some(m) = PREALLOC_BUFFERS.get() {
+        let mut guard = m.lock().unwrap();
+        let used = guard.space_used;
+        for i in 0..used {
+            let (ref k, v) = guard.space_pool[i];
+            space.insert(k.clone(), v);
+        }
+        guard.space_used = 0;
+    }
+}
+
+/// Configures a single fixed glibc allocator policy at the start of every benchmark binary:
+/// - `libc::mallopt(libc::M_MMAP_MAX, 0)` disables `mmap()`-backed heap allocations for all
+///   sizes (including `> 32 MiB` buffers in `dat/*/build_sorted`, `radix_sort/*`, and
+///   `suffix_array/*`), routing all system-allocator requests through `brk`.
+/// - `libc::mallopt(libc::M_TRIM_THRESHOLD, -1)` disables automatic `systrim()` (`sbrk(-delta)`)
+///   inside `free()` during timed benchmark loops, so pages faulted during `warmup_calls`
+///   remain mapped across all timed trials in both full-suite and isolated `--filter` runs.
+/// - Pre-allocates all `BenchRecord` and `space_metrics` buffers at the bottom of `brk` so
+///   `measure_bench_inner` and `record_space_metric` never allocate above a benchmark's working
+///   set or pin `av->top` across `malloc_trim(0)`.
+pub fn init_bench_allocator_policy() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
         use std::sync::Once;
-        static INIT_MMAP_THRESHOLD: Once = Once::new();
-        INIT_MMAP_THRESHOLD.call_once(|| {
-            let v: Vec<u8> = Vec::with_capacity(24 * 1024 * 1024);
-            std::hint::black_box(v.as_ptr());
-            drop(v);
+        static INIT_POLICY: Once = Once::new();
+        INIT_POLICY.call_once(|| {
+            // SAFETY: `libc::mallopt` sets global glibc ptmalloc2 parameters using valid
+            // documented option constants (`M_MMAP_MAX`, `M_TRIM_THRESHOLD`).
+            unsafe {
+                libc::mallopt(libc::M_MMAP_MAX, 0);
+                libc::mallopt(libc::M_TRIM_THRESHOLD, -1);
+            }
         });
-        // SAFETY: `libc::malloc_trim(0)` is thread-safe and releases unused pages from
-        // glibc's arenas back to the OS.
+    }
+    let _ = get_prealloc_buffers();
+}
+
+/// Consolidates glibc `fastbins` and returns unused top-of-heap / interior pages
+/// to the OS via `libc::malloc_trim(0)` (after ensuring [`init_bench_allocator_policy`]
+/// is active) so full-suite runs and isolated `--filter` retries start each multi-megabyte
+/// benchmark from the same clean allocator state.
+pub fn trim_allocator_arena() {
+    init_bench_allocator_policy();
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        // SAFETY: `libc::malloc_trim(0)` is thread-safe and consolidates fastbins / releases
+        // unused pages from glibc's arenas back to the OS between benchmarks.
         unsafe {
             libc::malloc_trim(0);
         }

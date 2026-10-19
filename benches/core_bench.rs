@@ -586,10 +586,10 @@ fn bench_tries(
         lookup_params.bursts_per_trial = 18;
 
         let mut dat_build_params = BenchParams::heavy(num_keys, num_keys, 3);
-        dat_build_params.warmup_calls = usize::from(dist_idx == 2);
+        dat_build_params.warmup_calls = 1;
         dat_build_params.bursts_per_trial = 1;
         let mut cspp_build_params = BenchParams::heavy(num_keys, num_keys, 3);
-        cspp_build_params.warmup_calls = 0;
+        cspp_build_params.warmup_calls = 1;
         cspp_build_params.bursts_per_trial = 1;
 
         let warm_perm = BijectivePerm::new(n, SEED_BASE ^ 0x0550 ^ (dist_idx as u64));
@@ -878,12 +878,14 @@ fn bench_tries(
                 *slot = Some(z);
             },
         );
-        let mut built_ztries = Vec::with_capacity(Z_REPLICAS);
-        let mut zspacers = Vec::with_capacity(Z_REPLICAS + 1);
-        if let Some(last) = z_pending.take() {
+        let need_z_lookup = should_run_bench("tries/zipora_trie_da/lookup");
+        let eff_z_replicas = if need_z_lookup { Z_REPLICAS } else { 0 };
+        let mut built_ztries = Vec::with_capacity(eff_z_replicas);
+        let mut zspacers = Vec::with_capacity(eff_z_replicas + 1);
+        if need_z_lookup && let Some(last) = z_pending.take() {
             built_ztries.push(last);
         }
-        while built_ztries.len() < Z_REPLICAS {
+        while built_ztries.len() < eff_z_replicas {
             let skb = Z_SPACERS_KB[built_ztries.len()];
             zspacers.push(vec![1u8; skb * 1024]);
             let mut z: ZiporaTrie<RankSelectInterleaved256> =
@@ -897,44 +899,46 @@ fn bench_tries(
         (built_ztries, zspacers)
     };
 
-    let zwarm_perm = BijectivePerm::new(n, SEED_BASE ^ 0x059A);
-    let mut warm_ztrie = 0usize;
-    let mut warm_z_idx = 0usize;
-    for w_burst in 0..8usize {
-        let w_start = w_burst * lookup_batch;
-        zwarm_perm.for_each_slice(w_start, lookup_batch, |id| {
-            let z = &ztries[warm_z_idx & (Z_REPLICAS - 1)];
-            warm_z_idx = warm_z_idx.wrapping_add(1);
-            let k = AlignedKey(make_url_path_key(id));
-            if z.contains(black_box(&k.0[..])) {
-                warm_ztrie += 1;
-            }
-        });
-    }
-    black_box(warm_ztrie);
-
-    measure_bench(
-        records,
-        "tries",
-        "tries/zipora_trie_da/lookup",
-        "ns/op",
-        zlookup_params,
-        || {
-            let start = current_burst_index() * lookup_batch;
-            let mut found = 0usize;
-            let mut q_idx = 0usize;
-            zperm.for_each_slice(start, lookup_batch, |id| {
-                let z = &ztries[q_idx & (Z_REPLICAS - 1)];
-                q_idx = q_idx.wrapping_add(1);
+    if should_run_bench("tries/zipora_trie_da/lookup") {
+        let zwarm_perm = BijectivePerm::new(n, SEED_BASE ^ 0x059A);
+        let mut warm_ztrie = 0usize;
+        let mut warm_z_idx = 0usize;
+        for w_burst in 0..8usize {
+            let w_start = w_burst * lookup_batch;
+            zwarm_perm.for_each_slice(w_start, lookup_batch, |id| {
+                let z = &ztries[warm_z_idx & (Z_REPLICAS - 1)];
+                warm_z_idx = warm_z_idx.wrapping_add(1);
                 let k = AlignedKey(make_url_path_key(id));
                 if z.contains(black_box(&k.0[..])) {
-                    found += 1;
+                    warm_ztrie += 1;
                 }
             });
-            debug_assert_eq!(found, lookup_batch);
-            black_box(found);
-        },
-    );
+        }
+        black_box(warm_ztrie);
+
+        measure_bench(
+            records,
+            "tries",
+            "tries/zipora_trie_da/lookup",
+            "ns/op",
+            zlookup_params,
+            || {
+                let start = current_burst_index() * lookup_batch;
+                let mut found = 0usize;
+                let mut q_idx = 0usize;
+                zperm.for_each_slice(start, lookup_batch, |id| {
+                    let z = &ztries[q_idx & (Z_REPLICAS - 1)];
+                    q_idx = q_idx.wrapping_add(1);
+                    let k = AlignedKey(make_url_path_key(id));
+                    if z.contains(black_box(&k.0[..])) {
+                        found += 1;
+                    }
+                });
+                debug_assert_eq!(found, lookup_batch);
+                black_box(found);
+            },
+        );
+    }
     drop(ztries);
     drop(_ztrie_spacers);
 }
@@ -2348,8 +2352,10 @@ fn bench_suffix_array(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
             *slot = Some(built);
         },
     );
-    let sa0 = sa_pending.take().unwrap();
     if should_run_bench("suffix_array/search_query") {
+        let sa0 = sa_pending
+            .take()
+            .unwrap_or_else(|| SuffixArray::new(&text0).unwrap());
         let _text_spacer = vec![1u8; 1_376 * 1024];
         let text1 = text0.clone();
         let _sa_spacer = vec![1u8; 3_424 * 1024];
@@ -2622,6 +2628,13 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
     );
 }
 
+#[inline(never)]
+fn _zipora_core_bench_text_pad(x: u64) -> u64 {
+    let a = x.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+    let b = a.rotate_left(17).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    b.wrapping_add(0x94D0_49BB_1331_11EB)
+}
+
 fn write_json(path: &Path, report: &CoreBenchReport) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).unwrap();
@@ -2632,6 +2645,8 @@ fn write_json(path: &Path, report: &CoreBenchReport) {
 }
 
 fn main() {
+    init_bench_allocator_policy();
+    black_box(_zipora_core_bench_text_pad(black_box(0)));
     let args: Vec<String> = std::env::args().collect();
     let smoke_mode = args.iter().any(|a| a == "--smoke")
         || std::env::var("ZIPORA_BENCH_SMOKE").as_deref() == Ok("1");
@@ -2687,54 +2702,66 @@ fn main() {
 
     let mut search_records = Vec::with_capacity(8);
     if run_cat("search_and_scoring") {
+        trim_allocator_arena();
         bench_search_and_scoring(&mut search_records, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("rank_select") {
+        trim_allocator_arena();
         bench_rank_select(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("elias_fano") {
+        trim_allocator_arena();
         bench_elias_fano(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("tries") {
+        trim_allocator_arena();
         bench_tries(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("hash_maps") {
+        trim_allocator_arena();
         bench_hash_maps(&mut records, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("memory_pools") {
+        trim_allocator_arena();
         bench_memory_pools(&mut records, logical_cores, sizes);
         set_allow_self_repin(true);
         pin_current_thread_to_core(current_self_pinned_core());
         maybe_repin_self_within_ccd();
     }
     if run_cat("entropy") {
+        trim_allocator_arena();
         bench_entropy(&mut records, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("int_codecs") {
+        trim_allocator_arena();
         bench_int_codecs(&mut records, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("radix_sort") {
         if should_run_any(&["radix_sort/lsd_u32", "radix_sort/lsd_u64"]) {
+            trim_allocator_arena();
             bench_radix_sort_lsd(&mut records, sizes);
             maybe_repin_self_within_ccd();
         }
         if should_run_bench("radix_sort/kv_u64_u64") {
+            trim_allocator_arena();
             bench_radix_sort_kv(&mut records, current_self_pinned_core(), sizes);
             maybe_repin_self_within_ccd();
         }
     }
     if run_cat("suffix_array") {
+        trim_allocator_arena();
         bench_suffix_array(&mut records, sizes);
         maybe_repin_self_within_ccd();
     }
     records.append(&mut search_records);
+    flush_prealloc_space_metrics(&mut space_metrics);
 
     let elapsed = suite_start.elapsed();
     let host_metadata = collect_host_metadata(primary_core);

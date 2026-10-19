@@ -219,6 +219,7 @@ pub fn bench_int_codecs(
     space: &mut BTreeMap<String, f64>,
     sizes: SuiteSizes,
 ) {
+    trim_allocator_arena();
     let n = sizes.int_codec_elements;
     let sorted_u32 = gen_uniform_sparse(n, 120, SEED_BASE ^ 0x08);
     let mut params = BenchParams::fast(n as u64, n as u64).with_threshold(9.0);
@@ -236,85 +237,89 @@ pub fn bench_int_codecs(
     svb_deltas_params.bursts_per_trial = 4;
 
     // 1. Zipora StreamVByte (1 instance)
-    let svb_stream = StreamVByte::encode_deltas(&sorted_u32);
-    let mut svb_out = vec![0u32; n];
-    record_space_metric(
-        space,
-        "int_codecs/stream_vbyte_bits_per_int",
-        ((svb_stream.controls.len() + svb_stream.data.len()) as f64 * 8.0) / (n as f64),
-    );
+    {
+        let svb_stream = StreamVByte::encode_deltas(&sorted_u32);
+        record_space_metric(
+            space,
+            "int_codecs/stream_vbyte_bits_per_int",
+            ((svb_stream.controls.len() + svb_stream.data.len()) as f64 * 8.0) / (n as f64),
+        );
+        let mut svb_out = vec![0u32; n];
 
-    measure_bench(
-        records,
-        "int_codecs",
-        "int_codecs/stream_vbyte/encode_deltas",
-        "ns/int",
-        params,
-        || {
-            let encoded = StreamVByte::encode_deltas(black_box(&sorted_u32));
-            black_box(encoded.data.len());
-        },
-    );
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/stream_vbyte/encode_deltas",
+            "ns/int",
+            params,
+            || {
+                let encoded = StreamVByte::encode_deltas(black_box(&sorted_u32));
+                black_box(encoded.data.len());
+            },
+        );
 
-    measure_bench(
-        records,
-        "int_codecs",
-        "int_codecs/stream_vbyte/decode_into",
-        "ns/int",
-        svb_into_params,
-        || {
-            for _ in 0..32usize {
-                let decoded = StreamVByte::decode_into(black_box(&svb_stream), n, &mut svb_out);
-                black_box(decoded);
-            }
-        },
-    );
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/stream_vbyte/decode_into",
+            "ns/int",
+            svb_into_params,
+            || {
+                for _ in 0..32usize {
+                    let decoded = StreamVByte::decode_into(black_box(&svb_stream), n, &mut svb_out);
+                    black_box(decoded);
+                }
+            },
+        );
 
-    measure_bench(
-        records,
-        "int_codecs",
-        "int_codecs/stream_vbyte/decode_deltas",
-        "ns/int",
-        svb_deltas_params,
-        || {
-            for _ in 0..16usize {
-                let decoded = StreamVByte::decode_deltas(black_box(&svb_stream), n);
-                black_box(decoded.len());
-            }
-        },
-    );
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/stream_vbyte/decode_deltas",
+            "ns/int",
+            svb_deltas_params,
+            || {
+                for _ in 0..16usize {
+                    let decoded = StreamVByte::decode_deltas(black_box(&svb_stream), n);
+                    black_box(decoded.len());
+                }
+            },
+        );
+    }
 
     // 2. Zipora GroupVarint (1 instance, 1 shared `sorted_u32` input slice)
-    let gv_encoded = GroupVarint::encode_deltas(&sorted_u32);
-    record_space_metric(
-        space,
-        "int_codecs/group_varint_bits_per_int",
-        (gv_encoded.len() as f64 * 8.0) / (n as f64),
-    );
+    {
+        let gv_encoded = GroupVarint::encode_deltas(&sorted_u32);
+        record_space_metric(
+            space,
+            "int_codecs/group_varint_bits_per_int",
+            (gv_encoded.len() as f64 * 8.0) / (n as f64),
+        );
 
-    measure_bench(
-        records,
-        "int_codecs",
-        "int_codecs/group_varint/encode_deltas",
-        "ns/int",
-        params,
-        || {
-            let encoded = GroupVarint::encode_deltas(black_box(&sorted_u32));
-            black_box(encoded.len());
-        },
-    );
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/group_varint/encode_deltas",
+            "ns/int",
+            params,
+            || {
+                let encoded = GroupVarint::encode_deltas(black_box(&sorted_u32));
+                black_box(encoded.len());
+            },
+        );
 
-    measure_bench(
-        records,
-        "int_codecs",
-        "int_codecs/group_varint/decode_deltas",
-        "ns/int",
-        params,
-        || {
-            let decoded = GroupVarint::decode_deltas(black_box(&gv_encoded), n);
-            black_box(decoded.len());
-        },
-    );
+        measure_bench(
+            records,
+            "int_codecs",
+            "int_codecs/group_varint/decode_deltas",
+            "ns/int",
+            params,
+            || {
+                let decoded = GroupVarint::decode_deltas(black_box(&gv_encoded), n);
+                black_box(decoded.len());
+            },
+        );
+    }
 
     // 3. Competitor: stream-vbyte crate (v0.4.1 Scalar + delta pass, 1 instance)
     {
@@ -333,63 +338,68 @@ pub fn bench_int_codecs(
             (svb_crate_encoded.len() as f64 * 8.0) / (n as f64),
         );
 
-        let mut svb_crate_out = vec![0u32; n];
+        {
+            let mut svb_crate_out = vec![0u32; n];
 
-        measure_bench(
-            records,
-            "int_codecs",
-            "int_codecs/stream_vbyte_crate/encode_deltas",
-            "ns/int",
-            params,
-            || {
-                let src = black_box(&sorted_u32);
-                let mut deltas = Vec::with_capacity(n);
-                let mut p = 0u32;
-                for &v in src {
-                    deltas.push(v.wrapping_sub(p));
-                    p = v;
-                }
-                let mut buf = vec![0u8; n.div_ceil(4) + n * 4];
-                let written = svb_crate_encode::<SvbCrateScalar>(&deltas, &mut buf);
-                buf.truncate(written);
-                black_box(buf.len());
-            },
-        );
+            measure_bench(
+                records,
+                "int_codecs",
+                "int_codecs/stream_vbyte_crate/encode_deltas",
+                "ns/int",
+                params,
+                || {
+                    let src = black_box(&sorted_u32);
+                    let mut deltas = Vec::with_capacity(n);
+                    let mut p = 0u32;
+                    for &v in src {
+                        deltas.push(v.wrapping_sub(p));
+                        p = v;
+                    }
+                    let mut buf = vec![0u8; n.div_ceil(4) + n * 4];
+                    let written = svb_crate_encode::<SvbCrateScalar>(&deltas, &mut buf);
+                    buf.truncate(written);
+                    black_box(buf.len());
+                },
+            );
 
-        measure_bench(
-            records,
-            "int_codecs",
-            "int_codecs/stream_vbyte_crate/decode_into",
-            "ns/int",
-            params,
-            || {
-                let consumed = svb_crate_decode::<SvbCrateScalar>(
-                    black_box(&svb_crate_encoded),
-                    n,
-                    &mut svb_crate_out,
-                );
-                black_box(consumed);
-            },
-        );
+            measure_bench(
+                records,
+                "int_codecs",
+                "int_codecs/stream_vbyte_crate/decode_into",
+                "ns/int",
+                params,
+                || {
+                    let consumed = svb_crate_decode::<SvbCrateScalar>(
+                        black_box(&svb_crate_encoded),
+                        n,
+                        &mut svb_crate_out,
+                    );
+                    black_box(consumed);
+                },
+            );
 
-        measure_bench(
-            records,
-            "int_codecs",
-            "int_codecs/stream_vbyte_crate/decode_deltas",
-            "ns/int",
-            params,
-            || {
-                let mut out = vec![0u32; n];
-                let consumed =
-                    svb_crate_decode::<SvbCrateScalar>(black_box(&svb_crate_encoded), n, &mut out);
-                let mut acc = 0u32;
-                for v in &mut out {
-                    acc = acc.wrapping_add(*v);
-                    *v = acc;
-                }
-                black_box(consumed + out.len());
-            },
-        );
+            measure_bench(
+                records,
+                "int_codecs",
+                "int_codecs/stream_vbyte_crate/decode_deltas",
+                "ns/int",
+                params,
+                || {
+                    let mut out = vec![0u32; n];
+                    let consumed = svb_crate_decode::<SvbCrateScalar>(
+                        black_box(&svb_crate_encoded),
+                        n,
+                        &mut out,
+                    );
+                    let mut acc = 0u32;
+                    for v in &mut out {
+                        acc = acc.wrapping_add(*v);
+                        *v = acc;
+                    }
+                    black_box(consumed + out.len());
+                },
+            );
+        }
 
         #[cfg(target_arch = "x86_64")]
         {
@@ -398,11 +408,13 @@ pub fn bench_int_codecs(
             let simd_len = svb_crate_encode::<SvbCrateSimd>(&init_deltas, &mut simd_encoded);
             simd_encoded.truncate(simd_len);
             assert_eq!(simd_encoded, svb_crate_encoded);
-            let mut simd_check_out = vec![0u32; n];
-            let simd_consumed =
-                svb_crate_decode::<SvbCrateSimd>(&simd_encoded, n, &mut simd_check_out);
-            assert_eq!(simd_consumed, simd_encoded.len());
-            assert_eq!(simd_check_out, init_deltas);
+            {
+                let mut simd_check_out = vec![0u32; n];
+                let simd_consumed =
+                    svb_crate_decode::<SvbCrateSimd>(&simd_encoded, n, &mut simd_check_out);
+                assert_eq!(simd_consumed, simd_encoded.len());
+                assert_eq!(simd_check_out, init_deltas);
+            }
 
             record_space_metric(
                 space,

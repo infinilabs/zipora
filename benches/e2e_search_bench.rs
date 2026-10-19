@@ -1964,7 +1964,20 @@ fn write_json(path: &Path, report: &E2EBenchReport) {
     eprintln!("Wrote E2E search benchmark report to {}", path.display());
 }
 
+fn init_bench_allocator_policy() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        // SAFETY: `libc::mallopt` sets global glibc ptmalloc2 parameters using valid
+        // documented option constants (`M_MMAP_MAX`, `M_TRIM_THRESHOLD`).
+        unsafe {
+            libc::mallopt(libc::M_MMAP_MAX, 0);
+            libc::mallopt(libc::M_TRIM_THRESHOLD, -1);
+        }
+    }
+}
+
 fn main() {
+    init_bench_allocator_policy();
     let args: Vec<String> = std::env::args().collect();
     let save_baseline = args.iter().any(|a| a == "--save-baseline")
         || std::env::var("ZIPORA_BENCH_SAVE_BASELINE").as_deref() == Ok("1")

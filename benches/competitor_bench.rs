@@ -32,6 +32,7 @@ fn write_json(path: &Path, report: &CompetitorBenchReport) {
 }
 
 fn main() {
+    init_bench_allocator_policy();
     let args: Vec<String> = std::env::args().collect();
     let smoke_mode = args.iter().any(|a| a == "--smoke")
         || std::env::var("ZIPORA_BENCH_SMOKE").as_deref() == Ok("1");
@@ -86,47 +87,78 @@ fn main() {
     let suite_start = Instant::now();
 
     if run_cat("rank_select") {
+        trim_allocator_arena();
         bench_rank_select(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("elias_fano") {
+        trim_allocator_arena();
         bench_elias_fano(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("tries") {
+        trim_allocator_arena();
         bench_tries(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("hash_maps") {
+        trim_allocator_arena();
         bench_hash_maps(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("memory_pools") {
+        trim_allocator_arena();
         bench_memory_pools(&mut records, &mut space_metrics, logical_cores, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("entropy") {
+        trim_allocator_arena();
         bench_entropy(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("int_codecs") {
+        trim_allocator_arena();
         bench_int_codecs(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("radix_sort") {
-        bench_radix_sort_lsd(&mut records, &mut space_metrics, sizes);
-        bench_radix_sort_kv(&mut records, &mut space_metrics, primary_core, sizes);
-        maybe_repin_self_within_ccd();
+        if should_run_any(&[
+            "radix_sort/lsd_u32",
+            "radix_sort/voracious/u32",
+            "radix_sort/rdst/u32",
+            "radix_sort/std_unstable/u32",
+            "radix_sort/lsd_u64",
+            "radix_sort/voracious/u64",
+            "radix_sort/rdst/u64",
+            "radix_sort/std_unstable/u64",
+        ]) {
+            trim_allocator_arena();
+            bench_radix_sort_lsd(&mut records, &mut space_metrics, sizes);
+            maybe_repin_self_within_ccd();
+        }
+        if should_run_any(&[
+            "radix_sort/kv_u64_u64",
+            "radix_sort/voracious/kv_u64_u64",
+            "radix_sort/rdst/kv_u64_u64",
+            "radix_sort/std_unstable/kv_u64_u64",
+        ]) {
+            trim_allocator_arena();
+            bench_radix_sort_kv(&mut records, &mut space_metrics, primary_core, sizes);
+            maybe_repin_self_within_ccd();
+        }
     }
     if run_cat("suffix_array") {
+        trim_allocator_arena();
         bench_suffix_array(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
     if run_cat("search_and_scoring") {
+        trim_allocator_arena();
         bench_search_and_scoring(&mut records, &mut space_metrics, sizes);
         maybe_repin_self_within_ccd();
     }
 
+    flush_prealloc_space_metrics(&mut space_metrics);
     let elapsed = suite_start.elapsed();
     let mut host_metadata = collect_host_metadata(primary_core);
     host_metadata.runner_command = format!(

@@ -46,6 +46,7 @@ pub fn bench_elias_fano(
         if !should_run_prefix(&format!("elias_fano/{dist_name}/")) {
             continue;
         }
+        trim_allocator_arena();
         let ef = EliasFano::from_sorted(data);
         let pef = PartitionedEliasFano::from_sorted(data);
         let opef = OptimalPartitionedEliasFano::from_sorted(data);

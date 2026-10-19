@@ -68,12 +68,15 @@ pub fn bench_radix_sort_lsd(
     sizes: SuiteSizes,
 ) {
     maybe_repin_self_within_ccd();
+    trim_allocator_arena();
     let n = sizes.radix_sort_elements;
-    let mut sorter = RadixSort::with_config(RadixSortConfig {
-        use_parallel: false,
-        use_counting_sort_threshold: 0,
-        ..RadixSortConfig::default()
-    });
+    let make_sorter = || {
+        RadixSort::with_config(RadixSortConfig {
+            use_parallel: false,
+            use_counting_sort_threshold: 0,
+            ..RadixSortConfig::default()
+        })
+    };
     let mut sort_params = BenchParams::heavy(n as u64, n as u64, 3);
     sort_params.warmup_calls = 1;
     sort_params.bursts_per_trial = 1;
@@ -88,11 +91,19 @@ pub fn bench_radix_sort_lsd(
     record_space_metric(space, "radix_sort/std_u64_bytes_per_elem", 8.0);
 
     // 1. u32 sorting (10^7 elements, 1 work buffer per side)
-    {
+    if should_run_any(&[
+        "radix_sort/lsd_u32",
+        "radix_sort/voracious/u32",
+        "radix_sort/rdst/u32",
+        "radix_sort/std_unstable/u32",
+    ]) {
+        trim_allocator_arena();
         let template_u32 = gen_radix_u32_template(n);
         let mut work_u32 = vec![0u32; n];
 
         if should_run_bench("radix_sort/lsd_u32") {
+            trim_allocator_arena();
+            let mut sorter = make_sorter();
             measure_bench_with_setup(
                 records,
                 "radix_sort",
@@ -108,9 +119,12 @@ pub fn bench_radix_sort_lsd(
                     black_box(buf[0]);
                 },
             );
+            let _ = &sorter;
+            trim_allocator_arena();
         }
 
         if should_run_bench("radix_sort/voracious/u32") {
+            trim_allocator_arena();
             measure_bench_with_setup(
                 records,
                 "radix_sort",
@@ -126,9 +140,11 @@ pub fn bench_radix_sort_lsd(
                     black_box(buf[0]);
                 },
             );
+            trim_allocator_arena();
         }
 
         if should_run_bench("radix_sort/rdst/u32") {
+            trim_allocator_arena();
             measure_bench_with_setup(
                 records,
                 "radix_sort",
@@ -147,9 +163,11 @@ pub fn bench_radix_sort_lsd(
                     black_box(buf[0]);
                 },
             );
+            trim_allocator_arena();
         }
 
         if should_run_bench("radix_sort/std_unstable/u32") {
+            trim_allocator_arena();
             measure_bench_with_setup(
                 records,
                 "radix_sort",
@@ -165,15 +183,27 @@ pub fn bench_radix_sort_lsd(
                     black_box(buf[0]);
                 },
             );
+            trim_allocator_arena();
         }
+        drop(work_u32);
+        drop(template_u32);
+        trim_allocator_arena();
     }
 
     // 2. u64 sorting (10^7 elements, 1 work buffer per side)
-    {
+    if should_run_any(&[
+        "radix_sort/lsd_u64",
+        "radix_sort/voracious/u64",
+        "radix_sort/rdst/u64",
+        "radix_sort/std_unstable/u64",
+    ]) {
+        trim_allocator_arena();
         let template_u64 = gen_radix_u64_template(n);
         let mut work_u64 = vec![0u64; n];
 
         if should_run_bench("radix_sort/lsd_u64") {
+            trim_allocator_arena();
+            let mut sorter = make_sorter();
             measure_bench_with_setup(
                 records,
                 "radix_sort",
@@ -189,9 +219,12 @@ pub fn bench_radix_sort_lsd(
                     black_box(buf[0]);
                 },
             );
+            let _ = &sorter;
+            trim_allocator_arena();
         }
 
         if should_run_bench("radix_sort/voracious/u64") {
+            trim_allocator_arena();
             measure_bench_with_setup(
                 records,
                 "radix_sort",
@@ -207,9 +240,11 @@ pub fn bench_radix_sort_lsd(
                     black_box(buf[0]);
                 },
             );
+            trim_allocator_arena();
         }
 
         if should_run_bench("radix_sort/rdst/u64") {
+            trim_allocator_arena();
             measure_bench_with_setup(
                 records,
                 "radix_sort",
@@ -228,9 +263,11 @@ pub fn bench_radix_sort_lsd(
                     black_box(buf[0]);
                 },
             );
+            trim_allocator_arena();
         }
 
         if should_run_bench("radix_sort/std_unstable/u64") {
+            trim_allocator_arena();
             measure_bench_with_setup(
                 records,
                 "radix_sort",
@@ -246,7 +283,11 @@ pub fn bench_radix_sort_lsd(
                     black_box(buf[0]);
                 },
             );
+            trim_allocator_arena();
         }
+        drop(work_u64);
+        drop(template_u64);
+        trim_allocator_arena();
     }
 }
 
@@ -257,6 +298,7 @@ pub fn bench_radix_sort_kv(
     sizes: SuiteSizes,
 ) {
     maybe_repin_self_within_ccd();
+    trim_allocator_arena();
     let n = sizes.radix_sort_elements;
     record_space_metric(space, "radix_sort/zipora_kv_bytes_per_elem", 56.0);
     record_space_metric(space, "radix_sort/voracious_kv_bytes_per_elem", 32.0);

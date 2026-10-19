@@ -100,6 +100,7 @@ rdst = { version = "0.20", default-features = false }
 suffix = "1.3"
 divsufsort = "2.0"
 cdivsufsort = "2.0"
+libsais = { version = "0.2.0", default-features = false }
 sacabase = "2.0"
 memchr = "2.7"
 aho-corasick = "1.1"

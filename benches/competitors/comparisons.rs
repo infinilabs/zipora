@@ -260,6 +260,14 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
         "C FFI binding to Yuta Mori's libdivsufsort reference implementation",
     ),
     (
+        "libsais",
+        "libsais",
+        "0.2.0",
+        &[],
+        "libsais::SuffixArrayConstruction::for_text(&[u8]).in_owned_buffer32().single_threaded().run() & sacabase::StringIndex::longest_substring_match(&[u8])",
+        "C FFI binding to Ilya Grebnov's libsais induced-sorting suffix array construction (single-threaded)",
+    ),
+    (
         "memchr",
         "memchr",
         "2.7.5",
@@ -570,6 +578,7 @@ pub fn build_same_run_comparisons(
         ("suffix_array/suffix_crate", "suffix::SuffixTable", "suffix_array/suffix_crate_bytes_per_byte"),
         ("suffix_array/divsufsort_rust", "divsufsort (Rust)", "suffix_array/divsufsort_rust_bytes_per_byte"),
         ("suffix_array/cdivsufsort_c", "cdivsufsort (C)", "suffix_array/cdivsufsort_c_bytes_per_byte"),
+        ("suffix_array/libsais_c", "libsais (C, 1T)", "suffix_array/libsais_c_bytes_per_byte"),
     ] {
         let c_bpb = sp(c_space_key, 5.0);
         push_comparison(&mut out, records, "suffix_array", "construct (10M bytes)", "suffix_array/construct", "SuffixArray", &format!("{c_prefix}/construct"), c_label, "ns/byte", "bytes_per_byte", sa_z_bpb, c_bpb);

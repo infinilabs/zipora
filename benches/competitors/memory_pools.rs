@@ -29,7 +29,7 @@ pub fn bench_memory_pools(
     let ops = sizes.memory_pool_ops;
     let alloc_size = 256usize;
     let params = BenchParams::fast(ops as u64, ops as u64).with_threshold(9.0);
-    let mut comp_pool_params = BenchParams::fast(ops as u64, ops as u64).with_threshold(15.0);
+    let mut comp_pool_params = BenchParams::fast(ops as u64, ops as u64).with_threshold(9.0);
     comp_pool_params.trials = 11;
     comp_pool_params.bursts_per_trial = 6;
     let phys_cores = (logical_cores / 2).max(1);
