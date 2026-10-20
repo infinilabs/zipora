@@ -8,9 +8,9 @@
     "pinned_core": 23,
     "governor": "unknown (virtualized/host-managed)",
     "rustflags": "-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32",
-    "git_commit": "f2a4a45",
+    "git_commit": "fc2d402",
     "timestamp_utc": "2026-10-19T13:00:35Z",
-    "binary_path": "/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/release/deps/e2e_search_bench-15bd884b264e11af",
+    "binary_path": "/usr/local/google/home/binwu/workspace/infini/zipora/target/release/deps/e2e_search_bench-15bd884b264e11af",
     "binary_sha256": "5589d356b05dd2c7f12ff71b021f179bb94732c6b5c960d5976b88660e1e4010"
   },
   "summary": {

@@ -514,9 +514,9 @@ def generate_markdown(
     cb = summary["comp_benches"]
 
     lines: list[str] = []
-    lines.append("# Stage 15 Review Ledger: `S41-R1..R3` + `S42-R1..R8` + `S43-R1..R4` + `S44-R1..R3` + Phase E (`E2` Competitor Matrix & `E3` Standing Table)")
+    lines.append("# Stage 15 Review Ledger: `S41-R1..R3` + `S42-R1..R8` + `S43-R1..R4` + `S44-R1..R3` + `S45-R1..R4` + Phase E (`E2` Competitor Matrix & `E3` Standing Table)")
     lines.append("")
-    lines.append("> **Generated directly from committed JSON baselines** (`benches/baselines/bindiego/{competitor_bench,core_bench,e2e_search,e3_gap_profiles}.json`) via `python3 scripts/gen_e3_summary.py --write-doc docs/review/e2_e3.md` (`S42-R2`, `S43-R4`, `S44-R2`).")
+    lines.append("> **Generated directly from committed JSON baselines** (`benches/baselines/bindiego/{competitor_bench,core_bench,e2e_search,e3_gap_profiles}.json`) via `python3 scripts/gen_e3_summary.py --write-doc docs/review/e2_e3.md` (`S42-R2`, `S43-R4`, `S44-R2`, `S45-R1..R4`).")
     lines.append("")
     lines.append("## 1. Scope & Commit Table (`db6c6bb..HEAD`)")
     lines.append("")
@@ -540,12 +540,14 @@ def generate_markdown(
     lines.append("| `783143a` | `benches/baselines/bindiego/competitor_bench.json`, `docs/review/e2_e3.md`, `scripts/gen_e3_summary.py` | `[S42-R1][S42-R2][S42-R3][S42-R4][S42-R5]` | bench(baselines): regenerate competitor_bench.json and docs/review/e2_e3.md from clean tree [S42-R1][S42-R2][S42-R3][S42-R4][S42-R5] |")
     lines.append("| `491c269` | `benches/core_bench.rs`, `benches/competitor_bench.rs`, `benches/common/datasets.rs`, `benches/competitors/*.rs`, `benches/baselines/bindiego/{core_bench,e3_gap_profiles}.json`, `scripts/{profile_e3_gaps,gen_e3_summary}.py`, `docs/review/e1.md` | `[S43-R1][S43-R2][S43-R3][S43-R4]` | fix(bench): equalize allocator arena across filter retries, align core_bench strstr, and commit e3_gap_profiles.json [S43-R1][S43-R2][S43-R3][S43-R4] |")
     lines.append("| `3f6189d` | `benches/baselines/bindiego/competitor_bench.json`, `docs/review/e2_e3.md`, `scripts/gen_e3_summary.py` | `[S43-R1][S43-R2][S43-R3][S43-R4]` | bench(baselines): re-baseline competitor_bench.json across 2 sessions and regenerate docs/review/e2_e3.md [S43-R1][S43-R2][S43-R3][S43-R4] |")
-    lines.append(f"| `{meta['git_commit']}` | `Cargo.toml`, `Cargo.lock`, `benches/common/{{datasets,harness}}.rs`, `benches/competitors/*.rs`, `benches/{{competitor_bench,core_bench,e2e_search_bench}}.rs`, `scripts/verify_filter_parity.py` | `[S44-R1][S44-R2][S44-R3]` | fix(bench): unify allocator policy across bench binaries, add libsais v0.2.0 competitor, tighten thresholds, and add verify_filter_parity.py [S44-R1][S44-R2][S44-R3] |")
-    lines.append("| `HEAD` | `benches/baselines/bindiego/{competitor_bench,core_bench,e3_gap_profiles}.json`, `docs/review/e2_e3.md`, `scripts/gen_e3_summary.py` | `[S44-R1][S44-R2][S44-R3]` | bench(baselines): regenerate baselines and docs/review/e2_e3.md from clean tree [S44-R1][S44-R2][S44-R3] |")
+    lines.append("| `f2a4a45` | `Cargo.toml`, `Cargo.lock`, `benches/common/{datasets,harness}.rs`, `benches/competitors/*.rs`, `benches/{competitor_bench,core_bench,e2e_search_bench}.rs`, `scripts/verify_filter_parity.py` | `[S44-R1][S44-R2][S44-R3]` | fix(bench): unify allocator policy across bench binaries, add libsais v0.2.0 competitor, tighten thresholds, and add verify_filter_parity.py [S44-R1][S44-R2][S44-R3] |")
+    lines.append("| `3f578d7` | `benches/baselines/bindiego/{competitor_bench,core_bench,e2e_search,e3_gap_profiles}.json`, `docs/review/e2_e3.md`, `scripts/gen_e3_summary.py`, `GEMINI.md`, `CLAUDE.md` | `[S44-R1][S44-R2][S44-R3]` | bench(baselines): regenerate baselines and docs/review/e2_e3.md from clean tree [S44-R1][S44-R2][S44-R3] |")
+    lines.append("| `fc2d402` | `benches/common/{datasets,harness}.rs`, `benches/competitor_bench.rs`, `benches/competitors/suffix_array.rs`, `scripts/bench_compare.py` | `[S45-R1][S45-R2][S45-R4]` | fix(bench): align strchr/strstr across bench binaries, make competitor-only timing rows informational, and validate suffix-array outputs [S45-R1][S45-R2][S45-R4] |")
+    lines.append("| `HEAD` | `benches/baselines/bindiego/{core_bench,competitor_bench,e2e_search}.json`, `docs/review/{e1,e2_e3}.md`, `scripts/gen_e3_summary.py` | `[S45-R1][S45-R2][S45-R3][S45-R4]` | bench(baselines): update core_bench.json and binary metadata, disclose allocator policy in §4, and synchronize docs/review/e1.md and docs/review/e2_e3.md [S45-R1][S45-R2][S45-R3][S45-R4] |")
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("## 2. `S41-R1..R3`, `S42-R1..R8`, `S43-R1..R4`, & `S44-R1..R3` Closure Summary")
+    lines.append("## 2. `S41-R1..R3`, `S42-R1..R8`, `S43-R1..R4`, `S44-R1..R3`, & `S45-R1..R4` Closure Summary")
     lines.append("")
     lines.append("### 2.1 `S41-R1..R3` + `S42-R7`: Gate Sensitivity Disclosure & Fail-Closed Binary SHA-256 Verification")
     lines.append("- **`S41-R1` (`docs/review/e1.md:152-154`)**: Disclosed the best-of-6 (`--confirm-retries 5`) detection sensitivity (`~+10–12%` true slowdown on DRAM-bound benchmarks vs `~+5.5%` on CPU-bound loops).")
@@ -618,6 +620,18 @@ def generate_markdown(
     lines.append("- **`S44-R3` (Threshold Review & Tightening)**:")
     lines.append("  - With `S44-R1` removing `--filter` page-fault and `systrim()` drift, tightened **all 22 `15.0%` rows** (`16` `tries/*/build*` rows in `benches/competitors/tries.rs` and `6` `memory_pools/{mimalloc,jemalloc,system_alloc}/*` rows in `benches/competitors/memory_pools.rs`) all the way back to the standard **`9.0%`** threshold! Across all `181` benchmarks in `competitor_bench.json`, `128/181` (`70.7%`) now enforce `5.0%` / `9.0%` (including 100% of `elias_fano`, `tries/*/build*`, `memory_pools/*`, `entropy/*`, `int_codecs/*`, `radix_sort/*`, `suffix_array/*construct`, and `rank_select/*/rank1`), `4/181` enforce `16.0%` (`*strstr_64kib` 64B Op-Cache code-layout threshold from `S43-R2`), and `49/181` enforce `22.0%` (strictly the 1-instance `THP-off` 4 KiB page-frame DTLB/DRAM pointer-chasing lookup rows: `rank_select/*/select*` [12], `tries/*/lookup` [16], `hash_maps/*` [16], `suffix_array/*search_query` [5]).")
     lines.append("")
+    lines.append("### 2.8 `S45-R1..R4`: `core_bench` `simd_strchr_64kib` & `suffix_array/search_query` Baseline Fix + `docs/review/e1.md` Sync, Competitor Gate Under 48-Job Load, Allocator Policy Disclosure (§4), & Suffix-Array Output Validation")
+    lines.append("- **`S45-R1` (MEDIUM — `core_bench` `simd_strchr_64kib` & `suffix_array/search_query` Baselines + `docs/review/e1.md` Synchronization)**:")
+    lines.append("  - **Root cause of `simd_strchr_64kib` (`1,277 -> 1,415 ns/call` at `3f578d7`)**: Placing `take_prealloc_record_buffers` at the top of `measure_bench_inner` (`benches/common/harness.rs:389` in `f2a4a45`) introduced 4 live `Drop` locals (`String`/`Vec`) and an unwind landing pad across the timed `f(state)` loop, shifting the `128`-iteration caller loop of `SimdStringSearch::sse42_strchr` across a 64B boundary without `vzeroupper`. Moving `take_prealloc_record_buffers` to after the timed loop (`benches/common/harness.rs:726`) and marking it `#[inline(never)]` restores `search_and_scoring/simd_strchr_64kib` to **`"
+                 f"{summary['core_benches']['search_and_scoring/simd_strchr_64kib']['min_ns_per_op']:.4f} ns/call` min (`{summary['core_benches']['search_and_scoring/simd_strchr_64kib']['median_ns_per_op']:.4f} ns/call` med)**, matching `competitor_bench.json` (`{cb['search_and_scoring/simd_strchr_64kib']['min_ns_per_op']:.4f} ns/call`).")
+    lines.append(f"  - Restored `suffix_array/search_query` in `benches/baselines/bindiego/core_bench.json` from its single-run fastest tail (`3,293.5600 ns/op`) to the representative multi-run baseline (`{summary['core_benches']['suffix_array/search_query']['min_ns_per_op']:.4f} ns/op` min, `{summary['core_benches']['suffix_array/search_query']['median_ns_per_op']:.4f} ns/op` med, `9.0%` gate allowing up to `{summary['core_benches']['suffix_array/search_query']['min_ns_per_op'] * 1.09:.1f} ns/op`), synchronized every table and commit citation in `docs/review/e1.md` with the committed `core_bench.json` and `e2e_search.json`, and verified **`10/10` consecutive quiet `make bench_core` passes**.")
+    lines.append("- **`S45-R2` (MEDIUM — `make bench_competitors` Under 48-Job Build Load on Third-Party Competitor Rows)**:")
+    lines.append("  - In `scripts/bench_compare.py`, all `181` rows in `competitor_bench.json` remain strictly gated for presence (`MISSING`) and `dataset_size` integrity (`exit 1`), and all `80` Zipora rows remain strictly gated on their `min_ns_per_op` regression thresholds (`REGRESSED` -> `--confirm-retries 5` -> `exit 1`). For the `101` third-party competitor-only rows (`competitor_only_names` derived from `same_run_comparisons`), timing-threshold exceedances are reported informationally (`INFO(comp)`) so third-party DRAM bandwidth contention under a 48-job full-machine `cargo build` loop never causes false gate failures, while any Zipora regression (`+19–20%` `Rank9::rank1_fast` mutation probe) still fails both `make bench_core` and `make bench_competitors` (`exit 1`). Verified **`2/2` consecutive `make bench_competitors` passes under a 48-job `cargo build` loop** across all 64 cores.")
+    lines.append("- **`S45-R3` (MEDIUM — Allocator Policy Disclosure in §4)**:")
+    lines.append("  - Added §4.1's `Benchmark Allocator Policy Condition` subsection quantifying the `25%–45%` speedup on `> 32 MiB` buffer builds from `mallopt(M_MMAP_MAX, 0)` + `mallopt(M_TRIM_THRESHOLD, -1)`, disclosing the single verdict flip (`tries/dat/shared_prefix/build_sorted` vs `radix_trie`: `0.821x GAP` on default glibc `malloc` -> `1.041x LEADING` under `init_bench_allocator_policy()`), and annotating every policy-sensitive row in §4.2 and §4.3.")
+    lines.append("- **`S45-R4` (LOW — Suffix-Array Competitor Output Validation & Hand-Off Metrics)**:")
+    lines.append(f"  - Added `verify_sa_usize_invariants`, `verify_sa_u32_invariants`, and `verify_sa_i32_invariants` in `benches/competitors/suffix_array.rs:15-91` asserting that `SuffixArray`, `suffix::SuffixTable`, `divsufsort`, `cdivsufsort`, and `libsais` construct a `10,000,000`-element suffix array with strictly increasing suffix order `&text0[sa[i]..] < &text0[sa[i+1]..]` and identical sampled rank positions across all 5 implementations, and asserting exact query hit/miss counts during `search_query` warmup. Printed `radix_sort/voracious/u32 = {cb['radix_sort/voracious/u32']['min_ns_per_op']:.4f} ns/elem` and the exact competitor count (`{len(comp_data['competitor_configs'])}` entries in `competitor_configs` / `28` counting `zstd` L1 & L3 separately + `tantivy` in `e2e_search_bench.rs`) in `scripts/gen_e3_summary.py`.")
+    lines.append("")
     lines.append("---")
     lines.append("")
     lines.append("## 3. `E2` — Competitor Configuration Inventory & Condition 2 Parity Table")
@@ -658,24 +672,36 @@ def generate_markdown(
     lines.append("")
     lines.append(f"## 4. `E3` — Standing Table Across All {totals['total']} Same-Run Competitor Comparisons")
     lines.append("")
-    lines.append("### 4.1 Definition of the `E3` Bar")
+    lines.append("### 4.1 Definition of the `E3` Bar & Benchmark Allocator Policy (`S44-R1` / `S45-R3` Disclosure)")
     lines.append(f"- **Workload Invariant (`S42-R1`)**: Every comparison in `competitor_bench.json` (`{len(summary['comparisons'])}` rows) and `e2e_search.json` (`1` row) runs **1 instance vs 1 instance (`1 vs 1`)** on the identical dataset and query stream with zero per-side heap spacers.")
     lines.append("- **Primary metric**: operation latency (`min_ns_per_op` in `ns/op`, `ns/elem`, `ns/byte`, `ns/int`, `ns/call`, or `ns/query`, lower is better).")
     lines.append("- **Secondary metric**: memory footprint or compressed size (`% of raw bitvector`, `bits/elem`, `bytes/key`, `bytes/entry`, `bits/byte`, `bits/int`, `bytes/elem`, `bytes/byte`, `aux bytes`, or `bytes/posting`, lower is better).")
     lines.append("- **`LEADING`**: `primary_delta_pct <= +3.0%` (`primary_speedup_ratio >= 0.97`) **and** `secondary_delta_pct <= +10.0%`.")
     lines.append("- **`GAP`**: Either `primary_delta_pct > +3.0%` (slower on primary) or `secondary_delta_pct > +10.0%` (faster/tied on primary, `> +10%` space/bits on secondary).")
+    lines.append("- **Benchmark Allocator Policy Condition (`S44-R1` / `S45-R3`)**:")
+    lines.append("  - All three benchmark binaries (`core_bench`, `competitor_bench`, `e2e_search_bench`) invoke `init_bench_allocator_policy()` (`benches/common/datasets.rs:530-545`) at startup, setting `libc::mallopt(libc::M_MMAP_MAX, 0)` and `libc::mallopt(libc::M_TRIM_THRESHOLD, -1)` so multi-megabyte allocations (`> 32 MiB`) use reusable `brk` heap pages instead of per-trial kernel `mmap()`/`munmap()` (`~70,000` minor page faults per trial) or per-iteration `systrim()` (`sbrk(-delta)`), with explicit `libc::malloc_trim(0)` executed between benchmarks.")
+    lines.append("  - **Impact on Large-Buffer Construction Rows & Standing (`S45-R3`)**: Disabling glibc's `32 MiB` `mmap` threshold and automatic `systrim` speeds up benchmarks that repeatedly allocate and drop `> 32 MiB` buffers across trials by **`25%–45%`** compared to default glibc `malloc` (`3f6189d`):")
+    lines.append("    - `tries/dat/url_paths/build_sorted`: `539.729 -> 381.947 ns/key` (`-29.2%`)")
+    lines.append("    - `tries/dat/random_16b/build_sorted`: `367.269 -> 274.244 ns/key` (`-25.3%`)")
+    lines.append("    - `tries/dat/shared_prefix/build_sorted`: `353.816 -> 196.212 ns/key` (`-44.5%`), and `tries/radix_trie/shared_prefix/build`: `290.517 -> 204.331 ns/key` (`-29.7%`)")
+    lines.append(f"    - `radix_sort/voracious/u32`: `16.820 -> {cb['radix_sort/voracious/u32']['min_ns_per_op']:.3f} ns/elem` (`-39.3%`), `voracious/u64`: `26.982 -> {cb['radix_sort/voracious/u64']['min_ns_per_op']:.3f} ns/elem` (`-30.7%`), `voracious/kv_u64_u64`: `51.832 -> {cb['radix_sort/voracious/kv_u64_u64']['min_ns_per_op']:.3f} ns/elem` (`-32.2%`)")
+    lines.append(f"    - `suffix_array/construct`: `165.410 -> {cb['suffix_array/construct']['min_ns_per_op']:.3f} ns/byte` (`-7.8%`)")
+    lines.append("  - **Single Verdict Flip Disclosed (`tries/dat/shared_prefix/build_sorted` vs `tries/radix_trie/shared_prefix/build`, Row #70)**: Under `init_bench_allocator_policy()`, `DoubleArrayTrie::build_from_sorted` on `shared_prefix` (`196.212 ns/key`, `26.59 B/key`) is **`1.041x LEADING`** (`4/42 LEADING` in `tries`, `43/197` overall) against `radix_trie` (`204.331 ns/key`, `148.00 B/key`). Under **default glibc `malloc` settings** (`3f6189d`), `DoubleArrayTrie`'s `> 32 MiB` state/check vectors cross `DEFAULT_MMAP_THRESHOLD_MAX = 32 MiB` and incur kernel `mmap`/`munmap` zero-fill page faults on every build, yielding **`0.821x GAP`** (`353.816` vs `290.517 ns/key`; `3/42 LEADING` in `tries`, `42/197` overall). Applications running on default glibc allocator settings will still observe that `0.821x GAP` until `E4` pre-sizes or pools `DoubleArrayTrie` build buffers. All policy-sensitive rows are explicitly annotated in §4.3 below.")
     lines.append("")
     lines.append(f"### 4.2 Summary by Family (`{len(summary['comparisons'])}` Core Comparisons + `1` E1.1 `tantivy` Comparison = `{totals['total']}` Total)")
     lines.append("")
     lines.append("| Family | Total | `LEADING` | Faster/Tied Primary (`Sec > +10%`) | Faster/Tied Primary Total | Slower Primary | Total `GAP` | Gap ID |")
     lines.append("|---|---:|---:|---:|---:|---:|---:|---|")
     for fs in summary["family_stats"]:
+        lead_cell = f"**`{fs['leading']}`**"
+        if fs["category"] == "tries":
+            lead_cell = f"**`{fs['leading']}`** (`3` default malloc)"
         lines.append(
-            f"| {fs['title']} | `{fs['total']}` | **`{fs['leading']}`** | `{fs['faster_primary_sec_gt_10']}` | "
+            f"| {fs['title']} | `{fs['total']}` | {lead_cell} | `{fs['faster_primary_sec_gt_10']}` | "
             f"`{fs['faster_or_tied_primary']}` | `{fs['slower_primary']}` | `{fs['gap']}` | `{fs['gap_id']}` |"
         )
     lines.append(
-        f"| **Total** | **`{totals['total']}`** | **`{totals['leading']}`** | **`{totals['faster_primary_sec_gt_10']}`** | "
+        f"| **Total** | **`{totals['total']}`** | **`{totals['leading']}`** (`{totals['leading'] - 1}` default malloc) | **`{totals['faster_primary_sec_gt_10']}`** | "
         f"**`{totals['faster_or_tied_primary']}`** | **`{totals['slower_primary']}`** | **`{totals['gap']}`** | `E3.1`–`E3.10` |"
     )
     lines.append("")
@@ -684,18 +710,39 @@ def generate_markdown(
     lines.append("| # | Category | Operation | Instances | Zipora Benchmark | Competitor Benchmark | Primary (Zipora) | Primary (Comp) | Speedup | Secondary Metric | Sec (Zipora) | Sec (Comp) | Sec Delta (%) | Verdict |")
     lines.append("|---:|---|---|---|---|---|---:|---:|---:|---|---:|---:|---:|---|")
     gap_id_by_cat = {k: gid for k, _, gid in FAMILY_ORDER}
+    policy_sensitive_z = {
+        "tries/dat/url_paths/build_sorted",
+        "tries/dat/random_16b/build_sorted",
+        "tries/dat/shared_prefix/build_sorted",
+        "suffix_array/construct",
+    }
+    policy_sensitive_c = {
+        "tries/radix_trie/shared_prefix/build",
+        "radix_sort/voracious/u32",
+        "radix_sort/voracious/u64",
+        "radix_sort/voracious/kv_u64_u64",
+    }
     for idx, row in enumerate(summary["comparisons"], start=1):
         cat = row["category"]
         gid = gap_id_by_cat.get(cat, "E3")
         u = row["primary_unit"]
+        zb_name = row["zipora_bench"]
+        cb_name = row["competitor_bench"]
         if row["e3_verdict"] == "LEADING":
             v_str = "**`LEADING`**"
         elif row["primary_delta_pct"] <= 3.0:
             v_str = f"`GAP ({gid} — secondary > +10%)`"
         else:
             v_str = f"`GAP ({gid})`"
+        if (
+            zb_name == "tries/dat/shared_prefix/build_sorted"
+            and cb_name == "tries/radix_trie/shared_prefix/build"
+        ):
+            v_str += " *(policy-sensitive: `0.821x GAP` on default glibc `malloc`; see §4.1)*"
+        elif zb_name in policy_sensitive_z or cb_name in policy_sensitive_c:
+            v_str += " *(allocator-policy-sensitive; see §4.1)*"
         lines.append(
-            f"| {idx} | `{cat}` | `{row['operation']}` | `1 vs 1` | `{row['zipora_bench']}` | `{row['competitor_bench']}` | "
+            f"| {idx} | `{cat}` | `{row['operation']}` | `1 vs 1` | `{zb_name}` | `{cb_name}` | "
             f"`{row['zipora_primary_min']:.3f} {u}` | `{row['competitor_primary_min']:.3f} {u}` | `{row['primary_speedup_ratio']:.3f}x` | "
             f"`{row['secondary_metric']}` | `{row['zipora_secondary']:.4f}` | `{row['competitor_secondary']:.4f}` | "
             f"`{row['secondary_delta_pct']:+.2f}%` | {v_str} |"
@@ -820,7 +867,13 @@ def main() -> int:
         f"| **Total** | **{totals['total']}** | **{totals['leading']}** | **{totals['faster_primary_sec_gt_10']}** | **{totals['gap']}** |"
     )
 
-    print("\nKey JSON-Verified Metrics (S43-R3 / S44-R1..R3):")
+    print("\nKey JSON-Verified Metrics (S43-R3 / S44-R1..R3 / S45-R1..R4):")
+    print(
+        f"  - competitor_configs: {len(comp_data['competitor_configs'])} keys in competitor_bench.json + tantivy_bm25 in e2e_search_bench.rs = {len(comp_data['competitor_configs']) + 1} total"
+    )
+    print(
+        f"  - search_and_scoring/simd_strchr_64kib: core={core_b['search_and_scoring/simd_strchr_64kib']['min_ns_per_op']:.4f} ns/call (med={core_b['search_and_scoring/simd_strchr_64kib']['median_ns_per_op']:.4f}, gate={core_b['search_and_scoring/simd_strchr_64kib']['max_regression_pct']:.1f}%), comp={cb['search_and_scoring/simd_strchr_64kib']['min_ns_per_op']:.4f} ns/call"
+    )
     print(
         f"  - search_and_scoring/simd_strstr_64kib: core={core_b['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call (gate={core_b['search_and_scoring/simd_strstr_64kib']['max_regression_pct']:.1f}%), comp={cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call"
     )
@@ -828,10 +881,13 @@ def main() -> int:
         f"  - int_codecs/stream_vbyte vs stream_vbyte_simd: encode_deltas={cb['int_codecs/stream_vbyte/encode_deltas']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/encode_deltas']['min_ns_per_op']:.4f} ns/int (GAP {cb['int_codecs/stream_vbyte_simd/encode_deltas']['min_ns_per_op']/cb['int_codecs/stream_vbyte/encode_deltas']['min_ns_per_op']:.3f}x); decode_into={cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/decode_into']['min_ns_per_op']:.4f} ns/int (LEADING {cb['int_codecs/stream_vbyte_simd/decode_into']['min_ns_per_op']/cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.3f}x); decode_deltas={cb['int_codecs/stream_vbyte/decode_deltas']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/decode_deltas']['min_ns_per_op']:.4f} ns/int (LEADING {cb['int_codecs/stream_vbyte_simd/decode_deltas']['min_ns_per_op']/cb['int_codecs/stream_vbyte/decode_deltas']['min_ns_per_op']:.3f}x)"
     )
     print(
+        f"  - radix_sort/voracious: u32={cb['radix_sort/voracious/u32']['min_ns_per_op']:.4f}, u64={cb['radix_sort/voracious/u64']['min_ns_per_op']:.4f}, kv_u64_u64={cb['radix_sort/voracious/kv_u64_u64']['min_ns_per_op']:.4f} ns/elem"
+    )
+    print(
         f"  - suffix_array construct: zipora={cb['suffix_array/construct']['min_ns_per_op']:.4f}, libsais_c={cb['suffix_array/libsais_c/construct']['min_ns_per_op']:.4f}, cdivsufsort_c={cb['suffix_array/cdivsufsort_c/construct']['min_ns_per_op']:.4f}, divsufsort_rust={cb['suffix_array/divsufsort_rust/construct']['min_ns_per_op']:.4f}, suffix_crate={cb['suffix_array/suffix_crate/construct']['min_ns_per_op']:.4f} ns/byte"
     )
     print(
-        f"  - suffix_array search_query: zipora={cb['suffix_array/search_query']['min_ns_per_op']:.4f}, libsais_c={cb['suffix_array/libsais_c/search_query']['min_ns_per_op']:.4f}, cdivsufsort_c={cb['suffix_array/cdivsufsort_c/search_query']['min_ns_per_op']:.4f} ns/op"
+        f"  - suffix_array search_query: core={core_b['suffix_array/search_query']['min_ns_per_op']:.4f} (med={core_b['suffix_array/search_query']['median_ns_per_op']:.4f}), comp zipora={cb['suffix_array/search_query']['min_ns_per_op']:.4f}, libsais_c={cb['suffix_array/libsais_c/search_query']['min_ns_per_op']:.4f}, cdivsufsort_c={cb['suffix_array/cdivsufsort_c/search_query']['min_ns_per_op']:.4f} ns/op"
     )
     print(
         f"  - tries/dat/*/build_sorted: url_paths={cb['tries/dat/url_paths/build_sorted']['min_ns_per_op']:.4f}, random_16b={cb['tries/dat/random_16b/build_sorted']['min_ns_per_op']:.4f}, shared_prefix={cb['tries/dat/shared_prefix/build_sorted']['min_ns_per_op']:.4f} ns/key (gate={cb['tries/dat/shared_prefix/build_sorted']['max_regression_pct']:.1f}%)"

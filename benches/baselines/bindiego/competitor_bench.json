@@ -14,9 +14,9 @@
     "cpu_governor": "unavailable (virtualized/no-cpufreq)",
     "rustflags": "-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32",
     "runner_command": "RUSTFLAGS=\"-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32\" cargo bench --locked --bench competitor_bench && python3 scripts/bench_compare.py --suite competitor_bench --confirm-retries 5",
-    "git_commit": "f2a4a45",
-    "binary_path": "/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/release/deps/competitor_bench-7a7ee89b36b4acf8",
-    "binary_sha256": "1e73738376836c0ec1301caf022e1e49596c3903a4767152cc2b7cb89d343349"
+    "git_commit": "fc2d402",
+    "binary_path": "/usr/local/google/home/binwu/workspace/infini/zipora/target/release/deps/competitor_bench-7a7ee89b36b4acf8",
+    "binary_sha256": "2e17288adecae2fe87ab405f1c274c3d6319997d0f74d2fbd88e1263a1629e28"
   },
   "competitor_configs": {
     "aho-corasick": {
