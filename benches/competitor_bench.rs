@@ -232,6 +232,9 @@ fn main() {
     }
 }
 
+/// Keeps `.text` function alignment stable across `competitor_bench` linkage so tight L1
+/// string-search loops (`simd_strchr_64kib` / `simd_strstr_64kib`) do not shift across a
+/// 64-byte instruction-fetch boundary relative to `core_bench` (`S43-R2`, `S46-R2`).
 #[unsafe(no_mangle)]
 pub extern "C" fn _zipora_competitor_bench_text_pad(x: u64) -> u64 {
     let a = x.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);

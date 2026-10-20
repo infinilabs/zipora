@@ -110,7 +110,7 @@ pub fn bench_suffix_array(
     let sa_window = (max_start / sa_perm_len).max(1);
     let sa_perm = BijectivePerm::new(sa_perm_len, SEED_BASE ^ 0x0A02);
     let mut sa_search_params =
-        BenchParams::heavy(n as u64, sa_batch as u64, 12).with_threshold(22.0);
+        BenchParams::heavy(n as u64, sa_batch as u64, 12).with_threshold(9.0);
     sa_search_params.warmup_calls = 8;
     sa_search_params.bursts_per_trial = 12;
 

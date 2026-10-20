@@ -178,11 +178,11 @@ pub fn bench_hash_maps(
         ..GoldHashMapConfig::default()
     };
 
-    let mut insert_params = BenchParams::heavy(n as u64, get_batch as u64, 10).with_threshold(22.0);
+    let mut insert_params = BenchParams::heavy(n as u64, get_batch as u64, 10).with_threshold(9.0);
     insert_params.warmup_calls = 8;
     insert_params.bursts_per_trial = 12;
 
-    let mut get_params = BenchParams::heavy(n as u64, get_batch as u64, 14).with_threshold(22.0);
+    let mut get_params = BenchParams::heavy(n as u64, get_batch as u64, 14).with_threshold(9.0);
     get_params.warmup_calls = 12;
     get_params.bursts_per_trial = 18;
 

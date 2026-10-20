@@ -102,7 +102,7 @@ fn bench_rank_select(
     select1_params.bursts_per_trial = 14;
     let mut select0_interleaved_params =
         BenchParams::heavy(num_bits as u64, select0_interleaved_batch as u64, 10)
-            .with_threshold(16.0);
+            .with_threshold(9.0);
     select0_interleaved_params.warmup_calls = 6;
     select0_interleaved_params.bursts_per_trial = 16;
 
@@ -2487,7 +2487,7 @@ fn bench_search_and_scoring(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
         }
         black_box(pre_acc);
 
-        let mut strstr_params = str_params.with_threshold(16.0);
+        let mut strstr_params = str_params.with_threshold(9.0);
         strstr_params.warmup_calls = 64;
         strstr_params.bursts_per_trial = 8;
         measure_bench(

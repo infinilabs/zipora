@@ -118,7 +118,7 @@ pub fn bench_tries(
         let num_keys = n as u64;
 
         let mut lookup_params =
-            BenchParams::heavy(num_keys, lookup_batch as u64, 14).with_threshold(22.0);
+            BenchParams::heavy(num_keys, lookup_batch as u64, 14).with_threshold(9.0);
         lookup_params.warmup_calls = 10;
         lookup_params.bursts_per_trial = 18;
 
@@ -509,7 +509,7 @@ pub fn bench_tries(
     let zperm = BijectivePerm::new(n, SEED_BASE ^ 0x0500);
     let zwarm_perm = BijectivePerm::new(n, SEED_BASE ^ 0x0550);
     let mut zlookup_params =
-        BenchParams::heavy(num_zipora_keys, lookup_batch as u64, 14).with_threshold(22.0);
+        BenchParams::heavy(num_zipora_keys, lookup_batch as u64, 14).with_threshold(9.0);
     zlookup_params.warmup_calls = 10;
     zlookup_params.bursts_per_trial = 18;
     let mut zbuild_params = BenchParams::heavy(num_zipora_keys, num_zipora_keys, 3);

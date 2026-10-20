@@ -18,10 +18,12 @@ Runner documentation (S37-R2 / S38-R4 / S39-R4):
     for a quiet host window and re-runs only the failing benchmark(s) via `--filter`
     up to `K` times, failing only if a regression persists across every retry.
     Per-benchmark thresholds remain unchanged (`5.0%` default, `9.0%` DRAM/allocator-bound).
-    In `competitor_bench` (`S45-R2`), the 101 third-party competitor-only rows are strictly
+    In `competitor_bench` (`S45-R2`, `S46-R2`), the 101 third-party competitor-only rows
+    (95 timing-threshold rows + 6 `enforce_threshold: false` `build_1m` rows) are strictly
     checked for presence and `dataset_size` integrity, while timing-threshold exceedances on
-    third-party rows are reported informationally (`INFO(comp)`) so third-party DRAM contention
-    under heavy multi-job host load cannot cause false gate failures.
+    the 95 third-party rows are reported informationally (`INFO(comp)`) so third-party DRAM
+    contention under heavy multi-job host load cannot cause false gate failures (`86` timing-gated
+    Zipora rows = `80` `core_bench` rows + `6` Zipora `ef_select`/`cef_select` rows).
 - Baselines under `benches/baselines/<host>/` are never auto-written by the gate;
   set `UPDATE_BASELINE=1` (which forwards `-- --save-baseline`) explicitly when recording or updating a baseline.
 
