@@ -1,10 +1,8 @@
 const BATCH_SIZE: usize = 8;
 use crate::algorithms::bit_ops::select_in_word;
 
-/// Sampling rate for rank acceleration.
-const RANK_SAMPLE_RATE: usize = 8;
 /// Sampling rate for select1 acceleration.
-const SELECT1_SAMPLE_RATE: usize = 256;
+const SELECT1_SAMPLE_RATE: usize = 128;
 /// Sampling rate for select0 acceleration.
 const SELECT0_SAMPLE_RATE: usize = 64;
 
@@ -13,7 +11,7 @@ const SELECT0_SAMPLE_RATE: usize = 64;
 /// Layout:
 /// - `low_bits`: packed array of the lower L bits of each element
 /// - `high_bits`: unary-coded upper bits in a bitvector (1 for value, 0 for bucket boundary)
-/// - Sampling indices for O(1) rank/select on high_bits
+/// - Sampling indices for O(1) select1/select0 on high_bits
 /// - L = floor(log2(universe / n)), chosen to minimize total space
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -31,12 +29,9 @@ pub struct EliasFano {
     universe: u64,
     /// Total number of valid bits in high_bits
     high_len_bits: usize,
-    /// Cumulative popcount at every RANK_SAMPLE_RATE words.
-    /// rank_samples[i] = popcount(high_bits[0..i*RANK_SAMPLE_RATE])
-    rank_samples: Vec<u32>,
-    /// Position of every SELECT1_SAMPLE_RATE-th set bit.
+    /// Exact bit position of every SELECT1_SAMPLE_RATE-th set bit.
     select1_samples: Vec<u32>,
-    /// Position of every SELECT0_SAMPLE_RATE-th clear bit (denser for next_geq).
+    /// Exact bit position of every SELECT0_SAMPLE_RATE-th clear bit (denser for next_geq).
     select0_samples: Vec<u32>,
 }
 
@@ -62,7 +57,6 @@ impl EliasFano {
                 low_bit_width: 0,
                 universe: 0,
                 high_len_bits: 0,
-                rank_samples: Vec::new(),
                 select1_samples: Vec::new(),
                 select0_samples: Vec::new(),
             };
@@ -149,7 +143,7 @@ impl EliasFano {
             prev_high = high;
         }
 
-        let (rank_samples, select1_samples, select0_samples) =
+        let (select1_samples, select0_samples) =
             Self::build_samples(&high_bits, high_len_bits);
 
         Self {
@@ -159,19 +153,16 @@ impl EliasFano {
             low_bit_width,
             universe,
             high_len_bits,
-            rank_samples,
             select1_samples,
             select0_samples,
         }
     }
 
-    /// Build rank and select sampling tables from high_bits in a single pass.
+    /// Build exact-bit-offset select1 and select0 sampling tables from high_bits in a single pass.
     ///
-    /// - `rank_samples[i]` = popcount(high_bits[0 .. i*RANK_SAMPLE_RATE*64])
-    /// - `select1_samples[k]` = word-start bit-pos containing the (k*S)-th 1-bit
-    /// - `select0_samples[k]` = word-start bit-pos containing the (k*S)-th 0-bit
-    fn build_samples(high_bits: &[u64], high_len_bits: usize) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
-        let mut rank_samples = Vec::new();
+    /// - `select1_samples[k]` = exact bit position of the `(k * SELECT1_SAMPLE_RATE)`-th 1-bit
+    /// - `select0_samples[k]` = exact bit position of the `(k * SELECT0_SAMPLE_RATE)`-th 0-bit
+    fn build_samples(high_bits: &[u64], high_len_bits: usize) -> (Vec<u32>, Vec<u32>) {
         let mut select1_samples = Vec::new();
         let mut select0_samples = Vec::new();
 
@@ -182,30 +173,33 @@ impl EliasFano {
         let mut next_sel0: u32 = 0;
 
         for (word_idx, &word) in high_bits.iter().enumerate() {
-            // Rank: sample at block boundaries
-            if word_idx % RANK_SAMPLE_RATE == 0 {
-                rank_samples.push(cumul_ones);
-            }
-
             let ones = word.count_ones();
             let valid = if (word_idx + 1) * 64 <= high_len_bits {
                 64u32
             } else {
                 (high_len_bits - word_idx * 64) as u32
             };
+            let valid_mask = if valid >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << valid) - 1
+            };
+            let inverted = (!word) & valid_mask;
             let zeros = valid - ones;
 
-            // Select1: record word position for each threshold crossed
+            // Select1: record exact bit position for each threshold crossed
             let after_ones = cumul_ones + ones;
             while next_sel1 < after_ones {
-                select1_samples.push((word_idx * 64) as u32);
+                let bit_in_word = select_in_word(word, (next_sel1 - cumul_ones) as usize);
+                select1_samples.push((word_idx * 64 + bit_in_word) as u32);
                 next_sel1 += SELECT1_SAMPLE_RATE as u32;
             }
 
-            // Select0: denser sampling for next_geq hot path
+            // Select0: record exact bit position for next_geq hot path
             let after_zeros = cumul_zeros + zeros;
             while next_sel0 < after_zeros {
-                select0_samples.push((word_idx * 64) as u32);
+                let bit_in_word = select_in_word(inverted, (next_sel0 - cumul_zeros) as usize);
+                select0_samples.push((word_idx * 64 + bit_in_word) as u32);
                 next_sel0 += SELECT0_SAMPLE_RATE as u32;
             }
 
@@ -213,10 +207,7 @@ impl EliasFano {
             cumul_zeros = after_zeros;
         }
 
-        // Final rank sentinel
-        rank_samples.push(cumul_ones);
-
-        (rank_samples, select1_samples, select0_samples)
+        (select1_samples, select0_samples)
     }
 
     /// Number of elements.
@@ -236,7 +227,6 @@ impl EliasFano {
     pub fn size_bytes(&self) -> usize {
         self.low_bits.len() * 8
             + self.high_bits.len() * 8
-            + self.rank_samples.len() * 4
             + self.select1_samples.len() * 4
             + self.select0_samples.len() * 4
             + 32 // metadata fields
@@ -287,7 +277,10 @@ impl EliasFano {
             self.select0(target_high as usize - 1)? + 1
         };
 
-        let elem_before = self.rank1(bucket_start_pos);
+        // In unary high_bits, bucket_start_pos = select0(target_high - 1) + 1 has
+        // exactly `target_high` clear bits in high_bits[0..bucket_start_pos), so
+        // rank1(bucket_start_pos) == bucket_start_pos - target_high.
+        let elem_before = bucket_start_pos.saturating_sub(target_high as usize);
 
         // Scan high_bits directly from bucket_start_pos — no get()/select1 calls
         let mut idx = elem_before;
@@ -378,36 +371,51 @@ impl EliasFano {
     }
 
     /// Select1(rank): find position of the rank-th set bit (0-indexed).
-    /// O(1) via sampling + rank: jump to neighbourhood, compute exact offset, scan ≤ S/64 words.
+    /// O(1) via exact-bit-offset sampling: jump directly to the `(sample_idx * S)`-th
+    /// 1-bit and scan only the remaining `rank % S` set bits forward.
     #[inline]
     fn select1(&self, rank: usize) -> Option<usize> {
         if rank >= self.len {
             return None;
         }
 
-        // Jump to sample: select1_samples[k] = word-start of k*S-th 1-bit
         let sample_idx = rank / SELECT1_SAMPLE_RATE;
-        let mut start_word = if sample_idx < self.select1_samples.len() {
-            self.select1_samples[sample_idx] as usize / 64
-        } else {
-            0
-        };
-        let rank_block = start_word / RANK_SAMPLE_RATE;
-        if start_word > self.high_bits.len() || rank_block >= self.rank_samples.len() {
-            start_word = 0;
+        if let Some(&sample_bit_u32) = self.select1_samples.get(sample_idx) {
+            let sample_bit = sample_bit_u32 as usize;
+            let start_word = sample_bit / 64;
+            if sample_bit < self.high_len_bits
+                && let Some(words) = self.high_bits.get(start_word..)
+                && let Some((&first_raw, rest)) = words.split_first()
+            {
+                let mut remaining = rank % SELECT1_SAMPLE_RATE;
+                if remaining == 0 {
+                    return Some(sample_bit);
+                }
+
+                let bit_in_word = (sample_bit % 64) as u32;
+                let first_word = first_raw & ((!1u64) << bit_in_word);
+                let ones = first_word.count_ones() as usize;
+                if remaining <= ones {
+                    return Some(start_word * 64 + select_in_word(first_word, remaining - 1));
+                }
+                remaining -= ones;
+
+                for (offset, &word) in rest.iter().enumerate() {
+                    let ones = word.count_ones() as usize;
+                    if remaining <= ones {
+                        return Some(
+                            (start_word + 1 + offset) * 64 + select_in_word(word, remaining - 1),
+                        );
+                    }
+                    remaining -= ones;
+                }
+                return None;
+            }
         }
 
-        // Use rank_samples to compute exact cumulative ones at start_word
-        let rank_block = start_word / RANK_SAMPLE_RATE;
-        let mut cumul = self.rank_samples.get(rank_block).copied().unwrap_or(0) as usize;
-        for w in (rank_block * RANK_SAMPLE_RATE)..start_word {
-            cumul += self.high_bits[w].count_ones() as usize;
-        }
-        let mut remaining = rank.saturating_sub(cumul);
-
-        // Scan forward from start_word
-        for word_idx in start_word..self.high_bits.len() {
-            let word = self.high_bits[word_idx];
+        // Fallback if sample table was truncated/corrupted
+        let mut remaining = rank;
+        for (word_idx, &word) in self.high_bits.iter().enumerate() {
             let ones = word.count_ones() as usize;
             if remaining < ones {
                 return Some(word_idx * 64 + select_in_word(word, remaining));
@@ -418,43 +426,67 @@ impl EliasFano {
     }
 
     /// Select0(rank): find position of the rank-th clear bit (0-indexed).
-    /// O(1) via sampling + rank.
+    /// O(1) via exact-bit-offset sampling.
     #[inline]
     fn select0(&self, rank: usize) -> Option<usize> {
         let sample_idx = rank / SELECT0_SAMPLE_RATE;
-        let mut start_word = if sample_idx < self.select0_samples.len() {
-            self.select0_samples[sample_idx] as usize / 64
-        } else {
-            0
-        };
-        let rank_block = start_word / RANK_SAMPLE_RATE;
-        if start_word > self.high_bits.len() || rank_block >= self.rank_samples.len() {
-            start_word = 0;
+        let last_word = self.high_bits.len().saturating_sub(1);
+        if let Some(&sample_bit_u32) = self.select0_samples.get(sample_idx) {
+            let sample_bit = sample_bit_u32 as usize;
+            let start_word = sample_bit / 64;
+            if sample_bit < self.high_len_bits
+                && let Some(words) = self.high_bits.get(start_word..)
+                && let Some((&first_raw, rest)) = words.split_first()
+            {
+                let mut remaining = rank % SELECT0_SAMPLE_RATE;
+                if remaining == 0 {
+                    return Some(sample_bit);
+                }
+
+                let bit_in_word = (sample_bit % 64) as u32;
+                let valid_mask = if start_word < last_word || self.high_len_bits.is_multiple_of(64)
+                {
+                    u64::MAX
+                } else {
+                    (1u64 << (self.high_len_bits % 64)) - 1
+                };
+                let first_inverted = (!first_raw) & valid_mask & ((!1u64) << bit_in_word);
+                let zeros = first_inverted.count_ones() as usize;
+                if remaining <= zeros {
+                    return Some(
+                        start_word * 64 + select_in_word(first_inverted, remaining - 1),
+                    );
+                }
+                remaining -= zeros;
+
+                for (offset, &word) in rest.iter().enumerate() {
+                    let word_idx = start_word + 1 + offset;
+                    let valid_mask =
+                        if word_idx < last_word || self.high_len_bits.is_multiple_of(64) {
+                            u64::MAX
+                        } else {
+                            (1u64 << (self.high_len_bits % 64)) - 1
+                        };
+                    let inverted = (!word) & valid_mask;
+                    let zeros = inverted.count_ones() as usize;
+                    if remaining <= zeros {
+                        return Some(word_idx * 64 + select_in_word(inverted, remaining - 1));
+                    }
+                    remaining -= zeros;
+                }
+                return None;
+            }
         }
 
-        // Compute exact cumulative zeros at start_word using rank_samples
-        let rank_block = start_word / RANK_SAMPLE_RATE;
-        let cumul_ones = {
-            let mut c = self.rank_samples.get(rank_block).copied().unwrap_or(0) as usize;
-            for w in (rank_block * RANK_SAMPLE_RATE)..start_word {
-                c += self.high_bits[w].count_ones() as usize;
-            }
-            c
-        };
-        // Total bits up to start_word
-        let total_bits_before = start_word * 64;
-        let cumul_zeros = total_bits_before.saturating_sub(cumul_ones);
-        let mut remaining = rank.saturating_sub(cumul_zeros);
-
-        for word_idx in start_word..self.high_bits.len() {
-            let word = self.high_bits[word_idx];
+        // Fallback if sample table was truncated/corrupted
+        let mut remaining = rank;
+        for (word_idx, &word) in self.high_bits.iter().enumerate() {
             let valid_bits = if (word_idx + 1) * 64 <= self.high_len_bits {
                 64
             } else {
                 self.high_len_bits.saturating_sub(word_idx * 64).min(64)
             };
             let actual_zeros = valid_bits.saturating_sub(word.count_ones() as usize);
-
             if remaining < actual_zeros {
                 let inverted = !word;
                 return Some(word_idx * 64 + select_in_word(inverted, remaining));
@@ -462,41 +494,6 @@ impl EliasFano {
             remaining -= actual_zeros;
         }
         None
-    }
-
-    /// Rank1(pos): count set bits in high_bits[0..pos).
-    /// O(1) via cumulative popcount sampling.
-    #[inline]
-    fn rank1(&self, pos: usize) -> usize {
-        let full_words = (pos / 64).min(self.high_bits.len());
-        let remaining_bits = if pos / 64 < self.high_bits.len() {
-            pos % 64
-        } else {
-            0
-        };
-
-        // Jump to nearest sample
-        let sample_idx = full_words / RANK_SAMPLE_RATE;
-        let (mut count, scan_start) = if sample_idx < self.rank_samples.len() {
-            (
-                self.rank_samples[sample_idx] as usize,
-                sample_idx * RANK_SAMPLE_RATE,
-            )
-        } else {
-            (0, 0)
-        };
-
-        // Scan at most RANK_SAMPLE_RATE words from the sample
-        for i in scan_start..full_words {
-            count += self.high_bits[i].count_ones() as usize;
-        }
-
-        // Handle partial word
-        if remaining_bits > 0 && full_words < self.high_bits.len() {
-            let mask = (1u64 << remaining_bits) - 1;
-            count += (self.high_bits[full_words] & mask).count_ones() as usize;
-        }
-        count
     }
 }
 
@@ -607,6 +604,8 @@ pub struct EliasFanoCursor<'a> {
     index: usize,
     /// Current bit position in high_bits (position of the current 1-bit).
     high_pos: usize,
+    /// Remaining set bits in `ef.high_bits[high_pos / 64]` strictly above `high_pos % 64`.
+    word: u64,
 }
 
 impl<'a> EliasFanoCursor<'a> {
@@ -617,13 +616,16 @@ impl<'a> EliasFanoCursor<'a> {
                 ef,
                 index: 0,
                 high_pos: 0,
+                word: 0,
             };
         }
         // Find the first 1-bit in high_bits
         let mut high_pos = 0;
+        let mut rem_word = 0;
         for (word_idx, &word) in ef.high_bits.iter().enumerate() {
             if word != 0 {
                 high_pos = word_idx * 64 + word.trailing_zeros() as usize;
+                rem_word = word & (word - 1);
                 break;
             }
         }
@@ -631,6 +633,7 @@ impl<'a> EliasFanoCursor<'a> {
             ef,
             index: 0,
             high_pos,
+            word: rem_word,
         }
     }
 
@@ -665,35 +668,23 @@ impl<'a> EliasFanoCursor<'a> {
             return false;
         }
 
-        // Move past current 1-bit
-        let next_pos = self.high_pos + 1;
-        let mut word_idx = next_pos / 64;
-        if word_idx >= self.ef.high_bits.len() {
-            return false;
-        }
-
-        // Mask out bits at or below current position within the word
-        let bit_in_word = next_pos % 64;
-        let mut word = self.ef.high_bits[word_idx] >> bit_in_word;
-
-        // Find next 1-bit
-        if word != 0 {
-            self.high_pos = word_idx * 64 + bit_in_word + word.trailing_zeros() as usize;
+        if self.word != 0 {
+            let bit = self.word.trailing_zeros() as usize;
+            self.high_pos = (self.high_pos & !63) | bit;
+            self.word &= self.word - 1;
             return true;
         }
 
-        // Scan subsequent words
-        loop {
-            word_idx += 1;
-            if word_idx >= self.ef.high_bits.len() {
-                return false;
-            }
-            word = self.ef.high_bits[word_idx];
-            if word != 0 {
-                self.high_pos = word_idx * 64 + word.trailing_zeros() as usize;
+        let mut word_idx = (self.high_pos / 64) + 1;
+        while let Some(&w) = self.ef.high_bits.get(word_idx) {
+            if w != 0 {
+                self.high_pos = word_idx * 64 + w.trailing_zeros() as usize;
+                self.word = w & (w - 1);
                 return true;
             }
+            word_idx += 1;
         }
+        false
     }
 
     /// Advance to the first element >= target.
@@ -732,7 +723,7 @@ impl<'a> EliasFanoCursor<'a> {
             }
         };
 
-        let elem_before = self.ef.rank1(bucket_start_pos);
+        let elem_before = bucket_start_pos.saturating_sub(target_high as usize);
 
         // Scan high_bits directly — maintaining index + high_pos inline
         let mut idx = elem_before;
@@ -770,6 +761,7 @@ impl<'a> EliasFanoCursor<'a> {
                 // Found it — update cursor state directly
                 self.index = idx;
                 self.high_pos = bit_pos;
+                self.word = self.ef.high_bits[word_idx] & ((!1u64) << ((bit_pos % 64) as u32));
                 return true;
             }
 
@@ -779,6 +771,7 @@ impl<'a> EliasFanoCursor<'a> {
         }
 
         self.index = self.ef.len;
+        self.word = 0;
         false
     }
 
@@ -800,6 +793,8 @@ impl<'a> EliasFanoCursor<'a> {
         if let Some(pos) = self.ef.select1(idx) {
             self.index = idx;
             self.high_pos = pos;
+            let raw = self.ef.high_bits.get(pos / 64).copied().unwrap_or(0);
+            self.word = raw & ((!1u64) << ((pos % 64) as u32));
             true
         } else {
             false
