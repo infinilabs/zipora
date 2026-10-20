@@ -34,44 +34,52 @@ impl HuffmanEncSymbol {
 #[derive(Debug)]
 pub(crate) struct BitStreamWriter {
     pub(crate) buffer: Vec<u8>,
-    pub(crate) current: u64,
+    pub(crate) current: u128,
     pub(crate) bit_count: usize,
 }
 
 impl BitStreamWriter {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::with_capacity(0)
+    }
+
+    pub(crate) fn with_capacity(cap: usize) -> Self {
         Self {
-            buffer: Vec::new(),
+            buffer: Vec::with_capacity(cap),
             current: 0,
             bit_count: 0,
         }
     }
 
     /// Write bits to the stream
-    #[inline]
+    #[inline(always)]
     pub(crate) fn write(&mut self, bits: u64, count: usize) {
-        // `bit_count` is always in 0..=7 here (the flush loop below drains
-        // whole bytes), so `bits << bit_count` silently drops high bits once
-        // `count` passes 57. Callers must stay within that budget.
         debug_assert!(
-            count + self.bit_count <= 64,
+            count + self.bit_count <= 128,
             "code of {count} bits does not fit above {} buffered bits",
             self.bit_count
         );
 
-        self.current |= bits << self.bit_count;
+        self.current |= (bits as u128) << self.bit_count;
         self.bit_count += count;
 
-        // Flush complete bytes
-        while self.bit_count >= 8 {
-            self.buffer.push(self.current as u8);
-            self.current >>= 8;
-            self.bit_count -= 8;
+        // Flush 8 complete bytes at once when 64+ bits have accumulated
+        if self.bit_count >= 64 {
+            let word = self.current as u64;
+            self.buffer.extend_from_slice(&word.to_le_bytes());
+            self.current >>= 64;
+            self.bit_count -= 64;
         }
     }
 
     /// Flush remaining bits and return the buffer
     pub(crate) fn finish(mut self) -> Vec<u8> {
+        while self.bit_count >= 8 {
+            self.buffer.push(self.current as u8);
+            self.current >>= 8;
+            self.bit_count -= 8;
+        }
         if self.bit_count > 0 {
             self.buffer.push(self.current as u8);
         }
@@ -152,11 +160,18 @@ impl HuffmanEncoder {
             acc |= (bits as u128) << bit_count;
             bit_count += len as u32;
 
-            while bit_count >= 8 {
-                result.push(acc as u8);
-                acc >>= 8;
-                bit_count -= 8;
+            if bit_count >= 64 {
+                let word = acc as u64;
+                result.extend_from_slice(&word.to_le_bytes());
+                acc >>= 64;
+                bit_count -= 64;
             }
+        }
+
+        while bit_count >= 8 {
+            result.push(acc as u8);
+            acc >>= 8;
+            bit_count -= 8;
         }
 
         // Add remaining bits if any

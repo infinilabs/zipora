@@ -652,17 +652,10 @@ impl FseTable {
         }
     }
 
-    /// High 64 bits of 128-bit multiplication (portable version)
+    /// High 64 bits of 128-bit multiplication (single hardware `mul` on x86_64/AArch64)
+    #[inline(always)]
     fn mul_hi(a: u64, b: u64) -> u64 {
-        let a_lo = a & 0xFFFFFFFF;
-        let a_hi = a >> 32;
-        let b_lo = b & 0xFFFFFFFF;
-        let b_hi = b >> 32;
-
-        let x0 = b_lo * a_lo;
-        let x1 = (b_lo * a_hi) + (b_hi * a_lo) + (x0 >> 32);
-
-        (b_hi * a_hi) + (x1 >> 32)
+        ((a as u128 * b as u128) >> 64) as u64
     }
 
     /// Encode symbol using rANS approach
@@ -709,7 +702,8 @@ impl FseTable {
 
         // rANS state transition: state = freq * (state / TOTFREQ) + state_low - start.
         // state_low >= start by alias-table construction, so no underflow.
-        let new_state = (sym.freq as u64) * (state >> TF_SHIFT) + state_low as u64 - sym.start as u64;
+        let new_state =
+            (sym.freq as u64) * (state >> TF_SHIFT) + state_low as u64 - sym.start as u64;
         (symbol, new_state)
     }
 
@@ -771,7 +765,10 @@ impl FseTable {
             x <<= BLOCK_SIZE * 8;
 
             // Read backward from current position
-            if let Some(bytes) = input.get(*pos..).and_then(|s| s.first_chunk::<BLOCK_SIZE>()) {
+            if let Some(bytes) = input
+                .get(*pos..)
+                .and_then(|s| s.first_chunk::<BLOCK_SIZE>())
+            {
                 let new_bytes = u32::from_le_bytes(*bytes);
                 x |= new_bytes as u64;
             }
@@ -782,7 +779,6 @@ impl FseTable {
         }
         Some(x)
     }
-
 
     /// Get table size
     #[inline(always)]
@@ -934,45 +930,54 @@ impl FseEncoder {
             return self.compress_parallel(data, num_blocks);
         }
 
-        // Single-threaded compression, framed with the single-mode byte
-        let body = self.compress_single_internal(data)?;
-        let mut output = Vec::with_capacity(body.len() + 1);
-        output.push(FSE_MODE_SINGLE);
-        output.extend_from_slice(&body);
-        // stats were recorded for the unframed body; account for the mode byte
-        self.stats = EntropyStats::new(data.len(), output.len(), self.stats.entropy);
-        Ok(output)
+        // Single-threaded compression, framed with the single-mode byte in a single allocation
+        self.compress_single_with_mode(data, true)
     }
 
     /// Single-threaded compression (internal, ZSTD-compatible)
     fn compress_single_internal(&mut self, data: &[u8]) -> Result<Vec<u8>> {
+        self.compress_single_with_mode(data, false)
+    }
+
+    fn compress_single_with_mode(&mut self, data: &[u8], with_mode_byte: bool) -> Result<Vec<u8>> {
         // SAFETY: This is called from compress() which creates self.table if None
         let table = self.table.as_ref().expect("FSE table must be initialized");
+        let mode_len = usize::from(with_mode_byte);
 
         // For very small data, skip FSE compression to avoid expansion
         if data.len() < 100 {
             // Return data with a simple "uncompressed" marker
-            let mut output = Vec::with_capacity(data.len() + 5);
+            let mut output = Vec::with_capacity(data.len() + 5 + mode_len);
+            if with_mode_byte {
+                output.push(FSE_MODE_SINGLE);
+            }
             output.extend_from_slice(&(data.len() as u32).to_le_bytes());
             output.push(0xFF); // Special marker for uncompressed data
             output.extend_from_slice(data);
 
             // Update statistics for uncompressed fallback
-            let entropy = EntropyStats::calculate_entropy(data);
+            let entropy = if self.dictionary.is_none() {
+                EntropyStats::calculate_entropy_from_frequencies(&self.frequency_stats, data.len())
+            } else {
+                EntropyStats::calculate_entropy(data)
+            };
             self.stats = EntropyStats::new(data.len(), output.len(), entropy);
 
             return Ok(output);
         }
 
         // Prepare output with compact header
-        let mut output = Vec::with_capacity(data.len() + 256); // Smaller header estimation
+        let mut output = Vec::with_capacity(data.len() + 256 + mode_len);
+        if with_mode_byte {
+            output.push(FSE_MODE_SINGLE);
+        }
 
         // Write header: original size + table log + compact frequency table
         output.extend_from_slice(&(data.len() as u32).to_le_bytes());
         output.push(table.table_log);
 
         // Write compact frequency table (only non-zero frequencies)
-        let mut non_zero_symbols = Vec::new();
+        let mut non_zero_symbols = Vec::with_capacity(256);
         for (symbol, &freq) in table.frequencies.iter().enumerate() {
             if freq > 0 && symbol <= table.max_symbol as usize {
                 non_zero_symbols.push((symbol as u8, freq));
@@ -1010,24 +1015,23 @@ impl FseEncoder {
         } else {
             // Encode symbols in reverse order (FSE/rANS style)
             for &symbol in data.iter().rev() {
-                // Get symbol frequency for renormalization
-                let sym_freq = table.enc_symbols[symbol as usize].freq as u32;
-
-                // Renormalize before encoding
-                current_state = table.renormalize_encode(current_state, &mut output, sym_freq);
-
-                // Encode symbol. A zero-frequency symbol means the table was built
-                // from data that did not contain it (static/non-adaptive table
-                // reuse); that must fail loudly instead of corrupting the stream.
-                if let Some((new_state, _bits_needed)) = table.encode_symbol(symbol, current_state)
-                {
-                    current_state = new_state;
-                } else {
+                let sym = &table.enc_symbols[symbol as usize];
+                if sym.freq == 0 {
                     return Err(ZiporaError::invalid_data(format!(
                         "symbol {} not present in FSE table (was the table built from different data?)",
                         symbol
                     )));
                 }
+
+                // Renormalize before encoding: x_max = ((65536 >> 12) << 32) * freq = freq << 36
+                let x_max = (sym.freq as u64) << 36;
+                if current_state >= x_max {
+                    output.extend_from_slice(&(current_state as u32).to_le_bytes());
+                    current_state >>= 32;
+                }
+
+                let q = FseTable::mul_hi(current_state, sym.rcp_freq) >> sym.rcp_shift;
+                current_state = current_state + (sym.bias as u64) + q * (sym.cmpl_freq as u64);
             }
         }
 
@@ -1035,14 +1039,17 @@ impl FseEncoder {
         let state_bytes = current_state.to_le_bytes();
         output.extend_from_slice(&state_bytes);
 
-        // Update statistics
-        let entropy = EntropyStats::calculate_entropy(data);
+        // Update statistics without a redundant 2nd histogram pass over `data`
+        let entropy = if self.dictionary.is_none() {
+            EntropyStats::calculate_entropy_from_frequencies(&self.frequency_stats, data.len())
+        } else {
+            EntropyStats::calculate_entropy(data)
+        };
         self.stats = EntropyStats::new(data.len(), output.len(), entropy);
 
         self.states[0] = current_state;
         Ok(output)
     }
-
 
     /// Parallel compression for large data (real implementation)
     fn compress_parallel(&mut self, data: &[u8], num_blocks: usize) -> Result<Vec<u8>> {
@@ -1139,7 +1146,6 @@ impl FseEncoder {
     pub fn config(&self) -> &FseConfig {
         &self.config
     }
-
 }
 
 /// FSE decoder with ZSTD optimizations
@@ -1363,8 +1369,8 @@ impl FseDecoder {
         // In a multi-symbol table, every symbol has normalized frequency <= 4095,
         // so each symbol consumes at least log2(4096/4095) bits (~1/2839 bits).
         // Total state bits available is 8 * compressed_data.len() + 64.
-        let max_possible_symbols = (compressed_data.len().saturating_mul(8).saturating_add(64))
-            .saturating_mul(2840);
+        let max_possible_symbols =
+            (compressed_data.len().saturating_mul(8).saturating_add(64)).saturating_mul(2840);
         if original_size > max_possible_symbols {
             return Err(ZiporaError::invalid_data(
                 "FSE declared original_size exceeds maximum possible symbols for payload length",
@@ -1377,16 +1383,41 @@ impl FseDecoder {
             ));
         }
 
-        // Build decompression table. The table shape is dictated by the
-        // stream header, not by this decoder's tuning parameters, so relax
-        // max_table_size to fit the header's table_log — any decoder must be
-        // able to decode any valid stream.
-        let config = FseConfig {
-            table_log,
-            max_table_size: self.config.max_table_size.max(1usize << table_log),
-            ..self.config.clone()
-        };
-        let table = FseTable::new(&frequencies, &config)?;
+        // Build compact stack-resident decode LUT directly from normalized frequencies,
+        // avoiding FseTable heap allocations and encoder reciprocal initialization.
+        #[derive(Clone, Copy, Default)]
+        #[repr(C)]
+        struct FseDecSlot {
+            freq: u16,
+            bias: u16,
+            symbol: u8,
+            _pad: u8,
+        }
+
+        const TABLE_SIZE: usize = 4096;
+        let normalized_freqs =
+            FseTable::normalize_frequencies_exact(&frequencies, TABLE_SIZE as u32)?;
+        let mut dec_lut = [FseDecSlot::default(); TABLE_SIZE];
+        let mut position = 0usize;
+        for (symbol, &freq_u32) in normalized_freqs.iter().enumerate() {
+            let freq = freq_u32 as usize;
+            if freq == 0 {
+                continue;
+            }
+            let freq16 = freq as u16;
+            let sym_u8 = symbol as u8;
+            for i in 0..freq {
+                dec_lut[position + i] = FseDecSlot {
+                    freq: freq16,
+                    bias: i as u16,
+                    symbol: sym_u8,
+                    _pad: 0,
+                };
+            }
+            position += freq;
+        }
+        debug_assert_eq!(position, TABLE_SIZE);
+
         let mut byte_pos = compressed_data.len(); // Start from the end for rANS
 
         // Decode symbols using advanced approach. Reserve incrementally: the
@@ -1394,7 +1425,53 @@ impl FseDecoder {
         // buffer grow with the output actually produced instead of
         // committing the full amount for a stream that may fail early.
         const MAX_EAGER_RESERVE: usize = 1 << 20;
-        let mut output = Vec::with_capacity(original_size.min(MAX_EAGER_RESERVE));
+        if original_size <= MAX_EAGER_RESERVE {
+            let mut output = vec![0u8; original_size];
+            for out_slot in &mut output {
+                if byte_pos >= 4 {
+                    let slot = dec_lut[(state & 4095) as usize];
+                    *out_slot = slot.symbol;
+                    state = (slot.freq as u64) * (state >> 12) + (slot.bias as u64);
+                    if state < 65536 {
+                        byte_pos -= 4;
+                        if let Some(chunk) = compressed_data
+                            .get(byte_pos..)
+                            .and_then(|s| s.first_chunk::<4>())
+                        {
+                            state = (state << 32) | (u32::from_le_bytes(*chunk) as u64);
+                        }
+                    }
+                } else {
+                    if state <= INITIAL_STATE && byte_pos == 0 {
+                        return Err(ZiporaError::invalid_data(
+                            "FSE decoder state exhausted before reaching declared original_size",
+                        ));
+                    }
+                    let slot = dec_lut[(state & 4095) as usize];
+                    *out_slot = slot.symbol;
+                    state = (slot.freq as u64) * (state >> 12) + (slot.bias as u64);
+                    if state < 65536 && byte_pos > 0 {
+                        return Err(ZiporaError::invalid_data(
+                            "Failed to renormalize during decoding",
+                        ));
+                    }
+                    if state == 0 {
+                        return Err(ZiporaError::invalid_data(
+                            "Failed to renormalize during decoding",
+                        ));
+                    }
+                }
+            }
+
+            if state != INITIAL_STATE || byte_pos != 0 {
+                return Err(ZiporaError::invalid_data(
+                    "FSE stream did not terminate at initial state with empty buffer",
+                ));
+            }
+            return Ok(output);
+        }
+
+        let mut output = Vec::with_capacity(MAX_EAGER_RESERVE);
 
         for _i in 0..original_size {
             if state <= INITIAL_STATE && byte_pos == 0 {
@@ -1403,21 +1480,28 @@ impl FseDecoder {
                 ));
             }
 
-            // Decode symbol first (optimal order for performance)
-            let (symbol, new_state) = table.decode_symbol(state);
+            // Single-lookup rANS state transition (`bias = state_low - sym.start`)
+            let slot = dec_lut[(state & 4095) as usize];
+            output.push(slot.symbol);
+            state = (slot.freq as u64) * (state >> 12) + (slot.bias as u64);
 
-            // Output the decoded symbol (line 801 in reference)
-            output.push(symbol);
-
-            // Update state
-            state = new_state;
-
-            // Renormalize AFTER decoding (optimal order for performance)
-            if let Some(renorm_state) =
-                table.renormalize_decode(state, compressed_data, &mut byte_pos)
-            {
-                state = renorm_state;
-            } else {
+            // Renormalize AFTER decoding when state < RANS_L (65536) and input bytes remain
+            if state < 65536 && byte_pos > 0 {
+                if byte_pos < 4 {
+                    return Err(ZiporaError::invalid_data(
+                        "Failed to renormalize during decoding",
+                    ));
+                }
+                byte_pos -= 4;
+                state <<= 32;
+                if let Some(chunk) = compressed_data
+                    .get(byte_pos..)
+                    .and_then(|s| s.first_chunk::<4>())
+                {
+                    state |= u32::from_le_bytes(*chunk) as u64;
+                }
+            }
+            if state == 0 {
                 return Err(ZiporaError::invalid_data(
                     "Failed to renormalize during decoding",
                 ));
@@ -1471,7 +1555,6 @@ impl FseDecoder {
 
         Ok(output)
     }
-
 
     /// Reset decoder state
     pub fn reset(&mut self) {
@@ -1819,7 +1902,10 @@ mod bench_tests {
         // Input exhausted with x < RANS_L is the encoder's warm-up from
         // state 1 seen in reverse; it must still pass through untouched.
         let mut pos = 0;
-        assert_eq!(table.renormalize_decode(100, &input_bytes, &mut pos), Some(100));
+        assert_eq!(
+            table.renormalize_decode(100, &input_bytes, &mut pos),
+            Some(100)
+        );
         assert_eq!(pos, 0);
 
         // A zero state is never produced by the encoder; no `.max(1)` clamp.
@@ -1835,13 +1921,25 @@ mod bench_tests {
         // Single mode with truncated size (< 4 bytes body)
         assert!(decoder.decompress(&[FSE_MODE_SINGLE, 10, 0, 0]).is_err());
         // Single mode with invalid table log
-        assert!(decoder.decompress(&[FSE_MODE_SINGLE, 10, 0, 0, 0, 0x02]).is_err());
+        assert!(
+            decoder
+                .decompress(&[FSE_MODE_SINGLE, 10, 0, 0, 0, 0x02])
+                .is_err()
+        );
         // Parallel mode truncated before block count
         assert!(decoder.decompress(&[FSE_MODE_PARALLEL, 1, 0]).is_err());
         // Parallel mode with 0 blocks
-        assert!(decoder.decompress(&[FSE_MODE_PARALLEL, 0, 0, 0, 0]).is_err());
+        assert!(
+            decoder
+                .decompress(&[FSE_MODE_PARALLEL, 0, 0, 0, 0])
+                .is_err()
+        );
         // Parallel mode with truncated block sizes
-        assert!(decoder.decompress(&[FSE_MODE_PARALLEL, 2, 0, 0, 0, 10, 0]).is_err());
+        assert!(
+            decoder
+                .decompress(&[FSE_MODE_PARALLEL, 2, 0, 0, 0, 10, 0])
+                .is_err()
+        );
         // Unknown mode
         assert!(decoder.decompress(&[0xEE, 1, 2, 3]).is_err());
     }

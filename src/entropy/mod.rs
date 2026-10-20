@@ -298,11 +298,20 @@ impl EntropyStats {
             frequencies[byte as usize] += 1;
         }
 
-        // Calculate entropy
-        let total = data.len() as f64;
+        Self::calculate_entropy_from_frequencies(&frequencies, data.len())
+    }
+
+    /// Calculate theoretical entropy from precomputed byte frequencies
+    #[inline]
+    pub fn calculate_entropy_from_frequencies(frequencies: &[u32; 256], total_len: usize) -> f64 {
+        if total_len == 0 {
+            return 0.0;
+        }
+
+        let total = total_len as f64;
         let mut entropy = 0.0;
 
-        for &freq in &frequencies {
+        for &freq in frequencies {
             if freq > 0 {
                 let p = freq as f64 / total;
                 entropy -= p * p.log2();

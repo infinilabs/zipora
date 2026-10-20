@@ -78,16 +78,68 @@ impl<'a> BitStreamReader<'a> {
     }
 }
 
+const FAST_LUT_BITS: u8 = 11;
+const FAST_LUT_SIZE: usize = 1 << FAST_LUT_BITS;
+const FAST_LUT_MASK: u64 = (FAST_LUT_SIZE as u64) - 1;
+
+/// Flat lookup entry for single-cycle Huffman decoding of codes up to `FAST_LUT_BITS`.
+#[derive(Debug, Clone, Copy, Default)]
+#[repr(C)]
+pub(crate) struct FastDecEntry {
+    pub(crate) symbol: u8,
+    pub(crate) bit_len: u8,
+}
+
+pub(crate) fn fill_lut_dfs<const N: usize>(
+    node: &HuffmanNode,
+    code_bits: usize,
+    depth: u8,
+    lut_bits: u8,
+    table: &mut [FastDecEntry; N],
+) {
+    match node {
+        HuffmanNode::Leaf { symbol, .. } => {
+            let bit_len = depth.max(1);
+            let step = 1usize << (depth as usize);
+            let mut idx = code_bits;
+            while idx < N {
+                table[idx] = FastDecEntry {
+                    symbol: *symbol,
+                    bit_len,
+                };
+                idx += step;
+            }
+        }
+        HuffmanNode::Internal { left, right, .. } => {
+            if depth < lut_bits {
+                fill_lut_dfs(left, code_bits, depth + 1, lut_bits, table);
+                fill_lut_dfs(
+                    right,
+                    code_bits | (1usize << (depth as usize)),
+                    depth + 1,
+                    lut_bits,
+                    table,
+                );
+            }
+        }
+    }
+}
+
 /// Huffman decoder
 #[derive(Debug)]
 pub struct HuffmanDecoder {
     tree: HuffmanTree,
+    fast_lut: Box<[FastDecEntry; FAST_LUT_SIZE]>,
 }
 
 impl HuffmanDecoder {
     /// Create decoder from tree
     pub fn new(tree: HuffmanTree) -> Self {
-        Self { tree }
+        let mut fast_lut = Box::new([FastDecEntry::default(); FAST_LUT_SIZE]);
+        if let Some(root) = tree.root() {
+            fill_lut_dfs(root, 0, 0, FAST_LUT_BITS, &mut fast_lut);
+        }
+        Self { tree, fast_lut }
     }
 
     /// Decode Huffman-encoded data
@@ -110,52 +162,83 @@ impl HuffmanDecoder {
             )));
         }
 
+        if let HuffmanNode::Leaf { symbol, .. } = root {
+            let max_single_len = encoded_data.len().saturating_mul(8).saturating_add(1);
+            if output_length > max_single_len {
+                return Err(ZiporaError::invalid_data(format!(
+                    "Decoded length {} != expected {}",
+                    max_single_len, output_length
+                )));
+            }
+            return Ok(vec![*symbol; output_length]);
+        }
+
         let mut result = Vec::with_capacity(output_length);
-        let mut current_node = root;
+        let mut bit_buf: u64 = 0;
+        let mut bits_in_buf: u32 = 0;
+        let mut byte_idx: usize = 0;
 
-        for &byte in encoded_data {
-            for bit_pos in 0..8 {
-                if result.len() >= output_length {
-                    break;
+        while result.len() < output_length {
+            if bits_in_buf <= 32 {
+                if let Some(chunk) = encoded_data
+                    .get(byte_idx..byte_idx + 4)
+                    .and_then(|s| s.first_chunk::<4>())
+                {
+                    bit_buf |= (u32::from_le_bytes(*chunk) as u64) << bits_in_buf;
+                    bits_in_buf += 32;
+                    byte_idx += 4;
+                } else {
+                    while bits_in_buf <= 56 {
+                        if let Some(&b) = encoded_data.get(byte_idx) {
+                            bit_buf |= (b as u64) << bits_in_buf;
+                            bits_in_buf += 8;
+                            byte_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
                 }
+            }
 
-                let bit = (byte >> bit_pos) & 1 == 1;
+            let entry = self.fast_lut[(bit_buf & FAST_LUT_MASK) as usize];
+            let len = entry.bit_len as u32;
+            if len > 0 && bits_in_buf >= len {
+                result.push(entry.symbol);
+                bit_buf >>= len;
+                bits_in_buf -= len;
+                continue;
+            }
 
+            // Fallback to tree walk for codes > FAST_LUT_BITS or end-of-stream partial byte
+            let mut current_node = root;
+            let mut found = false;
+            loop {
                 match current_node {
                     HuffmanNode::Leaf { symbol, .. } => {
                         result.push(*symbol);
-                        current_node = root;
-                        // Process the current bit with the reset node
-                        current_node = match current_node {
-                            HuffmanNode::Leaf { .. } => {
-                                // Single symbol tree case
-                                current_node
-                            }
-                            HuffmanNode::Internal { left, right, .. } => {
-                                if bit {
-                                    right
-                                } else {
-                                    left
-                                }
-                            }
-                        };
+                        found = true;
+                        break;
                     }
                     HuffmanNode::Internal { left, right, .. } => {
+                        if bits_in_buf == 0 {
+                            if let Some(&b) = encoded_data.get(byte_idx) {
+                                bit_buf = b as u64;
+                                bits_in_buf = 8;
+                                byte_idx += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        let bit = (bit_buf & 1) != 0;
+                        bit_buf >>= 1;
+                        bits_in_buf -= 1;
                         current_node = if bit { right } else { left };
                     }
                 }
             }
-
-            if result.len() >= output_length {
+            if !found {
                 break;
             }
-        }
-
-        // Handle final symbol if we're at a leaf
-        if let HuffmanNode::Leaf { symbol, .. } = current_node
-            && result.len() < output_length
-        {
-            result.push(*symbol);
         }
 
         if result.len() != output_length {

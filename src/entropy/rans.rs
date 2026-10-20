@@ -195,10 +195,25 @@ impl ParallelVariant for ParallelX8 {
     const NAME: &'static str = "x8";
 }
 
+/// Compact 16-byte encoding entry for `s < (1 << 24)` (`max_state = freq << 12 <= 1 << 24`).
+///
+/// For any `1 <= freq <= 4096` and `0 <= s < (1 << 24)`, `rcp40 = ceil(2^40 / freq)` satisfies
+/// `s * rcp40 < 2^64` and `(s * rcp40) >> 40 == s / freq` with a constant 40-bit shift and
+/// zero branches for `freq == 1`.
+#[derive(Debug, Clone, Copy, Default)]
+#[repr(C)]
+struct RansEncEntry {
+    rcp40: u64,
+    max_state: u32,
+    cmpl_freq: u16,
+    start: u16,
+}
+
 /// Enhanced 64-bit rANS encoder with parallel processing
 #[derive(Debug)]
 pub struct Rans64Encoder<P: ParallelVariant> {
     symbols: [Rans64Symbol; 256],
+    enc_entries: [RansEncEntry; 256],
     total_freq: u32,
     _phantom: PhantomData<P>,
 }
@@ -210,6 +225,7 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
         if total_freq == 0 {
             return Ok(Self {
                 symbols: [Rans64Symbol::new(0, 0); 256],
+                enc_entries: [RansEncEntry::default(); 256],
                 total_freq: 0,
                 _phantom: PhantomData,
             });
@@ -219,16 +235,27 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
         let normalized_freqs = Self::normalize_frequencies(frequencies, total_freq)?;
 
         let mut symbols = [Rans64Symbol::new(0, 0); 256];
+        let mut enc_entries = [RansEncEntry::default(); 256];
         let mut cumulative = 0u32;
 
         // Build enhanced symbol table with reciprocals
         for (i, &freq) in normalized_freqs.iter().enumerate() {
             symbols[i] = Rans64Symbol::new(cumulative, freq);
+            if freq > 0 {
+                let rcp40 = (1u64 << 40).div_ceil(freq as u64);
+                enc_entries[i] = RansEncEntry {
+                    rcp40,
+                    max_state: freq << TF_SHIFT,
+                    cmpl_freq: (TOTFREQ - freq) as u16,
+                    start: cumulative as u16,
+                };
+            }
             cumulative += freq;
         }
 
         Ok(Self {
             symbols,
+            enc_entries,
             total_freq: TOTFREQ,
             _phantom: PhantomData,
         })
@@ -299,16 +326,16 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
     }
 
     /// Encode a symbol using enhanced 64-bit state
-    #[inline]
+    #[inline(always)]
     pub fn encode_symbol(
         &self,
         state: &mut Rans64State,
         symbol: u8,
         output: &mut Vec<u8>,
     ) -> Result<()> {
-        let sym = &self.symbols[symbol as usize];
+        let entry = &self.enc_entries[symbol as usize];
 
-        if sym.freq == 0 {
+        if entry.max_state == 0 {
             return Err(ZiporaError::invalid_data(format!(
                 "Symbol {} not in frequency table",
                 symbol
@@ -316,19 +343,18 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
         }
 
         // Renormalize: output bytes when state gets too large
-        let max_state = ((RANS64_L << 8) / TOTFREQ as u64) * sym.freq as u64;
+        let max_state = entry.max_state as u64;
         while state.state >= max_state {
             output.push((state.state & 0xFF) as u8);
             state.state >>= 8;
         }
 
-        // Standard rANS encoding using 64-bit arithmetic
+        // Standard rANS encoding using pre-computed 40-bit reciprocal [E4(d)]
+        // After renormalization `state.state < max_state <= 1 << 24`, so `s * rcp40 < 2^64`
+        // and `(s * rcp40) >> 40 == s / freq` with a constant shift.
         let s = state.state;
-        let freq = sym.freq as u64;
-        let start = sym.start as u64;
-        let total_freq = TOTFREQ as u64;
-
-        let new_state = ((s / freq) * total_freq) + (s % freq) + start;
+        let q = (s * entry.rcp40) >> 40;
+        let new_state = s + (entry.start as u64) + q * (entry.cmpl_freq as u64);
         state.set_state(new_state);
 
         Ok(())
@@ -353,7 +379,7 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
     /// Single-stream encoding
     fn encode_single(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut state = Rans64State::new();
-        let mut output = Vec::new();
+        let mut output = Vec::with_capacity(data.len() + 16);
 
         // Encode symbols in reverse order
         for &symbol in data.iter().rev() {
@@ -377,27 +403,54 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
 
         // Initialize N independent rANS states
         let mut states = vec![Rans64State::new(); n_streams];
-        let mut outputs = vec![Vec::new(); n_streams];
+        let per_stream_cap = data_len / n_streams + 16;
+        let mut outputs: Vec<Vec<u8>> = (0..n_streams)
+            .map(|_| Vec::with_capacity(per_stream_cap))
+            .collect();
 
-        // Encode data in interleaved fashion, processing backwards.
-        // Each stream processes every Nth symbol: stream i handles indices
-        // i, i+N, i+2N, ..., in reverse order for proper rANS encoding.
-        //
-        // These index sequences used to be materialised into `n_streams`
-        // Vec<usize> before the codec ran, which allocated O(n) indices to
-        // express what the range computes for free and cost 4.33 ms of a
-        // 10.46 ms 1 MiB X4 encode — more than the codec itself.
-        for stream_idx in 0..n_streams {
-            for pos in (stream_idx..data_len).step_by(n_streams).rev() {
+        if n_streams == 4 {
+            let full_quads = data_len / 4;
+            for pos in (full_quads * 4..data_len).rev() {
                 let sym = *data
                     .get(pos)
                     .ok_or_else(|| ZiporaError::out_of_bounds(pos, data_len))?;
+                let stream_idx = pos & 3;
                 self.encode_symbol(&mut states[stream_idx], sym, &mut outputs[stream_idx])?;
+            }
+
+            let [s0, s1, s2, s3] = &mut states[..4] else {
+                unreachable!()
+            };
+            let [out0, out1, out2, out3] = &mut outputs[..4] else {
+                unreachable!()
+            };
+            let head = data.get(..full_quads * 4).unwrap_or(&[]);
+            for quad in head.chunks_exact(4).rev() {
+                let &[b0, b1, b2, b3] = quad else {
+                    unreachable!()
+                };
+                self.encode_symbol(s3, b3, out3)?;
+                self.encode_symbol(s2, b2, out2)?;
+                self.encode_symbol(s1, b1, out1)?;
+                self.encode_symbol(s0, b0, out0)?;
+            }
+        } else {
+            // Encode data in interleaved fashion, processing backwards.
+            // Each stream processes every Nth symbol: stream i handles indices
+            // i, i+N, i+2N, ..., in reverse order for proper rANS encoding.
+            for stream_idx in 0..n_streams {
+                for pos in (stream_idx..data_len).step_by(n_streams).rev() {
+                    let sym = *data
+                        .get(pos)
+                        .ok_or_else(|| ZiporaError::out_of_bounds(pos, data_len))?;
+                    self.encode_symbol(&mut states[stream_idx], sym, &mut outputs[stream_idx])?;
+                }
             }
         }
 
         // Combine outputs: first output stream states, then concatenate stream data
-        let mut final_output = Vec::new();
+        let total_out_bytes: usize = outputs.iter().map(Vec::len).sum();
+        let mut final_output = Vec::with_capacity(n_streams * 12 + total_out_bytes);
 
         // Write stream states (8 bytes each)
         for state in &states {
@@ -433,11 +486,22 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
     }
 }
 
+/// Combined slot entry for single-lookup rANS decoding (`bias = slot - sym.start`).
+#[derive(Debug, Clone, Copy, Default)]
+#[repr(C)]
+struct RansDecEntry {
+    freq: u16,
+    bias: u16,
+    symbol: u8,
+    _pad: u8,
+}
+
 /// Enhanced 64-bit rANS decoder with parallel processing
 #[derive(Debug)]
 pub struct Rans64Decoder<P: ParallelVariant> {
     symbols: [Rans64Symbol; 256],
     decode_table: [u8; TOTFREQ as usize], // Direct lookup table for decoding
+    decode_entries: Box<[RansDecEntry; TOTFREQ as usize]>,
     _total_freq: u32,
     _phantom: PhantomData<P>,
 }
@@ -446,33 +510,46 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
     /// Create decoder from encoder
     pub fn new(encoder: &Rans64Encoder<P>) -> Self {
         let mut decode_table = [0u8; TOTFREQ as usize];
+        let mut decode_entries = Box::new([RansDecEntry::default(); TOTFREQ as usize]);
 
         // Build direct lookup table for O(1) symbol lookup
         for symbol in 0..256 {
             let sym = &encoder.symbols[symbol];
+            let freq16 = sym.freq as u16;
+            let sym_u8 = symbol as u8;
             for i in 0..sym.freq {
                 if (sym.start + i) < TOTFREQ {
-                    decode_table[(sym.start + i) as usize] = symbol as u8; // D10.1: in-bounds
+                    let slot = (sym.start + i) as usize;
+                    decode_table[slot] = sym_u8; // D10.1: in-bounds
+                    decode_entries[slot] = RansDecEntry {
+                        freq: freq16,
+                        bias: i as u16,
+                        symbol: sym_u8,
+                        _pad: 0,
+                    };
                 }
             }
         }
 
+        let _ = encoder.symbols;
         Self {
             symbols: encoder.symbols,
             decode_table,
+            decode_entries,
             _total_freq: encoder.total_freq,
             _phantom: PhantomData,
         }
     }
 
     /// Decode a symbol using enhanced 64-bit state
-    #[inline]
+    #[inline(always)]
     pub fn decode_symbol(
         &self,
         state: &mut Rans64State,
         input: &[u8],
         pos: &mut usize,
     ) -> Result<u8> {
+        let _ = &self.symbols;
         // Renormalize: read bytes when state gets too small
         while state.needs_renorm_decode() {
             if *pos == 0 {
@@ -486,22 +563,12 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
         }
 
         // Fast symbol lookup using direct table
-        let slot = (state.state % TOTFREQ as u64) as u32;
-        if slot as usize >= self.decode_table.len() {
-            return Err(ZiporaError::invalid_data(
-                "Invalid slot value for decode table",
-            ));
-        }
-        let symbol = self.decode_table[slot as usize]; // D10.1: in-bounds
-        let sym_info = &self.symbols[symbol as usize];
+        let slot = (state.state & (TOTFREQ as u64 - 1)) as usize;
+        let symbol = self.decode_table[slot]; // D10.1: in-bounds
+        let entry = self.decode_entries[slot];
 
         // Standard rANS decoding (inverse of encoding)
-        let freq = sym_info.freq as u64;
-        let start = sym_info.start as u64;
-        let total_freq = TOTFREQ as u64;
-        let s = state.state;
-
-        let new_state = freq * (s / total_freq) + (s % total_freq) - start;
+        let new_state = (entry.freq as u64) * (state.state >> TF_SHIFT) + (entry.bias as u64);
         state.set_state(new_state);
 
         Ok(symbol)
@@ -539,7 +606,14 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
 
         let mut state = Rans64State::from_state(initial_state);
         let mut pos = data_len - 8;
-        let mut result = Vec::with_capacity(output_length);
+        if output_length <= (1 << 20) {
+            let mut result = vec![0u8; output_length];
+            for out_slot in &mut result {
+                *out_slot = self.decode_symbol(&mut state, encoded_data, &mut pos)?;
+            }
+            return Ok(result);
+        }
+        let mut result = Vec::with_capacity(output_length.min(1 << 20));
 
         for _ in 0..output_length {
             let symbol = self.decode_symbol(&mut state, encoded_data, &mut pos)?;
@@ -569,9 +643,9 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
         let mut states = Vec::with_capacity(n_streams);
         let mut pos = 0;
         for _ in 0..n_streams {
-            let state_bytes = encoded_data
-                .get(pos..pos + 8)
-                .ok_or_else(|| ZiporaError::invalid_data("Insufficient data for parallel rANS header"))?;
+            let state_bytes = encoded_data.get(pos..pos + 8).ok_or_else(|| {
+                ZiporaError::invalid_data("Insufficient data for parallel rANS header")
+            })?;
             let state_value = u64::from_le_bytes(
                 state_bytes
                     .try_into()
@@ -586,9 +660,9 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
         let mut stream_lengths = Vec::with_capacity(n_streams);
         let mut total_stream_len: usize = 0;
         for _ in 0..n_streams {
-            let length_bytes = encoded_data
-                .get(pos..pos + 4)
-                .ok_or_else(|| ZiporaError::invalid_data("Insufficient data for parallel rANS header"))?;
+            let length_bytes = encoded_data.get(pos..pos + 4).ok_or_else(|| {
+                ZiporaError::invalid_data("Insufficient data for parallel rANS header")
+            })?;
             let length = u32::from_le_bytes(
                 length_bytes
                     .try_into()
@@ -601,7 +675,10 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
             pos += 4;
         }
 
-        if pos.checked_add(total_stream_len).is_none_or(|end| end > encoded_data.len()) {
+        if pos
+            .checked_add(total_stream_len)
+            .is_none_or(|end| end > encoded_data.len())
+        {
             return Err(ZiporaError::invalid_data("Invalid stream data length"));
         }
 
@@ -617,6 +694,44 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
 
         // Decode each stream independently in interleaved fashion
         let mut result = vec![0u8; output_length];
+
+        if n_streams == 4 {
+            let [sd0, sd1, sd2, sd3] = stream_data.as_slice() else {
+                unreachable!()
+            };
+            let [s0, s1, s2, s3] = &mut states[..4] else {
+                unreachable!()
+            };
+            let mut p0 = sd0.len();
+            let mut p1 = sd1.len();
+            let mut p2 = sd2.len();
+            let mut p3 = sd3.len();
+
+            for quad in result.chunks_exact_mut(4) {
+                let [o0, o1, o2, o3] = quad else {
+                    unreachable!()
+                };
+                *o0 = self.decode_symbol(s0, sd0, &mut p0)?;
+                *o1 = self.decode_symbol(s1, sd1, &mut p1)?;
+                *o2 = self.decode_symbol(s2, sd2, &mut p2)?;
+                *o3 = self.decode_symbol(s3, sd3, &mut p3)?;
+            }
+
+            let rem_start = (output_length / 4) * 4;
+            if let Some(tail) = result.get_mut(rem_start..) {
+                if let Some(slot) = tail.get_mut(0) {
+                    *slot = self.decode_symbol(s0, sd0, &mut p0)?;
+                }
+                if let Some(slot) = tail.get_mut(1) {
+                    *slot = self.decode_symbol(s1, sd1, &mut p1)?;
+                }
+                if let Some(slot) = tail.get_mut(2) {
+                    *slot = self.decode_symbol(s2, sd2, &mut p2)?;
+                }
+            }
+            return Ok(result);
+        }
+
         let mut stream_positions = vec![0usize; n_streams];
 
         // Initialize stream positions at the end of each stream's data (read backwards)
