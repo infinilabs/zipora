@@ -12,6 +12,79 @@ use zipora::algorithms::suffix_array::SuffixArray;
 
 use crate::common::*;
 
+fn verify_sa_with<F: Fn(usize) -> usize>(
+    text: &[u8],
+    sa_len: usize,
+    sa_at: F,
+    expected_sample: &mut Option<Vec<u32>>,
+    label: &str,
+) {
+    let n = text.len();
+    assert_eq!(sa_len, n, "{label}: suffix array length mismatch");
+    let step = (n / 256).max(1);
+    let mut sample = Vec::with_capacity(258);
+    let mut idx = 0usize;
+    while idx < n {
+        let p0 = sa_at(idx);
+        assert!(p0 < n, "{label}: suffix index {p0} out of bounds for n={n}");
+        if idx + 1 < n {
+            let p1 = sa_at(idx + 1);
+            assert!(p1 < n, "{label}: suffix index {p1} out of bounds for n={n}");
+            assert!(
+                text[p0..] < text[p1..],
+                "{label}: suffix ordering violated at rank {idx} (p0={p0}, p1={p1})"
+            );
+        }
+        sample.push(p0 as u32);
+        idx += step;
+    }
+    sample.push(sa_at(n - 1) as u32);
+    if let Some(ref exp) = *expected_sample {
+        assert_eq!(
+            &sample, exp,
+            "{label}: sampled suffix array ranks disagree with reference"
+        );
+    } else {
+        *expected_sample = Some(sample);
+    }
+}
+
+fn verify_sa_usize_invariants(
+    text: &[u8],
+    sa: &[usize],
+    expected_sample: &mut Option<Vec<u32>>,
+    label: &str,
+) {
+    verify_sa_with(text, sa.len(), |i| sa[i], expected_sample, label);
+}
+
+fn verify_sa_u32_invariants(
+    text: &[u8],
+    sa: &[u32],
+    expected_sample: &mut Option<Vec<u32>>,
+    label: &str,
+) {
+    verify_sa_with(text, sa.len(), |i| sa[i] as usize, expected_sample, label);
+}
+
+fn verify_sa_i32_invariants(
+    text: &[u8],
+    sa: &[i32],
+    expected_sample: &mut Option<Vec<u32>>,
+    label: &str,
+) {
+    verify_sa_with(
+        text,
+        sa.len(),
+        |i| {
+            assert!(sa[i] >= 0, "{label}: negative suffix index at rank {i}");
+            sa[i] as usize
+        },
+        expected_sample,
+        label,
+    );
+}
+
 pub fn bench_suffix_array(
     records: &mut Vec<BenchRecord>,
     space: &mut BTreeMap<String, f64>,
@@ -44,6 +117,10 @@ pub fn bench_suffix_array(
     let mut sa_build_params = BenchParams::heavy(n as u64, n as u64, 3);
     sa_build_params.warmup_calls = 1;
     sa_build_params.bursts_per_trial = 1;
+    let mut expected_sa_sample: Option<Vec<u32>> = None;
+    let mut expected_occ_hits: Option<usize> = None;
+    let warm_queries = sa_batch * 24;
+    let expected_matched_queries = warm_queries - warm_queries / 10;
 
     // 1. Zipora: SuffixArray (1 instance, 1 text buffer)
     if should_run_any(&["suffix_array/construct", "suffix_array/search_query"]) {
@@ -66,23 +143,50 @@ pub fn bench_suffix_array(
                     *slot = Some(built);
                 },
             );
+            if let Some(ref built) = sa_pending {
+                verify_sa_usize_invariants(
+                    &text0,
+                    built.as_slice(),
+                    &mut expected_sa_sample,
+                    "suffix_array/construct",
+                );
+            }
             drop(sa_pending);
             trim_allocator_arena();
         }
         if should_run_bench("suffix_array/search_query") {
             trim_allocator_arena();
             let sa0 = SuffixArray::new(&text0).unwrap();
+            verify_sa_usize_invariants(
+                &text0,
+                sa0.as_slice(),
+                &mut expected_sa_sample,
+                "suffix_array/search_query",
+            );
             let mut warm_sa_hits = 0usize;
-            for idx in 0..(sa_batch * 24) {
+            for idx in 0..warm_queries {
                 let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
                 let mut pat = [0u8; 16];
                 pat.copy_from_slice(&text0[pos..pos + pat_len]);
-                if idx % 10 == 9 {
+                let is_miss = idx % 10 == 9;
+                if is_miss {
                     pat[pat_len - 1] = b'~';
                 }
                 let (_, count) = sa0.search(black_box(&text0), black_box(&pat[..]));
+                if is_miss {
+                    assert_eq!(
+                        count, 0,
+                        "suffix_array/search_query: expected miss at idx={idx}"
+                    );
+                } else {
+                    assert!(
+                        count >= 1,
+                        "suffix_array/search_query: expected hit at idx={idx}"
+                    );
+                }
                 warm_sa_hits = warm_sa_hits.wrapping_add(count);
             }
+            expected_occ_hits = Some(warm_sa_hits);
             black_box(warm_sa_hits);
 
             measure_bench(
@@ -139,23 +243,56 @@ pub fn bench_suffix_array(
                     *slot = Some(built);
                 },
             );
+            if let Some(ref built) = st_pending {
+                verify_sa_u32_invariants(
+                    &text0,
+                    built.table(),
+                    &mut expected_sa_sample,
+                    "suffix_array/suffix_crate/construct",
+                );
+            }
             drop(st_pending);
             trim_allocator_arena();
         }
         if should_run_bench("suffix_array/suffix_crate/search_query") {
             trim_allocator_arena();
             let st0 = SuffixTable::new(text_str0);
+            verify_sa_u32_invariants(
+                &text0,
+                st0.table(),
+                &mut expected_sa_sample,
+                "suffix_array/suffix_crate/search_query",
+            );
 
             let mut warm_hits = 0usize;
-            for idx in 0..(sa_batch * 24) {
+            for idx in 0..warm_queries {
                 let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
                 let mut pat = [0u8; 16];
                 pat.copy_from_slice(&text0[pos..pos + pat_len]);
-                if idx % 10 == 9 {
+                let is_miss = idx % 10 == 9;
+                if is_miss {
                     pat[pat_len - 1] = b'~';
                 }
                 let pat_str = std::str::from_utf8(&pat).unwrap();
-                warm_hits = warm_hits.wrapping_add(st0.positions(black_box(pat_str)).len());
+                let count = st0.positions(black_box(pat_str)).len();
+                if is_miss {
+                    assert_eq!(
+                        count, 0,
+                        "suffix_array/suffix_crate/search_query: expected miss at idx={idx}"
+                    );
+                } else {
+                    assert!(
+                        count >= 1,
+                        "suffix_array/suffix_crate/search_query: expected hit at idx={idx}"
+                    );
+                }
+                warm_hits = warm_hits.wrapping_add(count);
+            }
+            if let Some(exp) = expected_occ_hits {
+                assert_eq!(
+                    warm_hits, exp,
+                    "suffix_array/suffix_crate/search_query: hit count mismatch vs Zipora"
+                );
             }
             black_box(warm_hits);
 
@@ -213,7 +350,16 @@ pub fn bench_suffix_array(
                     *slot = Some(built);
                 },
             );
-            drop(dss_pending);
+            if let Some(built) = dss_pending.take() {
+                let (_, sa_vec) = built.into_parts();
+                verify_sa_i32_invariants(
+                    &text0,
+                    &sa_vec,
+                    &mut expected_sa_sample,
+                    "suffix_array/divsufsort_rust/construct",
+                );
+                drop(sa_vec);
+            }
             trim_allocator_arena();
         }
         if should_run_bench("suffix_array/divsufsort_rust/search_query") {
@@ -221,18 +367,33 @@ pub fn bench_suffix_array(
             let dss0 = divsufsort::sort(&text0);
 
             let mut warm_hits = 0usize;
-            for idx in 0..(sa_batch * 24) {
+            for idx in 0..warm_queries {
                 let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
                 let mut pat = [0u8; 16];
                 pat.copy_from_slice(&text0[pos..pos + pat_len]);
-                if idx % 10 == 9 {
+                let is_miss = idx % 10 == 9;
+                if is_miss {
                     pat[pat_len - 1] = b'~';
                 }
                 let m = dss0.longest_substring_match(black_box(&pat[..]));
-                if m.len == pat_len {
+                if is_miss {
+                    assert!(
+                        m.len < pat_len,
+                        "suffix_array/divsufsort_rust/search_query: expected miss at idx={idx}"
+                    );
+                } else {
+                    assert_eq!(
+                        m.len, pat_len,
+                        "suffix_array/divsufsort_rust/search_query: expected hit at idx={idx}"
+                    );
+                    assert_eq!(m.as_bytes(), &pat[..]);
                     warm_hits = warm_hits.wrapping_add(1);
                 }
             }
+            assert_eq!(
+                warm_hits, expected_matched_queries,
+                "suffix_array/divsufsort_rust/search_query: matched query count mismatch"
+            );
             black_box(warm_hits);
 
             measure_bench(
@@ -262,7 +423,14 @@ pub fn bench_suffix_array(
                     black_box(hits);
                 },
             );
-            drop(dss0);
+            let (_, sa_vec) = dss0.into_parts();
+            verify_sa_i32_invariants(
+                &text0,
+                &sa_vec,
+                &mut expected_sa_sample,
+                "suffix_array/divsufsort_rust/search_query",
+            );
+            drop(sa_vec);
             trim_allocator_arena();
         }
     }
@@ -290,7 +458,16 @@ pub fn bench_suffix_array(
                     *slot = Some(built);
                 },
             );
-            drop(cdss_pending);
+            if let Some(built) = cdss_pending.take() {
+                let (_, sa_vec) = built.into_parts();
+                verify_sa_i32_invariants(
+                    &text0,
+                    &sa_vec,
+                    &mut expected_sa_sample,
+                    "suffix_array/cdivsufsort_c/construct",
+                );
+                drop(sa_vec);
+            }
             trim_allocator_arena();
         }
         if should_run_bench("suffix_array/cdivsufsort_c/search_query") {
@@ -298,18 +475,33 @@ pub fn bench_suffix_array(
             let cdss0 = cdivsufsort::sort(&text0);
 
             let mut warm_hits = 0usize;
-            for idx in 0..(sa_batch * 24) {
+            for idx in 0..warm_queries {
                 let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
                 let mut pat = [0u8; 16];
                 pat.copy_from_slice(&text0[pos..pos + pat_len]);
-                if idx % 10 == 9 {
+                let is_miss = idx % 10 == 9;
+                if is_miss {
                     pat[pat_len - 1] = b'~';
                 }
                 let m = cdss0.longest_substring_match(black_box(&pat[..]));
-                if m.len == pat_len {
+                if is_miss {
+                    assert!(
+                        m.len < pat_len,
+                        "suffix_array/cdivsufsort_c/search_query: expected miss at idx={idx}"
+                    );
+                } else {
+                    assert_eq!(
+                        m.len, pat_len,
+                        "suffix_array/cdivsufsort_c/search_query: expected hit at idx={idx}"
+                    );
+                    assert_eq!(m.as_bytes(), &pat[..]);
                     warm_hits = warm_hits.wrapping_add(1);
                 }
             }
+            assert_eq!(
+                warm_hits, expected_matched_queries,
+                "suffix_array/cdivsufsort_c/search_query: matched query count mismatch"
+            );
             black_box(warm_hits);
 
             measure_bench(
@@ -339,7 +531,14 @@ pub fn bench_suffix_array(
                     black_box(hits);
                 },
             );
-            drop(cdss0);
+            let (_, sa_vec) = cdss0.into_parts();
+            verify_sa_i32_invariants(
+                &text0,
+                &sa_vec,
+                &mut expected_sa_sample,
+                "suffix_array/cdivsufsort_c/search_query",
+            );
+            drop(sa_vec);
             trim_allocator_arena();
         }
     }
@@ -376,7 +575,16 @@ pub fn bench_suffix_array(
                     *slot = Some(built);
                 },
             );
-            drop(sais_pending);
+            if let Some(built) = sais_pending.take() {
+                let (_, sa_vec) = built.into_parts();
+                verify_sa_i32_invariants(
+                    &text0,
+                    &sa_vec,
+                    &mut expected_sa_sample,
+                    "suffix_array/libsais_c/construct",
+                );
+                drop(sa_vec);
+            }
             trim_allocator_arena();
         }
         if should_run_bench("suffix_array/libsais_c/search_query") {
@@ -384,18 +592,33 @@ pub fn bench_suffix_array(
             let sais0 = build_libsais(&text0);
 
             let mut warm_hits = 0usize;
-            for idx in 0..(sa_batch * 24) {
+            for idx in 0..warm_queries {
                 let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
                 let mut pat = [0u8; 16];
                 pat.copy_from_slice(&text0[pos..pos + pat_len]);
-                if idx % 10 == 9 {
+                let is_miss = idx % 10 == 9;
+                if is_miss {
                     pat[pat_len - 1] = b'~';
                 }
                 let m = sais0.longest_substring_match(black_box(&pat[..]));
-                if m.len == pat_len {
+                if is_miss {
+                    assert!(
+                        m.len < pat_len,
+                        "suffix_array/libsais_c/search_query: expected miss at idx={idx}"
+                    );
+                } else {
+                    assert_eq!(
+                        m.len, pat_len,
+                        "suffix_array/libsais_c/search_query: expected hit at idx={idx}"
+                    );
+                    assert_eq!(m.as_bytes(), &pat[..]);
                     warm_hits = warm_hits.wrapping_add(1);
                 }
             }
+            assert_eq!(
+                warm_hits, expected_matched_queries,
+                "suffix_array/libsais_c/search_query: matched query count mismatch"
+            );
             black_box(warm_hits);
 
             measure_bench(
@@ -425,7 +648,14 @@ pub fn bench_suffix_array(
                     black_box(hits);
                 },
             );
-            drop(sais0);
+            let (_, sa_vec) = sais0.into_parts();
+            verify_sa_i32_invariants(
+                &text0,
+                &sa_vec,
+                &mut expected_sa_sample,
+                "suffix_array/libsais_c/search_query",
+            );
+            drop(sa_vec);
             trim_allocator_arena();
         }
     }

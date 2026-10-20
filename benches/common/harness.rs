@@ -386,8 +386,6 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
     if !should_run_bench(name) {
         return;
     }
-    let (name_owned, category_owned, unit_owned, mut rounded_samples) =
-        super::datasets::take_prealloc_record_buffers(name, category, unit);
 
     let filtered_mode = has_active_filter();
     let check_preempt = true;
@@ -724,6 +722,8 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
     } else {
         0.0
     };
+    let (name_owned, category_owned, unit_owned, mut rounded_samples) =
+        super::datasets::take_prealloc_record_buffers(name, category, unit);
     for &s in s_slice.iter() {
         rounded_samples.push(round4(s));
     }

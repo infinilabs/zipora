@@ -11,13 +11,17 @@ Runner documentation (S37-R2 / S38-R4 / S39-R4):
 - Exact command:
     make bench_core
     make bench_e2e_search
-- Shared-host resilience (S40-R1 Option B):
+- Shared-host resilience (S40-R1 Option B / S45-R2):
     When `--confirm-retries K` (`K > 0`, wired as `--confirm-retries 5` in `Makefile`)
-    is enabled and one or more benchmarks exceed their regression threshold on the
+    is enabled and one or more Zipora benchmarks exceed their regression threshold on the
     initial pass (with zero structural/integrity errors), `bench_compare.py` waits
     for a quiet host window and re-runs only the failing benchmark(s) via `--filter`
     up to `K` times, failing only if a regression persists across every retry.
     Per-benchmark thresholds remain unchanged (`5.0%` default, `9.0%` DRAM/allocator-bound).
+    In `competitor_bench` (`S45-R2`), the 101 third-party competitor-only rows are strictly
+    checked for presence and `dataset_size` integrity, while timing-threshold exceedances on
+    third-party rows are reported informationally (`INFO(comp)`) so third-party DRAM contention
+    under heavy multi-job host load cannot cause false gate failures.
 - Baselines under `benches/baselines/<host>/` are never auto-written by the gate;
   set `UPDATE_BASELINE=1` (which forwards `-- --save-baseline`) explicitly when recording or updating a baseline.
 
@@ -229,6 +233,15 @@ def compare_benchmarks(
     curr_list = current_data.get("benchmarks", [])
     base_benches = {b["name"]: b for b in base_list}
     curr_benches = {b["name"]: b for b in curr_list}
+    competitor_only_names = {
+        row["competitor_bench"]
+        for row in baseline_data.get("same_run_comparisons", [])
+        if "competitor_bench" in row
+    } - {
+        row["zipora_bench"]
+        for row in baseline_data.get("same_run_comparisons", [])
+        if "zipora_bench" in row
+    }
 
     metric_field = "min_ns_per_op" if metric == "min" else "median_ns_per_op"
 
@@ -281,12 +294,15 @@ def compare_benchmarks(
             pct_diff = 0.0
 
         if pct_diff > thresh_pct and abs_diff > abs_noise_floor_ns:
-            status = "REGRESSED"
-            regressed_names.append(name)
-            failures.append(
-                f"{name}: baseline {metric}={base_val:.4f} {unit}, current {metric}={curr_val:.4f} {unit} "
-                f"({pct_diff:+.2f}% > +{thresh_pct:.2f}%)"
-            )
+            if name in competitor_only_names:
+                status = "INFO(comp)"
+            else:
+                status = "REGRESSED"
+                regressed_names.append(name)
+                failures.append(
+                    f"{name}: baseline {metric}={base_val:.4f} {unit}, current {metric}={curr_val:.4f} {unit} "
+                    f"({pct_diff:+.2f}% > +{thresh_pct:.2f}%)"
+                )
         elif pct_diff < -thresh_pct and (-abs_diff) > abs_noise_floor_ns:
             status = "IMPROVED"
         else:

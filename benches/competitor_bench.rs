@@ -231,3 +231,14 @@ fn main() {
         write_json(&baseline_path, &report);
     }
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _zipora_competitor_bench_text_pad(x: u64) -> u64 {
+    let a = x.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+    a.rotate_left(17)
+        .wrapping_mul(0xBF58_476D_1CE4_E5B9)
+        .wrapping_add(x)
+}
+
+#[used]
+static _COMP_TEXT_PAD_REF: extern "C" fn(u64) -> u64 = _zipora_competitor_bench_text_pad;

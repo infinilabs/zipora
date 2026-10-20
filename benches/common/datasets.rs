@@ -455,6 +455,7 @@ fn get_prealloc_buffers() -> &'static Mutex<PreallocBenchBuffers> {
 /// Pops a pre-allocated `(name, category, unit, samples)` buffer tuple from the bottom-of-`brk`
 /// pool initialized by [`init_bench_allocator_policy`], so `measure_bench_inner` performs zero
 /// heap allocations while a benchmark's multi-megabyte data structure is alive on `brk`.
+#[inline(never)]
 pub fn take_prealloc_record_buffers(
     name: &str,
     category: &str,
@@ -486,6 +487,7 @@ pub fn take_prealloc_record_buffers(
 
 /// Records a `(key, val)` space metric into the pre-allocated bottom-of-`brk` buffer pool
 /// without allocating `String` or `BTreeMap` nodes while benchmark data structures are on `brk`.
+#[inline(never)]
 pub fn record_prealloc_space_metric(space: &mut BTreeMap<String, f64>, key: &str, val: f64) {
     init_bench_allocator_policy();
     let mut guard = get_prealloc_buffers().lock().unwrap();
@@ -505,6 +507,7 @@ pub fn record_prealloc_space_metric(space: &mut BTreeMap<String, f64>, key: &str
 
 /// Flushes all pre-allocated space metrics recorded via [`record_prealloc_space_metric`] into
 /// the output `BTreeMap` after all benchmarks have completed.
+#[inline(never)]
 pub fn flush_prealloc_space_metrics(space: &mut BTreeMap<String, f64>) {
     if let Some(m) = PREALLOC_BUFFERS.get() {
         let mut guard = m.lock().unwrap();
