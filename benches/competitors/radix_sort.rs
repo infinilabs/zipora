@@ -300,7 +300,7 @@ pub fn bench_radix_sort_kv(
     maybe_repin_self_within_ccd();
     trim_allocator_arena();
     let n = sizes.radix_sort_elements;
-    record_space_metric(space, "radix_sort/zipora_kv_bytes_per_elem", 56.0);
+    record_space_metric(space, "radix_sort/zipora_kv_bytes_per_elem", 32.0);
     record_space_metric(space, "radix_sort/voracious_kv_bytes_per_elem", 32.0);
     record_space_metric(space, "radix_sort/rdst_kv_bytes_per_elem", 32.0);
     record_space_metric(space, "radix_sort/std_kv_bytes_per_elem", 16.0);
