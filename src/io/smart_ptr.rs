@@ -241,15 +241,43 @@ pub(crate) fn checked_u32_len(len: usize, what: &str) -> Result<u32> {
     })
 }
 
+/// Fast single-multiply pointer hasher for `SerializationContext::object_ids`.
+#[derive(Default)]
+struct PtrHasher(u64);
+
+impl std::hash::Hasher for PtrHasher {
+    #[inline(always)]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline(always)]
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ (b as u64)).wrapping_mul(0x517cc1b727220a95);
+        }
+    }
+
+    #[inline(always)]
+    fn write_usize(&mut self, i: usize) {
+        self.0 = (i as u64).wrapping_mul(0x517cc1b727220a95);
+    }
+}
+
+type PtrBuildHasher = std::hash::BuildHasherDefault<PtrHasher>;
+
 /// Serialization context for tracking shared objects and preventing cycles
 #[derive(Debug)]
 pub struct SerializationContext {
     /// Object ID counter for reference tracking
     next_id: u32,
     /// Map from object pointer to assigned ID
-    object_ids: HashMap<usize, u32>,
-    /// Cloned smart pointers kept alive so their addresses cannot be reused
-    /// by the allocator while this context is active.
+    object_ids: HashMap<usize, u32, PtrBuildHasher>,
+    /// Primary retained smart-pointer vector (`Box<Vec<P>>`) avoiding per-pointer
+    /// `Box<dyn Any>` allocations in homogeneous pointer collections.
+    retained_primary: Option<Box<dyn Any>>,
+    /// Cloned smart pointers of secondary types kept alive so their addresses
+    /// cannot be reused by the allocator while this context is active.
     retained_objects: Vec<Box<dyn Any>>,
     /// Enable circular reference detection
     detect_cycles: bool,
@@ -266,7 +294,8 @@ impl SerializationContext {
     pub fn new() -> Self {
         Self {
             next_id: 1, // Start from 1, reserve 0 for null
-            object_ids: HashMap::new(),
+            object_ids: HashMap::default(),
+            retained_primary: None,
             retained_objects: Vec::new(),
             detect_cycles: true,
             compress_ids: false,
@@ -279,7 +308,8 @@ impl SerializationContext {
     pub fn without_cycle_detection() -> Self {
         Self {
             next_id: 1,
-            object_ids: HashMap::new(),
+            object_ids: HashMap::default(),
+            retained_primary: None,
             retained_objects: Vec::new(),
             detect_cycles: false,
             compress_ids: false,
@@ -288,22 +318,31 @@ impl SerializationContext {
         }
     }
 
+    /// Look up or assign an ID for an object in a single hash probe, returning `(seen, id)`.
+    #[inline]
+    fn register_or_assign_id<T>(&mut self, ptr: &T) -> (bool, u32) {
+        if !self.detect_cycles {
+            let id = self.next_id;
+            self.next_id = self.next_id.saturating_add(1);
+            return (false, id);
+        }
+        let addr = ptr as *const T as usize;
+        match self.object_ids.entry(addr) {
+            std::collections::hash_map::Entry::Occupied(entry) => (true, *entry.get()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let id = self.next_id;
+                self.next_id = self.next_id.saturating_add(1);
+                entry.insert(id);
+                (false, id)
+            }
+        }
+    }
+
     /// Get or assign an ID for an object
+    #[cfg(test)]
     #[inline]
     fn get_or_assign_id<T>(&mut self, ptr: &T) -> u32 {
-        let addr = ptr as *const T as usize;
-
-        if self.detect_cycles
-            && let Some(&id) = self.object_ids.get(&addr)
-        {
-            return id;
-        }
-        let id = self.next_id;
-        self.next_id = self.next_id.saturating_add(1);
-        if self.detect_cycles {
-            self.object_ids.insert(addr, id);
-        }
-        id
+        self.register_or_assign_id(ptr).1
     }
 
     /// Keep a clone of a serialized smart pointer alive for the lifetime of
@@ -311,12 +350,28 @@ impl SerializationContext {
     /// allocation.
     #[inline]
     fn retain_object<P: 'static>(&mut self, ptr: P) {
-        if self.detect_cycles {
-            self.retained_objects.push(Box::new(ptr));
+        if !self.detect_cycles {
+            return;
         }
+        if self.retained_primary.is_none() {
+            let mut vec = Vec::<P>::with_capacity(16);
+            vec.push(ptr);
+            self.retained_primary = Some(Box::new(vec));
+            return;
+        }
+        if let Some(vec) = self
+            .retained_primary
+            .as_mut()
+            .and_then(|b| b.downcast_mut::<Vec<P>>())
+        {
+            vec.push(ptr);
+            return;
+        }
+        self.retained_objects.push(Box::new(ptr));
     }
 
     /// Check if an object has been seen before (for cycle detection)
+    #[cfg(test)]
     #[inline]
     fn has_seen<T>(&self, ptr: &T) -> bool {
         if !self.detect_cycles {
@@ -331,6 +386,7 @@ impl SerializationContext {
     pub fn clear(&mut self) {
         self.next_id = 1;
         self.object_ids.clear();
+        self.retained_primary = None;
         self.retained_objects.clear();
         self.depth = 0;
     }
@@ -645,7 +701,10 @@ fn get_active_de_object<T: Clone + 'static>(id: u32) -> Option<T> {
 }
 
 #[inline]
-fn register_active_ser_ptr<T, P: 'static>(obj_ref: &T, retained: Option<P>) -> (bool, u32, bool) {
+fn register_active_ser_ptr<T, P: 'static>(
+    obj_ref: &T,
+    retain_fn: impl FnOnce() -> P,
+) -> (bool, u32, bool) {
     let state = SER_DEPTH.with(|cell| {
         let cur = cell.get();
         if (cur & STATE_DIRTY_CTX_BIT) == 0 {
@@ -655,13 +714,21 @@ fn register_active_ser_ptr<T, P: 'static>(obj_ref: &T, retained: Option<P>) -> (
     });
     let detect_cycles = (state & SER_DETECT_CYCLES_BIT) != 0;
     let compress_ids = (state & STATE_COMPRESS_IDS_BIT) != 0;
+    if !detect_cycles {
+        let id = ACTIVE_SER_CTX.with(|cell| {
+            let mut ctx = cell.borrow_mut();
+            let id = ctx.next_id;
+            ctx.next_id = ctx.next_id.saturating_add(1);
+            id
+        });
+        return (false, id, compress_ids);
+    }
     let (seen, id) = ACTIVE_SER_CTX.with(|cell| {
         let mut ctx = cell.borrow_mut();
-        ctx.detect_cycles = detect_cycles;
-        let seen = ctx.has_seen(obj_ref);
-        let id = ctx.get_or_assign_id(obj_ref);
-        if !seen && let Some(ptr) = retained {
-            ctx.retain_object(ptr);
+        ctx.detect_cycles = true;
+        let (seen, id) = ctx.register_or_assign_id(obj_ref);
+        if !seen {
+            ctx.retain_object(retain_fn());
         }
         (seen, id)
     });
@@ -725,6 +792,15 @@ pub trait SerializableType: 'static {
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self>
     where
         Self: Sized;
+
+    /// Optional contiguous-slice fast path for `Vec<Self>::serialize`.
+    #[inline(always)]
+    fn serialize_slice<O: DataOutput>(_slice: &[Self], _output: &mut O) -> Result<bool>
+    where
+        Self: Sized,
+    {
+        Ok(false)
+    }
 }
 
 // Implementation for Box<T>
@@ -844,7 +920,7 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Rc<T> {
     #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         let obj_ref = self.as_ref();
-        let (seen, id, compress_ids) = register_active_ser_ptr(obj_ref, Some(self.clone()));
+        let (seen, id, compress_ids) = register_active_ser_ptr(obj_ref, || self.clone());
         if seen {
             output.write_u8(2)?; // Reference marker
             write_active_ser_id(output, id, compress_ids)
@@ -903,7 +979,7 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for Arc<T> {
     #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         let obj_ref = self.as_ref();
-        let (seen, id, compress_ids) = register_active_ser_ptr(obj_ref, Some(self.clone()));
+        let (seen, id, compress_ids) = register_active_ser_ptr(obj_ref, || self.clone());
         if seen {
             output.write_u8(2)?; // Reference marker
             write_active_ser_id(output, id, compress_ids)
@@ -1146,6 +1222,7 @@ impl SmartPtrSerializer {
 
 // Implementations for basic types to make them SerializableType
 impl SerializableType for i32 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(*self as u32)
     }
@@ -1154,9 +1231,17 @@ impl SerializableType for i32 {
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u32()? as i32)
     }
+
+    #[cfg(target_endian = "little")]
+    #[inline(always)]
+    fn serialize_slice<O: DataOutput>(slice: &[Self], output: &mut O) -> Result<bool> {
+        output.write_bytes(bytemuck::cast_slice(slice))?;
+        Ok(true)
+    }
 }
 
 impl SerializableType for u32 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(*self)
     }
@@ -1164,6 +1249,13 @@ impl SerializableType for u32 {
     #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u32()
+    }
+
+    #[cfg(target_endian = "little")]
+    #[inline(always)]
+    fn serialize_slice<O: DataOutput>(slice: &[Self], output: &mut O) -> Result<bool> {
+        output.write_bytes(bytemuck::cast_slice(slice))?;
+        Ok(true)
     }
 }
 
@@ -1192,12 +1284,16 @@ fn deserialize_vec_tail<T: SerializableType, I: DataInput>(
 }
 
 impl<T: SerializableType> SerializableType for Vec<T> {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(checked_u32_len(self.len(), "Vec")?)?;
         if self.is_empty() {
             return Ok(());
         }
         let _guard = enter_ser_depth()?;
+        if T::serialize_slice(self.as_slice(), output)? {
+            return Ok(());
+        }
         for item in self {
             item.serialize(output)?;
         }
@@ -1301,6 +1397,7 @@ impl<T: SerializableType> SerializableType for Box<T> {
 
 // Implement for primitive types using available DataInput/DataOutput methods
 impl SerializableType for u8 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(*self)
     }
@@ -1309,9 +1406,16 @@ impl SerializableType for u8 {
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u8()
     }
+
+    #[inline(always)]
+    fn serialize_slice<O: DataOutput>(slice: &[Self], output: &mut O) -> Result<bool> {
+        output.write_bytes(slice)?;
+        Ok(true)
+    }
 }
 
 impl SerializableType for u16 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u16(*self)
     }
@@ -1320,9 +1424,17 @@ impl SerializableType for u16 {
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u16()
     }
+
+    #[cfg(target_endian = "little")]
+    #[inline(always)]
+    fn serialize_slice<O: DataOutput>(slice: &[Self], output: &mut O) -> Result<bool> {
+        output.write_bytes(bytemuck::cast_slice(slice))?;
+        Ok(true)
+    }
 }
 
 impl SerializableType for u64 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u64(*self)
     }
@@ -1331,9 +1443,17 @@ impl SerializableType for u64 {
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u64()
     }
+
+    #[cfg(target_endian = "little")]
+    #[inline(always)]
+    fn serialize_slice<O: DataOutput>(slice: &[Self], output: &mut O) -> Result<bool> {
+        output.write_bytes(bytemuck::cast_slice(slice))?;
+        Ok(true)
+    }
 }
 
 impl SerializableType for i8 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(*self as u8)
     }
@@ -1342,9 +1462,16 @@ impl SerializableType for i8 {
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u8()? as i8)
     }
+
+    #[inline(always)]
+    fn serialize_slice<O: DataOutput>(slice: &[Self], output: &mut O) -> Result<bool> {
+        output.write_bytes(bytemuck::cast_slice(slice))?;
+        Ok(true)
+    }
 }
 
 impl SerializableType for i16 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u16(*self as u16)
     }
@@ -1353,9 +1480,17 @@ impl SerializableType for i16 {
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u16()? as i16)
     }
+
+    #[cfg(target_endian = "little")]
+    #[inline(always)]
+    fn serialize_slice<O: DataOutput>(slice: &[Self], output: &mut O) -> Result<bool> {
+        output.write_bytes(bytemuck::cast_slice(slice))?;
+        Ok(true)
+    }
 }
 
 impl SerializableType for i64 {
+    #[inline]
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u64(*self as u64)
     }
@@ -1363,6 +1498,13 @@ impl SerializableType for i64 {
     #[inline]
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u64()? as i64)
+    }
+
+    #[cfg(target_endian = "little")]
+    #[inline(always)]
+    fn serialize_slice<O: DataOutput>(slice: &[Self], output: &mut O) -> Result<bool> {
+        output.write_bytes(bytemuck::cast_slice(slice))?;
+        Ok(true)
     }
 }
 
@@ -2174,6 +2316,11 @@ mod tests {
             let mut input = SliceDataInput::new(black_box(&bytes_rc));
             Vec::<Rc<u64>>::deserialize(&mut input).unwrap()
         });
+        let ns_rc_ser = median_ns_per_op(21, 100_000, || {
+            let mut out = VecDataOutput::with_capacity(4 + 100_000 * 13);
+            black_box(&vec_rc).serialize(&mut out).unwrap();
+            out
+        });
 
         // 3. Vec<Vec<u32>> (1,000 x 100)
         let vec_vec_u32: Vec<Vec<u32>> = (0..1_000u32)
@@ -2215,7 +2362,7 @@ mod tests {
         });
 
         println!(
-            "S24-R3 timings: Vec<u64>={ns_u64:.3} ns/elem | Vec<Rc<u64>>={ns_rc:.2} ns/elem | Vec<Vec<u32>> de={ns_vv32:.1} ns/inner ser={ns_vv32_ser:.1} ns/inner | Vec<Vec<u8>>(100kx3)={ns_vv8:.2} ns/inner | Vec<Box<u64>>={ns_box:.2} ns/elem"
+            "S24-R3 timings: Vec<u64>={ns_u64:.3} ns/elem | Vec<Rc<u64>> de={ns_rc:.2} ns/elem ser={ns_rc_ser:.2} ns/elem | Vec<Vec<u32>> de={ns_vv32:.1} ns/inner ser={ns_vv32_ser:.1} ns/inner | Vec<Vec<u8>>(100kx3)={ns_vv8:.2} ns/inner | Vec<Box<u64>>={ns_box:.2} ns/elem"
         );
     }
 }

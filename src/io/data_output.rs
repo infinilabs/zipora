@@ -119,45 +119,54 @@ impl Default for VecDataOutput {
 }
 
 impl DataOutput for VecDataOutput {
+    #[inline]
     fn write_u8(&mut self, value: u8) -> Result<()> {
         self.data.push(value);
         Ok(())
     }
 
+    #[inline]
     fn write_u16(&mut self, value: u16) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
         Ok(())
     }
 
+    #[inline]
     fn write_u32(&mut self, value: u32) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
         Ok(())
     }
 
+    #[inline]
     fn write_u64(&mut self, value: u64) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
         Ok(())
     }
 
+    #[inline]
     fn write_var_int(&mut self, value: u64) -> Result<()> {
         VarInt::write_to(&mut self.data, value)?;
         Ok(())
     }
 
+    #[inline]
     fn write_bytes(&mut self, data: &[u8]) -> Result<()> {
         self.data.extend_from_slice(data);
         Ok(())
     }
 
+    #[inline]
     fn flush(&mut self) -> Result<()> {
         // No-op for Vec, data is always "flushed"
         Ok(())
     }
 
+    #[inline]
     fn position(&self) -> Option<u64> {
         Some(self.data.len() as u64)
     }
 
+    #[inline]
     fn bytes_written(&self) -> Option<u64> {
         Some(self.data.len() as u64)
     }

@@ -32,6 +32,13 @@ fn bench_s23_serialization(c: &mut Criterion) {
             black_box(Vec::<Rc<u64>>::deserialize(&mut input).unwrap())
         });
     });
+    group.bench_function("vec_rc_u64_100k_ser", |b| {
+        b.iter(|| {
+            let mut output = VecDataOutput::with_capacity(4 + 100_000 * 13);
+            black_box(&vec_rc).serialize(&mut output).unwrap();
+            black_box(output)
+        });
+    });
 
     let vec_vec_u32: Vec<Vec<u32>> = (0..1_000u32)
         .map(|i| (0..100u32).map(|j| i * 100 + j).collect())
