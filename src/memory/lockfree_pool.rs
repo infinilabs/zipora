@@ -22,6 +22,7 @@ use crate::error::{Result, ZiporaError};
 use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint};
 use crate::memory::simd_ops::{fast_fill, fast_prefetch};
 use std::alloc::{Layout, alloc, dealloc};
+use std::cell::Cell;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -68,6 +69,93 @@ const FAST_BIN_SIZES: &[usize] = &[
     1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096,
     4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
 ];
+
+/// Compile-time lookup table mapping `size.div_ceil(ALIGN_SIZE)` (`0..=1024`) to its fast bin index.
+const SIZE_CLASS_LUT_LEN: usize = (FAST_BIN_THRESHOLD / ALIGN_SIZE) + 1;
+
+const SIZE_CLASS_LUT: [u8; SIZE_CLASS_LUT_LEN] = {
+    let mut lut = [0u8; SIZE_CLASS_LUT_LEN];
+    let mut idx = 0usize;
+    while idx < SIZE_CLASS_LUT_LEN {
+        let size = idx * ALIGN_SIZE;
+        let mut bin = 0usize;
+        while bin < FAST_BIN_COUNT {
+            if size <= FAST_BIN_SIZES[bin] {
+                lut[idx] = bin as u8;
+                break;
+            }
+            bin += 1;
+        }
+        idx += 1;
+    }
+    lut
+};
+
+/// Per-thread magazine capacity per fast bin (matching tcache small-bin batching).
+const MAGAZINE_CAP: usize = 16;
+
+static NEXT_LOCKFREE_POOL_ID: AtomicU64 = AtomicU64::new(1);
+
+struct FastBinMagazine {
+    pool_id: Cell<u64>,
+    counts: [Cell<u8>; FAST_BIN_COUNT],
+    slots: [[Cell<NonNull<u8>>; MAGAZINE_CAP]; FAST_BIN_COUNT],
+}
+
+impl FastBinMagazine {
+    const fn new() -> Self {
+        Self {
+            pool_id: Cell::new(0),
+            counts: [const { Cell::new(0) }; FAST_BIN_COUNT],
+            slots: [const { [const { Cell::new(NonNull::dangling()) }; MAGAZINE_CAP] };
+                FAST_BIN_COUNT],
+        }
+    }
+
+    #[inline(always)]
+    fn clear_for_pool(&self, new_pool_id: u64) {
+        for c in &self.counts {
+            c.set(0);
+        }
+        self.pool_id.set(new_pool_id);
+    }
+
+    #[inline(always)]
+    fn pop(&self, pool_id: u64, bin_index: usize) -> Option<NonNull<u8>> {
+        if self.pool_id.get() != pool_id {
+            return None;
+        }
+        let bin = bin_index & (FAST_BIN_COUNT - 1);
+        let count_cell = &self.counts[bin];
+        let c = count_cell.get();
+        if c == 0 {
+            return None;
+        }
+        let new_c = c - 1;
+        count_cell.set(new_c);
+        Some(self.slots[bin][(new_c as usize) & (MAGAZINE_CAP - 1)].get())
+    }
+
+    #[inline(always)]
+    fn push(&self, pool_id: u64, bin_index: usize, ptr: NonNull<u8>) -> bool {
+        if self.pool_id.get() != pool_id {
+            self.clear_for_pool(pool_id);
+        }
+        let bin = bin_index & (FAST_BIN_COUNT - 1);
+        let count_cell = &self.counts[bin];
+        let c = count_cell.get() as usize;
+        if c >= MAGAZINE_CAP {
+            return false;
+        }
+        self.slots[bin][c & (MAGAZINE_CAP - 1)].set(ptr);
+        count_cell.set((c + 1) as u8);
+        true
+    }
+}
+
+thread_local! {
+    static FAST_BIN_MAGAZINE: FastBinMagazine = const { FastBinMagazine::new() };
+}
 
 /// Lock-free head for a free list with cache line padding
 #[derive(Debug)]
@@ -359,6 +447,10 @@ impl LargeFreeList {
 
 /// Lock-free memory pool implementation
 pub struct LockFreeMemoryPool {
+    /// Unique identifier for thread-local magazine validation
+    pool_id: u64,
+    /// Whether the thread-local fast-bin magazine is enabled
+    use_tls_magazine: bool,
     /// Configuration
     config: LockFreePoolConfig,
     /// Backing memory region
@@ -472,7 +564,15 @@ impl LockFreeMemoryPool {
             None
         };
 
+        // ORDERING: Relaxed is sufficient for unique monotonic pool ID assignment.
+        let pool_id = NEXT_LOCKFREE_POOL_ID.fetch_add(1, Ordering::Relaxed);
+        let use_tls_magazine = !config.enable_stats
+            && config.max_cas_retries > 0
+            && config.memory_size >= 16 * 1024 * 1024;
+
         Ok(Self {
+            pool_id,
+            use_tls_magazine,
             config,
             memory,
             memory_layout: layout,
@@ -486,6 +586,7 @@ impl LockFreeMemoryPool {
     }
 
     /// Allocate memory from the pool
+    #[inline(always)]
     pub fn allocate(&self, size: usize) -> Result<NonNull<u8>> {
         if size == 0 {
             return Err(ZiporaError::invalid_data("Cannot allocate zero bytes"));
@@ -494,13 +595,20 @@ impl LockFreeMemoryPool {
         let aligned_size = self.align_size(size);
 
         if aligned_size <= FAST_BIN_THRESHOLD {
-            self.allocate_from_fast_bin(aligned_size)
+            let bin_index = SIZE_CLASS_LUT[aligned_size >> 3] as usize;
+            if self.use_tls_magazine
+                && let Some(ptr) = FAST_BIN_MAGAZINE.with(|mag| mag.pop(self.pool_id, bin_index))
+            {
+                return Ok(ptr);
+            }
+            self.allocate_from_fast_bin_index(bin_index)
         } else {
             self.allocate_from_skip_list(aligned_size)
         }
     }
 
     /// Deallocate memory back to the pool
+    #[inline(always)]
     pub fn deallocate(&self, ptr: NonNull<u8>, size: usize) -> Result<()> {
         if size == 0 {
             return Ok(());
@@ -509,7 +617,14 @@ impl LockFreeMemoryPool {
         let aligned_size = self.align_size(size);
 
         if aligned_size <= FAST_BIN_THRESHOLD {
-            self.deallocate_to_fast_bin(ptr, aligned_size)
+            let offset = self.ptr_to_offset(ptr)?;
+            let bin_index = SIZE_CLASS_LUT[aligned_size >> 3] as usize;
+            if self.use_tls_magazine
+                && FAST_BIN_MAGAZINE.with(|mag| mag.push(self.pool_id, bin_index, ptr))
+            {
+                return Ok(());
+            }
+            self.deallocate_to_fast_bin_offset(bin_index, offset)
         } else {
             // `size` is what the caller *asked* for, which can be narrower than
             // the block it was given. Filing that width would shrink the block
@@ -652,8 +767,7 @@ impl LockFreeMemoryPool {
     }
 
     /// Allocate from fast bin using lock-free stack
-    fn allocate_from_fast_bin(&self, size: usize) -> Result<NonNull<u8>> {
-        let bin_index = self.size_to_bin_index(size)?;
+    fn allocate_from_fast_bin_index(&self, bin_index: usize) -> Result<NonNull<u8>> {
         let bin = &self.fast_bins[bin_index];
 
         // Prefer a recycled block. `max_cas_retries` bounds how long we are
@@ -686,10 +800,8 @@ impl LockFreeMemoryPool {
     }
 
     /// Deallocate to fast bin using lock-free stack
-    fn deallocate_to_fast_bin(&self, ptr: NonNull<u8>, size: usize) -> Result<()> {
-        let bin_index = self.size_to_bin_index(size)?;
+    fn deallocate_to_fast_bin_offset(&self, bin_index: usize, offset: u32) -> Result<()> {
         let bin = &self.fast_bins[bin_index];
-        let offset = self.ptr_to_offset(ptr)?;
 
         // C3.18. Unbudgeted by design, unlike the pop side: a push onto a
         // Treiber stack always has somewhere to go, so a retry budget here can
@@ -927,21 +1039,24 @@ impl LockFreeMemoryPool {
     }
 
     /// Convert size to fast bin index
+    #[inline(always)]
     fn size_to_bin_index(&self, size: usize) -> Result<usize> {
-        for (index, &bin_size) in FAST_BIN_SIZES.iter().enumerate() {
-            if size <= bin_size {
-                return Ok(index);
-            }
+        let idx = size.div_ceil(ALIGN_SIZE);
+        if let Some(&bin) = SIZE_CLASS_LUT.get(idx) {
+            Ok(bin as usize)
+        } else {
+            Err(ZiporaError::invalid_data("Size too large for fast bins"))
         }
-        Err(ZiporaError::invalid_data("Size too large for fast bins"))
     }
 
     /// Align size to allocation boundary
+    #[inline(always)]
     fn align_size(&self, size: usize) -> usize {
         (size + ALIGN_SIZE - 1) & !(ALIGN_SIZE - 1)
     }
 
     /// Convert offset to pointer
+    #[inline(always)]
     fn offset_to_ptr(&self, offset: u32) -> Result<NonNull<u8>> {
         if offset == LIST_TAIL {
             return Err(ZiporaError::invalid_data("Invalid offset"));
@@ -956,15 +1071,17 @@ impl LockFreeMemoryPool {
     }
 
     /// Convert pointer to offset
+    #[inline(always)]
     fn ptr_to_offset(&self, ptr: NonNull<u8>) -> Result<u32> {
         let base = self.memory.as_ptr() as usize;
         let addr = ptr.as_ptr() as usize;
+        let off = addr.wrapping_sub(base);
 
-        if addr < base || addr >= base + self.config.memory_size {
+        if off >= self.config.memory_size {
             return Err(ZiporaError::invalid_data("Pointer outside pool memory"));
         }
 
-        Ok((addr - base) as u32)
+        Ok(off as u32)
     }
 
     /// Implement backoff strategy for failed CAS operations
@@ -996,6 +1113,11 @@ impl LockFreeMemoryPool {
 
 impl Drop for LockFreeMemoryPool {
     fn drop(&mut self) {
+        let _ = FAST_BIN_MAGAZINE.try_with(|mag| {
+            if mag.pool_id.get() == self.pool_id {
+                mag.clear_for_pool(0);
+            }
+        });
         // SAFETY: ptr from matching alloc, layout matches allocation
         unsafe {
             dealloc(self.memory.as_ptr(), self.memory_layout);
@@ -1990,5 +2112,30 @@ mod tests {
 
         // LIST_TAIL (0) should fail
         assert!(pool.offset_to_ptr(LIST_TAIL).is_err());
+    }
+
+    #[test]
+    fn test_size_class_lut_matches_linear_search_and_tls_magazine() {
+        let pool = LockFreeMemoryPool::new(LockFreePoolConfig::high_performance()).unwrap();
+        for size in 1..=FAST_BIN_THRESHOLD {
+            let expected = FAST_BIN_SIZES.iter().position(|&b| size <= b).unwrap();
+            assert_eq!(pool.size_to_bin_index(size).unwrap(), expected);
+        }
+        assert!(pool.size_to_bin_index(FAST_BIN_THRESHOLD + 1).is_err());
+
+        // Exercise TLS magazine fill + overflow into global bin + drain.
+        let mut ptrs = Vec::with_capacity(MAGAZINE_CAP + 4);
+        for _ in 0..(MAGAZINE_CAP + 4) {
+            ptrs.push(pool.allocate(256).unwrap());
+        }
+        for ptr in ptrs.drain(..) {
+            pool.deallocate(ptr, 256).unwrap();
+        }
+        for _ in 0..(MAGAZINE_CAP + 4) {
+            ptrs.push(pool.allocate(256).unwrap());
+        }
+        for ptr in ptrs {
+            pool.deallocate(ptr, 256).unwrap();
+        }
     }
 }
