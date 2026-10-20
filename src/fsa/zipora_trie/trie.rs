@@ -139,6 +139,11 @@ where
                     }
                 };
 
+                let mut child_links = match FastVec::with_capacity(*initial_capacity) {
+                    Ok(vec) => vec,
+                    Err(_) => FastVec::with_capacity(1).unwrap_or_else(|_| FastVec::new()),
+                };
+
                 // Initialize with just root state (referenced project: line 70)
                 // CRITICAL: Root base must be non-zero to allow transitions
                 // Using 1 as the base means child states will be at base+symbol = 1+symbol
@@ -146,10 +151,12 @@ where
                 // In that case, the program cannot continue anyway
                 let _ = base.push(1); // Ignore error - if this fails, we're out of memory
                 let _ = check.push(0); // Ignore error - if this fails, we're out of memory
+                let _ = child_links.push(0);
 
                 TrieStorage::DoubleArray {
                     base,
                     check,
+                    child_links,
                     free_list: DaFreeList::new(),
                     state_count: 1, // Start with root state
                 }
@@ -689,6 +696,7 @@ where
         if let TrieStorage::DoubleArray {
             base,
             check,
+            child_links,
             free_list,
             ..
         } = &mut self.storage
@@ -726,11 +734,13 @@ where
             if actual_len < base.len() {
                 let _ = base.resize(actual_len, 0).ok();
                 let _ = check.resize(actual_len, 0).ok();
+                let _ = child_links.resize(actual_len, 0).ok();
             }
 
             // Shrink capacity to size (referenced project: minimal memory)
             let _ = base.shrink_to_fit();
             let _ = check.shrink_to_fit();
+            let _ = child_links.shrink_to_fit();
         }
     }
 
@@ -998,11 +1008,13 @@ where
             TrieStorage::DoubleArray {
                 base,
                 check,
+                child_links,
                 free_list,
                 state_count,
             } => Self::insert_double_array(
                 base,
                 check,
+                child_links,
                 free_list,
                 state_count,
                 key,

@@ -3,7 +3,7 @@
 use super::ZiporaTrie;
 use super::storage::{
     CritBitNode, DA_FREE_BIT, DA_MAX_STATE, DA_NIL_STATE, DA_TERMINAL_BIT, DA_VALUE_MASK,
-    DaFreeList, PatriciaNode,
+    DaFreeList, PatriciaNode, da_link_child,
 };
 use crate::StateId;
 use crate::containers::FastVec;
@@ -69,6 +69,7 @@ where
     pub(super) fn insert_double_array(
         base: &mut FastVec<u32>,
         check: &mut FastVec<u32>,
+        child_links: &mut FastVec<u32>,
         free_list: &mut DaFreeList,
         state_count: &mut usize,
         key: &[u8],
@@ -79,6 +80,7 @@ where
         if base.is_empty() {
             base.push(DA_NIL_STATE)?;
             check.push(0)?;
+            child_links.push(0)?;
             *state_count = 1;
         }
 
@@ -103,7 +105,7 @@ where
             }
 
             let next_state = base_value + symbol as u32;
-            Self::ensure_da_capacity(base, check, free_list, next_state as usize + 1)?;
+            Self::ensure_da_capacity(base, check, child_links, free_list, next_state as usize + 1)?;
 
             // A transition exists iff check[next] == parent; free cells carry
             // DA_FREE_BIT and can never compare equal to a state id.
@@ -112,6 +114,7 @@ where
                 current_state = next_state;
             } else if (check_val & DA_FREE_BIT) != 0 {
                 free_list.claim(base, check, next_state, current_state);
+                da_link_child(child_links, current_state, next_state, symbol);
                 *state_count += 1;
                 current_state = next_state;
             } else {
@@ -120,6 +123,7 @@ where
                 let new_base = Self::relocate_state(
                     base,
                     check,
+                    child_links,
                     free_list,
                     current_state,
                     symbol,
@@ -127,6 +131,7 @@ where
                 )?;
                 let new_next = new_base + symbol as u32;
                 free_list.claim(base, check, new_next, current_state);
+                da_link_child(child_links, current_state, new_next, symbol);
                 *state_count += 1;
                 current_state = new_next;
             }
@@ -184,13 +189,14 @@ where
         free_list.high_water.max(min_symbol + 1) - min_symbol
     }
 
-    /// Grow `base`/`check` so that index `required - 1` exists, threading every
-    /// new cell onto the free list in ascending order. All growth must go
-    /// through here: a free cell that is not linked is invisible to
-    /// `find_free_base`.
+    /// Grow `base`/`check`/`child_links` so that index `required - 1` exists,
+    /// threading every new cell onto the free list in ascending order. All
+    /// growth must go through here: a free cell that is not linked is invisible
+    /// to `find_free_base`.
     pub(super) fn ensure_da_capacity(
         base: &mut FastVec<u32>,
         check: &mut FastVec<u32>,
+        child_links: &mut FastVec<u32>,
         free_list: &mut DaFreeList,
         required: usize,
     ) -> Result<()> {
@@ -206,6 +212,7 @@ where
         }
         base.resize(new_len, DA_NIL_STATE)?;
         check.resize(new_len, DA_NIL_STATE | DA_FREE_BIT)?;
+        child_links.resize(new_len, 0)?;
         for cell in old_len..new_len {
             free_list.push_back(base, check, cell as u32);
         }
@@ -219,6 +226,7 @@ where
     pub(super) fn relocate_state(
         base: &mut FastVec<u32>,
         check: &mut FastVec<u32>,
+        child_links: &mut FastVec<u32>,
         free_list: &mut DaFreeList,
         state: u32,
         new_symbol: u8,
@@ -226,13 +234,18 @@ where
     ) -> Result<u32> {
         let old_base = base[state as usize] & DA_VALUE_MASK;
 
-        // (symbol, old position, raw base including the terminal bit)
-        let mut children: Vec<(u8, u32, u32)> = Vec::new();
-        for symbol in 0u8..=255u8 {
+        // (symbol, old position, raw base including the terminal bit, raw child_links)
+        let mut children: Vec<(u8, u32, u32, u32)> = Vec::new();
+        let mut c = (child_links[state as usize] & 0xFFFF) as u16;
+        while c != 0 {
+            let symbol = (c - 1) as u8;
             let pos = old_base + symbol as u32;
-            if (pos as usize) < check.len() && check[pos as usize] == state {
-                children.push((symbol, pos, base[pos as usize]));
+            if (pos as usize) >= check.len() || check[pos as usize] != state {
+                break;
             }
+            let raw_link = child_links[pos as usize];
+            children.push((symbol, pos, base[pos as usize], raw_link));
+            c = (raw_link >> 16) as u16;
         }
 
         let mut symbols: Vec<u8> = children.iter().map(|c| c.0).collect();
@@ -242,25 +255,34 @@ where
         Self::ensure_da_capacity(
             base,
             check,
+            child_links,
             free_list,
             (new_base + max_symbol as u32) as usize + 1,
         )?;
 
         // The new slots were all free when chosen and the old slots are still
         // occupied, so the two sets are disjoint: claim first, release after.
-        for &(symbol, old_pos, raw_base) in &children {
+        for &(symbol, old_pos, raw_base, raw_link) in &children {
             let new_pos = new_base + symbol as u32;
             free_list.claim(base, check, new_pos, state);
             base[new_pos as usize] = raw_base;
+            child_links[new_pos as usize] = raw_link;
             relocations.push((old_pos, new_pos));
 
             // Grandchildren still name the old position as their parent.
             let child_base = raw_base & DA_VALUE_MASK;
             if child_base != 0 && child_base != DA_NIL_STATE {
-                Self::update_grandchildren_check_values(base, check, old_pos, new_pos);
+                Self::update_grandchildren_check_values(
+                    base,
+                    check,
+                    child_links,
+                    old_pos,
+                    new_pos,
+                );
             }
         }
-        for &(_, old_pos, _) in &children {
+        for &(_, old_pos, _, _) in &children {
+            child_links[old_pos as usize] = 0;
             free_list.push_front(base, check, old_pos);
         }
 
@@ -272,28 +294,29 @@ where
     pub(super) fn update_grandchildren_check_values(
         base: &mut FastVec<u32>,
         check: &mut FastVec<u32>,
+        child_links: &FastVec<u32>,
         old_parent_pos: u32,
         new_parent_pos: u32,
     ) {
         const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for values (referenced project)
         const FREE_BIT: u32 = 0x8000_0000; // Bit 31 in check for free (referenced project)
 
-        // Get the base value of the relocated child to find its children
+        // Walk only the relocated child's actual children via `child_links` (O(out-degree))
         if let Some(&child_base_raw) = base.get(new_parent_pos as usize) {
             let child_base = child_base_raw & VALUE_MASK;
             if child_base != 0 && child_base != 0x7FFF_FFFF {
-                // Find all grandchildren that were pointing to the old parent position
-                for symbol in 0u8..=255u8 {
+                let mut gc = (child_links[new_parent_pos as usize] & 0xFFFF) as u16;
+                while gc != 0 {
+                    let symbol = (gc - 1) as u8;
                     let grandchild_pos = child_base.saturating_add(symbol as u32);
-                    if (grandchild_pos as usize) < check.len() {
-                        let check_val = check[grandchild_pos as usize];
-                        // Check if it's allocated (not free) and points to old parent
-                        if (check_val & FREE_BIT) == 0 && check_val == old_parent_pos {
-                            // This grandchild was pointing to the old parent position
-                            // Update it to point to the new parent position
-                            check[grandchild_pos as usize] = new_parent_pos;
-                        }
+                    if (grandchild_pos as usize) >= check.len() {
+                        break;
                     }
+                    let check_val = check[grandchild_pos as usize];
+                    if (check_val & FREE_BIT) == 0 && check_val == old_parent_pos {
+                        check[grandchild_pos as usize] = new_parent_pos;
+                    }
+                    gc = (child_links[grandchild_pos as usize] >> 16) as u16;
                 }
             }
         }

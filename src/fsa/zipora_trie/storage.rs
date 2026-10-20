@@ -29,6 +29,11 @@ where
     DoubleArray {
         base: FastVec<u32>,
         check: FastVec<u32>,
+        /// Packed per-state child links (`low 16 bits = first_child (symbol + 1, 0 = none)`,
+        /// `high 16 bits = next_sibling (symbol + 1, 0 = none)` stored on the child slot)
+        /// so `relocate_state` and `update_grandchildren_check_values` visit only actual
+        /// children in `O(out-degree)` instead of scanning `0u8..=255u8`.
+        child_links: FastVec<u32>,
         /// Every free cell, threaded through the cells themselves; the only
         /// thing `find_free_base` walks, so allocation never rescans the
         /// occupied prefix.
@@ -139,6 +144,20 @@ impl DaFreeList {
             base[next as usize] = prev;
         }
     }
+}
+
+/// Prepend `symbol` (at `child_pos`) to `parent`'s packed child list in `child_links` (`O(1)`).
+#[inline]
+pub(super) fn da_link_child(
+    child_links: &mut FastVec<u32>,
+    parent: u32,
+    child_pos: u32,
+    symbol: u8,
+) {
+    let old_first = child_links[parent as usize] & 0xFFFF;
+    child_links[child_pos as usize] = old_first << 16;
+    child_links[parent as usize] =
+        (child_links[parent as usize] & 0xFFFF_0000) | (symbol as u32 + 1);
 }
 
 /// Patricia trie node with path compression (compact representation)

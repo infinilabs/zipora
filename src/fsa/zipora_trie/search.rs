@@ -444,13 +444,20 @@ where
             && let TrieStorage::DoubleArray {
                 base,
                 check,
+                child_links,
                 free_list,
                 ..
             } = &mut trie.storage
         {
             // Estimate: each key adds ~key_length states on average
             let estimated_states = keys.iter().map(|k| k.len()).sum::<usize>() / 2;
-            Self::ensure_da_capacity(base, check, free_list, estimated_states.max(256))?;
+            Self::ensure_da_capacity(
+                base,
+                check,
+                child_links,
+                free_list,
+                estimated_states.max(256),
+            )?;
         }
 
         // Insert keys in sorted order

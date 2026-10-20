@@ -902,7 +902,12 @@ impl DoubleArrayTrie {
         path.truncate(base_path_len);
     }
 
-    /// Build from sorted keys (more efficient than incremental insert).
+    /// Build from sorted keys using top-down zero-relocation bulk construction.
+    ///
+    /// When `keys` is sorted in non-decreasing lexicographical order, every
+    /// trie node's full child label set is known up front, so each internal
+    /// node allocates its `base` once without any child or grandchild
+    /// relocations. Falls back to incremental insertion if `keys` is unsorted.
     pub fn build_from_sorted(keys: &[&[u8]]) -> Result<Self> {
         if keys.is_empty() {
             return Ok(Self::new());
@@ -911,10 +916,105 @@ impl DoubleArrayTrie {
         // Estimate total states needed
         let total_bytes: usize = keys.iter().map(|k| k.len()).sum();
         let estimated_states = (total_bytes / 2).max(256);
-        let mut trie = Self::with_capacity(estimated_states * 3 / 2);
+        let mut trie = Self::with_capacity(estimated_states);
 
-        for &key in keys {
-            trie.insert(key)?;
+        let is_sorted = keys.windows(2).all(|w| w[0] <= w[1]);
+        if !is_sorted {
+            for &key in keys {
+                trie.insert(key)?;
+            }
+            trie.shrink_to_fit();
+            return Ok(trie);
+        }
+
+        let mut stack: Vec<(u32, usize, usize, usize)> = Vec::with_capacity(256);
+        stack.push((0u32, 0usize, keys.len(), 0usize));
+        let mut children: Vec<(usize, usize, u8)> = Vec::with_capacity(256);
+        let mut labels: Vec<u8> = Vec::with_capacity(256);
+
+        while let Some((state, start, end, depth)) = stack.pop() {
+            // Fast path: single key remaining in sub-range -> walk its unary suffix inline
+            if end - start == 1 {
+                let key = keys[start];
+                let mut curr = state;
+                for &ch in &key[depth..] {
+                    let base = trie.find_free_base(std::slice::from_ref(&ch))?;
+                    trie.set_base_padded(curr as usize, base);
+                    let next = base ^ (ch as u32);
+                    trie.states[next as usize].child0 = 0;
+                    trie.states[next as usize].set_parent(curr);
+                    trie.ninfos[curr as usize].set_first_child(label_to_ninfo(ch));
+                    curr = next;
+                }
+                if !trie.ninfos[curr as usize].is_term() {
+                    trie.ninfos[curr as usize].set_term();
+                    trie.num_keys += 1;
+                }
+                continue;
+            }
+
+            let mut cur = start;
+            if keys[cur].len() == depth {
+                if !trie.ninfos[state as usize].is_term() {
+                    trie.ninfos[state as usize].set_term();
+                    trie.num_keys += 1;
+                }
+                cur += 1;
+                while cur < end && keys[cur].len() == depth {
+                    cur += 1;
+                }
+            }
+            if cur >= end {
+                continue;
+            }
+
+            children.clear();
+            labels.clear();
+            while cur < end {
+                let ch = keys[cur][depth];
+                let sub_end = if keys[end - 1][depth] == ch {
+                    end
+                } else if end - cur <= 32 {
+                    let mut p = cur + 1;
+                    while p < end && keys[p][depth] == ch {
+                        p += 1;
+                    }
+                    p
+                } else {
+                    let mut step = 1usize;
+                    let mut lo = cur + 1;
+                    while lo + step < end && keys[lo + step][depth] == ch {
+                        lo += step;
+                        step <<= 1;
+                    }
+                    let hi = (lo + step).min(end);
+                    lo + keys[lo..hi].partition_point(|k| k[depth] == ch)
+                };
+                children.push((cur, sub_end, ch));
+                labels.push(ch);
+                cur = sub_end;
+            }
+
+            let base = trie.find_free_base(&labels)?;
+            trie.set_base_padded(state as usize, base);
+            trie.ninfos[state as usize].set_first_child(label_to_ninfo(labels[0]));
+
+            for j in 0..children.len() {
+                let ch = children[j].2;
+                let child_pos = (base ^ (ch as u32)) as usize;
+                trie.states[child_pos].child0 = 0;
+                trie.states[child_pos].set_parent(state);
+                trie.ninfos[child_pos].sibling = if j + 1 < children.len() {
+                    label_to_ninfo(children[j + 1].2)
+                } else {
+                    NINFO_NONE
+                };
+            }
+
+            for &(sub_start, sub_end, ch) in children.iter().rev() {
+                let child_state = base ^ (ch as u32);
+                stack.push((child_state, sub_start, sub_end, depth + 1));
+            }
         }
 
         trie.shrink_to_fit();
@@ -1044,9 +1144,10 @@ impl DoubleArrayTrie {
 
     /// Find a free base value where all given children symbols can be placed.
     ///
-    /// Uses search_head to skip past occupied regions at the start, then
-    /// probes candidates by incrementing base. For single-child inserts,
-    /// jumps directly to the next free position when the candidate is occupied.
+    /// Uses `search_head` to skip past the occupied prefix, then scans free
+    /// slots `pos >= search_head` directly (`base = pos ^ ch0`) so occupied
+    /// first-child slots are never probed and capacity growth is deferred
+    /// until a valid `base` is found.
     fn find_free_base(&mut self, children: &[u8]) -> Result<u32> {
         debug_assert!(!children.is_empty());
 
@@ -1058,45 +1159,50 @@ impl DoubleArrayTrie {
             self.search_head += 1;
         }
 
-        let mut base = (self.search_head as u32) ^ ch0;
-        if base == 0 {
-            base = 1;
-        }
-
+        let mut pos = self.search_head.max(1);
         let mut attempts = 0u32;
 
         loop {
-            if attempts > 1_000_000 || base > MAX_STATE {
+            if attempts > 1_000_000 {
                 return Err(ZiporaError::invalid_data(
                     "Double array: cannot find free base",
                 ));
             }
-            attempts += 1;
 
-            self.ensure_capacity((base as usize | 0xFF) + 1);
+            while pos < self.states.len() && !self.states[pos].is_free() {
+                pos += 1;
+            }
 
-            let first_pos = (base ^ ch0) as usize;
-            if first_pos == 0 || !self.states[first_pos].is_free() {
-                base += 1;
+            let base = (pos as u32) ^ ch0;
+            if base == 0 {
+                pos += 1;
                 continue;
+            }
+            if base > MAX_STATE {
+                return Err(ZiporaError::invalid_data(
+                    "Double array: cannot find free base",
+                ));
             }
 
             if single {
-                self.search_head = first_pos;
+                self.ensure_capacity((base as usize | 0xFF) + 1);
+                self.search_head = pos;
                 return Ok(base);
             }
 
-            // Multi-child: check remaining positions
+            attempts += 1;
+            let len = self.states.len();
             let all_free = children[1..].iter().all(|&ch| {
-                let pos = (base ^ ch as u32) as usize;
-                pos > 0 && self.states[pos].is_free()
+                let p = (base ^ ch as u32) as usize;
+                p > 0 && (p >= len || self.states[p].is_free())
             });
 
             if all_free {
-                self.search_head = first_pos;
+                self.ensure_capacity((base as usize | 0xFF) + 1);
+                self.search_head = pos;
                 return Ok(base);
             }
-            base += 1;
+            pos += 1;
         }
     }
 
