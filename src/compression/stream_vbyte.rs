@@ -38,6 +38,16 @@ const SHUFFLE_TABLE: [[u8; 16]; 256] = build_shuffle_table();
 #[cfg(target_arch = "x86_64")]
 const LENGTH_TABLE: [u8; 256] = build_length_table();
 
+/// Per-control-byte pshufb masks for encoding: pack four 32-bit lanes `[v0, v1, v2, v3]`
+/// into `LENGTH_TABLE[ctrl]` contiguous bytes (`0xFF` zero-fills trailing unused bytes).
+#[cfg(target_arch = "x86_64")]
+const ENCODE_SHUFFLE_TABLE: [[u8; 16]; 256] = build_encode_shuffle_table();
+
+/// Maps an 8-bit non-zero byte mask (for 2 `u32` lanes = 8 bytes) to the low 4 control bits
+/// `code0 | (code1 << 2)`. Combining two lookups gives the full 8-bit control byte for 4 lanes.
+#[cfg(target_arch = "x86_64")]
+const MASK_TO_CTRL_PAIR: [u8; 256] = build_mask_to_ctrl_pair();
+
 #[cfg(target_arch = "x86_64")]
 const fn build_shuffle_table() -> [[u8; 16]; 256] {
     let mut table = [[0u8; 16]; 256];
@@ -77,6 +87,42 @@ const fn build_length_table() -> [u8; 256] {
     table
 }
 
+#[cfg(target_arch = "x86_64")]
+const fn build_encode_shuffle_table() -> [[u8; 16]; 256] {
+    let mut enc_tbl = [[0xFF_u8; 16]; 256];
+    let mut ctrl = 0usize;
+    while ctrl < 256 {
+        let mut out_pos = 0usize;
+        let mut k = 0usize;
+        while k < 4 {
+            let len = ((ctrl >> (k * 2)) & 0x03) + 1;
+            let mut j = 0usize;
+            while j < len {
+                enc_tbl[ctrl][out_pos] = (k * 4 + j) as u8;
+                out_pos += 1;
+                j += 1;
+            }
+            k += 1;
+        }
+        ctrl += 1;
+    }
+    enc_tbl
+}
+
+#[cfg(target_arch = "x86_64")]
+const fn build_mask_to_ctrl_pair() -> [u8; 256] {
+    const NIB_CODE: [u8; 16] = [0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3];
+    let mut pair_lut = [0_u8; 256];
+    let mut m = 0usize;
+    while m < 256 {
+        let c0 = NIB_CODE[m & 0x0F];
+        let c1 = NIB_CODE[m >> 4];
+        pair_lut[m] = c0 | (c1 << 2);
+        m += 1;
+    }
+    pair_lut
+}
+
 /// Encoded stream: control bytes followed by data bytes.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -101,18 +147,153 @@ impl StreamVByte {
             };
         }
 
-        // Delta encode
-        let mut deltas = Vec::with_capacity(values.len());
-        deltas.push(values[0]);
-        for i in 1..values.len() {
-            deltas.push(values[i] - values[i - 1]);
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("ssse3") {
+                // SAFETY: SSSE3 runtime feature detection succeeded above.
+                return unsafe { Self::encode_deltas_ssse3(values) };
+            }
         }
 
-        Self::encode_raw(&deltas)
+        Self::encode_deltas_scalar(values)
+    }
+
+    fn encode_deltas_scalar(values: &[u32]) -> EncodedStream {
+        let n = values.len();
+        let num_groups = n.div_ceil(4);
+        let mut controls = Vec::with_capacity(num_groups);
+        let mut data = Vec::with_capacity(n * 2);
+
+        let mut prev = 0u32;
+        let mut i = 0;
+        while i + 4 <= n {
+            let mut ctrl = 0u8;
+            for k in 0..4 {
+                let cur = values[i + k];
+                let v = cur.wrapping_sub(prev);
+                prev = cur;
+                let len = Self::byte_length(v);
+                ctrl |= ((len - 1) as u8) << (k * 2);
+                Self::write_value(&mut data, v, len);
+            }
+            controls.push(ctrl);
+            i += 4;
+        }
+
+        if i < n {
+            let mut ctrl = 0u8;
+            for k in 0..(n - i) {
+                let cur = values[i + k];
+                let v = cur.wrapping_sub(prev);
+                prev = cur;
+                let len = Self::byte_length(v);
+                ctrl |= ((len - 1) as u8) << (k * 2);
+                Self::write_value(&mut data, v, len);
+            }
+            controls.push(ctrl);
+        }
+
+        EncodedStream {
+            controls,
+            data,
+            count: n,
+        }
+    }
+
+    /// SSSE3 fused delta + StreamVByte quad encoder.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure SSSE3 is available on the current CPU.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "ssse3")]
+    unsafe fn encode_deltas_ssse3(values: &[u32]) -> EncodedStream {
+        use std::arch::x86_64::*;
+
+        let n = values.len();
+        let num_groups = n.div_ceil(4);
+        let mut controls = Vec::with_capacity(num_groups);
+        let mut data = Vec::with_capacity(n * 4 + 16);
+
+        let val_ptr = values.as_ptr();
+        let ctrl_ptr: *mut u8 = controls.as_mut_ptr();
+        let data_ptr: *mut u8 = data.as_mut_ptr();
+        let zero = _mm_setzero_si128();
+        let mut prev_vec = zero;
+        let mut i = 0usize;
+        let mut ctrl_idx = 0usize;
+        let mut data_pos = 0usize;
+
+        while i + 4 <= n {
+            // SAFETY: `i + 4 <= n` guarantees 4 `u32`s (16 bytes) are readable from `val_ptr.add(i)`.
+            let cur_vec = unsafe { _mm_loadu_si128(val_ptr.add(i) as *const __m128i) };
+            let shifted = _mm_alignr_epi8(cur_vec, prev_vec, 12);
+            let deltas = _mm_sub_epi32(cur_vec, shifted);
+            prev_vec = cur_vec;
+
+            let eq_zero = _mm_cmpeq_epi8(deltas, zero);
+            let nz_mask = (!_mm_movemask_epi8(eq_zero)) as usize & 0xFFFF;
+            let ctrl = (MASK_TO_CTRL_PAIR[nz_mask & 0xFF] | (MASK_TO_CTRL_PAIR[nz_mask >> 8] << 4))
+                as usize;
+
+            // SAFETY: `ctrl < 256` is in-bounds for `ENCODE_SHUFFLE_TABLE`.
+            let shuf =
+                unsafe { _mm_loadu_si128(ENCODE_SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
+            let packed = _mm_shuffle_epi8(deltas, shuf);
+
+            // SAFETY: `data` was allocated with `n * 4 + 16` bytes and each group advances
+            // `data_pos` by at most 16, so `data_pos + 16 <= data.capacity()`.
+            // `ctrl_idx < num_groups <= controls.capacity()`.
+            unsafe {
+                _mm_storeu_si128(data_ptr.add(data_pos) as *mut __m128i, packed);
+                *ctrl_ptr.add(ctrl_idx) = ctrl as u8;
+            }
+            data_pos += LENGTH_TABLE[ctrl] as usize;
+            ctrl_idx += 1;
+            i += 4;
+        }
+
+        // SAFETY: `ctrl_idx` control bytes and `data_pos` data bytes have been initialized.
+        unsafe {
+            controls.set_len(ctrl_idx);
+            data.set_len(data_pos);
+        }
+
+        if i < n {
+            let mut prev = if i > 0 { values[i - 1] } else { 0 };
+            let mut ctrl = 0u8;
+            for k in 0..(n - i) {
+                let cur = values[i + k];
+                let v = cur.wrapping_sub(prev);
+                prev = cur;
+                let len = Self::byte_length(v);
+                ctrl |= ((len - 1) as u8) << (k * 2);
+                Self::write_value(&mut data, v, len);
+            }
+            controls.push(ctrl);
+        }
+
+        EncodedStream {
+            controls,
+            data,
+            count: n,
+        }
     }
 
     /// Encode raw u32 values (no delta encoding).
     pub fn encode_raw(values: &[u32]) -> EncodedStream {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("ssse3") {
+                // SAFETY: SSSE3 runtime feature detection succeeded above.
+                return unsafe { Self::encode_raw_ssse3(values) };
+            }
+        }
+
+        Self::encode_raw_scalar(values)
+    }
+
+    fn encode_raw_scalar(values: &[u32]) -> EncodedStream {
         let n = values.len();
         let num_groups = n.div_ceil(4);
 
@@ -151,6 +332,76 @@ impl StreamVByte {
         }
     }
 
+    /// SSSE3 raw StreamVByte quad encoder.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure SSSE3 is available on the current CPU.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "ssse3")]
+    unsafe fn encode_raw_ssse3(values: &[u32]) -> EncodedStream {
+        use std::arch::x86_64::*;
+
+        let n = values.len();
+        let num_groups = n.div_ceil(4);
+        let mut controls = Vec::with_capacity(num_groups);
+        let mut data = Vec::with_capacity(n * 4 + 16);
+
+        let val_ptr = values.as_ptr();
+        let ctrl_ptr: *mut u8 = controls.as_mut_ptr();
+        let data_ptr: *mut u8 = data.as_mut_ptr();
+        let zero = _mm_setzero_si128();
+        let mut i = 0usize;
+        let mut ctrl_idx = 0usize;
+        let mut data_pos = 0usize;
+
+        while i + 4 <= n {
+            // SAFETY: `i + 4 <= n` guarantees 4 `u32`s are readable from `val_ptr.add(i)`.
+            let cur_vec = unsafe { _mm_loadu_si128(val_ptr.add(i) as *const __m128i) };
+            let eq_zero = _mm_cmpeq_epi8(cur_vec, zero);
+            let nz_mask = (!_mm_movemask_epi8(eq_zero)) as usize & 0xFFFF;
+            let ctrl = (MASK_TO_CTRL_PAIR[nz_mask & 0xFF] | (MASK_TO_CTRL_PAIR[nz_mask >> 8] << 4))
+                as usize;
+
+            // SAFETY: `ctrl < 256` is in-bounds for `ENCODE_SHUFFLE_TABLE`.
+            let shuf =
+                unsafe { _mm_loadu_si128(ENCODE_SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
+            let packed = _mm_shuffle_epi8(cur_vec, shuf);
+
+            // SAFETY: `data` has capacity `n * 4 + 16` so `data_pos + 16 <= data.capacity()`.
+            unsafe {
+                _mm_storeu_si128(data_ptr.add(data_pos) as *mut __m128i, packed);
+                *ctrl_ptr.add(ctrl_idx) = ctrl as u8;
+            }
+            data_pos += LENGTH_TABLE[ctrl] as usize;
+            ctrl_idx += 1;
+            i += 4;
+        }
+
+        // SAFETY: `ctrl_idx` control bytes and `data_pos` data bytes have been initialized.
+        unsafe {
+            controls.set_len(ctrl_idx);
+            data.set_len(data_pos);
+        }
+
+        if i < n {
+            let mut ctrl = 0u8;
+            for k in 0..(n - i) {
+                let v = values[i + k];
+                let len = Self::byte_length(v);
+                ctrl |= ((len - 1) as u8) << (k * 2);
+                Self::write_value(&mut data, v, len);
+            }
+            controls.push(ctrl);
+        }
+
+        EncodedStream {
+            controls,
+            data,
+            count: n,
+        }
+    }
+
     /// Decode delta-encoded stream back to sorted u32 values.
     ///
     /// Returns the decoded values. If the input stream is truncated or malformed,
@@ -158,15 +409,97 @@ impl StreamVByte {
     /// returned `Vec` will contain fewer than `count` values without panicking.
     /// Callers requiring complete stream integrity should verify `result.len() == count`.
     pub fn decode_deltas(stream: &EncodedStream, count: usize) -> Vec<u32> {
+        let max_possible = stream.controls.len().saturating_mul(4);
+        let alloc_count = count.min(max_possible);
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("ssse3") && alloc_count >= 4 {
+                let mut values = Vec::with_capacity(alloc_count);
+                // SAFETY: SSSE3 is available and `values` has capacity `alloc_count`.
+                let (data_pos, mut out_idx, mut ctrl_idx, mut acc) = unsafe {
+                    Self::decode_groups_deltas_ssse3(
+                        &stream.controls,
+                        &stream.data,
+                        alloc_count,
+                        values.as_mut_ptr(),
+                    )
+                };
+                // SAFETY: `out_idx <= alloc_count == values.capacity()` elements were initialized.
+                unsafe {
+                    values.set_len(out_idx);
+                }
+                let mut dpos = data_pos;
+                while ctrl_idx < stream.controls.len() && out_idx < alloc_count {
+                    let ctrl = stream.controls[ctrl_idx];
+                    let group_size = (alloc_count - out_idx).min(4);
+                    for k in 0..group_size {
+                        let len = ((ctrl >> (k * 2)) & 0x03) as usize + 1;
+                        if dpos + len > stream.data.len() {
+                            return values;
+                        }
+                        acc = acc.wrapping_add(Self::read_value(&stream.data, dpos, len));
+                        values.push(acc);
+                        dpos += len;
+                        out_idx += 1;
+                    }
+                    ctrl_idx += 1;
+                }
+                return values;
+            }
+        }
         // Prefix sum in place on the buffer decode_raw already allocated;
         // a second Vec would be an extra allocation plus an O(n) copy.
         let mut values = Self::decode_raw(stream, count);
         let mut acc = 0u32;
         for v in &mut values {
-            acc += *v;
+            acc = acc.wrapping_add(*v);
             *v = acc;
         }
         values
+    }
+
+    /// SSSE3 fused quad decode + prefix-sum for `StreamVByte::decode_deltas`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure SSSE3 is available and `out_ptr` has capacity for `limit` `u32`s.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "ssse3")]
+    unsafe fn decode_groups_deltas_ssse3(
+        controls: &[u8],
+        data: &[u8],
+        limit: usize,
+        out_ptr: *mut u32,
+    ) -> (usize, usize, usize, u32) {
+        use std::arch::x86_64::*;
+
+        let mut data_pos = 0usize;
+        let mut out_idx = 0usize;
+        let mut ctrl_idx = 0usize;
+        let mut carry = _mm_setzero_si128();
+
+        while ctrl_idx < controls.len() && out_idx + 4 <= limit && data_pos + 16 <= data.len() {
+            let ctrl = controls[ctrl_idx] as usize;
+            // SAFETY: `data_pos + 16 <= data.len()` checked by the loop condition.
+            let input = unsafe { _mm_loadu_si128(data.as_ptr().add(data_pos) as *const __m128i) };
+            // SAFETY: `ctrl < 256` is in-bounds for `SHUFFLE_TABLE`.
+            let mask = unsafe { _mm_loadu_si128(SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
+            let expanded = _mm_shuffle_epi8(input, mask);
+            let s1 = _mm_add_epi32(expanded, _mm_slli_si128(expanded, 4));
+            let s2 = _mm_add_epi32(s1, _mm_slli_si128(s1, 8));
+            let sum = _mm_add_epi32(s2, carry);
+            carry = _mm_shuffle_epi32(sum, 0xFF);
+            // SAFETY: `out_idx + 4 <= limit` checked by the loop condition.
+            unsafe {
+                _mm_storeu_si128(out_ptr.add(out_idx) as *mut __m128i, sum);
+            }
+            data_pos += LENGTH_TABLE[ctrl] as usize;
+            out_idx += 4;
+            ctrl_idx += 1;
+        }
+
+        let acc = _mm_cvtsi128_si32(carry) as u32;
+        (data_pos, out_idx, ctrl_idx, acc)
     }
 
     /// Decode raw values from stream.
@@ -298,18 +631,10 @@ impl StreamVByte {
 
     // --- Internal helpers ---
 
-    /// Number of bytes needed to encode a u32 value.
+    /// Number of bytes needed to encode a u32 value (branchless via `leading_zeros`).
     #[inline(always)]
     fn byte_length(v: u32) -> usize {
-        if v < (1 << 8) {
-            1
-        } else if v < (1 << 16) {
-            2
-        } else if v < (1 << 24) {
-            3
-        } else {
-            4
-        }
+        (((31 - (v | 1).leading_zeros()) >> 3) + 1) as usize
     }
 
     /// Write a value using `len` bytes (little-endian).
@@ -353,17 +678,94 @@ pub struct GroupVarint;
 impl GroupVarint {
     /// Encode sorted values with delta + group varint.
     pub fn encode_deltas(values: &[u32]) -> Vec<u8> {
-        let Some(&first) = values.first() else {
+        if values.is_empty() {
             return Vec::new();
-        };
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("ssse3") {
+                // SAFETY: SSSE3 runtime feature detection succeeded above.
+                return unsafe { Self::encode_deltas_ssse3(values) };
+            }
+        }
 
         let mut deltas = Vec::with_capacity(values.len());
-        deltas.push(first);
+        deltas.push(values[0]);
         for w in values.windows(2) {
             deltas.push(w[1] - w[0]);
         }
 
         Self::encode_raw(&deltas)
+    }
+
+    /// SSSE3 fused delta + GroupVarint encoder.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure SSSE3 is available on the current CPU.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "ssse3")]
+    unsafe fn encode_deltas_ssse3(values: &[u32]) -> Vec<u8> {
+        use std::arch::x86_64::*;
+
+        let n = values.len();
+        let mut output = Vec::with_capacity(n * 5 + 20);
+        let val_ptr = values.as_ptr();
+        let out_ptr: *mut u8 = output.as_mut_ptr();
+        let zero = _mm_setzero_si128();
+        let mut prev_vec = zero;
+        let mut i = 0usize;
+        let mut out_pos = 0usize;
+
+        while i + 4 <= n {
+            // SAFETY: `i + 4 <= n` guarantees 4 `u32`s are readable from `val_ptr.add(i)`.
+            let cur_vec = unsafe { _mm_loadu_si128(val_ptr.add(i) as *const __m128i) };
+            let shifted = _mm_alignr_epi8(cur_vec, prev_vec, 12);
+            let deltas = _mm_sub_epi32(cur_vec, shifted);
+            prev_vec = cur_vec;
+
+            let eq_zero = _mm_cmpeq_epi8(deltas, zero);
+            let nz_mask = (!_mm_movemask_epi8(eq_zero)) as usize & 0xFFFF;
+            let ctrl = (MASK_TO_CTRL_PAIR[nz_mask & 0xFF] | (MASK_TO_CTRL_PAIR[nz_mask >> 8] << 4))
+                as usize;
+
+            // SAFETY: `ctrl < 256` is in-bounds for `ENCODE_SHUFFLE_TABLE`.
+            let shuf =
+                unsafe { _mm_loadu_si128(ENCODE_SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
+            let packed = _mm_shuffle_epi8(deltas, shuf);
+
+            // SAFETY: `output` has capacity `n * 5 + 20` and each 4-value group advances
+            // `out_pos` by at most 17, so `out_pos + 17 <= output.capacity()`.
+            unsafe {
+                *out_ptr.add(out_pos) = ctrl as u8;
+                _mm_storeu_si128(out_ptr.add(out_pos + 1) as *mut __m128i, packed);
+            }
+            out_pos += 1 + LENGTH_TABLE[ctrl] as usize;
+            i += 4;
+        }
+
+        // SAFETY: `out_pos` bytes of `output` have been initialized.
+        unsafe {
+            output.set_len(out_pos);
+        }
+
+        if let Some(tail) = values.get(i..) {
+            let mut prev = if i > 0 { values[i - 1] } else { 0 };
+            for &cur in tail {
+                let d = cur.wrapping_sub(prev);
+                prev = cur;
+                output.extend_from_slice(&d.to_le_bytes());
+            }
+        }
+
+        if !n.is_multiple_of(4) {
+            output.push((n % 4) as u8);
+        } else {
+            output.push(0);
+        }
+
+        output
     }
 
     /// Encode raw u32 values.
@@ -379,10 +781,7 @@ impl GroupVarint {
             let l3 = StreamVByte::byte_length(v3);
 
             // Control byte
-            let ctrl = ((l0 - 1)
-                | ((l1 - 1) << 2)
-                | ((l2 - 1) << 4)
-                | ((l3 - 1) << 6)) as u8;
+            let ctrl = ((l0 - 1) | ((l1 - 1) << 2) | ((l2 - 1) << 4) | ((l3 - 1) << 6)) as u8;
             output.push(ctrl);
 
             // Data
@@ -413,10 +812,56 @@ impl GroupVarint {
 
     /// Decode group varint with delta reconstruction.
     pub fn decode_deltas(data: &[u8], count: usize) -> Vec<u32> {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let alloc_cap = count.min(data.len());
+            if std::arch::is_x86_feature_detected!("ssse3") && alloc_cap == count && count >= 4 {
+                let mut values = Vec::with_capacity(count);
+                // SAFETY: SSSE3 is available and `values` has capacity `count`.
+                let (mut pos, decoded, mut acc) =
+                    unsafe { Self::decode_groups_deltas_ssse3(data, count, values.as_mut_ptr()) };
+                // SAFETY: `decoded <= count == values.capacity()` elements were initialized.
+                unsafe {
+                    values.set_len(decoded);
+                }
+                let mut remaining = count - decoded;
+                while remaining >= 4 {
+                    let Some(&ctrl) = data.get(pos) else {
+                        break;
+                    };
+                    pos += 1;
+                    for k in 0..4 {
+                        let len = ((ctrl >> (k * 2)) & 0x03) as usize + 1;
+                        let Some(src) = data.get(pos..pos + len) else {
+                            break;
+                        };
+                        let mut bytes = [0u8; 4];
+                        if let Some(dst) = bytes.get_mut(..len) {
+                            dst.copy_from_slice(src);
+                        }
+                        acc = acc.wrapping_add(u32::from_le_bytes(bytes));
+                        values.push(acc);
+                        pos += len;
+                    }
+                    remaining -= 4;
+                }
+                while remaining > 0 {
+                    let Some(&bytes) = data.get(pos..).and_then(|s| s.first_chunk::<4>()) else {
+                        break;
+                    };
+                    acc = acc.wrapping_add(u32::from_le_bytes(bytes));
+                    values.push(acc);
+                    pos += 4;
+                    remaining -= 1;
+                }
+                values.truncate(count);
+                return values;
+            }
+        }
         let mut values = Self::decode_raw(data, count);
         let mut acc = 0u32;
         for v in &mut values {
-            acc += *v;
+            acc = acc.wrapping_add(*v);
             *v = acc;
         }
         values
@@ -427,9 +872,25 @@ impl GroupVarint {
         // `count` is caller/header-supplied. Every value occupies at least one
         // data byte on top of its group's control byte, so the input length is
         // a hard upper bound on how many values can be present.
-        let mut values = Vec::with_capacity(count.min(data.len()));
-        let mut pos = 0;
+        let alloc_cap = count.min(data.len());
+        let mut values = Vec::with_capacity(alloc_cap);
+        let mut pos = 0usize;
         let mut remaining = count;
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("ssse3") && alloc_cap == count && count >= 4 {
+                // SAFETY: SSSE3 is available and `values` has capacity `count`.
+                let (new_pos, decoded) =
+                    unsafe { Self::decode_groups_ssse3(data, count, values.as_mut_ptr()) };
+                // SAFETY: `decoded <= count == values.capacity()` elements were initialized.
+                unsafe {
+                    values.set_len(decoded);
+                }
+                pos = new_pos;
+                remaining = count - decoded;
+            }
+        }
 
         while remaining >= 4 {
             let Some(&ctrl) = data.get(pos) else {
@@ -465,6 +926,86 @@ impl GroupVarint {
 
         values.truncate(count);
         values
+    }
+
+    /// SSSE3 GroupVarint quad decoder using `SHUFFLE_TABLE` and `LENGTH_TABLE`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure SSSE3 is available and `out_ptr` has capacity for at least `limit` `u32`s.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "ssse3")]
+    unsafe fn decode_groups_ssse3(data: &[u8], limit: usize, out_ptr: *mut u32) -> (usize, usize) {
+        use std::arch::x86_64::*;
+
+        let data_ptr = data.as_ptr();
+        let data_len = data.len();
+        let mut pos = 0usize;
+        let mut out_idx = 0usize;
+
+        while out_idx + 4 <= limit && pos + 17 <= data_len {
+            // SAFETY: `pos + 17 <= data_len` guarantees 1 control byte at `pos` and 16 readable
+            // payload bytes starting at `pos + 1`.
+            let ctrl = unsafe { *data_ptr.add(pos) as usize };
+            // SAFETY: `pos + 1 + 16 <= data_len` checked by loop guard.
+            let chunk = unsafe { _mm_loadu_si128(data_ptr.add(pos + 1) as *const __m128i) };
+            // SAFETY: `ctrl < 256` is in-bounds for `SHUFFLE_TABLE`.
+            let mask = unsafe { _mm_loadu_si128(SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
+            let expanded = _mm_shuffle_epi8(chunk, mask);
+            // SAFETY: `out_idx + 4 <= limit` guarantees 4 `u32`s fit at `out_ptr.add(out_idx)`.
+            unsafe {
+                _mm_storeu_si128(out_ptr.add(out_idx) as *mut __m128i, expanded);
+            }
+            pos += 1 + LENGTH_TABLE[ctrl] as usize;
+            out_idx += 4;
+        }
+
+        (pos, out_idx)
+    }
+
+    /// SSSE3 GroupVarint quad decoder with fused prefix-sum reconstruction.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure SSSE3 is available and `out_ptr` has capacity for at least `limit` `u32`s.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "ssse3")]
+    unsafe fn decode_groups_deltas_ssse3(
+        data: &[u8],
+        limit: usize,
+        out_ptr: *mut u32,
+    ) -> (usize, usize, u32) {
+        use std::arch::x86_64::*;
+
+        let data_ptr = data.as_ptr();
+        let data_len = data.len();
+        let mut pos = 0usize;
+        let mut out_idx = 0usize;
+        let mut carry = _mm_setzero_si128();
+
+        while out_idx + 4 <= limit && pos + 17 <= data_len {
+            // SAFETY: `pos + 17 <= data_len` guarantees 1 control byte at `pos` and 16 readable
+            // payload bytes starting at `pos + 1`.
+            let ctrl = unsafe { *data_ptr.add(pos) as usize };
+            // SAFETY: `pos + 1 + 16 <= data_len` checked by loop guard.
+            let chunk = unsafe { _mm_loadu_si128(data_ptr.add(pos + 1) as *const __m128i) };
+            // SAFETY: `ctrl < 256` is in-bounds for `SHUFFLE_TABLE`.
+            let mask = unsafe { _mm_loadu_si128(SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
+            let expanded = _mm_shuffle_epi8(chunk, mask);
+            let s1 = _mm_add_epi32(expanded, _mm_slli_si128(expanded, 4));
+            let s2 = _mm_add_epi32(s1, _mm_slli_si128(s1, 8));
+            let sum = _mm_add_epi32(s2, carry);
+            carry = _mm_shuffle_epi32(sum, 0xFF);
+            // SAFETY: `out_idx + 4 <= limit` guarantees 4 `u32`s fit at `out_ptr.add(out_idx)`.
+            unsafe {
+                _mm_storeu_si128(out_ptr.add(out_idx) as *mut __m128i, sum);
+            }
+            pos += 1 + LENGTH_TABLE[ctrl] as usize;
+            out_idx += 4;
+        }
+
+        let acc = _mm_cvtsi128_si32(carry) as u32;
+        (pos, out_idx, acc)
     }
 }
 
@@ -790,12 +1331,11 @@ mod tests {
                 // On x86_64 hardware with SSSE3, force the SIMD variant so
                 // this test provably exercises it (never under Miri: dispatch
                 // is scalar-only there and the intrinsics can't execute).
-                #[cfg(all(target_arch = "x86_64", not(miri)))]
+                #[cfg(target_arch = "x86_64")]
                 {
                     if std::arch::is_x86_feature_detected!("ssse3") {
                         let mut out_simd = vec![0u32; count];
-                        let n_simd =
-                            StreamVByte::decode_into_ssse3(&stream, count, &mut out_simd);
+                        let n_simd = StreamVByte::decode_into_ssse3(&stream, count, &mut out_simd);
                         assert_eq!(n_scalar, n_simd, "SIMD count mismatch ctrl={ctrl:#04x}");
                         assert_eq!(
                             out_scalar, out_simd,
@@ -812,7 +1352,7 @@ mod tests {
         // Construct a stream where control bytes say there are 4 values of 4 bytes each (16 bytes data),
         // but stream.data only has 5 bytes (truncated).
         let stream = EncodedStream {
-            controls: vec![0xFF], // four 4-byte integers
+            controls: vec![0xFF],      // four 4-byte integers
             data: vec![1, 2, 3, 4, 5], // only 5 bytes instead of 16
             count: 4,
         };
@@ -880,17 +1420,20 @@ mod tests {
         assert_eq!(decoded.len(), 26);
         assert_eq!(decoded, out_scalar[..26]);
 
-        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        #[cfg(target_arch = "x86_64")]
         {
             if std::arch::is_x86_feature_detected!("ssse3") {
                 let mut out_simd = vec![0u32; 40];
                 let n_simd = StreamVByte::decode_into_ssse3(&stream, 40, &mut out_simd);
                 assert_eq!(n_simd, 26, "SIMD handoff count mismatch");
-                assert_eq!(out_simd[..26], out_scalar[..26], "SIMD handoff output mismatch");
+                assert_eq!(
+                    out_simd[..26],
+                    out_scalar[..26],
+                    "SIMD handoff output mismatch"
+                );
             }
         }
     }
-
 
     /// `count` comes from an untrusted header. Each decoded value needs at least
     /// one data byte, so the reservation must be bounded by the input length,
