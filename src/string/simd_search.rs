@@ -640,28 +640,70 @@ impl SimdStringSearch {
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_strchr(&self, haystack: &[u8], needle: u8) -> Option<usize> {
         let needle_vec = _mm256_set1_epi8(needle as i8);
-        let chunks = haystack.len() / 32;
+        let len = haystack.len();
+        let ptr = haystack.as_ptr();
+        let mut offset = 0usize;
 
-        for i in 0..chunks {
-            let offset = i * 32;
-            // SAFETY: avx2 guaranteed by #[target_feature], pointer valid from slice, offset within bounds (chunks * 32 <= len)
-            let chunk =
-                unsafe { _mm256_loadu_si256(haystack[offset..].as_ptr() as *const __m256i) };
+        while offset + 128 <= len {
+            // SAFETY: AVX2 is guaranteed by #[target_feature], and `offset + 128 <= len`
+            // ensures all four 32-byte unaligned loads lie within `haystack`.
+            unsafe {
+                let c0 = _mm256_cmpeq_epi8(
+                    _mm256_loadu_si256(ptr.add(offset) as *const __m256i),
+                    needle_vec,
+                );
+                let c1 = _mm256_cmpeq_epi8(
+                    _mm256_loadu_si256(ptr.add(offset + 32) as *const __m256i),
+                    needle_vec,
+                );
+                let c2 = _mm256_cmpeq_epi8(
+                    _mm256_loadu_si256(ptr.add(offset + 64) as *const __m256i),
+                    needle_vec,
+                );
+                let c3 = _mm256_cmpeq_epi8(
+                    _mm256_loadu_si256(ptr.add(offset + 96) as *const __m256i),
+                    needle_vec,
+                );
+                let or01 = _mm256_or_si256(c0, c1);
+                let or23 = _mm256_or_si256(c2, c3);
+                if _mm256_movemask_epi8(_mm256_or_si256(or01, or23)) != 0 {
+                    let m0 = _mm256_movemask_epi8(c0) as u32;
+                    if m0 != 0 {
+                        return Some(offset + m0.trailing_zeros() as usize);
+                    }
+                    let m1 = _mm256_movemask_epi8(c1) as u32;
+                    if m1 != 0 {
+                        return Some(offset + 32 + m1.trailing_zeros() as usize);
+                    }
+                    let m2 = _mm256_movemask_epi8(c2) as u32;
+                    if m2 != 0 {
+                        return Some(offset + 64 + m2.trailing_zeros() as usize);
+                    }
+                    let m3 = _mm256_movemask_epi8(c3) as u32;
+                    return Some(offset + 96 + m3.trailing_zeros() as usize);
+                }
+            }
+            offset += 128;
+        }
+
+        while offset + 32 <= len {
+            // SAFETY: AVX2 is guaranteed by #[target_feature], and `offset + 32 <= len`
+            // ensures the 32-byte unaligned load lies within `haystack`.
+            let chunk = unsafe { _mm256_loadu_si256(ptr.add(offset) as *const __m256i) };
             let cmp = _mm256_cmpeq_epi8(chunk, needle_vec);
-            let mask = _mm256_movemask_epi8(cmp);
+            let mask = _mm256_movemask_epi8(cmp) as u32;
 
             if mask != 0 {
-                let first_match = mask.trailing_zeros() as usize;
-                return Some(offset + first_match);
+                return Some(offset + mask.trailing_zeros() as usize);
             }
+            offset += 32;
         }
 
         // Handle remaining bytes
-        let remaining_start = chunks * 32;
-        if remaining_start < haystack.len() {
+        if offset < len {
             return self
-                .scalar_strchr(&haystack[remaining_start..], needle)
-                .map(|pos| remaining_start + pos);
+                .scalar_strchr(&haystack[offset..], needle)
+                .map(|pos| offset + pos);
         }
 
         None
@@ -674,7 +716,6 @@ impl SimdStringSearch {
     /// invoking on hardware without AVX2 support is undefined behavior.
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_strstr(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        // For simplicity, use first character matching + verification approach
         let first_char = needle[0];
         let mut pos = 0;
 

@@ -92,11 +92,16 @@ impl Default for SuffixArrayConfig {
     }
 }
 
+type Bucket2Table = Option<Box<[(u32, u32)]>>;
+
 /// A suffix array data structure
 #[derive(Debug)]
 pub struct SuffixArray {
     /// The suffix array itself (indices into the original string)
     sa: Vec<usize>,
+    /// Precomputed `[lo, hi)` rank intervals in `sa` for each 2-byte prefix `(b0 << 8) | b1`
+    /// when `text_len >= 4096` (`E3.9`).
+    bucket2: Bucket2Table,
     /// The original string length
     text_len: usize,
     /// Performance statistics
@@ -137,69 +142,110 @@ impl SuffixArray {
         (left, right.saturating_sub(left))
     }
 
-    /// Find the range of suffixes that start with the given pattern
+    /// Find the range of suffixes that start with the given pattern (`E3.9`).
+    ///
+    /// Uses precomputed 2-gram bucket intervals (when available) + LCP-accelerated
+    /// `lower_bound` followed by early return on misses (avoiding a second full
+    /// binary search when `pattern` does not occur in `text`) and exponential
+    /// galloping from `left + 1` on hits so the upper bound is resolved in
+    /// $O(\log(\text{matches}))$ cache-local probes.
     pub fn search_range(&self, text: &[u8], pattern: &[u8]) -> (usize, usize) {
-        let left = self.lower_bound(text, pattern);
-        let right = self.upper_bound(text, pattern);
-        (left, right)
-    }
-
-    fn lower_bound(&self, text: &[u8], pattern: &[u8]) -> usize {
-        let mut left = 0;
-        let mut right = self.sa.len();
-
-        while left < right {
-            let mid = left + (right - left) / 2;
-            let suffix_start = self.sa[mid];
-            let suffix = &text[suffix_start..];
-
-            if Self::compare_suffix_pattern(suffix, pattern) == Ordering::Less {
-                left = mid + 1;
-            } else {
-                right = mid;
-            }
+        if pattern.is_empty() {
+            return (0, self.sa.len());
+        }
+        let n = self.sa.len();
+        if n == 0 {
+            return (0, 0);
         }
 
-        left
-    }
-
-    fn upper_bound(&self, text: &[u8], pattern: &[u8]) -> usize {
-        let mut left = 0;
-        let mut right = self.sa.len();
-
-        while left < right {
-            let mid = left + (right - left) / 2;
-            let suffix_start = self.sa[mid];
-            let suffix = &text[suffix_start..];
-
-            if Self::compare_suffix_pattern(suffix, pattern) != Ordering::Greater {
-                left = mid + 1;
-            } else {
-                right = mid;
+        let (lo_bound, hi_bound, init_lcp) = if pattern.len() >= 2
+            && let Some(ref b2) = self.bucket2
+        {
+            let key = ((pattern[0] as usize) << 8) | (pattern[1] as usize);
+            let (lo_u32, hi_u32) = b2[key];
+            let lo_b = lo_u32 as usize;
+            let hi_b = hi_u32 as usize;
+            if lo_b == hi_b || pattern.len() == 2 {
+                return (lo_b, hi_b);
             }
-        }
-
-        left
-    }
-
-    fn compare_suffix_pattern(suffix: &[u8], pattern: &[u8]) -> Ordering {
-        let min_len = suffix.len().min(pattern.len());
-
-        for i in 0..min_len {
-            match suffix[i].cmp(&pattern[i]) {
-                Ordering::Equal => continue,
-                other => return other,
-            }
-        }
-
-        // If we reach here, the pattern matches the beginning of the suffix
-        // For prefix search, we consider this equal if pattern fits within suffix
-        if pattern.len() <= suffix.len() {
-            Ordering::Equal
+            (lo_b, hi_b, 2usize)
         } else {
-            // Pattern is longer than suffix, so suffix comes first
-            Ordering::Less
+            (0usize, n, 0usize)
+        };
+
+        let left = self.lower_bound_in(text, pattern, lo_bound, hi_bound, init_lcp);
+        if left >= hi_bound || !text[self.sa[left]..].starts_with(pattern) {
+            return (left, left);
         }
+
+        // Pattern occurs at `left`. Gallop forward from `left + 1` to bracket the
+        // upper bound in O(log(match_count)) probes instead of O(log n) DRAM misses.
+        let mut lo = left + 1;
+        if lo >= hi_bound || !text[self.sa[lo]..].starts_with(pattern) {
+            return (left, lo);
+        }
+
+        let mut step = 2usize;
+        let mut hi = (lo + step).min(hi_bound);
+        while hi < hi_bound && text[self.sa[hi]..].starts_with(pattern) {
+            lo = hi;
+            step <<= 1;
+            hi = (lo + step).min(hi_bound);
+        }
+
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if text[self.sa[mid]..].starts_with(pattern) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+
+        (left, lo)
+    }
+
+    fn lower_bound_in(
+        &self,
+        text: &[u8],
+        pattern: &[u8],
+        mut left: usize,
+        mut right: usize,
+        init_lcp: usize,
+    ) -> usize {
+        let mut lcp_left = init_lcp;
+        let mut lcp_right = init_lcp;
+        let pat_len = pattern.len();
+
+        while left < right {
+            let mid = left + (right - left) / 2;
+            let suffix = &text[self.sa[mid]..];
+            let skip = lcp_left.min(lcp_right);
+            let min_len = suffix.len().min(pat_len);
+            let mut k = skip.min(min_len);
+
+            while k < min_len && suffix[k] == pattern[k] {
+                k += 1;
+            }
+
+            let ord = if k == pat_len {
+                Ordering::Equal
+            } else if k == suffix.len() {
+                Ordering::Less
+            } else {
+                suffix[k].cmp(&pattern[k])
+            };
+
+            if ord == Ordering::Less {
+                left = mid + 1;
+                lcp_left = k;
+            } else {
+                right = mid;
+                lcp_right = k;
+            }
+        }
+
+        left
     }
 
     /// Get performance statistics
@@ -353,6 +399,7 @@ impl SuffixArrayBuilder {
         if text.is_empty() {
             return Ok(SuffixArray {
                 sa: Vec::new(),
+                bucket2: None,
                 text_len: 0,
                 stats: AlgorithmStats {
                     items_processed: 0,
@@ -365,7 +412,7 @@ impl SuffixArrayBuilder {
         }
 
         // There is no parallel construction: `use_parallel` has no effect.
-        let sa = self.build_sequential(text)?;
+        let (sa, bucket2) = self.build_sequential(text)?;
 
         let elapsed = start_time.elapsed();
         let memory_used = sa.len() * std::mem::size_of::<usize>();
@@ -379,46 +426,46 @@ impl SuffixArrayBuilder {
                 used_parallel: false,
                 used_simd: false,
             },
+            bucket2,
             sa,
         })
     }
 
-    fn build_sequential(&self, text: &[u8]) -> Result<Vec<usize>> {
+    fn build_sequential(&self, text: &[u8]) -> Result<(Vec<usize>, Bucket2Table)> {
         if text.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
 
         if text.len() == 1 {
-            return Ok(vec![0]);
+            return Ok((vec![0], None));
         }
 
-        // Select algorithm based on configuration and data characteristics
-        let algorithm = self.select_algorithm(text);
-
-        match algorithm {
-            SuffixArrayAlgorithm::SAIS => self.sais_construct(text),
+        // Every SuffixArrayAlgorithm variant delegates to SA-IS (`sais_construct`);
+        // `Adaptive` dispatches directly to `sais_construct` to avoid the 2-pass
+        // `analyze_text_characteristics` scan over `text` (`E3.9`).
+        match self.config.algorithm {
+            SuffixArrayAlgorithm::SAIS | SuffixArrayAlgorithm::Adaptive => {
+                self.sais_construct(text)
+            }
             SuffixArrayAlgorithm::DC3 => self.dc3_construct(text),
             SuffixArrayAlgorithm::DivSufSort => self.divsufsort_construct(text),
             SuffixArrayAlgorithm::LarssonSadakane => self.larsson_sadakane_construct(text),
-            SuffixArrayAlgorithm::Adaptive => {
-                // This should not happen as select_algorithm resolves it
-                self.sais_construct(text)
-            }
         }
     }
 
     /// SA-IS (Suffix Array by Induced Sorting) — linear-time O(n).
     ///
-    /// Maps the byte string onto the integer alphabet `1..=256`, appends a
-    /// unique smallest sentinel (`0`), runs the induced-sorting core, then drops
-    /// the sentinel suffix that always sorts first.
-    fn sais_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
+    /// Operates directly on the byte slice `text` at the top level using a compact
+    /// `WordBitVec` (`1 bit/pos` = `1.25 MiB` at `10 MiB` instead of `40 MiB` `Vec<u32>` plus
+    /// `10 MiB` `Vec<bool>`), keeping `text` and `t` inside the 32 MiB L3 cache during
+    /// induced-sorting random lookups (`E3.9`).
+    fn sais_construct(&self, text: &[u8]) -> Result<(Vec<usize>, Bucket2Table)> {
         let n = text.len();
         if n == 0 {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
         if n == 1 {
-            return Ok(vec![0]);
+            return Ok((vec![0], None));
         }
         if n >= u32::MAX as usize {
             return Err(crate::error::ZiporaError::invalid_data(
@@ -426,30 +473,25 @@ impl SuffixArrayBuilder {
             ));
         }
 
-        // Reserve 0 as the unique sentinel; shift every byte up by one.
-        let mut s: Vec<u32> = Vec::with_capacity(n + 1);
-        s.extend(text.iter().map(|&b| b as u32 + 1));
-        s.push(0);
-
-        let sa = sais_core(&s, 257);
+        let (sa, bucket2) = sais_core_bytes(text);
 
         // The sentinel suffix (position n) is the global minimum, so it always
         // occupies sa[0]; the suffix array of `text` is the remainder.
         debug_assert_eq!(sa[0] as usize, n, "sentinel suffix must sort first");
-        Ok(sa.into_iter().skip(1).map(|x| x as usize).collect())
+        Ok((sa[1..].iter().map(|&x| x as usize).collect(), bucket2))
     }
 
     /// DC3 entry point; construction is delegated to SA-IS for every length.
     ///
     /// The former `n == 2` shortcut returned `[0, 1]` when `text[0] == text[1]`,
     /// but the shorter suffix sorts first, so the answer is `[1, 0]` (S20-R2).
-    fn dc3_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
+    fn dc3_construct(&self, text: &[u8]) -> Result<(Vec<usize>, Bucket2Table)> {
         if text.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
 
         if text.len() == 1 {
-            return Ok(vec![0]);
+            return Ok((vec![0], None));
         }
 
         self.sais_construct(text)
@@ -457,13 +499,13 @@ impl SuffixArrayBuilder {
 
     /// DivSufSort entry point; construction is delegated to SA-IS (there is
     /// no DivSufSort implementation).
-    fn divsufsort_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
+    fn divsufsort_construct(&self, text: &[u8]) -> Result<(Vec<usize>, Bucket2Table)> {
         let n = text.len();
         if n == 0 {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
         if n == 1 {
-            return Ok(vec![0]);
+            return Ok((vec![0], None));
         }
 
         self.sais_construct(text)
@@ -471,13 +513,13 @@ impl SuffixArrayBuilder {
 
     /// Larsson-Sadakane entry point; construction is delegated to SA-IS
     /// (there is no Larsson-Sadakane implementation).
-    fn larsson_sadakane_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
+    fn larsson_sadakane_construct(&self, text: &[u8]) -> Result<(Vec<usize>, Bucket2Table)> {
         let n = text.len();
         if n == 0 {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
         if n == 1 {
-            return Ok(vec![0]);
+            return Ok((vec![0], None));
         }
 
         self.sais_construct(text)
@@ -486,6 +528,42 @@ impl SuffixArrayBuilder {
 
 /// Marks an unfilled slot in the working suffix array during SA-IS.
 const SAIS_EMPTY: u32 = u32::MAX;
+
+/// Compact 1-bit-per-suffix type vector (`true` = S-type, `false` = L-type).
+///
+/// Uses 8x less memory than `Vec<bool>` (`1.25 MiB` vs `10 MiB` at `N = 10^7`),
+/// keeping the type vector cache-resident during SA-IS induced sorting.
+struct WordBitVec {
+    words: Vec<u64>,
+}
+
+impl WordBitVec {
+    #[inline]
+    fn new_false(len: usize) -> Self {
+        Self {
+            words: vec![0u64; len.div_ceil(64)],
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self, idx: usize) -> bool {
+        // SAFETY: callers only query indices `< len`.
+        unsafe { ((*self.words.get_unchecked(idx >> 6) >> (idx & 63)) & 1) != 0 }
+    }
+
+    #[inline(always)]
+    fn set_true(&mut self, idx: usize) {
+        // SAFETY: callers only set indices `< len`.
+        unsafe {
+            *self.words.get_unchecked_mut(idx >> 6) |= 1u64 << (idx & 63);
+        }
+    }
+
+    #[inline(always)]
+    fn is_lms(&self, idx: usize) -> bool {
+        idx > 0 && self.get(idx) && !self.get(idx - 1)
+    }
+}
 
 /// Bucket boundaries for an integer alphabet. With `heads = true` returns the
 /// start index of each character's bucket; otherwise the (exclusive) end index.
@@ -504,10 +582,262 @@ fn sais_buckets(counts: &[usize], heads: bool) -> Vec<usize> {
     res
 }
 
+/// Top-level induced sorting directly over `text: &[u8]` (with virtual sentinel `0` at index `text.len()`).
+fn sais_induce_bytes(text: &[u8], sa: &mut [u32], t: &WordBitVec, counts: &[usize; 257]) {
+    let n = sa.len();
+    let text_len = text.len();
+
+    // L-type pass at bucket heads.
+    let mut heads = [0usize; 257];
+    let mut sum = 0usize;
+    for c in 0..257 {
+        heads[c] = sum;
+        sum += counts[c];
+    }
+    for i in 0..n {
+        let p = sa[i];
+        if p != SAIS_EMPTY && p > 0 {
+            let j = (p - 1) as usize;
+            if !t.get(j) {
+                let c = if j < text_len {
+                    // SAFETY: `j < text_len`.
+                    unsafe { *text.get_unchecked(j) as usize + 1 }
+                } else {
+                    0
+                };
+                // SAFETY: `c < 257` and `heads[c] < n` from exact bucket prefix sums.
+                unsafe {
+                    let h = *heads.get_unchecked(c);
+                    *sa.get_unchecked_mut(h) = j as u32;
+                    *heads.get_unchecked_mut(c) = h + 1;
+                }
+            }
+        }
+    }
+
+    // S-type pass at bucket tails.
+    let mut tails = [0usize; 257];
+    let mut sum = 0usize;
+    for c in 0..257 {
+        sum += counts[c];
+        tails[c] = sum;
+    }
+    for i in (0..n).rev() {
+        let p = sa[i];
+        if p != SAIS_EMPTY && p > 0 {
+            let j = (p - 1) as usize;
+            if t.get(j) {
+                let c = if j < text_len {
+                    // SAFETY: `j < text_len`.
+                    unsafe { *text.get_unchecked(j) as usize + 1 }
+                } else {
+                    0
+                };
+                // SAFETY: `c < 257` and `tails[c] - 1 < n` from exact bucket prefix sums.
+                unsafe {
+                    let tl = *tails.get_unchecked(c) - 1;
+                    *tails.get_unchecked_mut(c) = tl;
+                    *sa.get_unchecked_mut(tl) = j as u32;
+                }
+            }
+        }
+    }
+}
+
+#[inline]
+fn sais_lms_substr_eq_bytes(text: &[u8], t: &WordBitVec, a: usize, b: usize, n: usize) -> bool {
+    if a == b {
+        return true;
+    }
+    let text_len = text.len();
+    let mut d = 0usize;
+    loop {
+        let (ia, ib) = (a + d, b + d);
+        if ia >= n || ib >= n {
+            return false;
+        }
+        let ca = if ia < text_len {
+            text[ia] as u16 + 1
+        } else {
+            0
+        };
+        let cb = if ib < text_len {
+            text[ib] as u16 + 1
+        } else {
+            0
+        };
+        if ca != cb || t.get(ia) != t.get(ib) {
+            return false;
+        }
+        if d > 0 {
+            let (la, lb) = (t.is_lms(ia), t.is_lms(ib));
+            if la && lb {
+                return true;
+            }
+            if la || lb {
+                return false;
+            }
+        }
+        d += 1;
+    }
+}
+
+/// Top-level SA-IS operating directly on `text: &[u8]` with a virtual sentinel at index `text.len()`.
+fn sais_core_bytes(text: &[u8]) -> (Vec<u32>, Bucket2Table) {
+    let text_len = text.len();
+    let n = text_len + 1;
+    let mut sa = vec![SAIS_EMPTY; n];
+    if text_len == 0 {
+        sa[0] = 0;
+        return (sa, None);
+    }
+
+    let build_b2 = text_len >= 4096 && !cfg!(miri);
+    let mut gram2 = if build_b2 {
+        vec![0u32; 65_536]
+    } else {
+        Vec::new()
+    };
+
+    let mut t = WordBitVec::new_false(n);
+    t.set_true(n - 1); // sentinel is S-type; index `n - 2` (`text_len - 1`) is L-type (`false`).
+    for i in (0..text_len.saturating_sub(1)).rev() {
+        let b0 = text[i];
+        let b1 = text[i + 1];
+        if b0 < b1 || (b0 == b1 && t.get(i + 1)) {
+            t.set_true(i);
+        }
+        if build_b2 {
+            // SAFETY: `((b0 as usize) << 8) | (b1 as usize) < 65_536 == gram2.len()`.
+            unsafe {
+                *gram2.get_unchecked_mut(((b0 as usize) << 8) | (b1 as usize)) += 1;
+            }
+        }
+    }
+
+    let mut counts = [0usize; 257];
+    counts[0] = 1;
+    let bucket2 = if build_b2 {
+        let last_b = text[text_len - 1] as usize;
+        let mut ranges = vec![(0u32, 0u32); 65_536].into_boxed_slice();
+        let mut sum = 0u32;
+        for b0 in 0..256usize {
+            let mut c_b0 = 0usize;
+            if b0 == last_b {
+                sum += 1;
+                c_b0 += 1;
+            }
+            let base = b0 << 8;
+            for b1 in 0..256usize {
+                let idx = base | b1;
+                let c = gram2[idx];
+                ranges[idx] = (sum, sum + c);
+                sum += c;
+                c_b0 += c as usize;
+            }
+            counts[b0 + 1] = c_b0;
+        }
+        debug_assert_eq!(sum as usize, text_len);
+        Some(ranges)
+    } else {
+        for &b in text {
+            counts[b as usize + 1] += 1;
+        }
+        None
+    };
+
+    let mut tails = [0usize; 257];
+    let mut sum = 0usize;
+    for c in 0..257 {
+        sum += counts[c];
+        tails[c] = sum;
+    }
+    // Seed LMS suffixes (indices `1..text_len` plus sentinel `text_len`).
+    sa[0] = text_len as u32;
+    for (i, &b) in text.iter().enumerate().skip(1) {
+        if t.is_lms(i) {
+            let c = b as usize + 1;
+            tails[c] -= 1;
+            sa[tails[c]] = i as u32;
+        }
+    }
+    sais_induce_bytes(text, &mut sa, &t, &counts);
+
+    let mut n1 = 0usize;
+    for i in 0..n {
+        let p = sa[i];
+        if p != SAIS_EMPTY && t.is_lms(p as usize) {
+            sa[n1] = p;
+            n1 += 1;
+        }
+    }
+    sa[n1..n].fill(SAIS_EMPTY);
+
+    let mut name = 0u32;
+    let mut prev: Option<usize> = None;
+    for i in 0..n1 {
+        let pos = sa[i] as usize;
+        let diff = match prev {
+            None => true,
+            Some(prev_pos) => !sais_lms_substr_eq_bytes(text, &t, prev_pos, pos, n),
+        };
+        if diff {
+            name += 1;
+            prev = Some(pos);
+        }
+        sa[n1 + pos / 2] = name - 1;
+    }
+
+    let mut j = n;
+    for i in (n1..n).rev() {
+        if sa[i] != SAIS_EMPTY {
+            j -= 1;
+            sa[j] = sa[i];
+        }
+    }
+    let s1: Vec<u32> = sa[n - n1..n].to_vec();
+
+    let sa1 = if (name as usize) < n1 {
+        sais_core(&s1, name as usize)
+    } else {
+        let mut tmp = vec![SAIS_EMPTY; n1];
+        for (i, &name_i) in s1.iter().enumerate() {
+            tmp[name_i as usize] = i as u32;
+        }
+        tmp
+    };
+
+    let mut lms_positions = Vec::with_capacity(n1);
+    for i in 1..n {
+        if t.is_lms(i) {
+            lms_positions.push(i as u32);
+        }
+    }
+    sa.fill(SAIS_EMPTY);
+    let mut sum = 0usize;
+    for c in 0..257 {
+        sum += counts[c];
+        tails[c] = sum;
+    }
+    for i in (0..n1).rev() {
+        let pos = lms_positions[sa1[i] as usize] as usize;
+        let c = if pos < text_len {
+            text[pos] as usize + 1
+        } else {
+            0
+        };
+        tails[c] -= 1;
+        sa[tails[c]] = pos as u32;
+    }
+    sais_induce_bytes(text, &mut sa, &t, &counts);
+
+    (sa, bucket2)
+}
+
 /// Induced sorting: with the LMS suffixes already seeded at their bucket tails
 /// in `sa`, induce the order of all L-type suffixes (left→right) then all
 /// S-type suffixes (right→left). Linear time.
-fn sais_induce(s: &[u32], sa: &mut [u32], t: &[bool], counts: &[usize]) {
+fn sais_induce(s: &[u32], sa: &mut [u32], t: &WordBitVec, counts: &[usize]) {
     let n = s.len();
 
     // L-type pass at bucket heads.
@@ -516,10 +846,14 @@ fn sais_induce(s: &[u32], sa: &mut [u32], t: &[bool], counts: &[usize]) {
         let p = sa[i];
         if p != SAIS_EMPTY && p > 0 {
             let j = (p - 1) as usize;
-            if !t[j] {
-                let c = s[j] as usize;
-                sa[heads[c]] = j as u32;
-                heads[c] += 1;
+            if !t.get(j) {
+                // SAFETY: `j < n` and `s[j] < counts.len()`.
+                unsafe {
+                    let c = *s.get_unchecked(j) as usize;
+                    let h = *heads.get_unchecked(c);
+                    *sa.get_unchecked_mut(h) = j as u32;
+                    *heads.get_unchecked_mut(c) = h + 1;
+                }
             }
         }
     }
@@ -530,10 +864,14 @@ fn sais_induce(s: &[u32], sa: &mut [u32], t: &[bool], counts: &[usize]) {
         let p = sa[i];
         if p != SAIS_EMPTY && p > 0 {
             let j = (p - 1) as usize;
-            if t[j] {
-                let c = s[j] as usize;
-                tails[c] -= 1;
-                sa[tails[c]] = j as u32;
+            if t.get(j) {
+                // SAFETY: `j < n` and `s[j] < counts.len()`.
+                unsafe {
+                    let c = *s.get_unchecked(j) as usize;
+                    let tl = *tails.get_unchecked(c) - 1;
+                    *tails.get_unchecked_mut(c) = tl;
+                    *sa.get_unchecked_mut(tl) = j as u32;
+                }
             }
         }
     }
@@ -542,14 +880,7 @@ fn sais_induce(s: &[u32], sa: &mut [u32], t: &[bool], counts: &[usize]) {
 /// Whether the two LMS substrings starting at `a` and `b` are identical. Walks
 /// until both substrings end (next LMS position) or a difference is found. The
 /// summed length of all LMS substrings is O(n), so total naming cost is O(n).
-fn sais_lms_substr_eq(
-    s: &[u32],
-    t: &[bool],
-    is_lms: &impl Fn(usize) -> bool,
-    a: usize,
-    b: usize,
-    n: usize,
-) -> bool {
+fn sais_lms_substr_eq(s: &[u32], t: &WordBitVec, a: usize, b: usize, n: usize) -> bool {
     if a == b {
         return true;
     }
@@ -559,11 +890,11 @@ fn sais_lms_substr_eq(
         if ia >= n || ib >= n {
             return false;
         }
-        if s[ia] != s[ib] || t[ia] != t[ib] {
+        if s[ia] != s[ib] || t.get(ia) != t.get(ib) {
             return false;
         }
         if d > 0 {
-            let (la, lb) = (is_lms(ia), is_lms(ib));
+            let (la, lb) = (t.is_lms(ia), t.is_lms(ib));
             if la && lb {
                 return true; // both substrings end here, equal so far
             }
@@ -590,12 +921,13 @@ fn sais_core(s: &[u32], k: usize) -> Vec<u32> {
     }
 
     // Suffix types: true = S-type, false = L-type. The last suffix is S-type.
-    let mut t = vec![false; n];
-    t[n - 1] = true;
+    let mut t = WordBitVec::new_false(n);
+    t.set_true(n - 1);
     for i in (0..n - 1).rev() {
-        t[i] = s[i] < s[i + 1] || (s[i] == s[i + 1] && t[i + 1]);
+        if s[i] < s[i + 1] || (s[i] == s[i + 1] && t.get(i + 1)) {
+            t.set_true(i);
+        }
     }
-    let is_lms = |i: usize| i > 0 && t[i] && !t[i - 1];
 
     // Bucket sizes.
     let mut counts = vec![0usize; k];
@@ -607,7 +939,7 @@ fn sais_core(s: &[u32], k: usize) -> Vec<u32> {
     // substrings into `sa`.
     let mut tails = sais_buckets(&counts, false);
     for (i, &ch) in s.iter().enumerate() {
-        if is_lms(i) {
+        if t.is_lms(i) {
             let c = ch as usize;
             tails[c] -= 1;
             sa[tails[c]] = i as u32;
@@ -621,14 +953,12 @@ fn sais_core(s: &[u32], k: usize) -> Vec<u32> {
     let mut n1 = 0usize;
     for i in 0..n {
         let p = sa[i];
-        if p != SAIS_EMPTY && is_lms(p as usize) {
+        if p != SAIS_EMPTY && t.is_lms(p as usize) {
             sa[n1] = p;
             n1 += 1;
         }
     }
-    for slot in sa.iter_mut().take(n).skip(n1) {
-        *slot = SAIS_EMPTY;
-    }
+    sa[n1..n].fill(SAIS_EMPTY);
 
     let mut name = 0u32;
     let mut prev: Option<usize> = None;
@@ -636,7 +966,7 @@ fn sais_core(s: &[u32], k: usize) -> Vec<u32> {
         let pos = sa[i] as usize;
         let diff = match prev {
             None => true,
-            Some(prev_pos) => !sais_lms_substr_eq(s, &t, &is_lms, prev_pos, pos, n),
+            Some(prev_pos) => !sais_lms_substr_eq(s, &t, prev_pos, pos, n),
         };
         if diff {
             name += 1;
@@ -670,13 +1000,11 @@ fn sais_core(s: &[u32], k: usize) -> Vec<u32> {
     // re-induce the full suffix array.
     let mut lms_positions = Vec::with_capacity(n1);
     for i in 0..n {
-        if is_lms(i) {
+        if t.is_lms(i) {
             lms_positions.push(i as u32);
         }
     }
-    for slot in sa.iter_mut() {
-        *slot = SAIS_EMPTY;
-    }
+    sa.fill(SAIS_EMPTY);
     let mut tails = sais_buckets(&counts, false);
     for i in (0..n1).rev() {
         let pos = lms_positions[sa1[i] as usize] as usize;
@@ -1616,9 +1944,7 @@ mod tests {
             vec![],
             vec![0],
             vec![b'a'; max_n / 4],
-            (0..max_n)
-                .map(|i| ((i * 7 + (i >> 3)) % 2) as u8)
-                .collect(), // {0, 1} with embedded 0x00
+            (0..max_n).map(|i| ((i * 7 + (i >> 3)) % 2) as u8).collect(), // {0, 1} with embedded 0x00
             (0..max_n)
                 .map(|i| 1 + ((i * 13 + (i >> 2)) % 3) as u8)
                 .collect(), // {1, 2, 3}
@@ -1650,10 +1976,20 @@ mod tests {
                     ..Default::default()
                 };
                 let sa = SuffixArray::with_config(text, &cfg).unwrap();
-                assert_eq!(sa.as_slice(), naive_sa.as_slice(), "SA mismatch for {:?}", alg);
+                assert_eq!(
+                    sa.as_slice(),
+                    naive_sa.as_slice(),
+                    "SA mismatch for {:?}",
+                    alg
+                );
 
                 let lcp = LcpArray::new(text, &sa).unwrap();
-                assert_eq!(lcp.as_slice(), naive_lcp.as_slice(), "LCP mismatch for {:?}", alg);
+                assert_eq!(
+                    lcp.as_slice(),
+                    naive_lcp.as_slice(),
+                    "LCP mismatch for {:?}",
+                    alg
+                );
             }
 
             if !text.is_empty() {
