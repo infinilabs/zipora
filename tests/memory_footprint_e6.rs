@@ -366,15 +366,15 @@ fn test_e6_rank_select_space_overhead_percent_and_mem_size() {
         se512_overhead
     );
 
-    // 4. RankSelectInterleaved256: 64-byte InterleavedLine per 256-bit (32-byte) block = 100.0% rank-only overhead,
-    // plus 3.125% select cache on 50% density (~103.125%).
+    // 4. RankSelectInterleaved256: 40-byte InterleavedLine per 256-bit (32-byte) block = 25.0% rank-only overhead,
+    // plus 6.25% select1 + select0 caches on 50% density (~31.25%).
     let il256_rank_only = RankSelectInterleaved256::with_options(bv.clone(), false, 512).unwrap();
-    assert_eq!(il256_rank_only.space_overhead_percent(), 100.0);
+    assert_eq!(il256_rank_only.space_overhead_percent(), 25.0);
     let il256 = RankSelectInterleaved256::new(bv.clone()).unwrap();
     let il256_overhead = il256.space_overhead_percent();
     assert!(
-        (103.0..=103.5).contains(&il256_overhead),
-        "RankSelectInterleaved256 space_overhead_percent on 1 Mbit must be in [103.0, 103.5], got {:.3}%",
+        (31.2..=31.4).contains(&il256_overhead),
+        "RankSelectInterleaved256 space_overhead_percent on 1 Mbit must be in [31.2, 31.4], got {:.3}%",
         il256_overhead
     );
 

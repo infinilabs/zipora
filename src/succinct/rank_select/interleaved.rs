@@ -73,7 +73,7 @@ use std::arch::x86_64::_popcnt64;
 /// This structure is carefully designed to fit within 1-2 cache lines for
 /// optimal memory access patterns. The rank metadata and corresponding bit
 /// data are co-located for maximum cache efficiency.
-#[repr(C, align(32))] // 32-byte alignment for cache efficiency
+#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct InterleavedLine {
     /// Cumulative rank1 up to the start of this line
@@ -93,8 +93,10 @@ pub struct InterleavedLine {
 pub struct RankSelectInterleaved256 {
     /// Interleaved cache lines containing both rank metadata and bit data
     lines: FastVec<InterleavedLine>,
-    /// Optional select cache for faster select operations
+    /// Optional select1 cache for faster select1 operations
     select_cache: Option<FastVec<u32>>,
+    /// Optional select0 cache for faster select0 operations
+    select0_cache: Option<FastVec<u32>>,
     /// Total number of set bits
     total_ones: usize,
     /// Total number of bits in the original bit vector
@@ -207,6 +209,11 @@ impl RankSelectInterleaved256 {
             } else {
                 None
             },
+            select0_cache: if enable_select_cache {
+                Some(FastVec::new())
+            } else {
+                None
+            },
             total_ones: 0,
             total_bits: bit_vector.len(),
             select_sample_rate: select_sample_rate.max(1),
@@ -214,7 +221,7 @@ impl RankSelectInterleaved256 {
 
         rs.build_interleaved_cache(bit_vector)?;
 
-        if rs.select_cache.is_some() && rs.total_ones > 0 {
+        if enable_select_cache && rs.total_bits > 0 {
             rs.build_select_cache()?;
         }
 
@@ -338,39 +345,96 @@ impl RankSelectInterleaved256 {
         }
     }
 
-    /// Build select cache for faster select operations
+    /// Build select1 and select0 caches for faster select operations via word-level POPCNT + PDEP.
     fn build_select_cache(&mut self) -> Result<()> {
-        if self.select_cache.is_none() || self.total_ones == 0 {
+        if self.select_cache.is_none() || self.total_bits == 0 {
             return Ok(());
         }
 
-        let mut ones_seen = 0;
-        let mut current_pos = 0;
-        let mut cache_entries = Vec::new();
+        let sample_rate = self.select_sample_rate;
+        let total_ones = self.total_ones;
+        let total_zeros = self.total_bits.saturating_sub(total_ones);
 
-        while ones_seen < self.total_ones {
-            let target_ones = (ones_seen + self.select_sample_rate).min(self.total_ones);
+        let mut cache1_entries = if total_ones > 0 {
+            Vec::with_capacity(total_ones.div_ceil(sample_rate))
+        } else {
+            Vec::new()
+        };
+        let mut cache0_entries = if total_zeros > 0 {
+            Vec::with_capacity(total_zeros.div_ceil(sample_rate))
+        } else {
+            Vec::new()
+        };
 
-            while ones_seen < target_ones && current_pos < self.total_bits {
-                if self.get_bit_internal(current_pos) {
-                    ones_seen += 1;
+        let mut ones_seen = 0usize;
+        let mut zeros_seen = 0usize;
+        let mut next_target_ones = if total_ones > 0 {
+            sample_rate.min(total_ones)
+        } else {
+            0
+        };
+        let mut next_target_zeros = if total_zeros > 0 {
+            sample_rate.min(total_zeros)
+        } else {
+            0
+        };
+
+        for (line_idx, line) in self.lines.iter().enumerate() {
+            let line_start_bit = line_idx * LINE_BITS;
+            for (word_idx, &word) in line.bit64.iter().enumerate() {
+                let word_start_bit = line_start_bit + word_idx * BITS_PER_WORD;
+                if word_start_bit >= self.total_bits {
+                    break;
                 }
-                if ones_seen < target_ones {
-                    current_pos += 1;
+                let valid_bits = (self.total_bits - word_start_bit).min(BITS_PER_WORD);
+                let w1 = word.count_ones() as usize;
+                while next_target_ones > 0 && ones_seen + w1 >= next_target_ones {
+                    let bit_in_word = crate::algorithms::bit_ops::select_in_word(
+                        word,
+                        next_target_ones - ones_seen - 1,
+                    );
+                    cache1_entries.push((word_start_bit + bit_in_word) as u32);
+                    if next_target_ones == total_ones {
+                        next_target_ones = 0;
+                    } else {
+                        next_target_ones = (next_target_ones + sample_rate).min(total_ones);
+                    }
                 }
-            }
+                ones_seen += w1;
 
-            if ones_seen == target_ones {
-                cache_entries.push(current_pos as u32);
+                let valid_mask = if valid_bits == BITS_PER_WORD {
+                    !0u64
+                } else {
+                    (1u64 << valid_bits) - 1
+                };
+                let inv_word = (!word) & valid_mask;
+                let w0 = valid_bits - w1;
+                while next_target_zeros > 0 && zeros_seen + w0 >= next_target_zeros {
+                    let bit_in_word = crate::algorithms::bit_ops::select_in_word(
+                        inv_word,
+                        next_target_zeros - zeros_seen - 1,
+                    );
+                    cache0_entries.push((word_start_bit + bit_in_word) as u32);
+                    if next_target_zeros == total_zeros {
+                        next_target_zeros = 0;
+                    } else {
+                        next_target_zeros = (next_target_zeros + sample_rate).min(total_zeros);
+                    }
+                }
+                zeros_seen += w0;
             }
-
-            current_pos += 1;
         }
 
-        // Now update the select cache
         if let Some(ref mut select_cache) = self.select_cache {
-            for entry in cache_entries {
+            select_cache.reserve(cache1_entries.len())?;
+            for entry in cache1_entries {
                 select_cache.push(entry)?;
+            }
+        }
+        if let Some(ref mut select0_cache) = self.select0_cache {
+            select0_cache.reserve(cache0_entries.len())?;
+            for entry in cache0_entries {
+                select0_cache.push(entry)?;
             }
         }
 
@@ -852,6 +916,7 @@ impl Default for RankSelectInterleaved256 {
         Self {
             lines: FastVec::new(),
             select_cache: None,
+            select0_cache: None,
             total_ones: 0,
             total_bits: 0,
             select_sample_rate: 256,
@@ -887,18 +952,27 @@ impl RankSelectOps for RankSelectInterleaved256 {
             ));
         }
 
-        // Binary search in line cache using referenced project pattern
-        let mut lo = 0;
-        let mut hi = self.lines.len();
-
-        while lo < hi {
-            let mid = (lo + hi) / 2;
-            let bitpos = mid * LINE_BITS;
-            let rank1_at_line = if mid == 0 {
+        // Use select0_cache to bracket the line binary search range when available
+        let (mut lo, mut hi) = if let Some(ref select0_cache) = self.select0_cache
+            && let Some(sample_idx) = k.checked_div(self.select_sample_rate)
+            && sample_idx < select0_cache.len()
+        {
+            let hi_pos = select0_cache[sample_idx] as usize;
+            let lo_line = if sample_idx == 0 {
                 0
             } else {
-                self.lines[mid].rlev1 as usize
+                (select0_cache[sample_idx - 1] as usize) / LINE_BITS
             };
+            let hi_line = (hi_pos / LINE_BITS + 1).min(self.lines.len());
+            (lo_line, hi_line)
+        } else {
+            (0, self.lines.len())
+        };
+
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let bitpos = mid * LINE_BITS;
+            let rank1_at_line = self.lines[mid].rlev1 as usize;
             let rank0_at_line = bitpos - rank1_at_line; // rank0 = bitpos - rank1
 
             if rank0_at_line <= k {
@@ -910,7 +984,6 @@ impl RankSelectOps for RankSelectInterleaved256 {
         }
 
         // Search within the found line
-
         let line_idx = lo.saturating_sub(1);
         if line_idx >= self.lines.len() {
             return Err(ZiporaError::invalid_data(
@@ -982,14 +1055,19 @@ impl RankSelectOps for RankSelectInterleaved256 {
 
         let bit_data_bytes = self.total_bits.div_ceil(8);
         // The lines hold the bit data itself; only the bytes beyond it
-        // (rank metadata + alignment padding) are overhead.
+        // (rank metadata) are overhead.
         let line_bytes = self.lines.len() * std::mem::size_of::<InterleavedLine>();
         let line_overhead = line_bytes.saturating_sub(bit_data_bytes);
         let select_cache_bytes = self
             .select_cache
             .as_ref()
             .map(|cache| cache.len() * 4)
-            .unwrap_or(0);
+            .unwrap_or(0)
+            + self
+                .select0_cache
+                .as_ref()
+                .map(|cache| cache.len() * 4)
+                .unwrap_or(0);
 
         let total_overhead = line_overhead + select_cache_bytes;
 
@@ -1135,19 +1213,19 @@ mod tests {
 
     #[test]
     fn test_space_overhead_reports_metadata_and_padding_only() -> Result<()> {
-        // Each InterleavedLine is 64 bytes for 32 bytes of bit data (8 bytes
-        // rank metadata + 24 bytes alignment padding), i.e. 100% overhead.
+        // Each InterleavedLine is 40 bytes for 32 bytes of bit data (8 bytes
+        // rank metadata + 0 bytes padding), i.e. 25.0% overhead.
         // The metric must not count the bit data itself as overhead.
         let mut bv = BitVector::new();
         for i in 0..(256 * 1024) {
             bv.push(i % 3 == 0)?;
         }
         let rs = RankSelectInterleaved256::with_options(bv, false, 512)?;
-        assert_eq!(std::mem::size_of::<InterleavedLine>(), 64);
+        assert_eq!(std::mem::size_of::<InterleavedLine>(), 40);
         let overhead = rs.space_overhead_percent();
         assert!(
-            (overhead - 100.0).abs() < 0.5,
-            "expected ~100% overhead without select cache, got {overhead}"
+            (overhead - 25.0).abs() < 0.5,
+            "expected ~25.0% overhead without select cache, got {overhead}"
         );
         Ok(())
     }
