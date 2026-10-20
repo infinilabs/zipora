@@ -417,14 +417,13 @@ fn test_backward_shift_delete() {
     map.insert(4, 40).expect("invariant broken");
 
     // Manually invoke backward_shift_delete on the first slot
-    if let HashMapStorage::Standard { entries, mask, .. } = &mut map.storage {
-        // Find the slot containing key 1 (the sanitized hash of 0 is 1 → slot 1 & mask)
-        let target_slot = 1usize & *mask;
-        entries[target_slot].hash = 0;
-        entries[target_slot].key = None;
-        entries[target_slot].value = None;
-        let m = *mask;
-        ZiporaHashMap::<i32, i32, FixedHashBuilder>::backward_shift_delete(entries, m, target_slot);
+    if let HashMapStorage::Standard(table) = &mut map.storage {
+        let target_slot = 0usize;
+        ZiporaHashMap::<i32, i32, FixedHashBuilder>::backward_shift_delete(
+            table,
+            &map.hash_builder,
+            target_slot,
+        );
     }
 
     // After backward shift: keys 2, 3, 4 should be shifted backward

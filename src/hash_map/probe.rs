@@ -1,11 +1,70 @@
 //! Probe and CRUD internals for [`ZiporaHashMap`](super::ZiporaHashMap).
 
 use super::ZiporaHashMap;
-use crate::containers::FastVec;
 use crate::error::Result;
 use crate::hash_map::storage::*;
 use std::borrow::Borrow;
 use std::hash::{BuildHasher, Hash};
+use std::mem::MaybeUninit;
+
+/// Return a 16-bit mask of lanes in `ctrl[pos..pos + 16]` equal to `byte`.
+#[inline(always)]
+fn group_match_byte(ctrl_ptr: *const u8, pos: usize, byte: u8) -> u16 {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        use std::arch::x86_64::{_mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8, _mm_set1_epi8, __m128i};
+        // SAFETY: `pos < capacity` and `ctrl` allocates `capacity + 16` initialized bytes.
+        unsafe {
+            let group = _mm_loadu_si128(ctrl_ptr.add(pos) as *const __m128i);
+            let cmp = _mm_cmpeq_epi8(group, _mm_set1_epi8(byte as i8));
+            _mm_movemask_epi8(cmp) as u16
+        }
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    {
+        let mut mask = 0u16;
+        for lane in 0..GROUP_WIDTH {
+            // SAFETY: `pos + lane < capacity + 16 == ctrl.len()`.
+            let c = unsafe { *ctrl_ptr.add(pos + lane) };
+            if c == byte {
+                mask |= 1u16 << lane;
+            }
+        }
+        mask
+    }
+}
+
+/// Return a 16-bit mask of lanes in `ctrl[pos..pos + 16]` equal to `CTRL_EMPTY`.
+#[inline(always)]
+fn group_match_empty(ctrl_ptr: *const u8, pos: usize) -> u16 {
+    group_match_byte(ctrl_ptr, pos, CTRL_EMPTY)
+}
+
+/// Return a 16-bit mask of lanes in `ctrl[pos..pos + 16]` that are `CTRL_EMPTY` or `CTRL_DELETED` (MSB == 1).
+#[inline(always)]
+fn group_match_empty_or_deleted(ctrl_ptr: *const u8, pos: usize) -> u16 {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        use std::arch::x86_64::{_mm_loadu_si128, _mm_movemask_epi8, __m128i};
+        // SAFETY: `pos < capacity` and `ctrl` allocates `capacity + 16` initialized bytes.
+        unsafe {
+            let group = _mm_loadu_si128(ctrl_ptr.add(pos) as *const __m128i);
+            _mm_movemask_epi8(group) as u16
+        }
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    {
+        let mut mask = 0u16;
+        for lane in 0..GROUP_WIDTH {
+            // SAFETY: `pos + lane < capacity + 16 == ctrl.len()`.
+            let c = unsafe { *ctrl_ptr.add(pos + lane) };
+            if (c & 0x80) != 0 {
+                mask |= 1u16 << lane;
+            }
+        }
+        mask
+    }
+}
 
 impl<K, V, S> ZiporaHashMap<K, V, S>
 where
@@ -14,116 +73,85 @@ where
     S: BuildHasher,
 {
     /// Hash a key using the configured hasher
+    #[inline(always)]
     pub(super) fn hash_key(&self, key: &K) -> u64 {
-        let h = self.hash_builder.hash_one(key);
-        if h == 0 {
-            1
-        } else if h == u64::MAX {
-            u64::MAX - 1
-        } else {
-            h
-        }
+        self.hash_builder.hash_one(key)
     }
 
     /// Hash a borrowed key using the configured hasher
+    #[inline(always)]
     pub(super) fn hash_key_borrowed<Q>(&self, key: &Q) -> u64
     where
         K: Borrow<Q>,
         Q: Hash + ?Sized,
     {
-        let h = self.hash_builder.hash_one(key);
-        if h == 0 {
-            1
-        } else if h == u64::MAX {
-            u64::MAX - 1
-        } else {
-            h
-        }
+        self.hash_builder.hash_one(key)
     }
 
-    /// Helper to resize/rehash a `Standard` entry vector in place.
+    /// Insert a unique `(key, value)` with precomputed `hash` into an allocated table with no duplicate check.
+    #[inline(always)]
+    fn insert_unique_unchecked(table: &mut StandardTable<K, V>, key: K, value: V, hash: u64) -> bool {
+        let capacity = table.capacity();
+        let mask = table.mask;
+        let h2 = h2_tag(hash);
+        let ctrl_ptr = table.ctrl.as_ptr();
+        let mut pos = (hash as usize) & mask;
+        let groups = (capacity >> 4).max(1);
+        for _ in 0..groups {
+            let avail = group_match_empty_or_deleted(ctrl_ptr, pos);
+            if avail != 0 {
+                let lane = avail.trailing_zeros() as usize;
+                let idx = (pos + lane) & mask;
+                table.set_ctrl(idx, h2);
+                // SAFETY: `idx < capacity` and slot `idx` is currently empty/deleted.
+                unsafe {
+                    std::ptr::write(table.slots.as_mut_ptr().add(idx), MaybeUninit::new((key, value)));
+                }
+                return true;
+            }
+            pos = (pos + GROUP_WIDTH) & mask;
+        }
+        false
+    }
+
+    /// Helper to resize/rehash a `Standard` table in place.
     pub(super) fn resize_standard_entries(
-        entries: &mut FastVec<HashEntry<K, V>>,
-        mask: &mut usize,
+        hash_builder: &S,
+        table: &mut StandardTable<K, V>,
         live: usize,
         load_factor: f64,
         occupied: &mut usize,
         rehashes: &mut u64,
     ) -> Result<()> {
-        let old_capacity = entries.len();
-        // A resize is also how tombstones get purged, and the caller
-        // now triggers one on occupancy rather than on a failed
-        // insert. Growing unconditionally would make an
-        // insert/remove churn workload with a bounded live set grow
-        // the table forever, so only grow when the live entries
-        // themselves are approaching the load limit; otherwise
-        // rehash in place.
+        let old_capacity = table.capacity();
         let load_limit = (old_capacity as f64 * load_factor) as usize;
         let new_capacity = if old_capacity >= 32 && live < load_limit / 2 {
             old_capacity
         } else {
-            (old_capacity * 2).max(32) // At least double the size
+            (old_capacity * 2).max(32)
         };
-        // Mask-based probing requires a power-of-two capacity
-        // (storage is created power-of-two and doubling preserves it).
         assert!(
             new_capacity.is_power_of_two(),
             "hash map capacity must be a power of two for mask-based probing (got {})",
             new_capacity
         );
 
-        // Create new larger storage
-        let mut new_entries: FastVec<HashEntry<K, V>> = FastVec::with_capacity(new_capacity)?;
+        let new_table = StandardTable::with_capacity_and_load_factor(new_capacity, load_factor)?;
+        let mut old_table = std::mem::replace(table, new_table);
 
-        // Initialize new empty entries
-        // SAFETY: `new_capacity` is within bounds as it was just successfully allocated.
-        // All elements 0..new_capacity are immediately initialized via `ptr::write`.
-        unsafe {
-            new_entries.set_len(new_capacity);
-        }
-        for i in 0..new_capacity {
-            // SAFETY: `new_entries` has capacity `new_capacity`. `i` < `new_capacity`.
-            // It is safe to write to this uninitialized memory.
-            unsafe {
-                std::ptr::write(
-                    new_entries.as_mut_ptr().add(i),
-                    HashEntry {
-                        key: None,
-                        value: None,
-                        hash: 0,
-                        _next: None,
-                    },
-                );
-            }
-        }
-
-        let new_mask = new_capacity - 1;
-
-        // Move existing entries
-        let mut old_entries = std::mem::replace(entries, new_entries);
-
-        for entry in old_entries.iter_mut() {
-            // Skip empty slots AND tombstones (u64::MAX)
-            if entry.hash != 0 && entry.hash != u64::MAX {
-                let index = (entry.hash as usize) & new_mask;
-
-                // Find empty slot with linear probing
-                let mut inserted = false;
-                for i in 0..new_capacity {
-                    let probe_index = (index + i) & new_mask;
-                    let new_entry = &mut entries[probe_index];
-
-                    if new_entry.hash == 0 {
-                        // Empty slot, insert here
-                        new_entry.key = entry.key.take();
-                        new_entry.value = entry.value.take();
-                        new_entry.hash = entry.hash;
-                        inserted = true;
-                        break;
-                    }
-                }
-
-                if !inserted {
+        for i in 0..old_capacity {
+            // SAFETY: `i < old_capacity <= old_table.ctrl.len()`.
+            let c = unsafe { *old_table.ctrl.as_ptr().add(i) };
+            if is_ctrl_full(c) {
+                // Mark empty before reading out `(k, v)` so unwinding on a panicking
+                // `K::hash` cannot double-drop slot `i` when `old_table` drops.
+                // SAFETY: `i < old_capacity` and `is_ctrl_full(c)` guarantees `slots[i]` is initialized.
+                let (k, v) = unsafe {
+                    *old_table.ctrl.as_mut_ptr().add(i) = CTRL_EMPTY;
+                    std::ptr::read(old_table.slots.as_ptr().add(i)).assume_init()
+                };
+                let hash = hash_builder.hash_one(&k);
+                if !Self::insert_unique_unchecked(table, k, v, hash) {
                     return Err(crate::error::ZiporaError::invalid_state(
                         "Failed to reinsert during resize",
                     ));
@@ -131,14 +159,11 @@ where
             }
         }
 
-        // old_entries is dropped here, which will drop the None keys/values harmlessly.
+        // `old_table` has all moved slots marked `CTRL_EMPTY`, so its `Drop` is a no-op.
+        drop(old_table);
 
-        *mask = new_mask;
-        // The rehash dropped every tombstone, so the claimed slots
-        // are exactly the live entries again.
         *occupied = live;
         *rehashes += 1;
-
         Ok(())
     }
 
@@ -147,9 +172,9 @@ where
         let live = self.len;
         let load_factor = self.config.load_factor;
         match &mut self.storage {
-            HashMapStorage::Standard { entries, mask } => Self::resize_standard_entries(
-                entries,
-                mask,
+            HashMapStorage::Standard(table) => Self::resize_standard_entries(
+                &self.hash_builder,
+                table,
                 live,
                 load_factor,
                 &mut self.occupied,
@@ -158,9 +183,9 @@ where
             HashMapStorage::SmallInline {
                 fallback: Some(fb), ..
             } => match fb.as_mut() {
-                HashMapStorage::Standard { entries, mask } => Self::resize_standard_entries(
-                    entries,
-                    mask,
+                HashMapStorage::Standard(table) => Self::resize_standard_entries(
+                    &self.hash_builder,
+                    table,
                     live,
                     load_factor,
                     &mut self.occupied,
@@ -173,14 +198,6 @@ where
                 }
             },
             HashMapStorage::SmallInline { fallback: None, .. } => {
-                // Before migration a SmallInline map has only its 16 fixed
-                // inline slots, so there is nothing to resize. This arm used
-                // to be a catch-all reading "Other storage types don't
-                // support resizing yet", which also covered a migrated map.
-                // `insert` calls this for Standard storage only: a migrated
-                // map's fallback table grows inside `insert_small_inline`
-                // (which calls `resize_standard_entries` directly), and the
-                // SmallInline arms keep this helper correct in every state.
                 Err(crate::error::ZiporaError::invalid_state(
                     "Resize not supported before SmallInline fallback migration",
                 ))
@@ -188,89 +205,63 @@ where
         }
     }
 
-    // Implementation methods for different storage strategies
+    #[inline]
     pub(super) fn insert_standard(
         _hash_builder: &S,
-        entries: &mut FastVec<HashEntry<K, V>>,
-        mask: &mut usize,
+        table: &mut StandardTable<K, V>,
         key: K,
         value: V,
         hash: u64,
     ) -> std::result::Result<Option<V>, (K, V)> {
-        // Initialize entries if empty
-        if entries.is_empty() {
-            let capacity = entries.capacity();
-            if capacity == 0 {
-                return Err((key, value)); // Trigger resize to allocate
+        let capacity = table.capacity();
+        if capacity == 0 {
+            return Err((key, value));
+        }
+
+        let mask = table.mask;
+        let h2 = h2_tag(hash);
+        let ctrl_ptr = table.ctrl.as_ptr();
+        let slots_ptr = table.slots.as_mut_ptr();
+        let mut pos = (hash as usize) & mask;
+        let mut first_avail_idx: Option<usize> = None;
+        let groups = (capacity >> 4).max(1);
+
+        for _ in 0..groups {
+            let mut matches = group_match_byte(ctrl_ptr, pos, h2);
+            while matches != 0 {
+                let lane = matches.trailing_zeros() as usize;
+                let idx = (pos + lane) & mask;
+                // SAFETY: `idx < capacity` and `ctrl[idx] == h2` (`< 0x80`), so `slots[idx]` is initialized.
+                let (existing_k, existing_v) = unsafe { (*slots_ptr.add(idx)).assume_init_mut() };
+                if existing_k == &key {
+                    let old_v = std::mem::replace(existing_v, value);
+                    return Ok(Some(old_v));
+                }
+                matches &= matches - 1;
             }
-            // SAFETY: `capacity` is the actual allocated capacity.
-            // Elements 0..capacity will be immediately initialized by `ptr::write`.
+
+            if first_avail_idx.is_none() {
+                let avail = group_match_empty_or_deleted(ctrl_ptr, pos);
+                if avail != 0 {
+                    let lane = avail.trailing_zeros() as usize;
+                    first_avail_idx = Some((pos + lane) & mask);
+                }
+            }
+
+            if group_match_empty(ctrl_ptr, pos) != 0 {
+                break;
+            }
+            pos = (pos + GROUP_WIDTH) & mask;
+        }
+
+        if let Some(insert_idx) = first_avail_idx {
+            table.set_ctrl(insert_idx, h2);
+            // SAFETY: `insert_idx < capacity` and slot `insert_idx` is empty or deleted (uninitialized).
             unsafe {
-                entries.set_len(capacity);
+                std::ptr::write(slots_ptr.add(insert_idx), MaybeUninit::new((key, value)));
             }
-            for i in 0..capacity {
-                // SAFETY: `entries` capacity is `capacity`. `i` < `capacity`.
-                // Thus `as_mut_ptr().add(i)` is valid and within bounds.
-                unsafe {
-                    std::ptr::write(
-                        entries.as_mut_ptr().add(i),
-                        HashEntry {
-                            key: None,
-                            value: None,
-                            hash: 0,
-                            _next: None,
-                        },
-                    );
-                }
-            }
-            debug_assert!(
-                capacity.is_power_of_two(),
-                "hash map capacity must be a power of two for mask-based probing"
-            );
-            *mask = capacity - 1;
-        }
-
-        let capacity = entries.len();
-        let index = (hash as usize) & *mask;
-
-        let mut first_tombstone_idx = None;
-        let mut found_existing_idx = None;
-        let mut empty_slot_idx = None;
-
-        // Linear probing to find slot status
-        for i in 0..capacity {
-            let probe_index = (index + i) & *mask;
-            let entry = &entries[probe_index];
-
-            if entry.hash == 0 {
-                empty_slot_idx = Some(probe_index);
-                break;
-            } else if entry.hash == u64::MAX {
-                if first_tombstone_idx.is_none() {
-                    first_tombstone_idx = Some(probe_index);
-                }
-            } else if entry.hash == hash
-                && entry.key.as_ref().is_some_and(|existing| existing == &key)
-            {
-                found_existing_idx = Some(probe_index);
-                break;
-            }
-        }
-
-        if let Some(idx) = found_existing_idx {
-            // Key exists, update value
-            let entry = &mut entries[idx];
-            let old_value = entry.value.replace(value);
-            Ok(old_value)
-        } else if let Some(insert_idx) = first_tombstone_idx.or(empty_slot_idx) {
-            // Insert at first tombstone or empty slot
-            let entry = &mut entries[insert_idx];
-            entry.key = Some(key);
-            entry.value = Some(value);
-            entry.hash = hash;
             Ok(None)
         } else {
-            // Table is full, need to resize
             Err((key, value))
         }
     }
@@ -288,46 +279,37 @@ where
         occupied: &mut usize,
         rehashes: &mut u64,
     ) -> Result<Option<V>> {
-        // If already migrated to fallback, delegate to Standard storage (resizing if full)
         if let Some(fb) = fallback.as_mut()
-            && let HashMapStorage::Standard { entries, mask } = fb.as_mut()
+            && let HashMapStorage::Standard(table) = fb.as_mut()
         {
-            // The load check `insert` runs for a Standard map, applied to the
-            // fallback table: grow (or purge tombstones) before it gets dense.
-            let capacity = if entries.is_empty() {
-                entries.capacity()
-            } else {
-                entries.len()
-            };
-            let limit = (capacity as f64 * load_factor) as usize;
-            if capacity > 0 && *occupied >= limit {
+            if table.capacity() > 0 && *occupied >= table.load_limit {
                 Self::resize_standard_entries(
-                    entries,
-                    mask,
+                    hash_builder,
+                    table,
                     *len,
                     load_factor,
                     occupied,
                     rehashes,
                 )?;
             }
-            let result = match Self::insert_standard(hash_builder, entries, mask, key, value, hash)
-            {
+            let result = match Self::insert_standard(hash_builder, table, key, value, hash) {
                 Ok(res) => res,
                 Err((retry_key, retry_val)) => {
                     Self::resize_standard_entries(
-                        entries,
-                        mask,
+                        hash_builder,
+                        table,
                         *len,
                         load_factor,
                         occupied,
                         rehashes,
                     )?;
-                    Self::insert_standard(hash_builder, entries, mask, retry_key, retry_val, hash)
-                        .map_err(|_| {
-                        crate::error::ZiporaError::invalid_state(
-                            "Hash table full in SmallInline fallback storage after resize",
-                        )
-                    })?
+                    Self::insert_standard(hash_builder, table, retry_key, retry_val, hash).map_err(
+                        |_| {
+                            crate::error::ZiporaError::invalid_state(
+                                "Hash table full in SmallInline fallback storage after resize",
+                            )
+                        },
+                    )?
                 }
             };
             if result.is_none() {
@@ -370,62 +352,40 @@ where
         }
 
         // Inline storage full — migrate all 16 entries to Standard storage.
-        let std_cap = 32; // 16 existing + room to grow
-        let mut entries = FastVec::with_capacity(std_cap)?;
-        let mut mask = std_cap - 1;
+        let std_cap = 32;
+        let mut table = StandardTable::with_capacity_and_load_factor(std_cap, load_factor)?;
 
-        // Initialize entries
-        for _ in 0..std_cap {
-            entries.push(HashEntry {
-                key: None,
-                value: None,
-                hash: 0,
-                _next: None,
-            })?;
-        }
-
-        // Re-insert all 16 inline entries into standard storage
         for i in 0..16 {
             if (inline_data.occupied >> i) & 1 == 1 {
-                // SAFETY: Bit i is set in occupied, so slot i is initialized
+                // SAFETY: Bit i is set in occupied, so slot i is initialized.
+                // Clear the bit before hashing so panics in `hash_one` cannot double-drop.
                 let (k, v) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
                 inline_data.occupied &= !(1 << i);
-                let raw_h = hash_builder.hash_one(&k);
-                let h = if raw_h == 0 {
-                    1
-                } else if raw_h == u64::MAX {
-                    u64::MAX - 1
-                } else {
-                    raw_h
-                };
-                let _ = Self::insert_standard(hash_builder, &mut entries, &mut mask, k, v, h);
+                let h = hash_builder.hash_one(&k);
+                let _ = Self::insert_standard(hash_builder, &mut table, k, v, h);
             }
         }
         inline_data.occupied = 0;
 
-        // Insert the new key-value pair
-        let result = Self::insert_standard(hash_builder, &mut entries, &mut mask, key, value, hash);
-        let result = result.map_err(|_| {
-            crate::error::ZiporaError::invalid_state("Hash table full after SmallInline migration")
-        })?;
+        let result = Self::insert_standard(hash_builder, &mut table, key, value, hash).map_err(
+            |_| {
+                crate::error::ZiporaError::invalid_state(
+                    "Hash table full after SmallInline migration",
+                )
+            },
+        )?;
 
-        // Store the migrated storage as fallback
-        *fallback = Some(Box::new(HashMapStorage::Standard { entries, mask }));
-        // From here on the fallback's load check reads `occupied`, which the
-        // inline slots did not keep in step (they leave no tombstones, and
-        // inline removals do not subtract). Like a rehash, the migration
-        // resets it to the live count: the 16 entries it moved (`insert`
-        // then counts the new key).
+        *fallback = Some(Box::new(HashMapStorage::Standard(table)));
         *occupied = *len;
         *len += 1;
 
         Ok(result)
     }
 
+    #[inline]
     pub(super) fn get_standard<'a, Q>(
         &self,
-        entries: &'a FastVec<HashEntry<K, V>>,
-        mask: &usize,
+        table: &'a StandardTable<K, V>,
         key: &Q,
         hash: u64,
     ) -> Option<&'a V>
@@ -433,33 +393,34 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        if entries.is_empty() {
+        let capacity = table.capacity();
+        if capacity == 0 {
             return None;
         }
 
-        let capacity = entries.len();
-        let index = (hash as usize) & *mask;
+        let mask = table.mask;
+        let h2 = h2_tag(hash);
+        let ctrl_ptr = table.ctrl.as_ptr();
+        let slots_ptr = table.slots.as_ptr();
+        let mut pos = (hash as usize) & mask;
+        let groups = (capacity >> 4).max(1);
 
-        // Linear probing to find key
-        for i in 0..capacity {
-            let probe_index = (index + i) & *mask;
-            let entry = &entries[probe_index];
-
-            if entry.hash == 0 {
-                // Empty slot, key not found
-                return None;
-            } else if entry.hash == u64::MAX {
-                // Tombstone, skip and continue searching
-                continue;
-            } else if entry.hash == hash
-                && entry
-                    .key
-                    .as_ref()
-                    .is_some_and(|existing| existing.borrow() == key)
-            {
-                // Found the key
-                return entry.value.as_ref();
+        for _ in 0..groups {
+            let mut matches = group_match_byte(ctrl_ptr, pos, h2);
+            while matches != 0 {
+                let lane = matches.trailing_zeros() as usize;
+                let idx = (pos + lane) & mask;
+                // SAFETY: `idx < capacity` and `ctrl[idx] == h2` (`< 0x80`), so `slots[idx]` is initialized.
+                let (existing_k, existing_v) = unsafe { (*slots_ptr.add(idx)).assume_init_ref() };
+                if existing_k.borrow() == key {
+                    return Some(existing_v);
+                }
+                matches &= matches - 1;
             }
+            if group_match_empty(ctrl_ptr, pos) != 0 {
+                return None;
+            }
+            pos = (pos + GROUP_WIDTH) & mask;
         }
 
         None
@@ -476,12 +437,11 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        // Check fallback first (migrated data)
         if let Some(fb) = fallback
-            && let HashMapStorage::Standard { entries, mask } = fb.as_ref()
+            && let HashMapStorage::Standard(table) = fb.as_ref()
         {
             let hash = self.hash_key_borrowed(key);
-            return self.get_standard(entries, mask, key, hash);
+            return self.get_standard(table, key, hash);
         }
 
         for i in 0..16 {
@@ -496,63 +456,52 @@ where
         None
     }
 
-    // get_mut implementation methods
     pub(super) fn get_mut_standard<'a, Q>(
         hash_builder: &S,
-        entries: &'a mut FastVec<HashEntry<K, V>>,
-        mask: &mut usize,
+        table: &'a mut StandardTable<K, V>,
         key: &Q,
     ) -> Option<&'a mut V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        if entries.is_empty() {
+        let capacity = table.capacity();
+        if capacity == 0 {
             return None;
         }
 
-        let h = hash_builder.hash_one(key);
-        let hash = if h == 0 {
-            1
-        } else if h == u64::MAX {
-            u64::MAX - 1
-        } else {
-            h
-        };
+        let hash = hash_builder.hash_one(key);
+        let mask = table.mask;
+        let h2 = h2_tag(hash);
+        let ctrl_ptr = table.ctrl.as_ptr();
+        let slots_ptr = table.slots.as_mut_ptr();
+        let mut pos = (hash as usize) & mask;
+        let groups = (capacity >> 4).max(1);
 
-        let capacity = entries.len();
-        let index = (hash as usize) & *mask;
-
-        // Find the index first
-        let mut found_index = None;
-        for i in 0..capacity {
-            let probe_index = (index + i) & *mask;
-            let entry = &entries[probe_index]; // Immutable borrow for checking
-
-            if entry.hash == 0 {
-                // Empty slot, key not found
-                break;
-            } else if entry.hash == u64::MAX {
-                // Tombstone, skip and continue searching
-                continue;
-            } else if entry.hash == hash
-                && entry
-                    .key
-                    .as_ref()
-                    .is_some_and(|existing| existing.borrow() == key)
-            {
-                // Found the key
-                found_index = Some(probe_index);
-                break;
+        for _ in 0..groups {
+            let mut matches = group_match_byte(ctrl_ptr, pos, h2);
+            while matches != 0 {
+                let lane = matches.trailing_zeros() as usize;
+                let idx = (pos + lane) & mask;
+                // SAFETY: `idx < capacity` and `ctrl[idx] == h2` (`< 0x80`), so `slots[idx]` is initialized.
+                let k_matches = unsafe {
+                    let (existing_k, _) = (*slots_ptr.add(idx)).assume_init_ref();
+                    existing_k.borrow() == key
+                };
+                if k_matches {
+                    // SAFETY: `idx < capacity` is initialized and we return immediately with `'a` borrow.
+                    let (_, existing_v) = unsafe { (*slots_ptr.add(idx)).assume_init_mut() };
+                    return Some(existing_v);
+                }
+                matches &= matches - 1;
             }
+            if group_match_empty(ctrl_ptr, pos) != 0 {
+                return None;
+            }
+            pos = (pos + GROUP_WIDTH) & mask;
         }
 
-        // Return mutable reference if found
-        if let Some(idx) = found_index {
-            entries[idx].value.as_mut()
-        } else {
-            None
-        }
+        None
     }
 
     pub(super) fn get_mut_small_inline<'a, Q>(
@@ -567,9 +516,9 @@ where
         Q: Hash + Eq + ?Sized,
     {
         if let Some(fb) = fallback.as_mut()
-            && let HashMapStorage::Standard { entries, mask } = fb.as_mut()
+            && let HashMapStorage::Standard(table) = fb.as_mut()
         {
-            return Self::get_mut_standard(hash_builder, entries, mask, key);
+            return Self::get_mut_standard(hash_builder, table, key);
         }
 
         for i in 0..16 {
@@ -589,120 +538,100 @@ where
         None
     }
 
-    // remove implementation methods
     pub(super) fn remove_standard<Q>(
         hash_builder: &S,
-        entries: &mut FastVec<HashEntry<K, V>>,
-        mask: &mut usize,
+        table: &mut StandardTable<K, V>,
         key: &Q,
     ) -> Option<V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        if entries.is_empty() {
+        let capacity = table.capacity();
+        if capacity == 0 {
             return None;
         }
 
-        let h = hash_builder.hash_one(key);
-        let hash = if h == 0 {
-            1
-        } else if h == u64::MAX {
-            u64::MAX - 1
-        } else {
-            h
-        };
+        let hash = hash_builder.hash_one(key);
+        let mask = table.mask;
+        let h2 = h2_tag(hash);
+        let ctrl_ptr = table.ctrl.as_ptr();
+        let slots_ptr = table.slots.as_mut_ptr();
+        let mut pos = (hash as usize) & mask;
+        let groups = (capacity >> 4).max(1);
 
-        let capacity = entries.len();
-        let index = (hash as usize) & *mask;
-
-        // Linear probing to find key
-        for i in 0..capacity {
-            let probe_index = (index + i) & *mask;
-            let entry = &mut entries[probe_index];
-
-            if entry.hash == 0 {
-                // Empty slot, key not found
-                return None;
-            } else if entry.hash == hash
-                && entry
-                    .key
-                    .as_ref()
-                    .is_some_and(|existing| existing.borrow() == key)
-            {
-                // Found the key, remove it
-                let old_value = entry.value.take();
-                entry.key.take(); // free the key
-
-                // Use tombstone approach: mark as deleted but don't create holes
-                entry.hash = u64::MAX; // Special tombstone marker
-
-                return old_value;
+        for _ in 0..groups {
+            let mut matches = group_match_byte(ctrl_ptr, pos, h2);
+            while matches != 0 {
+                let lane = matches.trailing_zeros() as usize;
+                let idx = (pos + lane) & mask;
+                // SAFETY: `idx < capacity` and `ctrl[idx] == h2` (`< 0x80`), so `slots[idx]` is initialized.
+                let k_matches = unsafe {
+                    let (existing_k, _) = (*slots_ptr.add(idx)).assume_init_ref();
+                    existing_k.borrow() == key
+                };
+                if k_matches {
+                    // SAFETY: `idx < capacity` is initialized; we mark it deleted and read out `(k, v)`.
+                    let (_old_k, old_v) = unsafe { std::ptr::read(slots_ptr.add(idx)).assume_init() };
+                    table.set_ctrl(idx, CTRL_DELETED);
+                    return Some(old_v);
+                }
+                matches &= matches - 1;
             }
+            if group_match_empty(ctrl_ptr, pos) != 0 {
+                return None;
+            }
+            pos = (pos + GROUP_WIDTH) & mask;
         }
 
         None
     }
 
-    /// Backward shift deletion to maintain linear probing invariant
+    /// Backward shift deletion to compact a contiguous cluster in `StandardTable`.
     #[cfg(test)]
     pub(super) fn backward_shift_delete(
-        entries: &mut FastVec<HashEntry<K, V>>,
-        mask: usize,
+        table: &mut StandardTable<K, V>,
+        hash_builder: &S,
         mut pos: usize,
     ) where
         K: Clone,
         V: Clone,
     {
-        // Clear the removed entry
-        entries[pos].hash = 0;
+        let mask = table.mask;
+        if is_ctrl_full(table.ctrl[pos]) {
+            // SAFETY: `pos < table.capacity()` and `is_ctrl_full` guarantees `slots[pos]` is initialized.
+            unsafe {
+                std::ptr::drop_in_place(table.slots[pos].as_mut_ptr());
+            }
+        }
+        table.set_ctrl(pos, CTRL_EMPTY);
 
         loop {
             let next_pos = (pos + 1) & mask;
-            let next_entry = &entries[next_pos];
-
-            // Stop if next entry is empty
-            if next_entry.hash == 0 {
+            let next_ctrl = table.ctrl[next_pos];
+            if !is_ctrl_full(next_ctrl) {
                 break;
             }
-
-            // Calculate the ideal position for the next entry
-            let ideal_pos = (next_entry.hash as usize) & mask;
-
-            // Check if we can move this entry backward
-            // We can move it if its ideal position would still allow it to be found
-            // after the move. This happens when:
-            // - The ideal position is at or before the empty slot, OR
-            // - The entry is displaced and moving it backward doesn't break the probe sequence
-
-            let can_move = if ideal_pos <= pos {
-                // Ideal position is before the empty slot - safe to move
-                true
-            } else {
-                // Entry is displaced. Check if moving backward maintains findability.
-                // In a wrapping hash table, we need to consider wrap-around cases.
-                // The entry can be moved if the ideal position is between the current
-                // empty position and the entry's current position (considering wrap-around).
-
-                if pos < next_pos {
-                    // No wrap-around case: ideal should be between pos and next_pos
-                    ideal_pos > pos && ideal_pos <= next_pos
-                } else {
-                    // Wrap-around case: ideal can be after pos or before next_pos
-                    ideal_pos > pos || ideal_pos <= next_pos
-                }
+            // SAFETY: `next_pos < table.capacity()` and `is_ctrl_full(next_ctrl)` guarantees initialization.
+            let ideal_pos = unsafe {
+                let (next_k, _) = table.slots[next_pos].assume_init_ref();
+                (hash_builder.hash_one(next_k) as usize) & mask
             };
-
+            let can_move = if pos < next_pos {
+                ideal_pos <= pos || ideal_pos > next_pos
+            } else {
+                ideal_pos <= pos && ideal_pos > next_pos
+            };
             if !can_move {
                 break;
             }
-
-            // Move the entry backward using swap (no cloning needed!)
-            entries.swap(pos, next_pos);
-            entries[next_pos].hash = 0; // Mark the old position as empty
-            entries[next_pos].key = None;
-            entries[next_pos].value = None;
-
+            // SAFETY: `next_pos` is initialized and `pos` is currently empty (`CTRL_EMPTY`).
+            unsafe {
+                let moved = std::ptr::read(table.slots.as_ptr().add(next_pos));
+                std::ptr::write(table.slots.as_mut_ptr().add(pos), moved);
+            }
+            table.set_ctrl(pos, next_ctrl);
+            table.set_ctrl(next_pos, CTRL_EMPTY);
             pos = next_pos;
         }
     }
@@ -719,9 +648,9 @@ where
         Q: Hash + Eq + ?Sized,
     {
         if let Some(fb) = fallback.as_mut()
-            && let HashMapStorage::Standard { entries, mask } = fb.as_mut()
+            && let HashMapStorage::Standard(table) = fb.as_mut()
         {
-            let result = Self::remove_standard(hash_builder, entries, mask, key);
+            let result = Self::remove_standard(hash_builder, table, key);
             if result.is_some() {
                 *len -= 1;
             }
@@ -748,10 +677,8 @@ where
         None
     }
 
-    // clear implementation methods
-    pub(super) fn clear_standard(entries: &mut FastVec<HashEntry<K, V>>, mask: &mut usize) {
-        entries.clear();
-        *mask = 0;
+    pub(super) fn clear_standard(table: &mut StandardTable<K, V>) {
+        table.clear_slots();
     }
 
     pub(super) fn clear_small_inline(

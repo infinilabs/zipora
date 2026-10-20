@@ -19,7 +19,6 @@
 //! - **Memory Pool Integration**: SecureMemoryPool for high-performance allocation
 //! - **Concurrent Access**: Lock-free and token-based synchronization
 
-use crate::containers::FastVec;
 use crate::error::Result;
 use crate::hash_map::cache_locality::{
     CacheMetrics,
@@ -225,17 +224,20 @@ where
                 let cap = if *initial_capacity == 0 {
                     0
                 } else {
-                    initial_capacity.checked_next_power_of_two().ok_or_else(|| {
-                        crate::error::ZiporaError::out_of_memory(
-                            initial_capacity
-                                .saturating_mul(std::mem::size_of::<HashEntry<K, V>>()),
-                        )
-                    })?
+                    (*initial_capacity)
+                        .max(GROUP_WIDTH)
+                        .checked_next_power_of_two()
+                        .ok_or_else(|| {
+                            crate::error::ZiporaError::out_of_memory(
+                                initial_capacity.saturating_mul(
+                                    std::mem::size_of::<(K, V)>().saturating_add(1),
+                                ),
+                            )
+                        })?
                 };
-                Ok(HashMapStorage::Standard {
-                    entries: FastVec::with_capacity(cap)?,
-                    mask: cap.saturating_sub(1),
-                })
+                Ok(HashMapStorage::Standard(
+                    StandardTable::with_capacity_and_load_factor(cap, config.load_factor)?,
+                ))
             }
             HashStorageStrategy::SmallInline {
                 ..
@@ -272,6 +274,7 @@ where
     }
 
     /// Insert a key-value pair
+    #[inline]
     pub fn insert(&mut self, key: K, value: V) -> Result<Option<V>> {
         self.stats.insertions += 1;
 
@@ -286,55 +289,29 @@ where
         // The Standard table a SmallInline map migrates to once its 16 inline
         // slots are full gets the same check inside insert_small_inline, so
         // that an unmigrated SmallInline insert does not pay for it.
-        if let HashMapStorage::Standard { entries, .. } = &self.storage {
-            let capacity = if entries.is_empty() {
-                entries.capacity()
-            } else {
-                entries.len()
-            };
-            let limit = (capacity as f64 * self.config.load_factor) as usize;
-            if capacity > 0 && self.occupied >= limit {
-                self.resize_storage()?;
-            }
+        if let HashMapStorage::Standard(table) = &self.storage
+            && table.capacity() > 0
+            && self.occupied >= table.load_limit
+        {
+            self.resize_storage()?;
         }
 
         let res = match &mut self.storage {
-            HashMapStorage::Standard {
-                entries,
-                mask,
-            } => {
+            HashMapStorage::Standard(table) => {
                 // Try insertion first
-                match Self::insert_standard(
-                    &self.hash_builder,
-                    entries,
-                    mask,
-                    key,
-                    value,
-                    hash,
-                ) {
+                match Self::insert_standard(&self.hash_builder, table, key, value, hash) {
                     Ok(result) => Ok(result),
                     Err((key, value)) => {
                         // Table is full, resize and retry
                         self.resize_storage()?;
                         // Retry insertion after resize
-                        if let HashMapStorage::Standard {
-                            entries,
-                            mask,
-                        } = &mut self.storage
-                        {
-                            Self::insert_standard(
-                                &self.hash_builder,
-                                entries,
-                                mask,
-                                key,
-                                value,
-                                hash,
-                            )
-                            .map_err(|_| {
-                                crate::error::ZiporaError::invalid_state(
-                                    "Hash table full after resize",
-                                )
-                            })
+                        if let HashMapStorage::Standard(table) = &mut self.storage {
+                            Self::insert_standard(&self.hash_builder, table, key, value, hash)
+                                .map_err(|_| {
+                                    crate::error::ZiporaError::invalid_state(
+                                        "Hash table full after resize",
+                                    )
+                                })
                         } else {
                             Err(crate::error::ZiporaError::invalid_state(
                                 "Storage type changed during resize",
@@ -369,6 +346,7 @@ where
     }
 
     /// Get a value by key
+    #[inline]
     pub fn get<Q>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -377,10 +355,7 @@ where
         let hash = self.hash_key_borrowed(key);
 
         match &self.storage {
-            HashMapStorage::Standard {
-                entries,
-                mask,
-            } => self.get_standard(entries, mask, key, hash),
+            HashMapStorage::Standard(table) => self.get_standard(table, key, hash),
             HashMapStorage::SmallInline {
                 inline_data,
                 fallback,
@@ -412,16 +387,16 @@ where
     }
 
     /// Get a mutable reference to a value by key
+    #[inline]
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
         match &mut self.storage {
-            HashMapStorage::Standard {
-                entries,
-                mask,
-            } => Self::get_mut_standard(&self.hash_builder, entries, mask, key),
+            HashMapStorage::Standard(table) => {
+                Self::get_mut_standard(&self.hash_builder, table, key)
+            }
             HashMapStorage::SmallInline {
                 inline_data,
                 fallback,
@@ -431,16 +406,16 @@ where
     }
 
     /// Remove a key-value pair and return the value if it existed
+    #[inline]
     pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
         let res = match &mut self.storage {
-            HashMapStorage::Standard {
-                entries,
-                mask,
-            } => Self::remove_standard(&self.hash_builder, entries, mask, key),
+            HashMapStorage::Standard(table) => {
+                Self::remove_standard(&self.hash_builder, table, key)
+            }
             HashMapStorage::SmallInline {
                 inline_data,
                 fallback,
@@ -457,10 +432,7 @@ where
     /// Clear all entries from the map
     pub fn clear(&mut self) {
         match &mut self.storage {
-            HashMapStorage::Standard {
-                entries,
-                mask,
-            } => Self::clear_standard(entries, mask),
+            HashMapStorage::Standard(table) => Self::clear_standard(table),
             HashMapStorage::SmallInline {
                 inline_data,
                 fallback,
@@ -472,6 +444,7 @@ where
     }
 
     /// Check if the map contains a key
+    #[inline]
     pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
@@ -483,18 +456,15 @@ where
     /// Get the capacity of the map
     pub fn capacity(&self) -> usize {
         match &self.storage {
-            HashMapStorage::Standard { entries, .. } => entries.capacity(), // Return actual allocated capacity
+            HashMapStorage::Standard(table) => table.capacity(),
             HashMapStorage::SmallInline {
                 inline_data: _,
                 fallback,
                 ..
             } => {
-                // Migration moves all 16 inline entries into the fallback
-                // table and inserts go there afterwards, so the inline slots
-                // no longer add capacity (this used to report 16 + fallback).
                 if let Some(fb) = fallback {
                     match fb.as_ref() {
-                        HashMapStorage::Standard { entries, .. } => entries.capacity(),
+                        HashMapStorage::Standard(table) => table.capacity(),
                         HashMapStorage::SmallInline { .. } => 16,
                     }
                 } else {
@@ -643,14 +613,16 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.storage {
-            HashMapStorage::Standard { entries, .. } => {
-                while self.index < entries.len() {
-                    let entry = &entries[self.index];
+            HashMapStorage::Standard(table) => {
+                let cap = table.capacity();
+                let ctrl = table.ctrl.as_slice();
+                let slots = table.slots.as_slice();
+                while self.index < cap {
+                    let idx = self.index;
                     self.index += 1;
-                    if entry.hash != 0
-                        && entry.hash != u64::MAX
-                        && let (Some(k), Some(v)) = (&entry.key, &entry.value)
-                    {
+                    if is_ctrl_full(ctrl[idx]) {
+                        // SAFETY: `is_ctrl_full` guarantees `slots[idx]` is initialized.
+                        let (k, v) = unsafe { slots[idx].assume_init_ref() };
                         return Some((k, v));
                     }
                 }
@@ -671,19 +643,20 @@ where
                     }
                 }
                 if let Some(fb) = fallback
-                    && let HashMapStorage::Standard { entries, .. } = fb.as_ref()
+                    && let HashMapStorage::Standard(table) = fb.as_ref()
                 {
+                    let cap = table.capacity();
+                    let ctrl = table.ctrl.as_slice();
+                    let slots = table.slots.as_slice();
                     while self.index >= 16 {
                         let fb_idx = self.index - 16;
-                        if fb_idx >= entries.len() {
+                        if fb_idx >= cap {
                             return None;
                         }
-                        let entry = &entries[fb_idx];
                         self.index += 1;
-                        if entry.hash != 0
-                            && entry.hash != u64::MAX
-                            && let (Some(k), Some(v)) = (&entry.key, &entry.value)
-                        {
+                        if is_ctrl_full(ctrl[fb_idx]) {
+                            // SAFETY: `is_ctrl_full` guarantees `slots[fb_idx]` is initialized.
+                            let (k, v) = unsafe { slots[fb_idx].assume_init_ref() };
                             return Some((k, v));
                         }
                     }
@@ -703,17 +676,23 @@ where
     inner: IterMutInner<'a, K, V>,
 }
 
+struct StandardIterMutState<'a, K, V> {
+    ctrl: &'a [u8],
+    slots: std::slice::IterMut<'a, std::mem::MaybeUninit<(K, V)>>,
+    index: usize,
+}
+
 enum IterMutInner<'a, K, V>
 where
     K: Clone,
     V: Clone,
 {
-    Standard(std::slice::IterMut<'a, crate::hash_map::storage::HashEntry<K, V>>),
+    Standard(StandardIterMutState<'a, K, V>),
     SmallInline {
         inline_occupied: u16,
         inline_slice: &'a mut [std::mem::MaybeUninit<(K, V)>],
         inline_slot: usize,
-        fallback: Option<std::slice::IterMut<'a, crate::hash_map::storage::HashEntry<K, V>>>,
+        fallback: Option<StandardIterMutState<'a, K, V>>,
     },
 }
 
@@ -724,18 +703,22 @@ where
 {
     fn new(storage: &'a mut HashMapStorage<K, V>) -> Self {
         let inner = match storage {
-            HashMapStorage::Standard { entries, .. } => {
-                IterMutInner::Standard(entries.as_mut_slice().iter_mut())
-            }
+            HashMapStorage::Standard(table) => IterMutInner::Standard(StandardIterMutState {
+                ctrl: table.ctrl.as_slice(),
+                slots: table.slots.as_mut_slice().iter_mut(),
+                index: 0,
+            }),
             HashMapStorage::SmallInline {
                 inline_data,
                 fallback,
                 ..
             } => {
                 let fb_iter = fallback.as_deref_mut().and_then(|fb| match fb {
-                    HashMapStorage::Standard { entries, .. } => {
-                        Some(entries.as_mut_slice().iter_mut())
-                    }
+                    HashMapStorage::Standard(table) => Some(StandardIterMutState {
+                        ctrl: table.ctrl.as_slice(),
+                        slots: table.slots.as_mut_slice().iter_mut(),
+                        index: 0,
+                    }),
                     _ => None,
                 });
                 IterMutInner::SmallInline {
@@ -759,13 +742,15 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         match &mut self.inner {
-            IterMutInner::Standard(iter) => {
-                for entry in iter.by_ref() {
-                    if entry.hash != 0
-                        && entry.hash != u64::MAX
-                        && let (Some(k), Some(v)) = (&entry.key, &mut entry.value)
-                    {
-                        return Some((k, v));
+            IterMutInner::Standard(state) => {
+                for slot in state.slots.by_ref() {
+                    let idx = state.index;
+                    state.index += 1;
+                    if is_ctrl_full(state.ctrl[idx]) {
+                        // SAFETY: `is_ctrl_full` guarantees `slot` is initialized, and
+                        // `IterMut` yields each slot at most once.
+                        let (k, v) = unsafe { slot.assume_init_mut() };
+                        return Some((&*k, v));
                     }
                 }
                 None
@@ -787,13 +772,15 @@ where
                         return Some((&*k, v));
                     }
                 }
-                if let Some(fb_iter) = fallback {
-                    for entry in fb_iter.by_ref() {
-                        if entry.hash != 0
-                            && entry.hash != u64::MAX
-                            && let (Some(k), Some(v)) = (&entry.key, &mut entry.value)
-                        {
-                            return Some((k, v));
+                if let Some(state) = fallback {
+                    for slot in state.slots.by_ref() {
+                        let idx = state.index;
+                        state.index += 1;
+                        if is_ctrl_full(state.ctrl[idx]) {
+                            // SAFETY: `is_ctrl_full` guarantees `slot` is initialized, and
+                            // `IterMut` yields each slot at most once.
+                            let (k, v) = unsafe { slot.assume_init_mut() };
+                            return Some((&*k, v));
                         }
                     }
                 }

@@ -36,7 +36,7 @@ const PRIMES: &[usize] = &[
 /// do not reuse with an identity-style hasher.
 #[inline(always)]
 fn bucket_index(hash: u64, num_buckets: usize) -> usize {
-    ((hash as u128 * num_buckets as u128) >> 64) as usize
+    (((hash ^ (hash >> 32)) as u128 * (num_buckets as u128)) >> 64) as usize
 }
 
 /// Get next prime number greater than or equal to n
@@ -68,8 +68,9 @@ pub trait LinkType: Copy + Eq + PartialEq + Ord + PartialOrd + Default + std::fm
     fn from_usize(val: usize) -> Option<Self>;
 
     /// Check if this is a valid slot (not deleted or tail)
+    #[inline(always)]
     fn is_valid(self) -> bool {
-        self != Self::DELMARK && self != Self::TAIL
+        self < Self::DELMARK
     }
 }
 

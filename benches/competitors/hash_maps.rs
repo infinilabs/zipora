@@ -196,7 +196,7 @@ pub fn bench_hash_maps(
         record_space_metric(
             space,
             "hash_maps/zipora_u64_bytes_per_entry",
-            (cap * 40) as f64 / n.max(1) as f64,
+            (cap * 17) as f64 / n.max(1) as f64,
         );
         run_insert_bench(
             records,
@@ -243,7 +243,7 @@ pub fn bench_hash_maps(
         record_space_metric(
             space,
             "hash_maps/zipora_str16_bytes_per_entry",
-            (cap * 48) as f64 / n.max(1) as f64,
+            (cap * 25) as f64 / n.max(1) as f64,
         );
         run_insert_bench(
             records,
