@@ -930,7 +930,8 @@ mod tests {
         assert!(
             ratio1 < 0.65 && ratio1 < ratio0,
             "Order-1 ratio {} should be < 0.65 and < Order-0 ratio {}",
-            ratio1, ratio0
+            ratio1,
+            ratio0
         );
 
         // Roundtrip with Order-1
@@ -966,5 +967,203 @@ mod tests {
         // 2-byte input
         let decoded_pair = decoder2.decode(&encoded_pair, 2).unwrap();
         assert_eq!(decoded_pair, b"qu");
+    }
+
+    fn serialize_custom_tree(symbols_and_codes: &[(u8, &[bool])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&(symbols_and_codes.len() as u16).to_le_bytes());
+        for &(sym, code) in symbols_and_codes {
+            out.push(sym);
+            out.push(code.len() as u8);
+            let mut cur_byte = 0u8;
+            let mut bit_idx = 0usize;
+            for &bit in code {
+                if bit {
+                    cur_byte |= 1u8 << bit_idx;
+                }
+                bit_idx += 1;
+                if bit_idx == 8 {
+                    out.push(cur_byte);
+                    cur_byte = 0;
+                    bit_idx = 0;
+                }
+            }
+            if bit_idx > 0 {
+                out.push(cur_byte);
+            }
+        }
+        out
+    }
+
+    fn serialize_custom_contextual_model(
+        order: u8,
+        context_map: &[(u32, u32)],
+        trees: &[Vec<u8>],
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.push(order);
+        out.extend_from_slice(&(trees.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(context_map.len() as u32).to_le_bytes());
+        for &(ctx, tidx) in context_map {
+            out.extend_from_slice(&ctx.to_le_bytes());
+            out.extend_from_slice(&tidx.to_le_bytes());
+        }
+        for t in trees {
+            out.extend_from_slice(&(t.len() as u32).to_le_bytes());
+            out.extend_from_slice(t);
+        }
+        out
+    }
+
+    #[test]
+    fn test_deserialized_codes_longer_than_64_bits_roundtrip() {
+        // Build a prefix-free code table with lengths 1, 65, 130, and 200 bits:
+        // 'a': [0] (1 bit)
+        // 'b': [1, 1, ..., 1, 0] (64 ones + 0 = 65 bits)
+        // 'c': [1, 1, ..., 1, 0] (129 ones + 0 = 130 bits)
+        // 'd': [1, 1, ..., 1, 1] (200 ones = 200 bits)
+        let code_a = vec![false];
+        let mut code_b = vec![true; 64];
+        code_b.push(false);
+        let mut code_c = vec![true; 129];
+        code_c.push(false);
+        let code_d = vec![true; 200];
+
+        let raw_tree = serialize_custom_tree(&[
+            (b'a', &code_a),
+            (b'b', &code_b),
+            (b'c', &code_c),
+            (b'd', &code_d),
+        ]);
+        let tree = HuffmanTree::deserialize(&raw_tree).unwrap();
+        let msg = b"abacadaaaabbbcccdddcba";
+
+        // Reference bit-by-bit encoding
+        let mut expected_bits = Vec::new();
+        for &sym in msg {
+            expected_bits.extend_from_slice(tree.get_code(sym).unwrap());
+        }
+        let mut expected_bytes = Vec::new();
+        for chunk in expected_bits.chunks(8) {
+            let mut b = 0u8;
+            for (i, &bit) in chunk.iter().enumerate() {
+                if bit {
+                    b |= 1u8 << i;
+                }
+            }
+            expected_bytes.push(b);
+        }
+
+        // 1. Direct HuffmanEncoder::from_tree + HuffmanDecoder
+        let enc0 = HuffmanEncoder::from_tree(tree.clone());
+        let encoded0 = enc0.encode(msg).unwrap();
+        assert_eq!(encoded0, expected_bytes);
+        let dec0 = HuffmanDecoder::new(tree);
+        assert_eq!(dec0.decode(&encoded0, msg.len()).unwrap(), msg);
+
+        // 2. ContextualHuffmanEncoder::deserialize across Order0, Order1, Order2
+        for (order_byte, ctx_map) in [
+            (0u8, vec![]),
+            (1u8, vec![(b'a' as u32, 0u32), (b'b' as u32, 0u32)]),
+            (2u8, vec![(((b'a' as u32) << 8) | (b'b' as u32), 0u32)]),
+        ] {
+            let model_bytes = serialize_custom_contextual_model(
+                order_byte,
+                &ctx_map,
+                std::slice::from_ref(&raw_tree),
+            );
+            let ctx_enc = ContextualHuffmanEncoder::deserialize(&model_bytes).unwrap();
+            let ctx_encoded = ctx_enc.encode(msg).unwrap();
+            assert_eq!(
+                ctx_encoded, expected_bytes,
+                "Order-{order_byte} mis-encoded >64-bit deserialized codes"
+            );
+            let ctx_dec = ContextualHuffmanDecoder::new(ctx_enc);
+            let ctx_decoded = ctx_dec.decode(&ctx_encoded, msg.len()).unwrap();
+            assert_eq!(ctx_decoded, msg);
+        }
+    }
+
+    #[test]
+    fn test_deserialized_tree_index_above_u16_max_not_truncated() {
+        // Tree 0: 'a' -> [0], 'b' -> [1]
+        // Tree 65536: 'a' -> [1], 'b' -> [0] (inverted!)
+        // Filler trees 1..65536: empty 0-symbol trees (2 bytes each)
+        let tree0 = serialize_custom_tree(&[(b'a', &[false]), (b'b', &[true])]);
+        let tree_hi = serialize_custom_tree(&[(b'a', &[true]), (b'b', &[false])]);
+        let empty_tree = serialize_custom_tree(&[]);
+
+        let mut trees = Vec::with_capacity(65_537);
+        trees.push(tree0);
+        for _ in 1..65_536 {
+            trees.push(empty_tree.clone());
+        }
+        trees.push(tree_hi);
+        assert_eq!(trees.len(), 65_537);
+
+        // Order-1: context 'a' maps to tree 65536 (which wrapped to 0 when cast `as u16`)
+        let model_o1 = serialize_custom_contextual_model(1, &[(b'a' as u32, 65_536u32)], &trees);
+        let enc_o1 = ContextualHuffmanEncoder::deserialize(&model_o1).unwrap();
+        let data = b"aab";
+        // Symbol 0 ('a') uses tree 0 -> bit 0
+        // Symbol 1 ('a', ctx='a') uses tree 65536 -> bit 1
+        // Symbol 2 ('b', ctx='a') uses tree 65536 -> bit 0
+        // Packed LSB-first: 0b010 = 2 (whereas tree 0 would emit 0b100 = 4)
+        let encoded_o1 = enc_o1.encode(data).unwrap();
+        assert_eq!(encoded_o1, vec![0b010]);
+        let dec_o1 = ContextualHuffmanDecoder::new(enc_o1);
+        assert_eq!(dec_o1.decode(&encoded_o1, data.len()).unwrap(), data);
+
+        // Order-2: context "aa" maps to tree 65536
+        let ctx_aa = ((b'a' as u32) << 8) | (b'a' as u32);
+        let model_o2 = serialize_custom_contextual_model(2, &[(ctx_aa, 65_536u32)], &trees);
+        let enc_o2 = ContextualHuffmanEncoder::deserialize(&model_o2).unwrap();
+        let data_o2 = b"aaab";
+        // Symbol 0 ('a') uses tree 0 -> bit 0
+        // Symbol 1 ('a') uses tree 0 -> bit 0
+        // Symbol 2 ('a', ctx="aa") uses tree 65536 -> bit 1
+        // Symbol 3 ('b', ctx="aa") uses tree 65536 -> bit 0
+        // Packed LSB-first: 0b0100 = 4 (whereas tree 0 would emit 0b1000 = 8)
+        let encoded_o2 = enc_o2.encode(data_o2).unwrap();
+        assert_eq!(encoded_o2, vec![0b0100]);
+        let dec_o2 = ContextualHuffmanDecoder::new(enc_o2);
+        assert_eq!(dec_o2.decode(&encoded_o2, data_o2.len()).unwrap(), data_o2);
+    }
+
+    #[test]
+    fn test_crafted_1_5mb_model_does_not_blow_up_dense_table_allocation() {
+        // 166,667 1-symbol trees (9 bytes each: 4B size + 2B count + 3B sym) ≈ 1.5 MB.
+        // Previously allocated 166,667 * (4 KiB + 2 KiB) ≈ 1.024 GB of dense tables.
+        let one_sym_tree = serialize_custom_tree(&[(b'a', &[false])]);
+        let num_trees = 166_667usize;
+        let mut model = Vec::with_capacity(9 + num_trees * 9);
+        model.push(1u8); // Order1
+        model.extend_from_slice(&(num_trees as u32).to_le_bytes());
+        model.extend_from_slice(&1u32.to_le_bytes()); // 1 context entry
+        model.extend_from_slice(&(b'a' as u32).to_le_bytes());
+        model.extend_from_slice(&((num_trees - 1) as u32).to_le_bytes());
+        for _ in 0..num_trees {
+            model.extend_from_slice(&(one_sym_tree.len() as u32).to_le_bytes());
+            model.extend_from_slice(&one_sym_tree);
+        }
+        assert!(model.len() <= 1_600_000);
+
+        let enc = ContextualHuffmanEncoder::deserialize(&model).unwrap();
+        let encoded = enc.encode(b"aaaa").unwrap();
+        assert_eq!(
+            enc.cached_dense_tree_count(),
+            1,
+            "crafted model must cap dense encode tables at 1 (4 KiB), not {}",
+            num_trees
+        );
+
+        let dec = ContextualHuffmanDecoder::new(enc);
+        assert_eq!(
+            dec.dense_lut_count(),
+            1,
+            "crafted model must cap dense decode LUTs at 1 (2 KiB), not {}",
+            num_trees
+        );
+        assert_eq!(dec.decode(&encoded, 4).unwrap(), b"aaaa");
     }
 }

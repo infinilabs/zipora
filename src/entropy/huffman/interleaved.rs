@@ -11,12 +11,19 @@ type DecodeTable = HashMap<u16, Vec<DecodeEntry>>;
 const CTX_LUT_BITS: u8 = 10;
 const CTX_LUT_SIZE: usize = 1 << CTX_LUT_BITS;
 const CTX_LUT_MASK: u64 = (CTX_LUT_SIZE as u64) - 1;
+/// Maximum number of trees for which dense `4 KiB` encode / `2 KiB` decode
+/// tables are eagerly materialized (`1` Order-0 fallback + `1,024` Order-2
+/// context trees created by `new_order2`). Deserialized models exceeding this
+/// bound keep dense tables only for `trees[0]` and consult `trees[tree_idx]`
+/// directly, preventing crafted models with many tiny trees from amplifying
+/// memory by ~680x.
+const MAX_DENSE_TREES: usize = 1025;
 
 #[derive(Debug)]
 struct ContextualEncodeCache {
     tree_codes: Vec<[(u64, u8); 256]>,
-    order1_ctx: [u16; 256],
-    order2_ctx: Option<Box<[u16; 65536]>>,
+    order1_ctx: [u32; 256],
+    order2_ctx: Option<Box<[u32; 65536]>>,
 }
 
 /// Interleaving factor for parallel Huffman encoding/decoding
@@ -298,36 +305,48 @@ impl ContextualHuffmanEncoder {
 
     fn get_or_init_encode_cache(&self) -> &ContextualEncodeCache {
         self.encode_cache.get_or_init(|| {
-            let mut tree_codes = Vec::with_capacity(self.trees.len());
-            for tree in &self.trees {
+            let dense_count = if self.trees.len() <= MAX_DENSE_TREES
+                && self.trees.len() <= self.context_map.len().saturating_add(1)
+            {
+                self.trees.len()
+            } else {
+                self.trees.len().min(1)
+            };
+            let mut tree_codes = Vec::with_capacity(dense_count);
+            for tree in self.trees.iter().take(dense_count) {
                 let mut codes = [(0u64, 0u8); 256];
                 for symbol in 0..=255u8 {
                     if let Some(code) = tree.get_code(symbol) {
-                        debug_assert!(!code.is_empty() && code.len() <= 64);
-                        let mut bits = 0u64;
-                        for (i, &bit) in code.iter().enumerate() {
-                            if bit {
-                                bits |= 1u64 << i;
+                        if !code.is_empty() && code.len() <= 64 {
+                            let mut bits = 0u64;
+                            for (i, &bit) in code.iter().enumerate() {
+                                if bit {
+                                    bits |= 1u64 << i;
+                                }
                             }
+                            codes[symbol as usize] = (bits, code.len() as u8);
+                        } else {
+                            // Codes longer than 64 bits (reachable via deserialized models)
+                            // use u8::MAX as a sentinel so `encode` emits from `tree.get_code`.
+                            codes[symbol as usize] = (0, u8::MAX);
                         }
-                        codes[symbol as usize] = (bits, code.len() as u8);
                     }
                 }
                 tree_codes.push(codes);
             }
 
-            let mut order1_ctx = [0u16; 256];
+            let mut order1_ctx = [0u32; 256];
             if self.order == HuffmanOrder::Order1 {
                 for (ctx, slot) in order1_ctx.iter_mut().enumerate() {
-                    *slot = self.context_map.get(&(ctx as u32)).copied().unwrap_or(0) as u16;
+                    *slot = self.context_map.get(&(ctx as u32)).copied().unwrap_or(0) as u32;
                 }
             }
 
             let order2_ctx = if self.order == HuffmanOrder::Order2 {
-                let mut tbl = vec![0u16; 65536].into_boxed_slice();
+                let mut tbl = vec![0u32; 65536].into_boxed_slice();
                 for (&ctx, &idx) in &self.context_map {
                     if let Some(slot) = tbl.get_mut(ctx as usize) {
-                        *slot = idx as u16;
+                        *slot = idx as u32;
                     }
                 }
                 tbl.try_into().ok()
@@ -348,8 +367,12 @@ impl ContextualHuffmanEncoder {
         if data.is_empty() {
             return Ok(Vec::new());
         }
+        if self.trees.is_empty() {
+            return Err(ZiporaError::invalid_data("No Huffman trees in encoder"));
+        }
 
         let cache = self.get_or_init_encode_cache();
+        let table0 = &cache.tree_codes[0];
         let mut result = Vec::with_capacity(data.len());
         let mut acc: u128 = 0;
         let mut bit_count: u32 = 0;
@@ -367,36 +390,80 @@ impl ContextualHuffmanEncoder {
             }};
         }
 
+        macro_rules! emit_long_code {
+            ($tree_idx:expr, $sym:expr, $err_msg:expr) => {{
+                let code = self.trees[$tree_idx]
+                    .get_code($sym)
+                    .ok_or_else(|| ZiporaError::invalid_data($err_msg))?;
+                for chunk in code.chunks(64) {
+                    let mut chunk_bits = 0u64;
+                    for (bit_idx, &bit) in chunk.iter().enumerate() {
+                        if bit {
+                            chunk_bits |= 1u64 << bit_idx;
+                        }
+                    }
+                    emit_code!(chunk_bits, chunk.len() as u8);
+                }
+            }};
+        }
+
+        macro_rules! emit_order0_sym {
+            ($sym:expr, $err_msg:expr) => {{
+                let (bits, len) = table0[$sym as usize];
+                if len > 0 && len <= 64 {
+                    emit_code!(bits, len);
+                } else if len > 64 {
+                    emit_long_code!(0, $sym, $err_msg);
+                } else {
+                    return Err(ZiporaError::invalid_data($err_msg));
+                }
+            }};
+        }
+
+        macro_rules! emit_ctx_sym {
+            ($tree_idx:expr, $sym:expr) => {{
+                let tidx = $tree_idx;
+                let sym = $sym;
+                if let Some(table) = cache.tree_codes.get(tidx) {
+                    let (bits, len) = table[sym as usize];
+                    if len > 0 && len <= 64 {
+                        emit_code!(bits, len);
+                    } else if len > 64 {
+                        emit_long_code!(tidx, sym, format!("Symbol {} not found in any tree", sym));
+                    } else {
+                        emit_order0_sym!(sym, format!("Symbol {} not found in any tree", sym));
+                    }
+                } else if let Some(code) = self.trees[tidx].get_code(sym) {
+                    for chunk in code.chunks(64) {
+                        let mut chunk_bits = 0u64;
+                        for (bit_idx, &bit) in chunk.iter().enumerate() {
+                            if bit {
+                                chunk_bits |= 1u64 << bit_idx;
+                            }
+                        }
+                        emit_code!(chunk_bits, chunk.len() as u8);
+                    }
+                } else {
+                    emit_order0_sym!(sym, format!("Symbol {} not found in any tree", sym));
+                }
+            }};
+        }
+
         match self.order {
             HuffmanOrder::Order0 => {
-                let table0 = &cache.tree_codes[0];
                 for &symbol in data {
-                    let (bits, len) = table0[symbol as usize];
-                    if len > 0 {
-                        emit_code!(bits, len);
-                    } else {
-                        return Err(ZiporaError::invalid_data(format!(
-                            "Symbol {} not in Huffman tree",
-                            symbol
-                        )));
-                    }
+                    emit_order0_sym!(symbol, format!("Symbol {} not in Huffman tree", symbol));
                 }
             }
             HuffmanOrder::Order1 => {
                 // First symbol uses Order-0 tree (trees[0])
-                let table0 = &cache.tree_codes[0];
                 if data.is_empty() {
                     return Err(ZiporaError::invalid_data("Data empty"));
                 }
-                let (bits0, len0) = table0[data[0] as usize]; // D10.1: in-bounds
-                if len0 > 0 {
-                    emit_code!(bits0, len0);
-                } else {
-                    return Err(ZiporaError::invalid_data(format!(
-                        "First symbol {} not in Order-0 tree",
-                        data[0] // D10.1: in-bounds
-                    )));
-                }
+                emit_order0_sym!(
+                    data[0], // D10.1: in-bounds
+                    format!("First symbol {} not in Order-0 tree", data[0])
+                );
 
                 // Subsequent symbols use context-dependent trees
                 // D10.1: in-bounds: 1 <= i < data.len(), bounds proven by loop range
@@ -405,47 +472,23 @@ impl ContextualHuffmanEncoder {
                     let symbol = data[i]; // D10.1: in-bounds
 
                     let tree_idx = cache.order1_ctx[context] as usize;
-                    let (mut bits, mut len) = cache.tree_codes[tree_idx][symbol as usize];
-                    if len == 0 {
-                        (bits, len) = table0[symbol as usize];
-                        if len == 0 {
-                            return Err(ZiporaError::invalid_data(format!(
-                                "Symbol {} not found in any tree",
-                                symbol
-                            )));
-                        }
-                    }
-                    emit_code!(bits, len);
+                    emit_ctx_sym!(tree_idx, symbol);
                 }
             }
             HuffmanOrder::Order2 => {
-                let table0 = &cache.tree_codes[0];
                 if data.len() < 2 {
                     for &sym in data {
-                        let (bits, len) = table0[sym as usize];
-                        if len > 0 {
-                            emit_code!(bits, len);
-                        } else {
-                            return Err(ZiporaError::invalid_data(format!(
-                                "Symbol {} not in Order-0 tree",
-                                sym
-                            )));
-                        }
+                        emit_order0_sym!(sym, format!("Symbol {} not in Order-0 tree", sym));
                     }
                 } else {
                     for i in 0..2 {
-                        let (bits, len) = table0[data[i] as usize]; // D10.1: in-bounds
-                        if len > 0 {
-                            emit_code!(bits, len);
-                        } else {
-                            return Err(ZiporaError::invalid_data(format!(
-                                "Symbol {} not in Order-0 tree",
-                                data[i] // D10.1: in-bounds
-                            )));
-                        }
+                        emit_order0_sym!(
+                            data[i], // D10.1: in-bounds
+                            format!("Symbol {} not in Order-0 tree", data[i])
+                        );
                     }
 
-                    let order2_ctx = cache.order2_ctx.as_deref().unwrap_or(&[0u16; 65536]);
+                    let order2_ctx = cache.order2_ctx.as_deref().unwrap_or(&[0u32; 65536]);
                     // Subsequent symbols use 2-symbol context
                     // D10.1: in-bounds: 2 <= i < data.len(), bounds proven by loop range
                     for i in 2..data.len() {
@@ -453,17 +496,7 @@ impl ContextualHuffmanEncoder {
                         let symbol = data[i]; // D10.1: in-bounds
 
                         let tree_idx = order2_ctx[context] as usize;
-                        let (mut bits, mut len) = cache.tree_codes[tree_idx][symbol as usize];
-                        if len == 0 {
-                            (bits, len) = table0[symbol as usize];
-                            if len == 0 {
-                                return Err(ZiporaError::invalid_data(format!(
-                                    "Symbol {} not found in any tree",
-                                    symbol
-                                )));
-                            }
-                        }
-                        emit_code!(bits, len);
+                        emit_ctx_sym!(tree_idx, symbol);
                     }
                 }
             }
@@ -491,6 +524,11 @@ impl ContextualHuffmanEncoder {
     /// Get number of context trees
     pub fn tree_count(&self) -> usize {
         self.trees.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_dense_tree_count(&self) -> usize {
+        self.get_or_init_encode_cache().tree_codes.len()
     }
 
     /// Estimate compression ratio for the given data
@@ -631,7 +669,7 @@ impl ContextualHuffmanEncoder {
         let tree_count = u32::from_le_bytes(*count_chunk) as usize;
         offset += 4;
 
-        if tree_count > data.len() {
+        if tree_count == 0 || tree_count > (data.len() - offset) / 6 {
             return Err(ZiporaError::invalid_data(
                 "Tree count exceeds data capacity",
             ));
@@ -651,7 +689,7 @@ impl ContextualHuffmanEncoder {
             ));
         }
 
-        let mut context_map = HashMap::with_capacity(context_count);
+        let mut context_map = HashMap::with_capacity(context_count.min(65536));
         for _ in 0..context_count {
             let ctx_chunk = data
                 .get(offset..)
@@ -673,8 +711,14 @@ impl ContextualHuffmanEncoder {
             context_map.insert(context, tree_idx);
         }
 
+        if tree_count > (data.len() - offset) / 6 {
+            return Err(ZiporaError::invalid_data(
+                "Tree count exceeds remaining data",
+            ));
+        }
+
         // Read trees
-        let mut trees = Vec::with_capacity(tree_count);
+        let mut trees = Vec::with_capacity(tree_count.min(MAX_DENSE_TREES));
         for _ in 0..tree_count {
             let size_chunk = data
                 .get(offset..)
@@ -1186,15 +1230,22 @@ impl ContextualHuffmanEncoder {
 pub struct ContextualHuffmanDecoder {
     encoder: ContextualHuffmanEncoder,
     tree_luts: Vec<[FastDecEntry; CTX_LUT_SIZE]>,
-    order1_ctx: [u16; 256],
-    order2_ctx: Option<Box<[u16; 65536]>>,
+    order1_ctx: [u32; 256],
+    order2_ctx: Option<Box<[u32; 65536]>>,
 }
 
 impl ContextualHuffmanDecoder {
     /// Create decoder from encoder
     pub fn new(encoder: ContextualHuffmanEncoder) -> Self {
-        let mut tree_luts = Vec::with_capacity(encoder.trees.len());
-        for tree in &encoder.trees {
+        let dense_count = if encoder.trees.len() <= MAX_DENSE_TREES
+            && encoder.trees.len() <= encoder.context_map.len().saturating_add(1)
+        {
+            encoder.trees.len()
+        } else {
+            encoder.trees.len().min(1)
+        };
+        let mut tree_luts = Vec::with_capacity(dense_count);
+        for tree in encoder.trees.iter().take(dense_count) {
             let mut lut = [FastDecEntry::default(); CTX_LUT_SIZE];
             if let Some(root) = tree.root()
                 && matches!(root, HuffmanNode::Internal { .. })
@@ -1204,18 +1255,18 @@ impl ContextualHuffmanDecoder {
             tree_luts.push(lut);
         }
 
-        let mut order1_ctx = [0u16; 256];
+        let mut order1_ctx = [0u32; 256];
         if encoder.order == HuffmanOrder::Order1 {
             for (ctx, slot) in order1_ctx.iter_mut().enumerate() {
-                *slot = encoder.context_map.get(&(ctx as u32)).copied().unwrap_or(0) as u16;
+                *slot = encoder.context_map.get(&(ctx as u32)).copied().unwrap_or(0) as u32;
             }
         }
 
         let order2_ctx = if encoder.order == HuffmanOrder::Order2 {
-            let mut tbl = vec![0u16; 65536].into_boxed_slice();
+            let mut tbl = vec![0u32; 65536].into_boxed_slice();
             for (&ctx, &idx) in &encoder.context_map {
                 if let Some(slot) = tbl.get_mut(ctx as usize) {
-                    *slot = idx as u16;
+                    *slot = idx as u32;
                 }
             }
             tbl.try_into().ok()
@@ -1229,6 +1280,11 @@ impl ContextualHuffmanDecoder {
             order1_ctx,
             order2_ctx,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dense_lut_count(&self) -> usize {
+        self.tree_luts.len()
     }
 
     /// Decode context-based Huffman data  
@@ -1396,14 +1452,16 @@ impl ContextualHuffmanDecoder {
             }
 
             let tree_idx = self.order1_ctx[prev_sym as usize] as usize;
-            let entry = self.tree_luts[tree_idx][(bit_buf & CTX_LUT_MASK) as usize];
-            let len = entry.bit_len as u32;
-            if len > 0 && bits_in_buf >= len {
-                prev_sym = entry.symbol;
-                result.push(prev_sym);
-                bit_buf >>= len;
-                bits_in_buf -= len;
-                continue;
+            if let Some(lut) = self.tree_luts.get(tree_idx) {
+                let entry = lut[(bit_buf & CTX_LUT_MASK) as usize];
+                let len = entry.bit_len as u32;
+                if len > 0 && bits_in_buf >= len {
+                    prev_sym = entry.symbol;
+                    result.push(prev_sym);
+                    bit_buf >>= len;
+                    bits_in_buf -= len;
+                    continue;
+                }
             }
 
             if bits_in_buf == 0 && byte_idx >= encoded_data.len() {
@@ -1466,7 +1524,7 @@ impl ContextualHuffmanDecoder {
             return Ok(result);
         }
 
-        let order2_ctx = self.order2_ctx.as_deref().unwrap_or(&[0u16; 65536]);
+        let order2_ctx = self.order2_ctx.as_deref().unwrap_or(&[0u32; 65536]);
         let mut prev2 = result[0] as usize;
         let mut prev1 = result[1] as usize;
 
@@ -1478,16 +1536,18 @@ impl ContextualHuffmanDecoder {
 
             let context = (prev2 << 8) | prev1;
             let tree_idx = order2_ctx[context] as usize;
-            let entry = self.tree_luts[tree_idx][(bit_buf & CTX_LUT_MASK) as usize];
-            let len = entry.bit_len as u32;
-            if len > 0 && bits_in_buf >= len {
-                let sym = entry.symbol;
-                result.push(sym);
-                prev2 = prev1;
-                prev1 = sym as usize;
-                bit_buf >>= len;
-                bits_in_buf -= len;
-                continue;
+            if let Some(lut) = self.tree_luts.get(tree_idx) {
+                let entry = lut[(bit_buf & CTX_LUT_MASK) as usize];
+                let len = entry.bit_len as u32;
+                if len > 0 && bits_in_buf >= len {
+                    let sym = entry.symbol;
+                    result.push(sym);
+                    prev2 = prev1;
+                    prev1 = sym as usize;
+                    bit_buf >>= len;
+                    bits_in_buf -= len;
+                    continue;
+                }
             }
 
             if bits_in_buf == 0 && byte_idx >= encoded_data.len() {

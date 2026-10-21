@@ -914,7 +914,8 @@ impl FseEncoder {
         }
 
         // Analyze frequencies if in adaptive mode or no table exists
-        if self.config.adaptive || self.table.is_none() {
+        let analyzed_this_call = self.config.adaptive || self.table.is_none();
+        if analyzed_this_call {
             self.analyze_frequencies(data)?;
         }
 
@@ -931,15 +932,21 @@ impl FseEncoder {
         }
 
         // Single-threaded compression, framed with the single-mode byte in a single allocation
-        self.compress_single_with_mode(data, true)
+        let frequencies_match_data = analyzed_this_call && self.dictionary.is_none();
+        self.compress_single_with_mode(data, true, frequencies_match_data)
     }
 
     /// Single-threaded compression (internal, ZSTD-compatible)
     fn compress_single_internal(&mut self, data: &[u8]) -> Result<Vec<u8>> {
-        self.compress_single_with_mode(data, false)
+        self.compress_single_with_mode(data, false, false)
     }
 
-    fn compress_single_with_mode(&mut self, data: &[u8], with_mode_byte: bool) -> Result<Vec<u8>> {
+    fn compress_single_with_mode(
+        &mut self,
+        data: &[u8],
+        with_mode_byte: bool,
+        frequencies_match_data: bool,
+    ) -> Result<Vec<u8>> {
         // SAFETY: This is called from compress() which creates self.table if None
         let table = self.table.as_ref().expect("FSE table must be initialized");
         let mode_len = usize::from(with_mode_byte);
@@ -956,7 +963,7 @@ impl FseEncoder {
             output.extend_from_slice(data);
 
             // Update statistics for uncompressed fallback
-            let entropy = if self.dictionary.is_none() {
+            let entropy = if frequencies_match_data {
                 EntropyStats::calculate_entropy_from_frequencies(&self.frequency_stats, data.len())
             } else {
                 EntropyStats::calculate_entropy(data)
@@ -1040,7 +1047,7 @@ impl FseEncoder {
         output.extend_from_slice(&state_bytes);
 
         // Update statistics without a redundant 2nd histogram pass over `data`
-        let entropy = if self.dictionary.is_none() {
+        let entropy = if frequencies_match_data {
             EntropyStats::calculate_entropy_from_frequencies(&self.frequency_stats, data.len())
         } else {
             EntropyStats::calculate_entropy(data)
@@ -1996,5 +2003,54 @@ mod bench_tests {
             "rejection must be fast, took {:?}",
             start2.elapsed()
         );
+    }
+
+    #[test]
+    fn test_fse_stats_entropy_matches_current_payload_in_non_adaptive_and_dict_modes() -> Result<()>
+    {
+        // Pre-train a non-adaptive encoder (`realtime()` sets `adaptive: false`)
+        // on a large skewed 8,192-byte corpus.
+        let mut encoder = FseEncoder::new(FseConfig::realtime())?;
+        let mut training = Vec::with_capacity(8192);
+        for i in 0..8192 {
+            training.push((i % 16) as u8);
+        }
+        encoder.analyze_frequencies(&training)?;
+
+        // 1. Compress a >= 100-byte payload with a different length and symbol distribution.
+        let payload_large: Vec<u8> = (0..256).map(|i| (i % 4) as u8).collect();
+        let _ = encoder.compress(&payload_large)?;
+        let expected_large = EntropyStats::calculate_entropy(&payload_large);
+        assert!(
+            (encoder.stats().entropy - expected_large).abs() < 1e-12,
+            "non-adaptive >= 100B entropy = {}, expected = {}",
+            encoder.stats().entropy,
+            expected_large
+        );
+
+        // 2. Compress a < 100-byte payload (uncompressed fallback path).
+        let payload_small: Vec<u8> = (0..64).map(|i| (i % 4) as u8).collect();
+        let _ = encoder.compress(&payload_small)?;
+        let expected_small = EntropyStats::calculate_entropy(&payload_small);
+        assert!(
+            (encoder.stats().entropy - expected_small).abs() < 1e-12,
+            "non-adaptive < 100B entropy = {}, expected = {}",
+            encoder.stats().entropy,
+            expected_small
+        );
+
+        // 3. Dictionary-assisted adaptive encoder must also compute entropy of `data`
+        //    rather than `data + dictionary`.
+        let dict = vec![0xFFu8; 4096];
+        let mut dict_encoder = FseEncoder::with_dictionary(FseConfig::default(), dict)?;
+        let _ = dict_encoder.compress(&payload_large)?;
+        assert!(
+            (dict_encoder.stats().entropy - expected_large).abs() < 1e-12,
+            "dictionary encoder entropy = {}, expected = {}",
+            dict_encoder.stats().entropy,
+            expected_large
+        );
+
+        Ok(())
     }
 }
