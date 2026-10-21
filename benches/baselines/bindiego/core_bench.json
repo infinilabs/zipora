@@ -14,9 +14,9 @@
     "cpu_governor": "unavailable (virtualized/no-cpufreq)",
     "rustflags": "-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32",
     "runner_command": "RUSTFLAGS=\"-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32\" cargo bench --locked --bench core_bench && python3 scripts/bench_compare.py --suite core_bench --confirm-retries 5",
-    "git_commit": "20ebfed",
+    "git_commit": "f746fdb",
     "binary_path": "/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/release/deps/core_bench-dc82628c835b93c0",
-    "binary_sha256": "7df7fb5a42901d12e01f07cfc388750a377affc782d409c076d1d07491c1027b"
+    "binary_sha256": "9a030a46276613cbbb4530140f151a63cc6dca4e88ceedc917d5f452983716c0"
   },
   "dataset_sizes": {
     "bm25_docs": 100000,

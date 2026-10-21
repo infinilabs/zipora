@@ -8,10 +8,10 @@
     "pinned_core": 23,
     "governor": "unknown (virtualized/host-managed)",
     "rustflags": "-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32",
-    "git_commit": "20ebfed",
+    "git_commit": "f746fdb",
     "timestamp_utc": "2026-10-20T15:32:42Z",
     "binary_path": "/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/release/deps/e2e_search_bench-15bd884b264e11af",
-    "binary_sha256": "84e4e4cfddb7cc80f6f71bf1ff66fb5f65fcd7bd52bf70f82ae502b39c429808"
+    "binary_sha256": "6edf14c1ebb70384ae359d3352643deaae089005946aa509e3f48ee006b6c8a1"
   },
   "summary": {
     "num_docs": 100000,
