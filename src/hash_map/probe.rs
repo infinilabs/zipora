@@ -12,7 +12,9 @@ use std::mem::MaybeUninit;
 fn group_match_byte(ctrl_ptr: *const u8, pos: usize, byte: u8) -> u16 {
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     {
-        use std::arch::x86_64::{_mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8, _mm_set1_epi8, __m128i};
+        use std::arch::x86_64::{
+            __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8, _mm_set1_epi8,
+        };
         // SAFETY: `pos < capacity` and `ctrl` allocates `capacity + 16` initialized bytes.
         unsafe {
             let group = _mm_loadu_si128(ctrl_ptr.add(pos) as *const __m128i);
@@ -45,7 +47,7 @@ fn group_match_empty(ctrl_ptr: *const u8, pos: usize) -> u16 {
 fn group_match_empty_or_deleted(ctrl_ptr: *const u8, pos: usize) -> u16 {
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     {
-        use std::arch::x86_64::{_mm_loadu_si128, _mm_movemask_epi8, __m128i};
+        use std::arch::x86_64::{__m128i, _mm_loadu_si128, _mm_movemask_epi8};
         // SAFETY: `pos < capacity` and `ctrl` allocates `capacity + 16` initialized bytes.
         unsafe {
             let group = _mm_loadu_si128(ctrl_ptr.add(pos) as *const __m128i);
@@ -90,7 +92,12 @@ where
 
     /// Insert a unique `(key, value)` with precomputed `hash` into an allocated table with no duplicate check.
     #[inline(always)]
-    fn insert_unique_unchecked(table: &mut StandardTable<K, V>, key: K, value: V, hash: u64) -> bool {
+    fn insert_unique_unchecked(
+        table: &mut StandardTable<K, V>,
+        key: K,
+        value: V,
+        hash: u64,
+    ) -> bool {
         let capacity = table.capacity();
         let mask = table.mask;
         let h2 = h2_tag(hash);
@@ -105,7 +112,10 @@ where
                 table.set_ctrl(idx, h2);
                 // SAFETY: `idx < capacity` and slot `idx` is currently empty/deleted.
                 unsafe {
-                    std::ptr::write(table.slots.as_mut_ptr().add(idx), MaybeUninit::new((key, value)));
+                    std::ptr::write(
+                        table.slots.as_mut_ptr().add(idx),
+                        MaybeUninit::new((key, value)),
+                    );
                 }
                 return true;
             }
@@ -137,20 +147,34 @@ where
         );
 
         let new_table = StandardTable::with_capacity_and_load_factor(new_capacity, load_factor)?;
+
+        // Precompute hashes for all live entries before mutating `table` so that if
+        // `K::hash` panics, `table` remains completely untouched with zero data loss.
+        let mut hashes = crate::containers::FastVec::with_capacity(live)?;
+        for i in 0..old_capacity {
+            // SAFETY: `i < old_capacity <= table.ctrl.len()`.
+            let c = unsafe { *table.ctrl.as_ptr().add(i) };
+            if is_ctrl_full(c) {
+                // SAFETY: `i < old_capacity` and `is_ctrl_full(c)` guarantees `slots[i]` is initialized.
+                let (k, _) = unsafe { (*table.slots.as_ptr().add(i)).assume_init_ref() };
+                hashes.push(hash_builder.hash_one(k))?;
+            }
+        }
+
         let mut old_table = std::mem::replace(table, new_table);
+        let mut hash_idx = 0usize;
 
         for i in 0..old_capacity {
             // SAFETY: `i < old_capacity <= old_table.ctrl.len()`.
             let c = unsafe { *old_table.ctrl.as_ptr().add(i) };
             if is_ctrl_full(c) {
-                // Mark empty before reading out `(k, v)` so unwinding on a panicking
-                // `K::hash` cannot double-drop slot `i` when `old_table` drops.
+                let hash = hashes[hash_idx];
+                hash_idx += 1;
                 // SAFETY: `i < old_capacity` and `is_ctrl_full(c)` guarantees `slots[i]` is initialized.
                 let (k, v) = unsafe {
                     *old_table.ctrl.as_mut_ptr().add(i) = CTRL_EMPTY;
                     std::ptr::read(old_table.slots.as_ptr().add(i)).assume_init()
                 };
-                let hash = hash_builder.hash_one(&k);
                 if !Self::insert_unique_unchecked(table, k, v, hash) {
                     return Err(crate::error::ZiporaError::invalid_state(
                         "Failed to reinsert during resize",
@@ -355,25 +379,33 @@ where
         let std_cap = 32;
         let mut table = StandardTable::with_capacity_and_load_factor(std_cap, load_factor)?;
 
-        for i in 0..16 {
+        // Precompute all 16 hashes before moving entries out of `inline_data` so a
+        // panic in `K::hash` leaves `inline_data` intact.
+        let mut inline_hashes = [0u64; 16];
+        for (i, slot_hash) in inline_hashes.iter_mut().enumerate() {
             if (inline_data.occupied >> i) & 1 == 1 {
                 // SAFETY: Bit i is set in occupied, so slot i is initialized.
-                // Clear the bit before hashing so panics in `hash_one` cannot double-drop.
+                let (k, _) = unsafe { inline_data._data[i].assume_init_ref() };
+                *slot_hash = hash_builder.hash_one(k);
+            }
+        }
+
+        for (i, &h) in inline_hashes.iter().enumerate() {
+            if (inline_data.occupied >> i) & 1 == 1 {
+                // SAFETY: Bit i is set in occupied, so slot i is initialized.
                 let (k, v) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
                 inline_data.occupied &= !(1 << i);
-                let h = hash_builder.hash_one(&k);
-                let _ = Self::insert_standard(hash_builder, &mut table, k, v, h);
+                let _ = Self::insert_unique_unchecked(&mut table, k, v, h);
             }
         }
         inline_data.occupied = 0;
 
-        let result = Self::insert_standard(hash_builder, &mut table, key, value, hash).map_err(
-            |_| {
+        let result =
+            Self::insert_standard(hash_builder, &mut table, key, value, hash).map_err(|_| {
                 crate::error::ZiporaError::invalid_state(
                     "Hash table full after SmallInline migration",
                 )
-            },
-        )?;
+            })?;
 
         *fallback = Some(Box::new(HashMapStorage::Standard(table)));
         *occupied = *len;
@@ -572,7 +604,8 @@ where
                 };
                 if k_matches {
                     // SAFETY: `idx < capacity` is initialized; we mark it deleted and read out `(k, v)`.
-                    let (_old_k, old_v) = unsafe { std::ptr::read(slots_ptr.add(idx)).assume_init() };
+                    let (_old_k, old_v) =
+                        unsafe { std::ptr::read(slots_ptr.add(idx)).assume_init() };
                     table.set_ctrl(idx, CTRL_DELETED);
                     return Some(old_v);
                 }
@@ -686,16 +719,21 @@ where
         fallback: &mut Option<Box<HashMapStorage<K, V>>>,
         len: &mut usize,
     ) {
+        *len = 0;
+        if let Some(fb) = fallback.as_mut()
+            && let HashMapStorage::Standard(table) = fb.as_mut()
+        {
+            table.clear_slots();
+        }
+        *fallback = None;
         for i in 0..16 {
             if (inline_data.occupied >> i) & 1 == 1 {
-                // SAFETY: Bit i is set in occupied, so slot i is initialized
+                inline_data.occupied &= !(1 << i);
+                // SAFETY: Bit i was set in occupied, so slot i is initialized
                 unsafe {
                     std::ptr::drop_in_place(inline_data._data[i].as_mut_ptr());
                 }
             }
         }
-        inline_data.occupied = 0;
-        *fallback = None;
-        *len = 0;
     }
 }

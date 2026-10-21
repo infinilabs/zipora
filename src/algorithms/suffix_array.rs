@@ -10,10 +10,9 @@ use std::time::Instant;
 
 /// Suffix array construction algorithms
 ///
-/// Limitation: only SA-IS is implemented. `DivSufSort`, `DC3` and
-/// `LarssonSadakane` are kept for API compatibility and run SA-IS, so every
-/// variant builds the same suffix array with the same algorithm; `Adaptive`
-/// only adds the pass that picks a variant.
+/// Limitation: only SA-IS is implemented. `DivSufSort`, `DC3`,
+/// `LarssonSadakane`, and `Adaptive` are kept for API compatibility and all
+/// dispatch directly to SA-IS during construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SuffixArrayAlgorithm {
     /// SA-IS (Suffix Array by Induced Sorting) - linear time
@@ -24,8 +23,8 @@ pub enum SuffixArrayAlgorithm {
     DC3,
     /// Runs SA-IS; there is no Larsson-Sadakane implementation
     LarssonSadakane,
-    /// Picks one of the variants above from data characteristics; all of
-    /// them run SA-IS, so the choice only costs the analysis pass
+    /// Dispatches directly to SA-IS during construction; `SuffixArrayBuilder::select_algorithm`
+    /// still inspects data characteristics when called explicitly
     #[default]
     Adaptive,
 }
@@ -40,7 +39,7 @@ impl SuffixArrayAlgorithm {
             Self::LarssonSadakane => {
                 "Larsson-Sadakane: runs SA-IS (no Larsson-Sadakane implementation)"
             }
-            Self::Adaptive => "Adaptive: picks a variant by data characteristics; all run SA-IS",
+            Self::Adaptive => "Adaptive: dispatches directly to SA-IS",
         }
     }
 }
@@ -75,7 +74,8 @@ pub struct SuffixArrayConfig {
     pub compute_lcp: bool,
     /// Limitation: has no effect; every alphabet size runs the same SA-IS.
     pub optimize_small_alphabet: bool,
-    /// Threshold for adaptive algorithm selection
+    /// Threshold consulted by `SuffixArrayBuilder::select_algorithm` (has no effect on `build`,
+    /// which dispatches directly to SA-IS).
     pub adaptive_threshold: usize,
 }
 
@@ -415,7 +415,10 @@ impl SuffixArrayBuilder {
         let (sa, bucket2) = self.build_sequential(text)?;
 
         let elapsed = start_time.elapsed();
-        let memory_used = sa.len() * std::mem::size_of::<usize>();
+        let bucket2_bytes = bucket2
+            .as_ref()
+            .map_or(0, |b| b.len() * std::mem::size_of::<(u32, u32)>());
+        let memory_used = sa.len() * std::mem::size_of::<usize>() + bucket2_bytes;
 
         Ok(SuffixArray {
             text_len: text.len(),
@@ -2224,5 +2227,27 @@ mod tests {
             "used_parallel with use_parallel = true, parallel_threshold = 1"
         );
         assert!(!SuffixArrayBuilder::new(config).supports_parallel());
+    }
+
+    #[test]
+    fn test_s47_r11_stats_memory_used_includes_bucket2() {
+        let small = vec![b'a'; 100];
+        let sa_small = SuffixArray::new(&small).unwrap();
+        assert_eq!(
+            sa_small.stats().memory_used,
+            small.len() * std::mem::size_of::<usize>()
+        );
+
+        let large: Vec<u8> = (0..4096usize).map(|i| (i * 31) as u8).collect();
+        let sa_large = SuffixArray::new(&large).unwrap();
+        let expected_bucket2 = if cfg!(miri) {
+            0
+        } else {
+            65_536 * std::mem::size_of::<(u32, u32)>()
+        };
+        assert_eq!(
+            sa_large.stats().memory_used,
+            large.len() * std::mem::size_of::<usize>() + expected_bucket2
+        );
     }
 }

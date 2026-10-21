@@ -277,14 +277,13 @@ miri_pool:
 	$(CARGO_MIRI) test --lib memory::simd_ops
 	$(CARGO_MIRI) test --lib memory::prefetch
 
-# SIMD-adjacent modules under Miri. These three modules pick their kernels
-# through has_popcnt() (bit_ops.rs), has_avx2()/has_sse2() (simd_search.rs,
-# directly or through the simd::isa tokens built on them) and
-# resolve_decode_into() (stream_vbyte.rs), which all return the scalar choice
-# under cfg!(miri). So in both builds none of their #[target_feature] kernels
-# runs; Miri checks the scalar tiers and the index arithmetic, table lookups
-# and buffer handling around them. That is also why miri_scalar does not
-# repeat this target.
+# SIMD-adjacent modules under Miri. `bit_ops.rs` (`has_popcnt()`),
+# `simd_search.rs` (`has_avx2()`/`has_sse2()`), and
+# `StreamVByte::resolve_decode_into()` return their scalar tiers under
+# `cfg!(miri)`, while `StreamVByte::{encode_deltas,encode_raw,decode_deltas}`
+# and `GroupVarint::{encode_deltas,decode_deltas}` dispatch via
+# `is_x86_feature_detected!("ssse3")` (exercising their SSSE3 kernels under
+# Miri on x86_64).
 miri_simd:
 	$(CARGO_MIRI) test --lib algorithms::bit_ops
 	$(CARGO_MIRI) test --lib compression::stream_vbyte

@@ -2160,101 +2160,80 @@ fn bench_int_codecs(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
 // ---------------------------------------------------------------------------
 
 fn bench_radix_sort_lsd(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
+    maybe_repin_self_within_ccd();
+    trim_allocator_arena();
     let n = sizes.radix_sort_elements;
-    let mut sorter = RadixSort::with_config(RadixSortConfig {
-        use_parallel: false,
-        use_counting_sort_threshold: 0,
-        ..RadixSortConfig::default()
-    });
-    let mut lsd_u32_params = BenchParams::heavy(n as u64, n as u64, 3);
-    lsd_u32_params.warmup_calls = 1;
-    lsd_u32_params.bursts_per_trial = 2;
-    let mut lsd_u64_params = BenchParams::heavy(n as u64, n as u64, 3);
-    lsd_u64_params.warmup_calls = 1;
-    lsd_u64_params.bursts_per_trial = 1;
+    let make_sorter = || {
+        RadixSort::with_config(RadixSortConfig {
+            use_parallel: false,
+            use_counting_sort_threshold: 0,
+            ..RadixSortConfig::default()
+        })
+    };
+    let mut sort_params = BenchParams::heavy(n as u64, n as u64, 3);
+    sort_params.warmup_calls = 1;
+    sort_params.bursts_per_trial = 1;
 
-    drop(black_box(vec![1u8; 31 * 1024 * 1024]));
-    // Pre-fault a contiguous `96 MiB` (`4 x 24 MiB`) `brk` hole below `_lsd_top_anchor`
-    // so `RadixSort::sort_u32`'s `40 MiB` buffer and `RadixSort::sort_u64`'s `80 MiB` buffer
-    // are served from pre-faulted user-space `brk` memory without `mmap`/`munmap` page faults.
-    let mut lsd_holes: Vec<Vec<u8>> = Vec::with_capacity(4);
-    for _ in 0..4 {
-        lsd_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
-    }
-    let _lsd_top_anchor = black_box(vec![1u8; 64 * 1024]);
-    drop(lsd_holes);
-
-    // 1. LSD u32 (10^7 elements across a 2-buffer / 2-sorter ring with 352 KiB spacer)
-    {
+    // 1. LSD u32 (10^7 elements, 1 sorter, 1 work buffer)
+    if should_run_bench("radix_sort/lsd_u32") {
+        trim_allocator_arena();
         let template_u32 = gen_radix_u32_template(n);
-        let sorter0 = RadixSort::with_config(RadixSortConfig {
-            use_parallel: false,
-            use_counting_sort_threshold: 0,
-            ..RadixSortConfig::default()
-        });
-        let work0 = vec![0u32; n];
-        let _spacer = vec![1u8; 352 * 1024];
-        let sorter1 = RadixSort::with_config(RadixSortConfig {
-            use_parallel: false,
-            use_counting_sort_threshold: 0,
-            ..RadixSortConfig::default()
-        });
-        let work1 = vec![0u32; n];
-        let mut u32_state = (
-            0usize,
-            Vec::<Vec<u8>>::with_capacity(32),
-            [(sorter0, work0), (sorter1, work1)],
-        );
+        let mut work_u32 = vec![0u32; n];
+        let mut sorter = make_sorter();
         measure_bench_with_setup(
             records,
             "radix_sort",
             "radix_sort/lsd_u32",
             "ns/elem",
-            lsd_u32_params,
-            &mut u32_state,
-            |st| {
-                st.0 ^= 1;
-                st.1.push(vec![1u8; 352 * 1024]);
-                st.2[st.0].1.copy_from_slice(&template_u32);
+            sort_params,
+            &mut work_u32,
+            |buf| {
+                buf.copy_from_slice(&template_u32);
             },
-            |st| {
-                let (srt, buf) = &mut st.2[st.0];
-                srt.sort_u32(black_box(buf.as_mut_slice())).unwrap();
+            |buf| {
+                sorter.sort_u32(black_box(buf.as_mut_slice())).unwrap();
                 black_box(buf[0]);
             },
         );
+        let _ = &sorter;
+        drop(work_u32);
+        drop(template_u32);
+        trim_allocator_arena();
     }
 
-    // 2. LSD u64 (10^7 elements)
-    {
+    // 2. LSD u64 (10^7 elements, 1 sorter, 1 work buffer)
+    if should_run_bench("radix_sort/lsd_u64") {
+        trim_allocator_arena();
         let template_u64 = gen_radix_u64_template(n);
-        let mut work_u64 = (Vec::<Vec<u8>>::with_capacity(16), vec![0u64; n]);
+        let mut work_u64 = vec![0u64; n];
+        let mut sorter = make_sorter();
         measure_bench_with_setup(
             records,
             "radix_sort",
             "radix_sort/lsd_u64",
             "ns/elem",
-            lsd_u64_params,
+            sort_params,
             &mut work_u64,
-            |st| {
-                st.0.push(vec![1u8; 352 * 1024]);
-                st.1.copy_from_slice(&template_u64);
+            |buf| {
+                buf.copy_from_slice(&template_u64);
             },
-            |st| {
-                sorter.sort_u64(black_box(st.1.as_mut_slice())).unwrap();
-                black_box(st.1[0]);
+            |buf| {
+                sorter.sort_u64(black_box(buf.as_mut_slice())).unwrap();
+                black_box(buf[0]);
             },
         );
+        let _ = &sorter;
+        drop(work_u64);
+        drop(template_u64);
+        trim_allocator_arena();
     }
-    drop(_lsd_top_anchor);
 }
 
 fn bench_radix_sort_kv(records: &mut Vec<BenchRecord>, primary_core: usize, sizes: SuiteSizes) {
     maybe_repin_self_within_ccd();
+    trim_allocator_arena();
     let n = sizes.radix_sort_elements;
-    // 3. KeyValueRadixSort<u64, u64> (10^7 (u64, u64) elements)
-    let p_core_init = current_self_pinned_core().min(primary_core);
-    let _ = p_core_init;
+    let _ = primary_core;
     let rayon_core_for = |p_core: usize| -> usize {
         let ccd_base = (p_core / 8) * 8;
         if p_core != ccd_base + 2 {
@@ -2273,19 +2252,8 @@ fn bench_radix_sort_kv(records: &mut Vec<BenchRecord>, primary_core: usize, size
         .build_global();
     rayon::broadcast(|_| {});
 
-    drop(black_box(vec![1u8; 31 * 1024 * 1024]));
     let template_kv = gen_radix_kv_template(n);
     let mut work_kv = vec![(0u64, 0u64); n];
-    // Pre-fault a contiguous `432 MiB` (`18 x 24 MiB`) `brk` hole below `_kv_top_anchor`
-    // so `KeyValueRadixSort::sort_by_key`'s `160 MiB` `indices`, `160 MiB` `buffer`, and
-    // `80 MiB` `targets` allocations are served from pre-faulted user-space `brk` memory
-    // without `mmap`/`munmap` page-fault churn.
-    let mut kv_holes: Vec<Vec<u8>> = Vec::with_capacity(18);
-    for _ in 0..18 {
-        kv_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
-    }
-    let _kv_top_anchor = black_box(vec![1u8; 64 * 1024]);
-    drop(kv_holes);
 
     let kv_sorter = KeyValueRadixSort::<u64, u64>::new();
     let mut kv_params = BenchParams::heavy(n as u64, n as u64, 3);
@@ -2308,7 +2276,9 @@ fn bench_radix_sort_kv(records: &mut Vec<BenchRecord>, primary_core: usize, size
             black_box(buf[0].0);
         },
     );
-    drop(_kv_top_anchor);
+    drop(work_kv);
+    drop(template_kv);
+    trim_allocator_arena();
     set_allow_self_repin(true);
 }
 
@@ -2318,50 +2288,38 @@ fn bench_radix_sort_kv(records: &mut Vec<BenchRecord>, primary_core: usize, size
 
 fn bench_suffix_array(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
     maybe_repin_self_within_ccd();
+    trim_allocator_arena();
     let n = sizes.suffix_array_bytes;
     let text0 = gen_enwik_like_block(n, SEED_BASE ^ 0x0A);
-    drop(black_box(vec![1u8; 31 * 1024 * 1024]));
-    // Pre-fault a contiguous `432 MiB` (`18 x 24 MiB`) `brk` hole below `_brk_top_anchor`
-    // so `SuffixArray::new`'s DC3 recursive working vectors (`s_padded`, `s12`, `sa12`, `s0`,
-    // `sa0`, `ranks`, `sa` = `40 MiB` each) are served from pre-faulted user-space `brk`
-    // memory without `mmap`/`munmap` page-fault churn across trials.
-    let mut sa_holes: Vec<Vec<u8>> = Vec::with_capacity(18);
-    for _ in 0..18 {
-        sa_holes.push(black_box(vec![1u8; 24 * 1024 * 1024]));
-    }
-    let _brk_top_anchor = black_box(vec![1u8; 64 * 1024]);
-    drop(sa_holes);
 
-    let mut sa_pending: Option<SuffixArray> = None;
-    let mut sa_build_params = BenchParams::heavy(n as u64, n as u64, 4);
+    let mut sa_build_params = BenchParams::heavy(n as u64, n as u64, 3);
     sa_build_params.warmup_calls = 1;
     sa_build_params.bursts_per_trial = 1;
-    measure_bench_with_setup(
-        records,
-        "suffix_array",
-        "suffix_array/construct",
-        "ns/byte",
-        sa_build_params,
-        &mut sa_pending,
-        |slot| {
-            let _ = slot.take();
-        },
-        |slot| {
-            let built = SuffixArray::new(black_box(&text0)).unwrap();
-            black_box(built.as_slice().len());
-            *slot = Some(built);
-        },
-    );
+    if should_run_bench("suffix_array/construct") {
+        trim_allocator_arena();
+        let mut sa_pending: Option<SuffixArray> = None;
+        measure_bench_with_setup(
+            records,
+            "suffix_array",
+            "suffix_array/construct",
+            "ns/byte",
+            sa_build_params,
+            &mut sa_pending,
+            |slot| {
+                let _ = slot.take();
+            },
+            |slot| {
+                let built = SuffixArray::new(black_box(&text0)).unwrap();
+                black_box(built.as_slice().len());
+                *slot = Some(built);
+            },
+        );
+        drop(sa_pending);
+        trim_allocator_arena();
+    }
     if should_run_bench("suffix_array/search_query") {
-        let sa0 = sa_pending
-            .take()
-            .unwrap_or_else(|| SuffixArray::new(&text0).unwrap());
-        let _text_spacer = vec![1u8; 1_376 * 1024];
-        let text1 = text0.clone();
-        let _sa_spacer = vec![1u8; 3_424 * 1024];
-        let sa1 = SuffixArray::new(&text1).unwrap();
-        let sas = [sa0, sa1];
-        let texts = [text0, text1];
+        trim_allocator_arena();
+        let sa0 = SuffixArray::new(&text0).unwrap();
 
         // Sample distinct 16-byte substrings uniformly across the entire 10,000,000-byte
         // text via a stratified bijection (`sa_perm` over `1,000,000` 10-byte windows at
@@ -2379,21 +2337,19 @@ fn bench_suffix_array(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
 
         let mut warm_sa_hits = 0usize;
         for idx in 0..(sa_batch * 24) {
-            let slot = idx & 1;
-            let txt = &texts[slot];
-            let sa = &sas[slot];
             let pos = uniform_index_at(sa_query_seed ^ 0x55, idx, max_start);
             let mut pat = [0u8; 16];
-            pat.copy_from_slice(&txt[pos..pos + pat_len]);
+            pat.copy_from_slice(&text0[pos..pos + pat_len]);
             if idx % 10 == 9 {
                 pat[pat_len - 1] = b'~';
             }
-            let (_, count) = sa.search(black_box(txt), black_box(&pat[..]));
+            let (_, count) = sa0.search(black_box(&text0), black_box(&pat[..]));
             warm_sa_hits = warm_sa_hits.wrapping_add(count);
         }
         black_box(warm_sa_hits);
 
-        let mut sa_search_params = BenchParams::heavy(n as u64, sa_batch as u64, 12);
+        let mut sa_search_params =
+            BenchParams::heavy(n as u64, sa_batch as u64, 12).with_threshold(9.0);
         sa_search_params.warmup_calls = 8;
         sa_search_params.bursts_per_trial = 12;
 
@@ -2408,29 +2364,23 @@ fn bench_suffix_array(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
                 let mut hits = 0usize;
                 let mut q_idx = 0usize;
                 sa_perm.for_each_slice(base, sa_batch, |id| {
-                    let slot = q_idx & 1;
-                    let txt = &texts[slot];
-                    let sa = &sas[slot];
                     let pos = (id * sa_window + uniform_index_at(sa_query_seed, id, sa_window))
                         .min(max_start.saturating_sub(1));
                     let mut pat = [0u8; 16];
-                    pat.copy_from_slice(&txt[pos..pos + pat_len]);
+                    pat.copy_from_slice(&text0[pos..pos + pat_len]);
                     if q_idx % 10 == 9 {
                         pat[pat_len - 1] = b'~';
                     }
                     q_idx = q_idx.wrapping_add(1);
-                    let (_, count) = sa.search(black_box(txt), black_box(&pat[..]));
+                    let (_, count) = sa0.search(black_box(&text0), black_box(&pat[..]));
                     hits = hits.wrapping_add(count);
                 });
                 black_box(hits);
             },
         );
-        drop(sas);
-        drop(texts);
-        drop(_sa_spacer);
-        drop(_text_spacer);
+        drop(sa0);
+        trim_allocator_arena();
     }
-    drop(_brk_top_anchor);
 }
 
 // ---------------------------------------------------------------------------

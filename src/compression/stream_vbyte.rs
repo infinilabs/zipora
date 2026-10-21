@@ -2,10 +2,10 @@
 //!
 //! Encodes sorted u32 sequences using delta + variable-byte coding.
 //! Control bytes are separated from data bytes, following the Stream VByte
-//! layout (Lemire et al.). Decoding uses the SSSE3 shuffle-table fast path
-//! (one `pshufb` expands a full 4-value group; 256-entry precomputed mask
-//! table) with a scalar fallback for stream tails and non-x86 targets.
-//! Encoding is scalar.
+//! layout (Lemire et al.). Both encoding and decoding use SSSE3 shuffle-table
+//! fast paths (one `pshufb` packs or expands a full 4-value group; 256-entry
+//! precomputed mask tables) with scalar fallbacks for stream tails and non-x86
+//! targets.
 //!
 //! # Format
 //!
@@ -212,8 +212,9 @@ impl StreamVByte {
 
         let n = values.len();
         let num_groups = n.div_ceil(4);
+        let max_data_bytes = n.saturating_mul(4).saturating_add(16);
         let mut controls = Vec::with_capacity(num_groups);
-        let mut data = Vec::with_capacity(n * 4 + 16);
+        let mut data = Vec::with_capacity(max_data_bytes);
 
         let val_ptr = values.as_ptr();
         let ctrl_ptr: *mut u8 = controls.as_mut_ptr();
@@ -241,9 +242,8 @@ impl StreamVByte {
                 unsafe { _mm_loadu_si128(ENCODE_SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
             let packed = _mm_shuffle_epi8(deltas, shuf);
 
-            // SAFETY: `data` was allocated with `n * 4 + 16` bytes and each group advances
-            // `data_pos` by at most 16, so `data_pos + 16 <= data.capacity()`.
-            // `ctrl_idx < num_groups <= controls.capacity()`.
+            // SAFETY: `data` was reserved with `n * 4 + 16` bytes so `data_pos + 16 <= max_data_bytes`,
+            // and `ctrl_idx < num_groups <= controls.capacity()`.
             unsafe {
                 _mm_storeu_si128(data_ptr.add(data_pos) as *mut __m128i, packed);
                 *ctrl_ptr.add(ctrl_idx) = ctrl as u8;
@@ -271,6 +271,11 @@ impl StreamVByte {
                 Self::write_value(&mut data, v, len);
             }
             controls.push(ctrl);
+        }
+
+        let target_cap = n.saturating_mul(2).saturating_add(16);
+        if data.capacity() > target_cap && data.len() <= target_cap {
+            data.shrink_to(target_cap);
         }
 
         EncodedStream {
@@ -344,8 +349,9 @@ impl StreamVByte {
 
         let n = values.len();
         let num_groups = n.div_ceil(4);
+        let max_data_bytes = n.saturating_mul(4).saturating_add(16);
         let mut controls = Vec::with_capacity(num_groups);
-        let mut data = Vec::with_capacity(n * 4 + 16);
+        let mut data = Vec::with_capacity(max_data_bytes);
 
         let val_ptr = values.as_ptr();
         let ctrl_ptr: *mut u8 = controls.as_mut_ptr();
@@ -368,7 +374,7 @@ impl StreamVByte {
                 unsafe { _mm_loadu_si128(ENCODE_SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
             let packed = _mm_shuffle_epi8(cur_vec, shuf);
 
-            // SAFETY: `data` has capacity `n * 4 + 16` so `data_pos + 16 <= data.capacity()`.
+            // SAFETY: `data` was reserved with `n * 4 + 16` bytes so `data_pos + 16 <= max_data_bytes`.
             unsafe {
                 _mm_storeu_si128(data_ptr.add(data_pos) as *mut __m128i, packed);
                 *ctrl_ptr.add(ctrl_idx) = ctrl as u8;
@@ -393,6 +399,11 @@ impl StreamVByte {
                 Self::write_value(&mut data, v, len);
             }
             controls.push(ctrl);
+        }
+
+        let target_cap = n.saturating_mul(2).saturating_add(16);
+        if data.capacity() > target_cap && data.len() <= target_cap {
+            data.shrink_to(target_cap);
         }
 
         EncodedStream {
@@ -693,7 +704,7 @@ impl GroupVarint {
         let mut deltas = Vec::with_capacity(values.len());
         deltas.push(values[0]);
         for w in values.windows(2) {
-            deltas.push(w[1] - w[0]);
+            deltas.push(w[1].wrapping_sub(w[0]));
         }
 
         Self::encode_raw(&deltas)
@@ -710,7 +721,8 @@ impl GroupVarint {
         use std::arch::x86_64::*;
 
         let n = values.len();
-        let mut output = Vec::with_capacity(n * 5 + 20);
+        let max_bytes = ((n / 4) + 1).saturating_mul(17).saturating_add(16);
+        let mut output = Vec::with_capacity(max_bytes);
         let val_ptr = values.as_ptr();
         let out_ptr: *mut u8 = output.as_mut_ptr();
         let zero = _mm_setzero_si128();
@@ -735,8 +747,8 @@ impl GroupVarint {
                 unsafe { _mm_loadu_si128(ENCODE_SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
             let packed = _mm_shuffle_epi8(deltas, shuf);
 
-            // SAFETY: `output` has capacity `n * 5 + 20` and each 4-value group advances
-            // `out_pos` by at most 17, so `out_pos + 17 <= output.capacity()`.
+            // SAFETY: `output` was reserved above with `max_bytes >= (n / 4 + 1) * 17 + 16`,
+            // so `out_pos + 17 <= max_bytes`.
             unsafe {
                 *out_ptr.add(out_pos) = ctrl as u8;
                 _mm_storeu_si128(out_ptr.add(out_pos + 1) as *mut __m128i, packed);
@@ -1456,5 +1468,27 @@ mod tests {
             v.capacity(),
             data.len()
         );
+    }
+
+    #[test]
+    fn test_s47_r11_group_varint_decreasing_and_stream_vbyte_capacity() {
+        // Decreasing inputs must not panic in debug mode (both SIMD and scalar paths use wrapping_sub).
+        let dec = [100u32, 80, 50, 10, 5, 1, 0];
+        let gv_enc = GroupVarint::encode_deltas(&dec);
+        assert_eq!(GroupVarint::decode_deltas(&gv_enc, dec.len()), dec);
+
+        let svb_enc = StreamVByte::encode_deltas(&dec);
+        assert_eq!(StreamVByte::decode_deltas(&svb_enc, dec.len()), dec);
+
+        // Small-delta streams must start with 2*n+16 capacity instead of 4*n+16.
+        let n = if cfg!(miri) { 256 } else { 10_000 };
+        let sorted: Vec<u32> = (0..n as u32).map(|i| i * 3).collect();
+        let svb = StreamVByte::encode_deltas(&sorted);
+        assert!(
+            svb.data.capacity() <= n * 2 + 32,
+            "excess capacity {} for n={n}",
+            svb.data.capacity()
+        );
+        assert_eq!(StreamVByte::decode_deltas(&svb, n), sorted);
     }
 }

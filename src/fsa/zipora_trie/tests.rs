@@ -492,7 +492,10 @@ fn test_double_array_shrink_to_fit_truncates_free_tail_and_stays_insertable() {
     trie.shrink_to_fit();
     let after = cells(&trie);
     assert!(after < before, "free tail not dropped: {before} -> {after}");
-    assert!(!trie.is_free_double_array((after - 1) as u32), "last cell must be occupied");
+    assert!(
+        !trie.is_free_double_array((after - 1) as u32),
+        "last cell must be occupied"
+    );
 
     for k in &keys[1_000..] {
         trie.insert(k).unwrap();
@@ -571,11 +574,7 @@ fn test_compressed_sparse_strategy_full_fsa_and_map_consistency() {
     app_keys.sort();
     assert_eq!(
         app_keys,
-        vec![
-            b"app".to_vec(),
-            b"apple".to_vec(),
-            b"application".to_vec()
-        ]
+        vec![b"app".to_vec(), b"apple".to_vec(), b"application".to_vec()]
     );
 
     let stats = trie.stats();
@@ -757,4 +756,26 @@ fn test_compressed_sparse_transition_is_constant_time_and_rejects_overflow_slots
     assert!(trie_large.transitions(u32::MAX).is_empty());
 }
 
-
+#[test]
+fn test_s47_r11_double_array_memory_usage_includes_child_links() {
+    let mut trie: ZiporaTrie = ZiporaTrie::new();
+    for k in [b"alpha".as_slice(), b"alpine", b"beta", b"gamma"] {
+        trie.insert(k).unwrap();
+    }
+    let (base_len, check_len, links_len) = match &trie.storage {
+        super::storage::TrieStorage::DoubleArray {
+            base,
+            check,
+            child_links,
+            ..
+        } => (base.len(), check.len(), child_links.len()),
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        trie.memory_usage(),
+        (base_len + check_len + links_len) * 4,
+        "memory_usage must include base + check + child_links (12 B/slot)"
+    );
+    let (b_cap, c_cap, l_cap) = trie.memory_stats();
+    assert!(b_cap > 0 && c_cap > 0 && l_cap > 0);
+}

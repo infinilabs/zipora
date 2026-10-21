@@ -1141,6 +1141,10 @@ where
     /// `56 B/elem` in the former 3-allocation index+cycle permutation) and cache-conscious
     /// 8-bit MSB-bucket (`256` DTLB-friendly buckets) + 5-pass L2-resident LSD ping-pong
     /// (`11 + 11 + 11 + 11 + 12 = 56` bits).
+    ///
+    /// Calls `K::into()` at most once per element before any unsafe pointer moves, so an
+    /// impure or panicking `Into<u64>` implementation can never cause out-of-bounds writes
+    /// or double-drops (`S47-R2`, `S47-R3`).
     pub fn sort_by_key(&self, data: &mut [(K, V)]) -> Result<()> {
         let n = data.len();
         if n <= 1 {
@@ -1148,14 +1152,17 @@ where
         }
 
         const L2_THRESHOLD: usize = 16_384;
-        if n <= L2_THRESHOLD {
-            let mut buffer = Vec::<std::mem::MaybeUninit<(K, V)>>::with_capacity(n);
-            // SAFETY: `MaybeUninit<(K, V)>` does not require initialization.
-            unsafe {
-                buffer.set_len(n);
-            }
-            Self::lsd_kv_in_cache(data, buffer.as_mut_ptr() as *mut (K, V), 8);
-            return Ok(());
+        let can_use_raw_u64 = n > L2_THRESHOLD
+            && std::mem::size_of::<K>() == std::mem::size_of::<u64>()
+            && std::mem::align_of::<K>() == std::mem::align_of::<u64>()
+            && !std::mem::needs_drop::<(K, V)>()
+            && std::ptr::fn_addr_eq(
+                <K as Into<u64>>::into as fn(K) -> u64,
+                <u64 as Into<u64>>::into as fn(u64) -> u64,
+            );
+
+        if !can_use_raw_u64 {
+            return Self::sort_by_key_materialized(data);
         }
 
         let mut msb_counts = [0usize; 256];
@@ -1163,8 +1170,14 @@ where
         let mut sorted = true;
         let mut or_diff = 0u64;
         let first: u64 = data[0].0.into();
-        for &(k, _) in data.iter() {
-            let key: u64 = k.into();
+        for (idx, &(k, _)) in data.iter().enumerate() {
+            let key: u64 = if idx == 0 { first } else { k.into() };
+            // SAFETY: `size_of::<K>() == 8`, `align_of::<K>() == 8`, and `fn_addr_eq` verified
+            // that `K::into` is the 64-bit identity conversion.
+            let raw_key: u64 = unsafe { std::ptr::read_unaligned(&k as *const K as *const u64) };
+            if key != raw_key {
+                return Self::sort_by_key_materialized_from(data, idx, key);
+            }
             sorted &= key >= prev;
             prev = key;
             or_diff |= key ^ first;
@@ -1185,7 +1198,10 @@ where
 
         if (or_diff >> 56) == 0 {
             let num_passes = (((63 - or_diff.leading_zeros()) / 8) + 1) as usize;
-            Self::lsd_kv_in_cache(data, buf_ptr, num_passes);
+            // SAFETY: Every element's raw 64-bit key was verified identical to `K::into()`.
+            unsafe {
+                Self::lsd_kv_in_cache_raw_u64(data, buf_ptr, num_passes);
+            }
             return Ok(());
         }
 
@@ -1199,9 +1215,11 @@ where
         }
 
         for i in 0..n {
-            // SAFETY: `i < n`, `digit < 256`, and `out_pos < n` from exact prefix sums.
+            // SAFETY: `i < n`, `digit < 256`, and `out_pos < n` from exact prefix sums over
+            // immutable raw `u64` keys.
             unsafe {
-                let key: u64 = (*data_ptr.add(i)).0.into();
+                let key: u64 =
+                    std::ptr::read_unaligned(&(*data_ptr.add(i)).0 as *const K as *const u64);
                 let digit = (key >> 56) as usize;
                 let out_pos = *offsets.get_unchecked_mut(digit);
                 *offsets.get_unchecked_mut(digit) = out_pos + 1;
@@ -1241,14 +1259,153 @@ where
         Ok(())
     }
 
+    /// Sort `data` by calling `K::into()` exactly once per element upfront before any
+    /// unsafe pointer copies.
+    fn sort_by_key_materialized(data: &mut [(K, V)]) -> Result<()> {
+        let n = data.len();
+        let mut keys = Vec::with_capacity(n);
+        let mut prev = 0u64;
+        let mut sorted = true;
+        let mut or_diff = 0u64;
+        let mut first = 0u64;
+        for (i, &(k, _)) in data.iter().enumerate() {
+            let key: u64 = k.into();
+            if i == 0 {
+                first = key;
+            }
+            sorted &= key >= prev;
+            prev = key;
+            or_diff |= key ^ first;
+            keys.push(key);
+        }
+        if sorted || or_diff == 0 {
+            return Ok(());
+        }
+        Self::lsd_kv_with_materialized_keys(data, &mut keys, or_diff);
+        Ok(())
+    }
+
+    fn sort_by_key_materialized_from(
+        data: &mut [(K, V)],
+        mismatch_idx: usize,
+        mismatch_key: u64,
+    ) -> Result<()> {
+        let n = data.len();
+        let mut keys = Vec::with_capacity(n);
+        for &(k, _) in data[..mismatch_idx].iter() {
+            // SAFETY: `data[..mismatch_idx]` already verified `k.into() == raw_u64(k)`.
+            let raw_key: u64 = unsafe { std::ptr::read_unaligned(&k as *const K as *const u64) };
+            keys.push(raw_key);
+        }
+        keys.push(mismatch_key);
+        for &(k, _) in data[mismatch_idx + 1..].iter() {
+            keys.push(k.into());
+        }
+        let mut or_diff = 0u64;
+        let first = keys[0];
+        for &k in &keys {
+            or_diff |= k ^ first;
+        }
+        if or_diff == 0 {
+            return Ok(());
+        }
+        Self::lsd_kv_with_materialized_keys(data, &mut keys, or_diff);
+        Ok(())
+    }
+
+    fn lsd_kv_with_materialized_keys(data: &mut [(K, V)], keys: &mut [u64], or_diff: u64) {
+        let n = data.len();
+        let mut hist = [[0usize; 256]; 8];
+        for &key in keys.iter() {
+            hist[0][(key & 0xFF) as usize] += 1;
+            hist[1][((key >> 8) & 0xFF) as usize] += 1;
+            hist[2][((key >> 16) & 0xFF) as usize] += 1;
+            hist[3][((key >> 24) & 0xFF) as usize] += 1;
+            hist[4][((key >> 32) & 0xFF) as usize] += 1;
+            hist[5][((key >> 40) & 0xFF) as usize] += 1;
+            hist[6][((key >> 48) & 0xFF) as usize] += 1;
+            hist[7][(key >> 56) as usize] += 1;
+        }
+
+        let num_passes = (((63 - or_diff.leading_zeros()) / 8) + 1) as usize;
+        let mut val_buf = Vec::<std::mem::MaybeUninit<(K, V)>>::with_capacity(n);
+        // SAFETY: `MaybeUninit<(K, V)>` does not require initialization.
+        unsafe {
+            val_buf.set_len(n);
+        }
+        let mut key_buf = vec![0u64; n];
+
+        let data_ptr = data.as_mut_ptr();
+        let val_buf_ptr = val_buf.as_mut_ptr() as *mut (K, V);
+        let keys_ptr = keys.as_mut_ptr();
+        let key_buf_ptr = key_buf.as_mut_ptr();
+
+        let mut in_data = true;
+        for (pass, counts) in hist.iter().enumerate().take(num_passes) {
+            if counts.contains(&n) {
+                continue;
+            }
+            let shift = pass * 8;
+            let mut offsets = [0usize; 256];
+            let mut pos = 0usize;
+            for b in 0..256 {
+                offsets[b] = pos;
+                pos += counts[b];
+            }
+            let (src_val, dst_val, src_key, dst_key) = if in_data {
+                (
+                    data_ptr as *const (K, V),
+                    val_buf_ptr,
+                    keys_ptr as *const u64,
+                    key_buf_ptr,
+                )
+            } else {
+                (
+                    val_buf_ptr as *const (K, V),
+                    data_ptr,
+                    key_buf_ptr as *const u64,
+                    keys_ptr,
+                )
+            };
+            for i in 0..n {
+                // SAFETY: `i < n`, `digit < 256`, and `out_pos < n` from exact prefix sums
+                // over the immutable `u64` array `keys`; no user code runs in this loop.
+                unsafe {
+                    let key = *src_key.add(i);
+                    let digit = ((key >> shift) & 0xFF) as usize;
+                    let out_pos = *offsets.get_unchecked_mut(digit);
+                    *offsets.get_unchecked_mut(digit) = out_pos + 1;
+                    *dst_key.add(out_pos) = key;
+                    std::ptr::copy_nonoverlapping(src_val.add(i), dst_val.add(out_pos), 1);
+                }
+            }
+            in_data = !in_data;
+        }
+        if !in_data {
+            // SAFETY: `val_buf_ptr` holds a complete permutation of `data`'s `n` elements.
+            unsafe {
+                std::ptr::copy_nonoverlapping(val_buf_ptr, data_ptr, n);
+            }
+        }
+    }
+
+    /// # Safety
+    ///
+    /// `K` must have `size_of::<K>() == 8` and `align_of::<K>() == 8`, and `buf_ptr` must
+    /// point to a valid allocation of at least `data.len()` `(K, V)` elements.
     #[inline]
-    fn lsd_kv_in_cache(data: &mut [(K, V)], buf_ptr: *mut (K, V), num_passes: usize) {
+    unsafe fn lsd_kv_in_cache_raw_u64(
+        data: &mut [(K, V)],
+        buf_ptr: *mut (K, V),
+        num_passes: usize,
+    ) {
         let n = data.len();
         let mut hist = [[0usize; 256]; 8];
         let mut prev = 0u64;
         let mut sorted = true;
         for &(k, _) in data.iter() {
-            let key: u64 = k.into();
+            // SAFETY: Caller guarantees `K` is layout-identical to `u64`.
+            let key: u64 = unsafe { std::ptr::read_unaligned(&k as *const K as *const u64) };
             sorted &= key >= prev;
             prev = key;
             hist[0][(key & 0xFF) as usize] += 1;
@@ -1285,7 +1442,8 @@ where
             for i in 0..n {
                 // SAFETY: `i < n`, `digit < 256`, and `out_pos < n` from exact prefix sums.
                 unsafe {
-                    let key: u64 = (*src_ptr.add(i)).0.into();
+                    let key: u64 =
+                        std::ptr::read_unaligned(&(*src_ptr.add(i)).0 as *const K as *const u64);
                     let digit = ((key >> shift) & 0xFF) as usize;
                     let out_pos = *offsets.get_unchecked_mut(digit);
                     *offsets.get_unchecked_mut(digit) = out_pos + 1;
@@ -1304,8 +1462,9 @@ where
 
     /// # Safety
     ///
-    /// `buf_ptr` and `data_ptr` must be valid, non-overlapping allocations of at least `n`
-    /// `(K, V)` elements, with `buf_ptr[0..n]` initialized.
+    /// `K` must have `size_of::<K>() == 8` and `align_of::<K>() == 8`, and `buf_ptr` and
+    /// `data_ptr` must be valid, non-overlapping allocations of at least `n` `(K, V)`
+    /// elements, with `buf_ptr[0..n]` initialized.
     #[inline]
     unsafe fn lsd_kv_low56_from_buf_to_data(
         buf_ptr: *mut (K, V),
@@ -1322,8 +1481,9 @@ where
         let mut prev = 0u64;
         let mut sorted = true;
         for i in 0..n {
-            // SAFETY: `i < n` and `buf_ptr[0..n]` is initialized.
-            let key: u64 = unsafe { (*buf_ptr.add(i)).0.into() };
+            // SAFETY: `i < n` and `buf_ptr[0..n]` is initialized with layout-verified `u64` keys.
+            let key: u64 =
+                unsafe { std::ptr::read_unaligned(&(*buf_ptr.add(i)).0 as *const K as *const u64) };
             sorted &= key >= prev;
             prev = key;
             h0[(key & 0x7FF) as usize] += 1;
@@ -1352,7 +1512,8 @@ where
             for i in 0..n {
                 // SAFETY: `i < n`, `digit < 2048`, and `out_pos < n` from exact prefix sums.
                 unsafe {
-                    let key: u64 = (*buf_ptr.add(i)).0.into();
+                    let key: u64 =
+                        std::ptr::read_unaligned(&(*buf_ptr.add(i)).0 as *const K as *const u64);
                     let digit = (key & 0x7FF) as usize;
                     let out_pos = *h0.get_unchecked_mut(digit);
                     *h0.get_unchecked_mut(digit) = out_pos + 1;
@@ -1377,7 +1538,8 @@ where
             for i in 0..n {
                 // SAFETY: `i < n`, `digit < 2048`, and `out_pos < n` from exact prefix sums.
                 unsafe {
-                    let key: u64 = (*src_ptr.add(i)).0.into();
+                    let key: u64 =
+                        std::ptr::read_unaligned(&(*src_ptr.add(i)).0 as *const K as *const u64);
                     let digit = ((key >> 11) & 0x7FF) as usize;
                     let out_pos = *h1.get_unchecked_mut(digit);
                     *h1.get_unchecked_mut(digit) = out_pos + 1;
@@ -1402,7 +1564,8 @@ where
             for i in 0..n {
                 // SAFETY: `i < n`, `digit < 2048`, and `out_pos < n` from exact prefix sums.
                 unsafe {
-                    let key: u64 = (*src_ptr.add(i)).0.into();
+                    let key: u64 =
+                        std::ptr::read_unaligned(&(*src_ptr.add(i)).0 as *const K as *const u64);
                     let digit = ((key >> 22) & 0x7FF) as usize;
                     let out_pos = *h2.get_unchecked_mut(digit);
                     *h2.get_unchecked_mut(digit) = out_pos + 1;
@@ -1427,7 +1590,8 @@ where
             for i in 0..n {
                 // SAFETY: `i < n`, `digit < 2048`, and `out_pos < n` from exact prefix sums.
                 unsafe {
-                    let key: u64 = (*src_ptr.add(i)).0.into();
+                    let key: u64 =
+                        std::ptr::read_unaligned(&(*src_ptr.add(i)).0 as *const K as *const u64);
                     let digit = ((key >> 33) & 0x7FF) as usize;
                     let out_pos = *h3.get_unchecked_mut(digit);
                     *h3.get_unchecked_mut(digit) = out_pos + 1;
@@ -1452,7 +1616,8 @@ where
             for i in 0..n {
                 // SAFETY: `i < n`, `digit < 4096`, and `out_pos < n` from exact prefix sums.
                 unsafe {
-                    let key: u64 = (*src_ptr.add(i)).0.into();
+                    let key: u64 =
+                        std::ptr::read_unaligned(&(*src_ptr.add(i)).0 as *const K as *const u64);
                     let digit = ((key >> 44) & 0xFFF) as usize;
                     let out_pos = *h4.get_unchecked_mut(digit);
                     *h4.get_unchecked_mut(digit) = out_pos + 1;

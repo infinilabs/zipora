@@ -16,7 +16,7 @@
     "runner_command": "RUSTFLAGS=\"-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32\" cargo bench --locked --bench core_bench && python3 scripts/bench_compare.py --suite core_bench --confirm-retries 5",
     "git_commit": "20ebfed",
     "binary_path": "/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/release/deps/core_bench-dc82628c835b93c0",
-    "binary_sha256": "ccc550f9cd0eede9a1433ea75b1fd58cce2d3dbecca5fd8e28250370ea0e2ed4"
+    "binary_sha256": "7df7fb5a42901d12e01f07cfc388750a377affc782d409c076d1d07491c1027b"
   },
   "dataset_sizes": {
     "bm25_docs": 100000,
@@ -1748,15 +1748,15 @@
       "dataset_size": 10000000,
       "ops_per_iter": 10000000,
       "trials": 3,
-      "min_ns_per_op": 5.7383,
-      "median_ns_per_op": 5.7635,
-      "p95_ns_per_op": 6.72,
-      "spread_pct": 17.11,
+      "min_ns_per_op": 5.6839,
+      "median_ns_per_op": 5.7795,
+      "p95_ns_per_op": 5.819,
+      "spread_pct": 2.38,
       "max_regression_pct": 9.0,
       "samples": [
-        5.7383,
-        5.7635,
-        6.72
+        5.6839,
+        5.7795,
+        5.819
       ]
     },
     {
@@ -1821,24 +1821,24 @@
       "dataset_size": 10000000,
       "ops_per_iter": 1000,
       "trials": 12,
-      "min_ns_per_op": 1714.26,
-      "median_ns_per_op": 1788.3,
-      "p95_ns_per_op": 1867.52,
-      "spread_pct": 8.94,
+      "min_ns_per_op": 1399.16,
+      "median_ns_per_op": 1632.11,
+      "p95_ns_per_op": 1771.35,
+      "spread_pct": 26.6,
       "max_regression_pct": 9.0,
       "samples": [
-        1714.26,
-        1731.44,
-        1760.03,
-        1770.27,
-        1774.91,
-        1775.56,
-        1788.3,
-        1807.33,
-        1817.39,
-        1823.3,
-        1849.761,
-        1867.52
+        1399.16,
+        1454.28,
+        1485.269,
+        1505.06,
+        1517.551,
+        1569.461,
+        1632.11,
+        1689.299,
+        1700.559,
+        1734.13,
+        1769.029,
+        1771.35
       ]
     },
     {

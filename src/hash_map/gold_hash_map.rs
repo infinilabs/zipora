@@ -70,7 +70,7 @@ pub trait LinkType: Copy + Eq + PartialEq + Ord + PartialOrd + Default + std::fm
     /// Check if this is a valid slot (not deleted or tail)
     #[inline(always)]
     fn is_valid(self) -> bool {
-        self < Self::DELMARK
+        self != Self::TAIL && self != Self::DELMARK
     }
 }
 
@@ -90,6 +90,11 @@ impl LinkType for u32 {
             None
         }
     }
+
+    #[inline(always)]
+    fn is_valid(self) -> bool {
+        self < Self::DELMARK
+    }
 }
 
 impl LinkType for u64 {
@@ -107,6 +112,11 @@ impl LinkType for u64 {
         } else {
             None
         }
+    }
+
+    #[inline(always)]
+    fn is_valid(self) -> bool {
+        self < Self::DELMARK
     }
 }
 

@@ -11,7 +11,7 @@
     "git_commit": "20ebfed",
     "timestamp_utc": "2026-10-20T15:32:42Z",
     "binary_path": "/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/release/deps/e2e_search_bench-15bd884b264e11af",
-    "binary_sha256": "fb44b1a5fb6ba3329e6d265cd4973dbd5a0fe2ff6c259d1cd993b04a440124cc"
+    "binary_sha256": "84e4e4cfddb7cc80f6f71bf1ff66fb5f65fcd7bd52bf70f82ae502b39c429808"
   },
   "summary": {
     "num_docs": 100000,

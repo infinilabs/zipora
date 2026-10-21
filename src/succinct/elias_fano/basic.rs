@@ -14,7 +14,11 @@ const SELECT0_SAMPLE_RATE: usize = 64;
 /// - Sampling indices for O(1) select1/select0 on high_bits
 /// - L = floor(log2(universe / n)), chosen to minimize total space
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(into = "EliasFanoWire", from = "EliasFanoWire")
+)]
 pub struct EliasFano {
     /// Lower L bits of each element, packed consecutively
     low_bits: Vec<u64>,
@@ -33,6 +37,78 @@ pub struct EliasFano {
     select1_samples: Vec<u32>,
     /// Exact bit position of every SELECT0_SAMPLE_RATE-th clear bit (denser for next_geq).
     select0_samples: Vec<u32>,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct EliasFanoWire {
+    low_bits: Vec<u64>,
+    high_bits: Vec<u64>,
+    len: usize,
+    low_bit_width: u32,
+    universe: u64,
+    high_len_bits: usize,
+    #[serde(default)]
+    rank_samples: Vec<u32>,
+    #[serde(default)]
+    select1_samples: Vec<u32>,
+    #[serde(default)]
+    select0_samples: Vec<u32>,
+}
+
+#[cfg(feature = "serde")]
+impl From<EliasFano> for EliasFanoWire {
+    fn from(ef: EliasFano) -> Self {
+        let (rank_samples, select1_samples, select0_samples) = if ef.len == 0 {
+            (Vec::new(), Vec::new(), Vec::new())
+        } else {
+            EliasFano::build_legacy_wire_samples(&ef.high_bits, ef.high_len_bits)
+        };
+        Self {
+            low_bits: ef.low_bits,
+            high_bits: ef.high_bits,
+            len: ef.len,
+            low_bit_width: ef.low_bit_width,
+            universe: ef.universe,
+            high_len_bits: ef.high_len_bits,
+            rank_samples,
+            select1_samples,
+            select0_samples,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<EliasFanoWire> for EliasFano {
+    fn from(mut wire: EliasFanoWire) -> Self {
+        let high_len_bits = wire
+            .high_len_bits
+            .min(wire.high_bits.len().saturating_mul(64))
+            .min(u32::MAX as usize);
+        let used_high_words = high_len_bits.div_ceil(64);
+        wire.high_bits.truncate(used_high_words);
+        if let Some(last) = wire.high_bits.last_mut() {
+            let rem = high_len_bits % 64;
+            if rem != 0 {
+                *last &= (1u64 << rem) - 1;
+            }
+        }
+        let (select1_samples, select0_samples) = if wire.len == 0 || high_len_bits == 0 {
+            (Vec::new(), Vec::new())
+        } else {
+            Self::build_samples(&wire.high_bits, high_len_bits)
+        };
+        Self {
+            low_bits: wire.low_bits,
+            high_bits: wire.high_bits,
+            len: wire.len,
+            low_bit_width: wire.low_bit_width,
+            universe: wire.universe,
+            high_len_bits,
+            select1_samples,
+            select0_samples,
+        }
+    }
 }
 
 impl EliasFano {
@@ -143,8 +219,7 @@ impl EliasFano {
             prev_high = high;
         }
 
-        let (select1_samples, select0_samples) =
-            Self::build_samples(&high_bits, high_len_bits);
+        let (select1_samples, select0_samples) = Self::build_samples(&high_bits, high_len_bits);
 
         Self {
             low_bits,
@@ -173,7 +248,9 @@ impl EliasFano {
         let mut next_sel0: u32 = 0;
 
         for (word_idx, &word) in high_bits.iter().enumerate() {
-            let ones = word.count_ones();
+            if word_idx * 64 >= high_len_bits {
+                break;
+            }
             let valid = if (word_idx + 1) * 64 <= high_len_bits {
                 64u32
             } else {
@@ -184,13 +261,15 @@ impl EliasFano {
             } else {
                 (1u64 << valid) - 1
             };
-            let inverted = (!word) & valid_mask;
+            let masked_word = word & valid_mask;
+            let ones = masked_word.count_ones();
+            let inverted = (!masked_word) & valid_mask;
             let zeros = valid - ones;
 
             // Select1: record exact bit position for each threshold crossed
             let after_ones = cumul_ones + ones;
             while next_sel1 < after_ones {
-                let bit_in_word = select_in_word(word, (next_sel1 - cumul_ones) as usize);
+                let bit_in_word = select_in_word(masked_word, (next_sel1 - cumul_ones) as usize);
                 select1_samples.push((word_idx * 64 + bit_in_word) as u32);
                 next_sel1 += SELECT1_SAMPLE_RATE as u32;
             }
@@ -208,6 +287,58 @@ impl EliasFano {
         }
 
         (select1_samples, select0_samples)
+    }
+
+    #[cfg(feature = "serde")]
+    fn build_legacy_wire_samples(
+        high_bits: &[u64],
+        high_len_bits: usize,
+    ) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        const LEGACY_RANK_SAMPLE_RATE: usize = 8;
+        const LEGACY_SELECT1_SAMPLE_RATE: u32 = 256;
+        const LEGACY_SELECT0_SAMPLE_RATE: u32 = 64;
+
+        let mut rank_samples = Vec::new();
+        let mut select1_samples = Vec::new();
+        let mut select0_samples = Vec::new();
+
+        let mut cumul_ones: u32 = 0;
+        let mut cumul_zeros: u32 = 0;
+        let mut next_sel1: u32 = 0;
+        let mut next_sel0: u32 = 0;
+
+        for (word_idx, &word) in high_bits.iter().enumerate() {
+            if word_idx % LEGACY_RANK_SAMPLE_RATE == 0 {
+                rank_samples.push(cumul_ones);
+            }
+
+            let ones = word.count_ones();
+            let valid = if (word_idx + 1) * 64 <= high_len_bits {
+                64u32
+            } else {
+                (high_len_bits.saturating_sub(word_idx * 64)) as u32
+            };
+            let zeros = valid.saturating_sub(ones);
+
+            let after_ones = cumul_ones + ones;
+            while next_sel1 < after_ones {
+                select1_samples.push((word_idx * 64) as u32);
+                next_sel1 += LEGACY_SELECT1_SAMPLE_RATE;
+            }
+
+            let after_zeros = cumul_zeros + zeros;
+            while next_sel0 < after_zeros {
+                select0_samples.push((word_idx * 64) as u32);
+                next_sel0 += LEGACY_SELECT0_SAMPLE_RATE;
+            }
+
+            cumul_ones = after_ones;
+            cumul_zeros = after_zeros;
+        }
+
+        rank_samples.push(cumul_ones);
+
+        (rank_samples, select1_samples, select0_samples)
     }
 
     /// Number of elements.
@@ -254,7 +385,7 @@ impl EliasFano {
         // so high_value = high_position - index
         let high_val = high_pos.checked_sub(index)? as u64;
 
-        Some((high_val << self.low_bit_width) | low)
+        Some(high_val.wrapping_shl(self.low_bit_width.min(63)) | low)
     }
 
     /// Find the first element >= target. Returns (index, value).
@@ -268,7 +399,7 @@ impl EliasFano {
             return None;
         }
 
-        let target_high = target >> self.low_bit_width;
+        let target_high = target >> self.low_bit_width.min(63);
 
         // Jump to bucket via select0
         let bucket_start_pos = if target_high == 0 {
@@ -453,9 +584,7 @@ impl EliasFano {
                 let first_inverted = (!first_raw) & valid_mask & ((!1u64) << bit_in_word);
                 let zeros = first_inverted.count_ones() as usize;
                 if remaining <= zeros {
-                    return Some(
-                        start_word * 64 + select_in_word(first_inverted, remaining - 1),
-                    );
+                    return Some(start_word * 64 + select_in_word(first_inverted, remaining - 1));
                 }
                 remaining -= zeros;
 

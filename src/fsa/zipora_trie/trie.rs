@@ -1,15 +1,10 @@
-use super::config::{
-    TrieStrategy,
-    ZiporaTrieConfig,
-};
+use super::config::{TrieStrategy, ZiporaTrieConfig};
 use super::storage::{CritBitNode, DaFreeList, PatriciaNode, TrieStorage};
 use crate::StateId;
 use crate::containers::FastVec;
 use crate::containers::specialized::UintVector;
 use crate::error::Result;
-use crate::fsa::traits::{
-    FiniteStateAutomaton, PrefixIterable, Trie, TrieStats,
-};
+use crate::fsa::traits::{FiniteStateAutomaton, PrefixIterable, Trie, TrieStats};
 use crate::memory::SecureMemoryPool;
 use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator};
 use crate::succinct::RankSelectOps;
@@ -282,10 +277,15 @@ where
                     + keys.capacity() * 32 // Rough estimate per key
                     + critical_cache.capacity() * 9 // usize + u8
             }
-            TrieStorage::DoubleArray { base, check, .. } => {
+            TrieStorage::DoubleArray {
+                base,
+                check,
+                child_links,
+                ..
+            } => {
                 // Use actual length instead of capacity for more accurate memory usage
-                // Each element is 4 bytes (u32)
-                base.len() * 4 + check.len() * 4
+                // Each element is 4 bytes (u32) across base, check, and child_links (12 B/state)
+                base.len() * 4 + check.len() * 4 + child_links.len() * 4
             }
             TrieStorage::Louds {
                 label_data,
@@ -471,10 +471,16 @@ where
     /// Get memory statistics
     pub fn memory_stats(&self) -> (usize, usize, usize) {
         match &self.storage {
-            TrieStorage::DoubleArray { base, check, .. } => {
+            TrieStorage::DoubleArray {
+                base,
+                check,
+                child_links,
+                ..
+            } => {
                 let base_memory = base.capacity() * std::mem::size_of::<u32>();
                 let check_memory = check.capacity() * std::mem::size_of::<u32>();
-                (base_memory, check_memory, 0)
+                let links_memory = child_links.capacity() * std::mem::size_of::<u32>();
+                (base_memory, check_memory, links_memory)
             }
             _ => {
                 let total_memory = self.memory_usage();
@@ -798,9 +804,7 @@ where
         cspp.node_view(target_slot).is_well_formed()
     }
 
-    fn count_cspp_states_and_transitions(
-        cspp: &crate::fsa::cspp_trie::CsppTrie,
-    ) -> (usize, usize) {
+    fn count_cspp_states_and_transitions(cspp: &crate::fsa::cspp_trie::CsppTrie) -> (usize, usize) {
         if cspp.total_states() == 0 {
             return (0, 0);
         }
@@ -825,10 +829,7 @@ where
         (states, transitions)
     }
 
-    fn lookup_node_id_cspp(
-        cspp: &crate::fsa::cspp_trie::CsppTrie,
-        key: &[u8],
-    ) -> Option<StateId> {
+    fn lookup_node_id_cspp(cspp: &crate::fsa::cspp_trie::CsppTrie, key: &[u8]) -> Option<StateId> {
         let mut curr = crate::fsa::cspp_trie::INITIAL_STATE;
         let mut pos = 0usize;
         loop {
@@ -1036,8 +1037,7 @@ where
                 // `MAX_ZPATH + 1` bytes and allocates 2 header/child slots + 64 zpath slots
                 // = 66 slots; the final leaf takes at most 1 + 64 + 1 = 66 slots, and any
                 // interior fork/split/bitmap growth allocates at most 398 < 528 slots.
-                const SLOTS_PER_SEGMENT: usize =
-                    2 + crate::fsa::cspp_trie::MAX_ZPATH.div_ceil(4);
+                const SLOTS_PER_SEGMENT: usize = 2 + crate::fsa::cspp_trie::MAX_ZPATH.div_ceil(4);
                 let segments =
                     (key.len() / (crate::fsa::cspp_trie::MAX_ZPATH + 1)).saturating_add(1);
                 let max_new_slots =
@@ -1304,4 +1304,3 @@ where
         Self::new()
     }
 }
-

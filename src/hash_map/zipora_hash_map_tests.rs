@@ -1236,3 +1236,188 @@ fn test_c7_iteration_skips_tombstones_in_every_storage_state() {
         &live(0..60, |k| k == 3 || k == 7 || (k >= 10 && k % 4 == 0)),
     );
 }
+
+#[test]
+fn test_s47_r1_clear_panic_in_drop_no_double_free() {
+    #[derive(Clone, Debug)]
+    struct Bomb {
+        _payload: String,
+        drops: Arc<AtomicUsize>,
+        panic_at: usize,
+    }
+    impl Drop for Bomb {
+        fn drop(&mut self) {
+            let n = self.drops.fetch_add(1, Ordering::SeqCst) + 1;
+            if n == self.panic_at {
+                panic!("boom on drop {}", n);
+            }
+        }
+    }
+
+    // Standard storage
+    let drops = Arc::new(AtomicUsize::new(0));
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut m: ZiporaHashMap<u64, Bomb> = ZiporaHashMap::new().unwrap();
+        for i in 0..8u64 {
+            m.insert(
+                i,
+                Bomb {
+                    _payload: format!("hello-world-{}", i),
+                    drops: Arc::clone(&drops),
+                    panic_at: 3,
+                },
+            )
+            .unwrap();
+        }
+        m.clear();
+    }));
+    assert!(res.is_err());
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        8,
+        "every Bomb must be dropped exactly once across clear() panic + unwind drop"
+    );
+
+    // SmallInline storage
+    let drops_inline = Arc::new(AtomicUsize::new(0));
+    let res_inline = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut m: ZiporaHashMap<u64, Bomb> =
+            ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4)).unwrap();
+        for i in 0..8u64 {
+            m.insert(
+                i,
+                Bomb {
+                    _payload: format!("inline-world-{}", i),
+                    drops: Arc::clone(&drops_inline),
+                    panic_at: 3,
+                },
+            )
+            .unwrap();
+        }
+        m.clear();
+    }));
+    assert!(res_inline.is_err());
+    assert_eq!(
+        drops_inline.load(Ordering::SeqCst),
+        8,
+        "every inline Bomb must be dropped exactly once across clear() panic + unwind drop"
+    );
+}
+
+#[test]
+fn test_s47_r6_resize_panic_in_hash_preserves_entries() {
+    use std::hash::Hasher;
+
+    #[derive(Clone, Debug)]
+    struct PKey {
+        k: u64,
+        calls: Arc<AtomicUsize>,
+        panic_on: Arc<AtomicUsize>,
+    }
+    impl PartialEq for PKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.k == other.k
+        }
+    }
+    impl Eq for PKey {}
+    impl Hash for PKey {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            let c = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if c == self.panic_on.load(Ordering::SeqCst) {
+                panic!("hash panic at {}", c);
+            }
+            self.k.hash(state);
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let panic_on = Arc::new(AtomicUsize::new(usize::MAX));
+    let mut m: ZiporaHashMap<PKey, String> = ZiporaHashMap::new().unwrap();
+    for i in 0..24u64 {
+        m.insert(
+            PKey {
+                k: i,
+                calls: Arc::clone(&calls),
+                panic_on: Arc::clone(&panic_on),
+            },
+            format!("val-{}", i),
+        )
+        .unwrap();
+    }
+    let cur = calls.load(Ordering::SeqCst);
+    panic_on.store(cur + 8, Ordering::SeqCst);
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        m.insert(
+            PKey {
+                k: 99,
+                calls: Arc::clone(&calls),
+                panic_on: Arc::clone(&panic_on),
+            },
+            "val-99".to_string(),
+        )
+        .unwrap();
+    }));
+    panic_on.store(usize::MAX, Ordering::SeqCst);
+    assert!(res.is_err());
+    assert_eq!(m.len(), 24);
+    assert_eq!(m.iter().count(), 24);
+    for i in 0..24u64 {
+        let probe = PKey {
+            k: i,
+            calls: Arc::clone(&calls),
+            panic_on: Arc::clone(&panic_on),
+        };
+        assert_eq!(
+            m.get(&probe).map(|s| s.as_str()),
+            Some(format!("val-{}", i).as_str()),
+            "entry {} lost after panicking resize",
+            i
+        );
+    }
+}
+
+#[test]
+fn test_s47_r11_custom_link_type_with_zero_delmark() {
+    use crate::hash_map::{GoldHashMap, LinkType};
+
+    #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Default, Debug)]
+    struct L0(u32);
+
+    impl LinkType for L0 {
+        const MAX: Self = L0(u32::MAX - 1);
+        const DELMARK: Self = L0(0);
+        const TAIL: Self = L0(u32::MAX);
+
+        fn as_usize(self) -> usize {
+            (self.0 - 1) as usize
+        }
+
+        fn from_usize(v: usize) -> Option<Self> {
+            u32::try_from(v + 1).ok().filter(|&x| x < u32::MAX).map(L0)
+        }
+    }
+
+    assert!(!L0::DELMARK.is_valid());
+    assert!(!L0::TAIL.is_valid());
+    assert!(L0::MAX.is_valid());
+
+    let mut gm: GoldHashMap<u64, u64, L0> = GoldHashMap::new();
+    for i in 0..20u64 {
+        gm.insert(i, i * 10).unwrap();
+    }
+    for i in 0..10u64 {
+        assert_eq!(gm.remove(&i).unwrap(), Some(i * 10));
+    }
+    for i in 0..10u64 {
+        gm.insert(i, i * 100).unwrap();
+    }
+    let mut pairs: Vec<(u64, u64)> = gm.iter().map(|(&k, &v)| (k, v)).collect();
+    pairs.sort_unstable();
+    assert_eq!(pairs.len(), 20);
+    for i in 0..10u64 {
+        assert_eq!(gm.get(&i), Some(&(i * 100)));
+    }
+    for i in 10..20u64 {
+        assert_eq!(gm.get(&i), Some(&(i * 10)));
+    }
+}

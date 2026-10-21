@@ -63,10 +63,10 @@ use std::fmt;
 use crate::system::get_cpu_features;
 
 // Hardware acceleration imports
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
 #[cfg(all(target_arch = "x86_64", not(test)))]
 use std::arch::x86_64::_popcnt64;
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
 
 /// Cache-optimized interleaved line containing rank metadata and bit data
 ///
@@ -268,7 +268,13 @@ impl RankSelectInterleaved256 {
                 }
             }
 
-            cumulative_rank += line_rank as u32;
+            cumulative_rank = cumulative_rank
+                .checked_add(line_rank as u32)
+                .ok_or_else(|| {
+                    ZiporaError::invalid_data(
+                        "RankSelectInterleaved256 set bit count exceeds u32::MAX",
+                    )
+                })?;
             self.lines.push(line)?;
         }
 
@@ -381,6 +387,9 @@ impl RankSelectInterleaved256 {
 
         for (line_idx, line) in self.lines.iter().enumerate() {
             let line_start_bit = line_idx * LINE_BITS;
+            let line_u32 = u32::try_from(line_idx).map_err(|_| {
+                ZiporaError::invalid_data("RankSelectInterleaved256 line index exceeds u32::MAX")
+            })?;
             for (word_idx, &word) in line.bit64.iter().enumerate() {
                 let word_start_bit = line_start_bit + word_idx * BITS_PER_WORD;
                 if word_start_bit >= self.total_bits {
@@ -389,11 +398,7 @@ impl RankSelectInterleaved256 {
                 let valid_bits = (self.total_bits - word_start_bit).min(BITS_PER_WORD);
                 let w1 = word.count_ones() as usize;
                 while next_target_ones > 0 && ones_seen + w1 >= next_target_ones {
-                    let bit_in_word = crate::algorithms::bit_ops::select_in_word(
-                        word,
-                        next_target_ones - ones_seen - 1,
-                    );
-                    cache1_entries.push((word_start_bit + bit_in_word) as u32);
+                    cache1_entries.push(line_u32);
                     if next_target_ones == total_ones {
                         next_target_ones = 0;
                     } else {
@@ -402,19 +407,9 @@ impl RankSelectInterleaved256 {
                 }
                 ones_seen += w1;
 
-                let valid_mask = if valid_bits == BITS_PER_WORD {
-                    !0u64
-                } else {
-                    (1u64 << valid_bits) - 1
-                };
-                let inv_word = (!word) & valid_mask;
                 let w0 = valid_bits - w1;
                 while next_target_zeros > 0 && zeros_seen + w0 >= next_target_zeros {
-                    let bit_in_word = crate::algorithms::bit_ops::select_in_word(
-                        inv_word,
-                        next_target_zeros - zeros_seen - 1,
-                    );
-                    cache0_entries.push((word_start_bit + bit_in_word) as u32);
+                    cache0_entries.push(line_u32);
                     if next_target_zeros == total_zeros {
                         next_target_zeros = 0;
                     } else {
@@ -530,13 +525,12 @@ impl RankSelectInterleaved256 {
             && let Some(sample_idx) = k.checked_div(self.select_sample_rate)
             && sample_idx < select_cache.len()
         {
-            let hi_pos = select_cache[sample_idx] as usize;
             let lo_line = if sample_idx == 0 {
                 0
             } else {
-                (select_cache[sample_idx - 1] as usize) / LINE_BITS
+                select_cache[sample_idx - 1] as usize
             };
-            let hi_line = (hi_pos / LINE_BITS + 1).min(self.lines.len());
+            let hi_line = (select_cache[sample_idx] as usize + 1).min(self.lines.len());
             let line_idx = self.binary_search_lines_range(target_rank, lo_line, hi_line);
             let line = &self.lines[line_idx];
             let rank_before_line = line.rlev1 as usize;
@@ -957,13 +951,12 @@ impl RankSelectOps for RankSelectInterleaved256 {
             && let Some(sample_idx) = k.checked_div(self.select_sample_rate)
             && sample_idx < select0_cache.len()
         {
-            let hi_pos = select0_cache[sample_idx] as usize;
             let lo_line = if sample_idx == 0 {
                 0
             } else {
-                (select0_cache[sample_idx - 1] as usize) / LINE_BITS
+                select0_cache[sample_idx - 1] as usize
             };
-            let hi_line = (hi_pos / LINE_BITS + 1).min(self.lines.len());
+            let hi_line = (select0_cache[sample_idx] as usize + 1).min(self.lines.len());
             (lo_line, hi_line)
         } else {
             (0, self.lines.len())
@@ -1774,6 +1767,48 @@ mod tests {
         }
 
         // All operations should complete without panicking
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_s47_r7_select0_and_select1_over_4gb_bits() -> Result<()> {
+        if std::env::var_os("ZIPORA_S47_R7_CHILD").is_none() {
+            // Run the 4 GiB-bit allocation in an isolated child process so its
+            // 1.2 GiB anonymous heap growth does not race with process-wide
+            // `/proc/self/status` `RssAnon` checks in `mmap_vec` tests.
+            let exe = std::env::current_exe().unwrap();
+            let out = std::process::Command::new(exe)
+                .env("ZIPORA_S47_R7_CHILD", "1")
+                .arg("--exact")
+                .arg("succinct::rank_select::interleaved::tests::test_s47_r7_select0_and_select1_over_4gb_bits")
+                .arg("--nocapture")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "child >4GiB select0/select1 test failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            return Ok(());
+        }
+
+        let words = 67_108_866usize; // > 2^32 bits
+        let mut raw = vec![0u64; words];
+        raw[0] = 0b1011;
+        raw[33_554_432] = 0xAA55_AA55_AA55_AA55;
+        raw[words - 1] = (1u64 << 63) | (1u64 << 7) | 1;
+        let total_bits = words * 64;
+        let bv = BitVector::from_raw_bits(raw, total_bits)?;
+        let rs = RankSelectInterleaved256::with_options(bv, true, 16)?;
+        assert_eq!(rs.count_ones(), 38);
+        assert_eq!(rs.select1(35)?, (words - 1) * 64);
+        assert_eq!(rs.select1(36)?, (words - 1) * 64 + 7);
+        assert_eq!(rs.select1(37)?, (words - 1) * 64 + 63);
+        let z_total = rs.count_zeros();
+        let last_word_base = (words - 1) * 64;
+        assert_eq!(rs.select0(z_total - 61)?, last_word_base + 1);
+        assert_eq!(rs.select0(z_total - 1)?, last_word_base + 62);
         Ok(())
     }
 }

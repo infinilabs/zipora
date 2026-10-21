@@ -16,7 +16,7 @@
     "runner_command": "RUSTFLAGS=\"-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32\" cargo bench --locked --bench competitor_bench && python3 scripts/bench_compare.py --suite competitor_bench --confirm-retries 5",
     "git_commit": "20ebfed",
     "binary_path": "/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/release/deps/competitor_bench-7a7ee89b36b4acf8",
-    "binary_sha256": "3275af79f4ebdcad18f1b33289a0e873780338ceaafb4291b8356a2817edc19c"
+    "binary_sha256": "81fa1c741034bd7acb2c1e5225c4d287ee94d723b370efb86bda5cae42202c73"
   },
   "competitor_configs": {
     "aho-corasick": {
@@ -346,7 +346,7 @@
     "suffix_array/divsufsort_rust_bytes_per_byte": 5.0,
     "suffix_array/libsais_c_bytes_per_byte": 5.0,
     "suffix_array/suffix_crate_bytes_per_byte": 5.0,
-    "suffix_array/zipora_bytes_per_byte": 5.0,
+    "suffix_array/zipora_bytes_per_byte": 9.0524288,
     "tries/cspp_random_16b_bytes_per_key": 23.406252,
     "tries/cspp_shared_prefix_bytes_per_key": 9.601076,
     "tries/cspp_url_paths_bytes_per_key": 15.697908,
@@ -3273,10 +3273,10 @@
       "competitor_bench": "int_codecs/stream_vbyte_crate/decode_into",
       "competitor_name": "stream_vbyte::Scalar",
       "primary_unit": "ns/int",
-      "zipora_primary_min": 0.2093,
+      "zipora_primary_min": 0.2348,
       "competitor_primary_min": 9.0807,
-      "primary_speedup_ratio": 43.386,
-      "primary_delta_pct": -97.7,
+      "primary_speedup_ratio": 38.6742,
+      "primary_delta_pct": -97.41,
       "secondary_metric": "bits_per_int",
       "zipora_secondary": 10.0,
       "competitor_secondary": 10.0,
@@ -3363,10 +3363,10 @@
       "competitor_bench": "int_codecs/stream_vbyte_simd/decode_into",
       "competitor_name": "stream_vbyte::Ssse3/Sse41",
       "primary_unit": "ns/int",
-      "zipora_primary_min": 0.2093,
+      "zipora_primary_min": 0.2348,
       "competitor_primary_min": 0.2383,
-      "primary_speedup_ratio": 1.1386,
-      "primary_delta_pct": -12.17,
+      "primary_speedup_ratio": 1.0149,
+      "primary_delta_pct": -1.47,
       "secondary_metric": "bits_per_int",
       "zipora_secondary": 10.0,
       "competitor_secondary": 10.0,
@@ -3453,10 +3453,10 @@
       "competitor_bench": "int_codecs/bitpacking_4x/decode_into",
       "competitor_name": "bitpacking::BitPacker4x",
       "primary_unit": "ns/int",
-      "zipora_primary_min": 0.2093,
+      "zipora_primary_min": 0.2348,
       "competitor_primary_min": 0.0805,
-      "primary_speedup_ratio": 0.3846,
-      "primary_delta_pct": 160.0,
+      "primary_speedup_ratio": 0.3428,
+      "primary_delta_pct": 191.68,
       "secondary_metric": "bits_per_int",
       "zipora_secondary": 10.0,
       "competitor_secondary": 8.0702,
@@ -3692,10 +3692,10 @@
       "primary_speedup_ratio": 1.4446,
       "primary_delta_pct": -30.78,
       "secondary_metric": "bytes_per_byte",
-      "zipora_secondary": 5.0,
+      "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
-      "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "secondary_delta_pct": 81.05,
+      "e3_verdict": "GAP"
     },
     {
       "category": "suffix_array",
@@ -3710,10 +3710,10 @@
       "primary_speedup_ratio": 1.3491,
       "primary_delta_pct": -25.88,
       "secondary_metric": "bytes_per_byte",
-      "zipora_secondary": 5.0,
+      "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
-      "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "secondary_delta_pct": 81.05,
+      "e3_verdict": "GAP"
     },
     {
       "category": "suffix_array",
@@ -3728,9 +3728,9 @@
       "primary_speedup_ratio": 0.8036,
       "primary_delta_pct": 24.44,
       "secondary_metric": "bytes_per_byte",
-      "zipora_secondary": 5.0,
+      "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
-      "secondary_delta_pct": 0.0,
+      "secondary_delta_pct": 81.05,
       "e3_verdict": "GAP"
     },
     {
@@ -3746,9 +3746,9 @@
       "primary_speedup_ratio": 0.827,
       "primary_delta_pct": 20.92,
       "secondary_metric": "bytes_per_byte",
-      "zipora_secondary": 5.0,
+      "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
-      "secondary_delta_pct": 0.0,
+      "secondary_delta_pct": 81.05,
       "e3_verdict": "GAP"
     },
     {
@@ -3764,9 +3764,9 @@
       "primary_speedup_ratio": 0.6806,
       "primary_delta_pct": 46.93,
       "secondary_metric": "bytes_per_byte",
-      "zipora_secondary": 5.0,
+      "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
-      "secondary_delta_pct": 0.0,
+      "secondary_delta_pct": 81.05,
       "e3_verdict": "GAP"
     },
     {
@@ -3782,9 +3782,9 @@
       "primary_speedup_ratio": 0.907,
       "primary_delta_pct": 10.26,
       "secondary_metric": "bytes_per_byte",
-      "zipora_secondary": 5.0,
+      "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
-      "secondary_delta_pct": 0.0,
+      "secondary_delta_pct": 81.05,
       "e3_verdict": "GAP"
     },
     {
@@ -3800,9 +3800,9 @@
       "primary_speedup_ratio": 0.3373,
       "primary_delta_pct": 196.45,
       "secondary_metric": "bytes_per_byte",
-      "zipora_secondary": 5.0,
+      "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
-      "secondary_delta_pct": 0.0,
+      "secondary_delta_pct": 81.05,
       "e3_verdict": "GAP"
     },
     {
@@ -3818,9 +3818,9 @@
       "primary_speedup_ratio": 0.8912,
       "primary_delta_pct": 12.2,
       "secondary_metric": "bytes_per_byte",
-      "zipora_secondary": 5.0,
+      "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
-      "secondary_delta_pct": 0.0,
+      "secondary_delta_pct": 81.05,
       "e3_verdict": "GAP"
     },
     {
@@ -7216,23 +7216,23 @@
       "dataset_size": 100000,
       "ops_per_iter": 3200000,
       "trials": 11,
-      "min_ns_per_op": 0.2093,
-      "median_ns_per_op": 0.2096,
-      "p95_ns_per_op": 0.2115,
-      "spread_pct": 1.05,
+      "min_ns_per_op": 0.2348,
+      "median_ns_per_op": 0.236,
+      "p95_ns_per_op": 0.2388,
+      "spread_pct": 1.72,
       "max_regression_pct": 9.0,
       "samples": [
-        0.2093,
-        0.2094,
-        0.2095,
-        0.2095,
-        0.2095,
-        0.2096,
-        0.2106,
-        0.2107,
-        0.2108,
-        0.211,
-        0.2115
+        0.2348,
+        0.2351,
+        0.2352,
+        0.2357,
+        0.2358,
+        0.236,
+        0.2361,
+        0.2363,
+        0.2364,
+        0.2372,
+        0.2388
       ]
     },
     {

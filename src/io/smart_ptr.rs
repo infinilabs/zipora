@@ -794,6 +794,17 @@ pub trait SerializableType: 'static {
         Self: Sized;
 
     /// Optional contiguous-slice fast path for `Vec<Self>::serialize`.
+    ///
+    /// # Contract
+    ///
+    /// - Returning `Ok(false)` (the default) must not write any bytes to `output`;
+    ///   `Vec<Self>::serialize` will then serialize each element individually via
+    ///   [`SerializableType::serialize`].
+    /// - Returning `Ok(true)` indicates that the entire `slice` has been written
+    ///   directly to `output` (for example via a single [`DataOutput::write_bytes`]
+    ///   call for little-endian `Pod` primitives `u8..u64` / `i8..i64`, bypassing
+    ///   per-element `write_u16`/`write_u32`/`write_u64` calls in accordance with
+    ///   [`DataOutput`]'s little-endian wire contract).
     #[inline(always)]
     fn serialize_slice<O: DataOutput>(_slice: &[Self], _output: &mut O) -> Result<bool>
     where

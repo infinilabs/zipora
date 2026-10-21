@@ -23,7 +23,8 @@ const MAX_DENSE_TREES: usize = 1025;
 struct ContextualEncodeCache {
     tree_codes: Vec<[(u64, u8); 256]>,
     order1_ctx: [u32; 256],
-    order2_ctx: Option<Box<[u32; 65536]>>,
+    order2_ctx: Option<Box<[u16; 65536]>>,
+    all_dense_short: bool,
 }
 
 /// Interleaving factor for parallel Huffman encoding/decoding
@@ -313,6 +314,7 @@ impl ContextualHuffmanEncoder {
                 self.trees.len().min(1)
             };
             let mut tree_codes = Vec::with_capacity(dense_count);
+            let mut has_long_code = false;
             for tree in self.trees.iter().take(dense_count) {
                 let mut codes = [(0u64, 0u8); 256];
                 for symbol in 0..=255u8 {
@@ -329,24 +331,45 @@ impl ContextualHuffmanEncoder {
                             // Codes longer than 64 bits (reachable via deserialized models)
                             // use u8::MAX as a sentinel so `encode` emits from `tree.get_code`.
                             codes[symbol as usize] = (0, u8::MAX);
+                            has_long_code = true;
                         }
                     }
                 }
                 tree_codes.push(codes);
             }
 
+            let table0_complete = tree_codes
+                .first()
+                .is_some_and(|t0| t0.iter().all(|&(_, len)| len > 0 && len <= 64));
+            let mut all_dense_short = dense_count == self.trees.len()
+                && dense_count > 0
+                && dense_count < (u16::MAX as usize)
+                && !has_long_code
+                && table0_complete;
+
             let mut order1_ctx = [0u32; 256];
             if self.order == HuffmanOrder::Order1 {
                 for (ctx, slot) in order1_ctx.iter_mut().enumerate() {
-                    *slot = self.context_map.get(&(ctx as u32)).copied().unwrap_or(0) as u32;
+                    let idx = self.context_map.get(&(ctx as u32)).copied().unwrap_or(0);
+                    if idx >= dense_count {
+                        all_dense_short = false;
+                    }
+                    *slot = idx as u32;
                 }
             }
 
             let order2_ctx = if self.order == HuffmanOrder::Order2 {
-                let mut tbl = vec![0u32; 65536].into_boxed_slice();
+                let mut tbl = vec![0u16; 65536].into_boxed_slice();
                 for (&ctx, &idx) in &self.context_map {
                     if let Some(slot) = tbl.get_mut(ctx as usize) {
-                        *slot = idx as u32;
+                        if idx >= dense_count {
+                            all_dense_short = false;
+                        }
+                        *slot = if idx < (u16::MAX as usize) {
+                            idx as u16
+                        } else {
+                            u16::MAX
+                        };
                     }
                 }
                 tbl.try_into().ok()
@@ -358,6 +381,7 @@ impl ContextualHuffmanEncoder {
                 tree_codes,
                 order1_ctx,
                 order2_ctx,
+                all_dense_short,
             }
         })
     }
@@ -421,7 +445,7 @@ impl ContextualHuffmanEncoder {
         }
 
         macro_rules! emit_ctx_sym {
-            ($tree_idx:expr, $sym:expr) => {{
+            ($tree_idx:expr, $ctx_val:expr, $sym:expr) => {{
                 let tidx = $tree_idx;
                 let sym = $sym;
                 if let Some(table) = cache.tree_codes.get(tidx) {
@@ -433,18 +457,28 @@ impl ContextualHuffmanEncoder {
                     } else {
                         emit_order0_sym!(sym, format!("Symbol {} not found in any tree", sym));
                     }
-                } else if let Some(code) = self.trees[tidx].get_code(sym) {
-                    for chunk in code.chunks(64) {
-                        let mut chunk_bits = 0u64;
-                        for (bit_idx, &bit) in chunk.iter().enumerate() {
-                            if bit {
-                                chunk_bits |= 1u64 << bit_idx;
-                            }
-                        }
-                        emit_code!(chunk_bits, chunk.len() as u8);
-                    }
                 } else {
-                    emit_order0_sym!(sym, format!("Symbol {} not found in any tree", sym));
+                    let real_tidx = if tidx < (u16::MAX as usize) {
+                        tidx
+                    } else {
+                        self.context_map
+                            .get(&($ctx_val as u32))
+                            .copied()
+                            .unwrap_or(0)
+                    };
+                    if let Some(code) = self.trees[real_tidx].get_code(sym) {
+                        for chunk in code.chunks(64) {
+                            let mut chunk_bits = 0u64;
+                            for (bit_idx, &bit) in chunk.iter().enumerate() {
+                                if bit {
+                                    chunk_bits |= 1u64 << bit_idx;
+                                }
+                            }
+                            emit_code!(chunk_bits, chunk.len() as u8);
+                        }
+                    } else {
+                        emit_order0_sym!(sym, format!("Symbol {} not found in any tree", sym));
+                    }
                 }
             }};
         }
@@ -461,8 +495,8 @@ impl ContextualHuffmanEncoder {
                     return Err(ZiporaError::invalid_data("Data empty"));
                 }
                 emit_order0_sym!(
-                    data[0], // D10.1: in-bounds
-                    format!("First symbol {} not in Order-0 tree", data[0])
+                    data[0],                                                 // D10.1: in-bounds
+                    format!("First symbol {} not in Order-0 tree", data[0])  // D10.1: in-bounds
                 );
 
                 // Subsequent symbols use context-dependent trees
@@ -472,7 +506,7 @@ impl ContextualHuffmanEncoder {
                     let symbol = data[i]; // D10.1: in-bounds
 
                     let tree_idx = cache.order1_ctx[context] as usize;
-                    emit_ctx_sym!(tree_idx, symbol);
+                    emit_ctx_sym!(tree_idx, context, symbol);
                 }
             }
             HuffmanOrder::Order2 => {
@@ -483,20 +517,44 @@ impl ContextualHuffmanEncoder {
                 } else {
                     for i in 0..2 {
                         emit_order0_sym!(
-                            data[i], // D10.1: in-bounds
-                            format!("Symbol {} not in Order-0 tree", data[i])
+                            data[i],                                           // D10.1: in-bounds
+                            format!("Symbol {} not in Order-0 tree", data[i])  // D10.1: in-bounds
                         );
                     }
 
-                    let order2_ctx = cache.order2_ctx.as_deref().unwrap_or(&[0u32; 65536]);
-                    // Subsequent symbols use 2-symbol context
-                    // D10.1: in-bounds: 2 <= i < data.len(), bounds proven by loop range
-                    for i in 2..data.len() {
-                        let context = ((data[i - 2] as usize) << 8) | (data[i - 1] as usize); // D10.1: in-bounds
-                        let symbol = data[i]; // D10.1: in-bounds
+                    let order2_ctx = cache.order2_ctx.as_deref().unwrap_or(&[0u16; 65536]);
+                    if cache.all_dense_short {
+                        let tables_ptr = cache.tree_codes.as_ptr();
+                        let data_ptr = data.as_ptr();
+                        for i in 2..data.len() {
+                            // SAFETY: `2 <= i < data.len()`, so `i - 2`, `i - 1`, and `i` are in-bounds of `data`.
+                            let (context, symbol) = unsafe {
+                                (
+                                    ((*data_ptr.add(i - 2) as usize) << 8)
+                                        | (*data_ptr.add(i - 1) as usize),
+                                    *data_ptr.add(i) as usize,
+                                )
+                            };
+                            let tree_idx = order2_ctx[context] as usize;
+                            // SAFETY: `cache.all_dense_short` guarantees every `order2_ctx` entry
+                            // is `< cache.tree_codes.len()`, and `symbol < 256`.
+                            let (mut bits, mut len) =
+                                unsafe { (*tables_ptr.add(tree_idx))[symbol] };
+                            if len == 0 {
+                                (bits, len) = table0[symbol];
+                            }
+                            emit_code!(bits, len);
+                        }
+                    } else {
+                        // Subsequent symbols use 2-symbol context
+                        // D10.1: in-bounds: 2 <= i < data.len(), bounds proven by loop range
+                        for i in 2..data.len() {
+                            let context = ((data[i - 2] as usize) << 8) | (data[i - 1] as usize); // D10.1: in-bounds
+                            let symbol = data[i]; // D10.1: in-bounds
 
-                        let tree_idx = order2_ctx[context] as usize;
-                        emit_ctx_sym!(tree_idx, symbol);
+                            let tree_idx = order2_ctx[context] as usize;
+                            emit_ctx_sym!(tree_idx, context, symbol);
+                        }
                     }
                 }
             }
@@ -1231,7 +1289,7 @@ pub struct ContextualHuffmanDecoder {
     encoder: ContextualHuffmanEncoder,
     tree_luts: Vec<[FastDecEntry; CTX_LUT_SIZE]>,
     order1_ctx: [u32; 256],
-    order2_ctx: Option<Box<[u32; 65536]>>,
+    order2_ctx: Option<Box<[u16; 65536]>>,
 }
 
 impl ContextualHuffmanDecoder {
@@ -1263,10 +1321,15 @@ impl ContextualHuffmanDecoder {
         }
 
         let order2_ctx = if encoder.order == HuffmanOrder::Order2 {
-            let mut tbl = vec![0u32; 65536].into_boxed_slice();
+            let mut tbl = vec![0u16; 65536].into_boxed_slice();
+            let lut_len = tree_luts.len();
             for (&ctx, &idx) in &encoder.context_map {
                 if let Some(slot) = tbl.get_mut(ctx as usize) {
-                    *slot = idx as u32;
+                    *slot = if idx < lut_len && idx < (u16::MAX as usize) {
+                        idx as u16
+                    } else {
+                        u16::MAX
+                    };
                 }
             }
             tbl.try_into().ok()
@@ -1524,11 +1587,71 @@ impl ContextualHuffmanDecoder {
             return Ok(result);
         }
 
-        let order2_ctx = self.order2_ctx.as_deref().unwrap_or(&[0u32; 65536]);
+        let order2_ctx = self.order2_ctx.as_deref().unwrap_or(&[0u16; 65536]);
         let mut prev2 = result[0] as usize;
         let mut prev1 = result[1] as usize;
+        let all_dense = self.tree_luts.len() == self.encoder.trees.len()
+            && self.tree_luts.len() < (u16::MAX as usize);
 
-        // Decode remaining symbols with 2-symbol context
+        if all_dense {
+            let luts_ptr = self.tree_luts.as_ptr();
+            // Pre-size `result` to avoid per-byte Vec capacity checks inside the serial context loop.
+            result.resize(output_length, 0);
+            let mut out_idx = 2usize;
+            while out_idx < output_length {
+                if bits_in_buf <= 32 {
+                    Self::refill_bit_buf(
+                        encoded_data,
+                        &mut byte_idx,
+                        &mut bit_buf,
+                        &mut bits_in_buf,
+                    );
+                }
+
+                let context = (prev2 << 8) | prev1;
+                let tree_idx = order2_ctx[context] as usize;
+                // SAFETY: When `all_dense` is true, every entry in `order2_ctx` was clamped
+                // to `< self.tree_luts.len()` at construction time in `ContextualHuffmanDecoder::new`.
+                let lut = unsafe { &*luts_ptr.add(tree_idx) };
+                let entry = lut[(bit_buf & CTX_LUT_MASK) as usize];
+                let len = entry.bit_len as u32;
+                if len > 0 && bits_in_buf >= len {
+                    let sym = entry.symbol;
+                    // SAFETY: `out_idx < output_length == result.len()`.
+                    unsafe { *result.get_unchecked_mut(out_idx) = sym };
+                    out_idx += 1;
+                    prev2 = prev1;
+                    prev1 = sym as usize;
+                    bit_buf >>= len;
+                    bits_in_buf -= len;
+                    continue;
+                }
+
+                if bits_in_buf == 0 && byte_idx >= encoded_data.len() {
+                    break;
+                }
+
+                if let Ok(symbol) = self.decode_symbol_slow(
+                    encoded_data,
+                    &mut byte_idx,
+                    &mut bit_buf,
+                    &mut bits_in_buf,
+                    &self.encoder.trees[tree_idx],
+                ) {
+                    // SAFETY: `out_idx < output_length == result.len()`.
+                    unsafe { *result.get_unchecked_mut(out_idx) = symbol };
+                    out_idx += 1;
+                    prev2 = prev1;
+                    prev1 = symbol as usize;
+                } else {
+                    break;
+                }
+            }
+            result.truncate(out_idx);
+            return Ok(result);
+        }
+
+        // Decode remaining symbols with 2-symbol context (sparse/deserialized fallback)
         while result.len() < output_length {
             if bits_in_buf <= 32 {
                 Self::refill_bit_buf(encoded_data, &mut byte_idx, &mut bit_buf, &mut bits_in_buf);
@@ -1554,12 +1677,21 @@ impl ContextualHuffmanDecoder {
                 break;
             }
 
+            let real_tree_idx = if tree_idx < (u16::MAX as usize) {
+                tree_idx
+            } else {
+                self.encoder
+                    .context_map
+                    .get(&(context as u32))
+                    .copied()
+                    .unwrap_or(0)
+            };
             if let Ok(symbol) = self.decode_symbol_slow(
                 encoded_data,
                 &mut byte_idx,
                 &mut bit_buf,
                 &mut bits_in_buf,
-                &self.encoder.trees[tree_idx],
+                &self.encoder.trees[real_tree_idx],
             ) {
                 result.push(symbol);
                 prev2 = prev1;

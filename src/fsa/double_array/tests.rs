@@ -2118,7 +2118,8 @@ mod map_prefix_regression_tests {
         let roundtrip: DoubleArrayTrie = serde_json::from_str(&valid_json).unwrap();
         assert!(roundtrip.contains(b"hello"));
 
-        let bad_padded_json = valid_json.replacen(r#""child0":"#, r#""child0":2147418112,"ignored":"#, 1);
+        let bad_padded_json =
+            valid_json.replacen(r#""child0":"#, r#""child0":2147418112,"ignored":"#, 1);
         // Construct via serde_json::Value so field replacement is exact:
         let mut val: serde_json::Value = serde_json::from_str(&valid_json).unwrap();
         val["states"][0]["child0"] = serde_json::json!(0x7FFF_0000u32);

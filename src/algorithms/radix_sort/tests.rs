@@ -633,12 +633,14 @@ fn test_c8_10_radix_sort_invalid_radix_bits_and_differential_vs_std() {
         let mut d64 = vec![3u64, 1, 2];
         assert!(lsd.sort_u64(&mut d64).is_err());
 
-        assert!(AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
-            radix_bits: bad_bits,
-            use_secure_memory: false,
-            ..Default::default()
-        })
-        .is_err());
+        assert!(
+            AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
+                radix_bits: bad_bits,
+                use_secure_memory: false,
+                ..Default::default()
+            })
+            .is_err()
+        );
     }
 
     // 2. Strings longer than 8 bytes sharing an 8-byte prefix + embedded NULs
@@ -668,13 +670,16 @@ fn test_c8_10_radix_sort_invalid_radix_bits_and_differential_vs_std() {
             ..Default::default()
         })
         .unwrap();
-        let mut items: Vec<RadixString> =
-            raw_strings.iter().map(|s| RadixString::new(s)).collect();
+        let mut items: Vec<RadixString> = raw_strings.iter().map(|s| RadixString::new(s)).collect();
         let mut expected = items.clone();
         expected.sort_unstable();
 
         sorter.sort(&mut items).unwrap();
-        assert_eq!(items, expected, "strategy {:?} failed full Ord sort", strategy);
+        assert_eq!(
+            items, expected,
+            "strategy {:?} failed full Ord sort",
+            strategy
+        );
     }
 
     // 3. Differential test across u32, u64, Vec<u8>, and KV pairs vs std sort.
@@ -1103,4 +1108,172 @@ fn test_s21_r1_advanced_radix_sort_reports_the_path_that_ran() {
     });
 
     assert!(mismatches.is_empty(), "{mismatches:#?}");
+}
+
+#[test]
+fn test_s47_r2_impure_into_u64_no_oob() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Clone, Copy)]
+    struct ImpureKey(#[allow(dead_code)] u64);
+
+    impl From<ImpureKey> for u64 {
+        fn from(_k: ImpureKey) -> u64 {
+            let c = CALLS.fetch_add(1, Ordering::Relaxed);
+            if c < 64 { c % 2 } else { 0xFF00_0000_0000_00FF }
+        }
+    }
+
+    CALLS.store(0, Ordering::Relaxed);
+    let n = 64usize;
+    let mut data: Vec<(ImpureKey, String)> = (0..n)
+        .map(|i| (ImpureKey(i as u64), format!("value-{i}")))
+        .collect();
+    let mut guard = vec![String::from("neighbour"); 4];
+    KeyValueRadixSort::<ImpureKey, String>::new()
+        .sort_by_key(&mut data)
+        .unwrap();
+    guard.push(String::new());
+    assert_eq!(data.len(), n);
+    assert_eq!(CALLS.load(Ordering::Relaxed), n as u64);
+}
+
+#[test]
+fn test_s47_r3_panicking_into_u64_no_double_free() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+    static PANIC_AT: AtomicU64 = AtomicU64::new(u64::MAX);
+
+    #[derive(Clone, Copy)]
+    struct PanickyKey(u64);
+
+    impl From<PanickyKey> for u64 {
+        fn from(k: PanickyKey) -> u64 {
+            let c = CALLS.fetch_add(1, Ordering::Relaxed);
+            if c == PANIC_AT.load(Ordering::Relaxed) {
+                panic!("key conversion failed at call {c}");
+            }
+            k.0
+        }
+    }
+
+    // Case 1: panic at call 2*n + 5 (previously inside scatter pass; now never reached
+    // because K::into() is called only n times).
+    let n: u64 = 10;
+    CALLS.store(0, Ordering::Relaxed);
+    PANIC_AT.store(2 * n + 5, Ordering::Relaxed);
+    let mut data: Vec<(PanickyKey, String)> = (0..n)
+        .rev()
+        .map(|i| (PanickyKey(i * 257), format!("value-{i}")))
+        .collect();
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        KeyValueRadixSort::<PanickyKey, String>::new().sort_by_key(&mut data)
+    }));
+    assert!(r.is_ok());
+    let ptrs: Vec<*const u8> = data.iter().map(|(_, s)| s.as_ptr()).collect();
+    let mut uniq = ptrs.clone();
+    uniq.sort();
+    uniq.dedup();
+    assert_eq!(uniq.len(), ptrs.len());
+    drop(data);
+
+    // Case 2: panic at call 5 (during initial key extraction pass).
+    CALLS.store(0, Ordering::Relaxed);
+    PANIC_AT.store(5, Ordering::Relaxed);
+    let mut data2: Vec<(PanickyKey, String)> = (0..n)
+        .rev()
+        .map(|i| (PanickyKey(i * 257), format!("value-{i}")))
+        .collect();
+    let r2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        KeyValueRadixSort::<PanickyKey, String>::new().sort_by_key(&mut data2)
+    }));
+    assert!(r2.is_err());
+    let ptrs2: Vec<*const u8> = data2.iter().map(|(_, s)| s.as_ptr()).collect();
+    let mut uniq2 = ptrs2.clone();
+    uniq2.sort();
+    uniq2.dedup();
+    assert_eq!(uniq2.len(), ptrs2.len());
+    drop(data2);
+}
+
+#[test]
+fn test_s47_r11_hybrid_lsd_u32_u64_kv_paths() {
+    let sizes: &[usize] = if cfg!(miri) {
+        &[0, 1, 17, 257]
+    } else {
+        &[0, 1, 17, 257, 16_384, 20_000, 70_000]
+    };
+
+    let mut sorter = RadixSort::with_config(RadixSortConfig {
+        use_parallel: false,
+        use_counting_sort_threshold: 0,
+        ..RadixSortConfig::default()
+    });
+    let kv_u64 = KeyValueRadixSort::<u64, u64>::new();
+    let kv_u32 = KeyValueRadixSort::<u32, usize>::new();
+
+    for &n in sizes {
+        // 1. Wide u32 (triggers MSB + 3-pass low24 when n > 65536)
+        let mut u32_wide: Vec<u32> = (0..n as u32)
+            .map(|i| i.wrapping_mul(0x9E37_79B9).rotate_left(13) ^ i)
+            .collect();
+        let mut u32_want = u32_wide.clone();
+        u32_want.sort_unstable();
+        sorter.sort_u32(&mut u32_wide).unwrap();
+        assert_eq!(u32_wide, u32_want, "u32_wide n={n}");
+
+        // 2. Narrow u32 (or_diff >> 24 == 0, triggers lsd_u32_in_cache even when n > 65536)
+        let mut u32_narrow: Vec<u32> = (0..n as u32)
+            .map(|i| i.wrapping_mul(7919) & 0x00FF_FFFF)
+            .collect();
+        let mut u32_narrow_want = u32_narrow.clone();
+        u32_narrow_want.sort_unstable();
+        sorter.sort_u32(&mut u32_narrow).unwrap();
+        assert_eq!(u32_narrow, u32_narrow_want, "u32_narrow n={n}");
+
+        // 3. Wide u64 (triggers MSB + 5-pass low56 when n > 65536)
+        let mut u64_wide: Vec<u64> = (0..n as u64)
+            .map(|i| i.wrapping_mul(0x517C_C1B7_2722_0A95).rotate_left(19) ^ i)
+            .collect();
+        let mut u64_want = u64_wide.clone();
+        u64_want.sort_unstable();
+        sorter.sort_u64(&mut u64_wide).unwrap();
+        assert_eq!(u64_wide, u64_want, "u64_wide n={n}");
+
+        // 4. Narrow u64 (or_diff >> 56 == 0, triggers lsd_u64_in_cache)
+        let mut u64_narrow: Vec<u64> = (0..n as u64)
+            .map(|i| i.wrapping_mul(0x517C_C1B7) & 0x00FF_FFFF_FFFF_FFFF)
+            .collect();
+        let mut u64_narrow_want = u64_narrow.clone();
+        u64_narrow_want.sort_unstable();
+        sorter.sort_u64(&mut u64_narrow).unwrap();
+        assert_eq!(u64_narrow, u64_narrow_want, "u64_narrow n={n}");
+
+        // 5. KeyValueRadixSort<u64, u64> (wide and narrow, triggers > 16384 fast path)
+        let mut kv_wide: Vec<(u64, u64)> = (0..n as u64)
+            .map(|i| (i.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17), i))
+            .collect();
+        let mut kv_want = kv_wide.clone();
+        kv_want.sort_by_key(|&(k, _)| k);
+        kv_u64.sort_by_key(&mut kv_wide).unwrap();
+        assert_eq!(kv_wide, kv_want, "kv_wide n={n}");
+
+        let mut kv_narrow: Vec<(u64, u64)> = (0..n as u64)
+            .map(|i| ((i.wrapping_mul(65537) & 0x0000_FFFF_FFFF), i))
+            .collect();
+        let mut kv_narrow_want = kv_narrow.clone();
+        kv_narrow_want.sort_by_key(|&(k, _)| k);
+        kv_u64.sort_by_key(&mut kv_narrow).unwrap();
+        assert_eq!(kv_narrow, kv_narrow_want, "kv_narrow n={n}");
+
+        // 6. KeyValueRadixSort<u32, usize> (materialized-key path, stability check)
+        let mut kv32: Vec<(u32, usize)> = (0..n)
+            .map(|i| (((i as u32).wrapping_mul(251) % 64), i))
+            .collect();
+        let mut kv32_want = kv32.clone();
+        kv32_want.sort_by_key(|&(k, _)| k);
+        kv_u32.sort_by_key(&mut kv32).unwrap();
+        assert_eq!(kv32, kv32_want, "kv32 n={n}");
+    }
 }

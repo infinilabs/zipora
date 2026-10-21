@@ -492,7 +492,8 @@ impl DoubleArrayTrie {
             // SAFETY: set_base_padded guarantees (base | 0xFF) < len for valid bases.
             // Leaf states have child0=0, so next=ch ∈ [0,255] < 256 ≤ len.
             // Free states have parent with FREE_BIT set, never matching curr.
-            debug_assert!( // PROVEN: curr is allocated (0 or matched parent < 0x8000_0000); child0 is 0 (states.len() >= 256) or set by set_base_padded ((base | 0xFF) < states.len())
+            // PROVEN: curr is allocated (0 or matched parent < 0x8000_0000); child0 is 0 (states.len() >= 256) or set by set_base_padded ((base | 0xFF) < states.len())
+            debug_assert!(
                 next < states.len(),
                 "OOB: next={next}, len={}",
                 states.len()
@@ -869,7 +870,11 @@ impl DoubleArrayTrie {
         let mut stack = vec![(start_state, first, 0u16, base_path_len)];
         while let Some((state, c, prev_c, depth)) = stack.pop() {
             path.truncate(depth);
-            if c == NINFO_NONE || c <= prev_c || c > 256 || depth.saturating_sub(base_path_len) >= self.states.len() {
+            if c == NINFO_NONE
+                || c <= prev_c
+                || c > 256
+                || depth.saturating_sub(base_path_len) >= self.states.len()
+            {
                 continue;
             }
             let base = self.states[state as usize].child0();

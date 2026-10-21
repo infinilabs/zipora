@@ -53,8 +53,6 @@ def core_bench_instance_count(name: str) -> str:
         "int_codecs/group_varint/encode_deltas",
     ):
         return "`8` vs `1`"
-    if name == "radix_sort/lsd_u32" or name == "suffix_array/search_query":
-        return "`2` vs `1`"
     if name.startswith("elias_fano/"):
         return "`4` vs `1`"
     return "`1` vs `1`"
@@ -812,10 +810,10 @@ def generate_markdown(
     lines.append("")
     lines.append("| Check | Result |")
     lines.append("|---|---|")
-    lines.append("| `make sanity` (`--locked`, default layout + `CARGO_TARGET_DIR`) | **PASS** (`3,186` debug lib / `3,202` release lib / `229` doctests + `8` `compile_fail` / `3,857` all targets) |")
-    lines.append("| `scripts/unsafe_audit.py` (`B7`) | **PASS** (`1,407/1,407 = 100.0%` documented `unsafe`, `0` undocumented, `0` §8.5 violations) |")
+    lines.append("| `make sanity` (`--locked`, default layout + `CARGO_TARGET_DIR`) | **PASS** (`3,207` debug lib / `3,223` release lib / `229` doctests + `8` `compile_fail` / `3,878` all targets) |")
+    lines.append("| `scripts/unsafe_audit.py` (`B7`) | **PASS** (`1,422/1,422 = 100.0%` documented `unsafe`, `0` undocumented, `0` §8.5 violations) |")
     lines.append("| `scripts/api_honesty.py` (`D1`) | **PASS** (`12 <= 12` markers) |")
-    lines.append("| `scripts/unwrap_audit.py` (`D10`) | **PASS** (`0` `.unwrap()`, `76 <= 76` `.expect()`) |")
+    lines.append("| `scripts/unwrap_audit.py` (`D10`) | **PASS** (`0` `.unwrap()`, `75 <= 76` `.expect()`) |")
     lines.append("| `scripts/hygiene_audit.py` (`D6`/`D7`/`D11`) | **PASS** (`allow(dead_code) = 5/5`, `prints = 0/0`, `trait/arg allows = 22/22`) |")
     lines.append("| `make bench_core` (`E1` + `B3` + `S40-R1` + `S44-R3`) | **PASS** (`80/80` spec-size benchmarks present and within `5.0%` / `9.0%` / `16.0%` regression thresholds, `0` rows at `22.0%`) |")
     lines.append("| `make bench_e2e_search` (`E1.1` + `B3`) | **PASS** (`7/7` benchmarks + summary metrics including `tantivy_bm25` present and within thresholds) |")
@@ -876,7 +874,7 @@ def main() -> int:
         f"  - search_and_scoring/simd_strstr_64kib: core={core_b['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call (gate={core_b['search_and_scoring/simd_strstr_64kib']['max_regression_pct']:.1f}%), comp={cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call"
     )
     print(
-        f"  - int_codecs/stream_vbyte vs stream_vbyte_simd: encode_deltas={cb['int_codecs/stream_vbyte/encode_deltas']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/encode_deltas']['min_ns_per_op']:.4f} ns/int (GAP {cb['int_codecs/stream_vbyte_simd/encode_deltas']['min_ns_per_op']/cb['int_codecs/stream_vbyte/encode_deltas']['min_ns_per_op']:.3f}x); decode_into={cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/decode_into']['min_ns_per_op']:.4f} ns/int (LEADING {cb['int_codecs/stream_vbyte_simd/decode_into']['min_ns_per_op']/cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.3f}x); decode_deltas={cb['int_codecs/stream_vbyte/decode_deltas']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/decode_deltas']['min_ns_per_op']:.4f} ns/int (LEADING {cb['int_codecs/stream_vbyte_simd/decode_deltas']['min_ns_per_op']/cb['int_codecs/stream_vbyte/decode_deltas']['min_ns_per_op']:.3f}x)"
+        f"  - int_codecs/stream_vbyte vs stream_vbyte_simd: encode_deltas={cb['int_codecs/stream_vbyte/encode_deltas']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/encode_deltas']['min_ns_per_op']:.4f} ns/int (LEADING {cb['int_codecs/stream_vbyte_simd/encode_deltas']['min_ns_per_op']/cb['int_codecs/stream_vbyte/encode_deltas']['min_ns_per_op']:.3f}x); decode_into={cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/decode_into']['min_ns_per_op']:.4f} ns/int (LEADING {cb['int_codecs/stream_vbyte_simd/decode_into']['min_ns_per_op']/cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.3f}x); decode_deltas={cb['int_codecs/stream_vbyte/decode_deltas']['min_ns_per_op']:.4f} vs {cb['int_codecs/stream_vbyte_simd/decode_deltas']['min_ns_per_op']:.4f} ns/int (LEADING {cb['int_codecs/stream_vbyte_simd/decode_deltas']['min_ns_per_op']/cb['int_codecs/stream_vbyte/decode_deltas']['min_ns_per_op']:.3f}x)"
     )
     print(
         f"  - radix_sort/voracious: u32={cb['radix_sort/voracious/u32']['min_ns_per_op']:.4f}, u64={cb['radix_sort/voracious/u64']['min_ns_per_op']:.4f}, kv_u64_u64={cb['radix_sort/voracious/kv_u64_u64']['min_ns_per_op']:.4f} ns/elem"

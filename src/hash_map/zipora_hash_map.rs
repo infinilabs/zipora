@@ -20,18 +20,16 @@
 //! - **Concurrent Access**: Lock-free and token-based synchronization
 
 use crate::error::Result;
-use crate::hash_map::cache_locality::{
-    CacheMetrics,
-};
+use crate::hash_map::cache_locality::CacheMetrics;
+use crate::hash_map::config::{HashStorageStrategy, OptimizationStrategy, ZiporaHashMapConfig};
 use crate::hash_map::simd_string_ops::{SimdStringOps, get_global_simd_ops};
+use crate::hash_map::storage::*;
 use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator};
 use ahash::RandomState;
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::mem::MaybeUninit;
-use crate::hash_map::config::{HashStorageStrategy, OptimizationStrategy, ZiporaHashMapConfig};
-use crate::hash_map::storage::*;
 
 /// Unified hash map implementation with strategy-based configuration
 ///
@@ -104,7 +102,6 @@ where
     pub(super) occupied: usize,
 }
 
-
 /// Performance statistics
 #[derive(Debug, Default, Clone)]
 pub struct HashMapStats {
@@ -171,7 +168,10 @@ where
     /// Values `>= 1.0` are kept: the table then grows only once every slot
     /// is claimed (the [`small_inline`](ZiporaHashMapConfig::small_inline)
     /// preset uses `1.0`).
-    pub fn with_config_and_hasher(mut config: ZiporaHashMapConfig, hash_builder: S) -> Result<Self> {
+    pub fn with_config_and_hasher(
+        mut config: ZiporaHashMapConfig,
+        hash_builder: S,
+    ) -> Result<Self> {
         // `(capacity as f64 * load_factor) as usize` is 0 for 0.0, a negative
         // value or NaN, so the load-factor check fired on every insert and
         // every resize doubled the table until an allocation failed (the
@@ -239,9 +239,7 @@ where
                     StandardTable::with_capacity_and_load_factor(cap, config.load_factor)?,
                 ))
             }
-            HashStorageStrategy::SmallInline {
-                ..
-            } => {
+            HashStorageStrategy::SmallInline { .. } => {
                 Ok(HashMapStorage::SmallInline {
                     inline_data: InlineStorage {
                         // SAFETY: This creates an array of MaybeUninit<(K, V)> values.
@@ -431,6 +429,8 @@ where
 
     /// Clear all entries from the map
     pub fn clear(&mut self) {
+        self.len = 0;
+        self.occupied = 0;
         match &mut self.storage {
             HashMapStorage::Standard(table) => Self::clear_standard(table),
             HashMapStorage::SmallInline {
@@ -439,8 +439,6 @@ where
                 len,
             } => Self::clear_small_inline(inline_data, fallback, len),
         }
-        self.len = 0;
-        self.occupied = 0;
     }
 
     /// Check if the map contains a key
@@ -546,25 +544,32 @@ where
     fn clone(&self) -> Self {
         // SAFETY: Clone requires creating a new map with the same config.
         // If allocation fails, we panic as there's no graceful fallback for Clone.
-        let mut new_map = Self::with_config_and_hasher(self.config.clone(), self.hash_builder.clone())
-            .unwrap_or_else(|e| {
-                panic!(
-                    "ZiporaHashMap clone failed: {}. \
+        let mut new_map =
+            Self::with_config_and_hasher(self.config.clone(), self.hash_builder.clone())
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "ZiporaHashMap clone failed: {}. \
                        This indicates severe memory pressure.",
-                    e
-                )
-            });
+                        e
+                    )
+                });
 
         // Copy all entries from the original map
         match &self.storage {
             HashMapStorage::Standard { .. } => {
                 for (key, value) in self.iter() {
-                    new_map.insert(key.clone(), value.clone()).unwrap_or_else(|e| {
-                        panic!("ZiporaHashMap clone failed during insertion: {}", e);
-                    });
+                    new_map
+                        .insert(key.clone(), value.clone())
+                        .unwrap_or_else(|e| {
+                            panic!("ZiporaHashMap clone failed during insertion: {}", e);
+                        });
                 }
             }
-            HashMapStorage::SmallInline { inline_data, fallback, .. } => {
+            HashMapStorage::SmallInline {
+                inline_data,
+                fallback,
+                ..
+            } => {
                 // Copy inline entries
                 for i in 0..16 {
                     if (inline_data.occupied >> i) & 1 == 1 {
@@ -582,9 +587,14 @@ where
                         index: 0,
                     };
                     for (key, value) in fb_iter {
-                        new_map.insert(key.clone(), value.clone()).unwrap_or_else(|e| {
-                            panic!("ZiporaHashMap clone failed during fallback insertion: {}", e);
-                        });
+                        new_map
+                            .insert(key.clone(), value.clone())
+                            .unwrap_or_else(|e| {
+                                panic!(
+                                    "ZiporaHashMap clone failed during fallback insertion: {}",
+                                    e
+                                );
+                            });
                     }
                 }
             }

@@ -93,7 +93,17 @@ pub fn bench_suffix_array(
     maybe_repin_self_within_ccd();
     trim_allocator_arena();
     let n = sizes.suffix_array_bytes;
-    record_space_metric(space, "suffix_array/zipora_bytes_per_byte", 5.0);
+    let zipora_sa_bytes = n * std::mem::size_of::<usize>()
+        + if n >= 4096 {
+            65_536 * std::mem::size_of::<(u32, u32)>()
+        } else {
+            0
+        };
+    record_space_metric(
+        space,
+        "suffix_array/zipora_bytes_per_byte",
+        1.0 + zipora_sa_bytes as f64 / n.max(1) as f64,
+    );
     record_space_metric(space, "suffix_array/suffix_crate_bytes_per_byte", 5.0);
     record_space_metric(space, "suffix_array/divsufsort_rust_bytes_per_byte", 5.0);
     record_space_metric(space, "suffix_array/cdivsufsort_c_bytes_per_byte", 5.0);

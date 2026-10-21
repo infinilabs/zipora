@@ -115,23 +115,82 @@ impl HuffmanEncoder {
     pub(crate) fn from_tree(tree: HuffmanTree) -> Self {
         let mut code_table = Box::new([(0u64, 0u8); 256]);
         for symbol in 0..=255u8 {
-            if let Some(code) = tree.get_code(symbol) {
-                if !code.is_empty() && code.len() <= 64 {
-                    let mut bits = 0u64;
-                    for (i, &bit) in code.iter().enumerate() {
-                        if bit {
-                            bits |= 1u64 << i;
-                        }
+            if let Some(code) = tree.get_code(symbol)
+                && !code.is_empty()
+                && code.len() <= 64
+            {
+                let mut bits = 0u64;
+                for (i, &bit) in code.iter().enumerate() {
+                    if bit {
+                        bits |= 1u64 << i;
                     }
-                    code_table[symbol as usize] = (bits, code.len() as u8);
-                } else {
-                    // Deserialized trees may contain codes longer than 64 bits;
-                    // mark with u8::MAX (> 64) so `encode` emits via `tree.get_code`.
-                    code_table[symbol as usize] = (0, u8::MAX);
                 }
+                code_table[symbol as usize] = (bits, code.len() as u8);
             }
         }
         Self { tree, code_table }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn encode_with_long_codes(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let mut result = Vec::with_capacity(data.len());
+        let mut acc: u128 = 0;
+        let mut bit_count: u32 = 0;
+
+        for &symbol in data {
+            let (bits, len) = self.code_table[symbol as usize];
+            if len == 0 {
+                let code = self.tree.get_code(symbol).ok_or_else(|| {
+                    ZiporaError::invalid_data(format!("Symbol {} not in Huffman tree", symbol))
+                })?;
+                if code.is_empty() {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "Symbol {} not in Huffman tree",
+                        symbol
+                    )));
+                }
+                for chunk in code.chunks(64) {
+                    let mut chunk_bits = 0u64;
+                    for (i, &bit) in chunk.iter().enumerate() {
+                        if bit {
+                            chunk_bits |= 1u64 << i;
+                        }
+                    }
+                    acc |= (chunk_bits as u128) << bit_count;
+                    bit_count += chunk.len() as u32;
+                    if bit_count >= 64 {
+                        let word = acc as u64;
+                        result.extend_from_slice(&word.to_le_bytes());
+                        acc >>= 64;
+                        bit_count -= 64;
+                    }
+                }
+                continue;
+            }
+
+            acc |= (bits as u128) << bit_count;
+            bit_count += len as u32;
+
+            if bit_count >= 64 {
+                let word = acc as u64;
+                result.extend_from_slice(&word.to_le_bytes());
+                acc >>= 64;
+                bit_count -= 64;
+            }
+        }
+
+        while bit_count >= 8 {
+            result.push(acc as u8);
+            acc >>= 8;
+            bit_count -= 8;
+        }
+
+        if bit_count > 0 {
+            result.push(acc as u8);
+        }
+
+        Ok(result)
     }
 
     /// Encode data using Huffman coding
@@ -153,41 +212,18 @@ impl HuffmanEncoder {
 
         for &symbol in data {
             let (bits, len) = self.code_table[symbol as usize];
-            if len > 0 && len <= 64 {
-                acc |= (bits as u128) << bit_count;
-                bit_count += len as u32;
+            if len == 0 {
+                return self.encode_with_long_codes(data);
+            }
 
-                if bit_count >= 64 {
-                    let word = acc as u64;
-                    result.extend_from_slice(&word.to_le_bytes());
-                    acc >>= 64;
-                    bit_count -= 64;
-                }
-            } else if len > 64 {
-                let code = self.tree.get_code(symbol).ok_or_else(|| {
-                    ZiporaError::invalid_data(format!("Symbol {} not in Huffman tree", symbol))
-                })?;
-                for chunk in code.chunks(64) {
-                    let mut chunk_bits = 0u64;
-                    for (i, &bit) in chunk.iter().enumerate() {
-                        if bit {
-                            chunk_bits |= 1u64 << i;
-                        }
-                    }
-                    acc |= (chunk_bits as u128) << bit_count;
-                    bit_count += chunk.len() as u32;
-                    if bit_count >= 64 {
-                        let word = acc as u64;
-                        result.extend_from_slice(&word.to_le_bytes());
-                        acc >>= 64;
-                        bit_count -= 64;
-                    }
-                }
-            } else {
-                return Err(ZiporaError::invalid_data(format!(
-                    "Symbol {} not in Huffman tree",
-                    symbol
-                )));
+            acc |= (bits as u128) << bit_count;
+            bit_count += len as u32;
+
+            if bit_count >= 64 {
+                let word = acc as u64;
+                result.extend_from_slice(&word.to_le_bytes());
+                acc >>= 64;
+                bit_count -= 64;
             }
         }
 
