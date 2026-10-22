@@ -1166,4 +1166,47 @@ mod tests {
         );
         assert_eq!(dec.decode(&encoded, 4).unwrap(), b"aaaa");
     }
+
+    #[test]
+    fn test_s48_r9_huffman_freq_saturation_and_sparse_o1_dense_luts() {
+        // 1. Frequency sum exceeding u32::MAX must saturate instead of panicking on overflow.
+        let mut freqs = [0u32; 256];
+        freqs[b'a' as usize] = u32::MAX - 10;
+        freqs[b'b' as usize] = u32::MAX - 20;
+        freqs[b'c' as usize] = 1_000;
+        let tree = HuffmanTree::from_frequencies(&freqs).unwrap();
+        let enc = HuffmanEncoder::from_tree(tree.clone());
+        let dec = HuffmanDecoder::new(tree);
+        let msg = b"abacabba";
+        let bytes = enc.encode(msg).unwrap();
+        assert_eq!(dec.decode(&bytes, msg.len()).unwrap(), msg);
+
+        // 2. Sparse Order-1 model with 300 trees (<= MAX_DENSE_TREES) and 10 active contexts
+        //    must build all 300 dense LUTs and round-trip cleanly even when filler trees are empty.
+        let tree0 = serialize_custom_tree(&[(b'a', &[false]), (b'b', &[true])]);
+        let tree_inv = serialize_custom_tree(&[(b'a', &[true]), (b'b', &[false])]);
+        let empty_tree = serialize_custom_tree(&[]);
+        let mut trees = Vec::with_capacity(300);
+        trees.push(tree0);
+        for _ in 1..299 {
+            trees.push(empty_tree.clone());
+        }
+        trees.push(tree_inv);
+        let ctx_map: Vec<(u32, u32)> = (0..10u32)
+            .map(|i| {
+                if i == 0 {
+                    (b'a' as u32, 299)
+                } else {
+                    (i, 1) // points to empty filler tree -> falls back to trees[0]
+                }
+            })
+            .collect();
+        let model = serialize_custom_contextual_model(1, &ctx_map, &trees);
+        let c_enc = ContextualHuffmanEncoder::deserialize(&model).unwrap();
+        let c_encoded = c_enc.encode(b"ababaa").unwrap();
+        assert_eq!(c_enc.cached_dense_tree_count(), 300);
+        let c_dec = ContextualHuffmanDecoder::new(c_enc);
+        assert_eq!(c_dec.dense_lut_count(), 300);
+        assert_eq!(c_dec.decode(&c_encoded, 6).unwrap(), b"ababaa");
+    }
 }

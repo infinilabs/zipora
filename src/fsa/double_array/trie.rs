@@ -918,6 +918,13 @@ impl DoubleArrayTrie {
             return Ok(Self::new());
         }
 
+        // Pre-allocate DFS scratch buffers before `trie` so their heap allocations
+        // sit below `trie.states` and `trie.ninfos` and never block in-place `realloc`
+        // growth at the top of the arena during bulk construction.
+        let mut stack: Vec<(u32, usize, usize, usize)> = Vec::with_capacity(4096);
+        let mut children: Vec<(usize, usize, u8)> = Vec::with_capacity(256);
+        let mut labels: Vec<u8> = Vec::with_capacity(256);
+
         // Estimate total states needed
         let total_bytes: usize = keys.iter().map(|k| k.len()).sum();
         let estimated_states = (total_bytes / 2).max(256);
@@ -925,6 +932,9 @@ impl DoubleArrayTrie {
 
         let is_sorted = keys.windows(2).all(|w| w[0] <= w[1]);
         if !is_sorted {
+            drop(stack);
+            drop(children);
+            drop(labels);
             for &key in keys {
                 trie.insert(key)?;
             }
@@ -932,10 +942,7 @@ impl DoubleArrayTrie {
             return Ok(trie);
         }
 
-        let mut stack: Vec<(u32, usize, usize, usize)> = Vec::with_capacity(256);
         stack.push((0u32, 0usize, keys.len(), 0usize));
-        let mut children: Vec<(usize, usize, u8)> = Vec::with_capacity(256);
-        let mut labels: Vec<u8> = Vec::with_capacity(256);
 
         while let Some((state, start, end, depth)) = stack.pop() {
             // Fast path: single key remaining in sub-range -> walk its unary suffix inline

@@ -93,7 +93,14 @@ impl From<EliasFanoWire> for EliasFano {
                 *last &= (1u64 << rem) - 1;
             }
         }
-        let (select1_samples, select0_samples) = if wire.len == 0 || high_len_bits == 0 {
+        let popcount: usize = wire.high_bits.iter().map(|w| w.count_ones() as usize).sum();
+        let max_low_elems = if wire.low_bit_width == 0 {
+            usize::MAX
+        } else {
+            wire.low_bits.len().saturating_mul(64) / (wire.low_bit_width as usize)
+        };
+        let len = wire.len.min(popcount).min(max_low_elems);
+        let (select1_samples, select0_samples) = if len == 0 || high_len_bits == 0 {
             (Vec::new(), Vec::new())
         } else {
             Self::build_samples(&wire.high_bits, high_len_bits)
@@ -101,7 +108,7 @@ impl From<EliasFanoWire> for EliasFano {
         Self {
             low_bits: wire.low_bits,
             high_bits: wire.high_bits,
-            len: wire.len,
+            len,
             low_bit_width: wire.low_bit_width,
             universe: wire.universe,
             high_len_bits,
@@ -478,7 +485,9 @@ impl EliasFano {
             return 0;
         }
 
-        let bit_pos = index as u64 * self.low_bit_width as u64;
+        let Some(bit_pos) = (index as u64).checked_mul(self.low_bit_width as u64) else {
+            return 0;
+        };
         let word_idx = (bit_pos / 64) as usize;
         let bit_idx = (bit_pos % 64) as u32;
         let mask = (1u64 << self.low_bit_width) - 1;

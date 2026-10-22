@@ -771,11 +771,24 @@ fn test_s47_r11_double_array_memory_usage_includes_child_links() {
         } => (base.len(), check.len(), child_links.len()),
         _ => unreachable!(),
     };
+    assert_eq!(base_len, check_len);
+    assert_eq!(base_len, links_len);
+    let old_two_array_bytes = (base_len + check_len) * 4;
+    let total_bytes = trie.memory_usage();
+    assert!(
+        total_bytes >= 3 * 256 * 4,
+        "DoubleArray must allocate at least 256 12-byte slots ({total_bytes} B)"
+    );
     assert_eq!(
-        trie.memory_usage(),
-        (base_len + check_len + links_len) * 4,
-        "memory_usage must include base + check + child_links (12 B/slot)"
+        total_bytes % 12,
+        0,
+        "DoubleArray memory_usage must be an exact multiple of 12 B/slot"
+    );
+    assert_eq!(
+        total_bytes,
+        old_two_array_bytes + base_len * 4,
+        "memory_usage must include child_links (+4 B/slot over base+check)"
     );
     let (b_cap, c_cap, l_cap) = trie.memory_stats();
-    assert!(b_cap > 0 && c_cap > 0 && l_cap > 0);
+    assert!(b_cap >= base_len * 4 && c_cap >= check_len * 4 && l_cap >= links_len * 4);
 }

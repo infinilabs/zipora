@@ -122,7 +122,8 @@ def wait_for_quiet_host_window(max_wait_sec: float = 35.0) -> Tuple[int, float]:
         nr2, busy = sample_busy_cores(0.10)
         if nr2 <= 6 and busy <= 6.5:
             return nr2, busy
-    deadline = time.monotonic() + max_wait_sec
+    t_start = time.monotonic()
+    deadline = t_start + max_wait_sec
     best_nr, best_busy = nr, 999.0
     while time.monotonic() < deadline:
         nr, busy = sample_busy_cores(0.20)
@@ -130,6 +131,8 @@ def wait_for_quiet_host_window(max_wait_sec: float = 35.0) -> Tuple[int, float]:
             best_nr, best_busy = nr, busy
         if nr <= 6 and busy <= 6.5:
             return nr, busy
+        if nr > 16 and (time.monotonic() - t_start) >= 1.2:
+            break
     return best_nr, best_busy
 
 

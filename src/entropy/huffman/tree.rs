@@ -105,7 +105,7 @@ impl HuffmanTree {
                 .0;
 
             let merged = HuffmanNode::Internal {
-                frequency: left.frequency() + right.frequency(),
+                frequency: left.frequency().saturating_add(right.frequency()),
                 left: Box::new(left),
                 right: Box::new(right),
             };
@@ -272,7 +272,9 @@ impl HuffmanTree {
             .ok_or_else(|| ZiporaError::invalid_data("Huffman tree data too short"))?;
         let symbol_count = u16::from_le_bytes(*count_chunk) as usize;
         if symbol_count > 256 {
-            return Err(ZiporaError::invalid_data("Huffman tree symbol count exceeds 256"));
+            return Err(ZiporaError::invalid_data(
+                "Huffman tree symbol count exceeds 256",
+            ));
         }
 
         let mut codes = HashMap::with_capacity(symbol_count);

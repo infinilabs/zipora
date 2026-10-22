@@ -479,7 +479,8 @@ pub fn choose_quietest_physical_core(
         sum
     };
     let prim = primary_core.min(phys - 1).max(1);
-    if pair_busy(prim) <= 15_000 && ccd_busy(prim / 8) <= 800_000 {
+    let nr = read_nr_running();
+    if pair_busy(prim) <= 15_000 && (nr <= 16 || ccd_busy(prim / 8) <= 800_000) {
         return prim;
     }
     let ccd_pref = |ccd: usize| -> usize {
@@ -490,11 +491,28 @@ pub fn choose_quietest_physical_core(
             _ => 3,
         }
     };
+    let cur_core = current_self_pinned_core().min(phys - 1).max(1);
+    let cur_ccd = cur_core / 8;
+    let ccd_start = (cur_ccd * 8).max(1).min(phys);
+    let ccd_end = ((cur_ccd + 1) * 8).min(phys);
+    let mut best_same_ccd_p = cur_core;
+    let mut best_same_ccd_busy = u64::MAX;
+    for p in ccd_start..ccd_end {
+        let pb = pair_busy(p);
+        if pb < best_same_ccd_busy || (pb == best_same_ccd_busy && p == prim) {
+            best_same_ccd_busy = pb;
+            best_same_ccd_p = p;
+        }
+    }
+    if nr <= 16 || (best_same_ccd_busy <= 150_000 && ccd_busy(cur_ccd) <= 4_000_000) {
+        return best_same_ccd_p;
+    }
     let mut best_p = prim;
-    let mut best_key = (u64::MAX, u64::MAX, usize::MAX, usize::MAX);
+    let mut best_key = (u64::MAX, usize::MAX, u64::MAX, usize::MAX, usize::MAX);
     for p in 1..phys {
         let key = (
             pair_busy(p) / 15_000,
+            usize::from(p / 8 != cur_ccd && best_same_ccd_busy <= 600_000),
             ccd_busy(p / 8) / 250_000,
             ccd_pref(p / 8),
             usize::from(p != prim),
@@ -548,18 +566,27 @@ pub fn wait_for_quiet_host_and_repin(max_wait_ms: u64, force_sample_repin: bool)
         pin_current_thread_to_core(current_self_pinned_core());
         return;
     }
+    let eff_max_wait_ms = if nr0 > 16 {
+        max_wait_ms.min(200)
+    } else {
+        max_wait_ms
+    };
     let mut waited_ms = 0u64;
     let mut last_delta = [0u64; 64];
     let (mut prim, mut lcores, mut allow_repin, mut user_pinned) = (23usize, 64usize, true, false);
     let mut sampled = false;
     loop {
-        let step_ms = if read_nr_running() > 6 && waited_ms < max_wait_ms {
-            40u64
-        } else {
-            8u64
-        };
+        let mut step_ms =
+            if read_nr_running() > 6 && waited_ms < eff_max_wait_ms && eff_max_wait_ms >= 40 {
+                40u64
+            } else {
+                8u64
+            };
         if step_ms >= 40 && !consume_wait_budget_ms(step_ms) {
-            break;
+            if sampled {
+                break;
+            }
+            step_ms = 8u64;
         }
         let mut ns0 = [0u64; 64];
         (prim, lcores, allow_repin, user_pinned) = read_all_schedstat_snapshot(&mut ns0);
@@ -577,7 +604,7 @@ pub fn wait_for_quiet_host_and_repin(max_wait_ms: u64, force_sample_repin: bool)
         waited_ms = waited_ms.saturating_add(step_ms);
         let active_other_cpus = (total_other_ns as f64) / (wall_ns.max(1) as f64);
         let nr = read_nr_running();
-        if (nr <= 6 && active_other_cpus <= 5.5) || waited_ms >= max_wait_ms {
+        if (nr <= 6 && active_other_cpus <= 5.5) || waited_ms >= eff_max_wait_ms {
             break;
         }
     }
@@ -661,9 +688,8 @@ pub fn read_current_and_sibling_raw() -> (u64, u64, u64, u64, u64) {
 /// waits out the burst and hops `self` (`pid = 0` only) to the quietest physical core
 /// pair on the quietest CCD. Never touches any other process.
 pub fn wait_for_quiet_sibling() {
-    if read_nr_running() > 7 {
-        let max_ms = if has_active_filter() { 4_000 } else { 1_200 };
-        wait_for_quiet_host_and_repin(max_ms, true);
+    if read_nr_running() > 16 {
+        wait_for_quiet_host_and_repin(12, true);
         return;
     }
     for iter in 0..16 {
@@ -684,12 +710,11 @@ pub fn wait_for_quiet_sibling() {
         let sib_d_ns = sib_ns1.saturating_sub(sib_ns0);
         let sib_d_j = sib_j1.saturating_sub(sib_j0);
         let ccd_d_ns = ccd_ns1.saturating_sub(ccd_ns0);
-        if stolen < 15_000 && sib_d_ns < 15_000 && sib_d_j == 0 && ccd_d_ns < 250_000 {
+        if stolen < 15_000 && sib_d_ns < 15_000 && sib_d_j == 0 && ccd_d_ns < 1_500_000 {
             return;
         }
-        if iter == 3 && is_self_repin_allowed() {
-            let max_ms = if has_active_filter() { 3_000 } else { 800 };
-            wait_for_quiet_host_and_repin(max_ms, true);
+        if iter == 3 && is_self_repin_allowed() && read_nr_running() > 16 {
+            wait_for_quiet_host_and_repin(16, true);
             return;
         }
     }

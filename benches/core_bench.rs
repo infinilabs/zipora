@@ -1069,8 +1069,8 @@ fn bench_hash_maps(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
         }
         let mut warm_sum = 0u64;
         let mut warm_q = 0usize;
-        for w in 0..8usize {
-            u64_perm.for_each_slice(w * get_batch, get_batch, |id| {
+        for w in 0..32usize {
+            u64_perm.for_each_slice((w * 31) * get_batch, get_batch, |id| {
                 let m = &zmaps[warm_q & 1];
                 warm_q = warm_q.wrapping_add(1);
                 let k = make_u64_key(id);
@@ -1110,6 +1110,8 @@ fn bench_hash_maps(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
         "hash_maps/zipora_hash_map/insert_str16",
         "hash_maps/zipora_hash_map/get_str16",
     ]) {
+        trim_allocator_arena();
+        drop(black_box(vec![1u8; 31 * 1024 * 1024]));
         maybe_repin_self_within_ccd();
         let mut zmap0: ZiporaHashMap<[u8; 16], u64> =
             ZiporaHashMap::with_config_and_hasher(make_zconfig(), make_hasher()).unwrap();
@@ -1177,8 +1179,8 @@ fn bench_hash_maps(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
         }
         let mut warm_sum = 0u64;
         let mut warm_q = 0usize;
-        for w in 0..8usize {
-            str16_perm.for_each_slice(w * get_batch, get_batch, |id| {
+        for w in 0..32usize {
+            str16_perm.for_each_slice((w * 31) * get_batch, get_batch, |id| {
                 let m = &zmaps[warm_q & 1];
                 warm_q = warm_q.wrapping_add(1);
                 let k = make_str16_key(id);
@@ -2292,8 +2294,8 @@ fn bench_suffix_array(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
     let n = sizes.suffix_array_bytes;
     let text0 = gen_enwik_like_block(n, SEED_BASE ^ 0x0A);
 
-    let mut sa_build_params = BenchParams::heavy(n as u64, n as u64, 3);
-    sa_build_params.warmup_calls = 1;
+    let mut sa_build_params = BenchParams::heavy(n as u64, n as u64, 4);
+    sa_build_params.warmup_calls = 2;
     sa_build_params.bursts_per_trial = 1;
     if should_run_bench("suffix_array/construct") {
         trim_allocator_arena();

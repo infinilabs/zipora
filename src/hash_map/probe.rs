@@ -134,7 +134,7 @@ where
         rehashes: &mut u64,
     ) -> Result<()> {
         let old_capacity = table.capacity();
-        let load_limit = (old_capacity as f64 * load_factor) as usize;
+        let load_limit = ((old_capacity as f64 * load_factor) as usize).min(old_capacity);
         let new_capacity = if old_capacity >= 32 && live < load_limit / 2 {
             old_capacity
         } else {
@@ -351,13 +351,13 @@ where
                     k == &key
                 };
                 if matches {
-                    // SAFETY: Slot i is initialized and no active references exist.
-                    let (old_k, old_v) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
+                    // SAFETY: Slot `i` is initialized and no active references exist; replace
+                    // the stored `(K, V)` tuple in place before dropping `old_k` so a panic in
+                    // `K::drop` never leaves slot `i` pointing at a dropped key.
+                    let (old_k, old_v) = unsafe {
+                        std::ptr::replace(inline_data._data[i].as_mut_ptr(), (key, value))
+                    };
                     drop(old_k);
-                    // SAFETY: Slot i is valid in `_data[0..16]` and was just read out above.
-                    unsafe {
-                        std::ptr::write(inline_data._data[i].as_mut_ptr(), (key, value));
-                    }
                     return Ok(Some(old_v));
                 }
             }
@@ -573,6 +573,7 @@ where
     pub(super) fn remove_standard<Q>(
         hash_builder: &S,
         table: &mut StandardTable<K, V>,
+        len: &mut usize,
         key: &Q,
     ) -> Option<V>
     where
@@ -603,10 +604,11 @@ where
                     existing_k.borrow() == key
                 };
                 if k_matches {
-                    // SAFETY: `idx < capacity` is initialized; we mark it deleted and read out `(k, v)`.
+                    table.set_ctrl(idx, CTRL_DELETED);
+                    *len = len.saturating_sub(1);
+                    // SAFETY: `idx < capacity` was initialized and is now marked deleted.
                     let (_old_k, old_v) =
                         unsafe { std::ptr::read(slots_ptr.add(idx)).assume_init() };
-                    table.set_ctrl(idx, CTRL_DELETED);
                     return Some(old_v);
                 }
                 matches &= matches - 1;
@@ -674,6 +676,7 @@ where
         inline_data: &mut InlineStorage<K, V>,
         fallback: &mut Option<Box<HashMapStorage<K, V>>>,
         len: &mut usize,
+        map_len: &mut usize,
         key: &Q,
     ) -> Option<V>
     where
@@ -683,9 +686,10 @@ where
         if let Some(fb) = fallback.as_mut()
             && let HashMapStorage::Standard(table) = fb.as_mut()
         {
-            let result = Self::remove_standard(hash_builder, table, key);
-            if result.is_some() {
-                *len -= 1;
+            let prev_map_len = *map_len;
+            let result = Self::remove_standard(hash_builder, table, map_len, key);
+            if *map_len < prev_map_len {
+                *len = len.saturating_sub(1);
             }
             return result;
         }
@@ -698,10 +702,11 @@ where
                     k.borrow() == key
                 };
                 if matches {
-                    // SAFETY: Slot i is initialized and no active references exist. Read out key and value tuple.
-                    let (_k_val, v_val) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
                     inline_data.occupied &= !(1 << i);
-                    *len -= 1;
+                    *len = len.saturating_sub(1);
+                    *map_len = map_len.saturating_sub(1);
+                    // SAFETY: Slot `i` was initialized and is now marked unoccupied before dropping `_k_val`.
+                    let (_k_val, v_val) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
                     return Some(v_val);
                 }
             }
@@ -720,20 +725,13 @@ where
         len: &mut usize,
     ) {
         *len = 0;
-        if let Some(fb) = fallback.as_mut()
-            && let HashMapStorage::Standard(table) = fb.as_mut()
+        let fb = fallback.take();
+        let mut inline_guard = ClearInlineGuard { inline_data };
+        if let Some(mut fb_box) = fb
+            && let HashMapStorage::Standard(table) = fb_box.as_mut()
         {
             table.clear_slots();
         }
-        *fallback = None;
-        for i in 0..16 {
-            if (inline_data.occupied >> i) & 1 == 1 {
-                inline_data.occupied &= !(1 << i);
-                // SAFETY: Bit i was set in occupied, so slot i is initialized
-                unsafe {
-                    std::ptr::drop_in_place(inline_data._data[i].as_mut_ptr());
-                }
-            }
-        }
+        inline_guard.drop_remaining();
     }
 }

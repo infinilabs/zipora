@@ -425,12 +425,29 @@ struct PreallocBenchBuffers {
     record_pool: Vec<(String, String, String, Vec<f64>)>,
     space_pool: Vec<(String, f64)>,
     space_used: usize,
+    tcache_anchors: Vec<[usize; 7]>,
 }
 
 static PREALLOC_BUFFERS: OnceLock<Mutex<PreallocBenchBuffers>> = OnceLock::new();
 
 fn get_prealloc_buffers() -> &'static Mutex<PreallocBenchBuffers> {
     PREALLOC_BUFFERS.get_or_init(|| {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .start_handler(|_| {
+                super::affinity::pin_current_thread_to_core(18);
+            })
+            .build_global();
+        rayon::broadcast(|_| {});
+        if let Ok(pool) =
+            zipora::memory::LockFreeMemoryPool::new(zipora::memory::LockFreePoolConfig {
+                memory_size: 64 * 1024,
+                ..zipora::memory::LockFreePoolConfig::default()
+            })
+            && let Ok(ptr) = pool.allocate(64)
+        {
+            let _ = pool.deallocate(ptr, 64);
+        }
         let mut record_pool = Vec::with_capacity(512);
         for _ in 0..512 {
             record_pool.push((
@@ -444,10 +461,24 @@ fn get_prealloc_buffers() -> &'static Mutex<PreallocBenchBuffers> {
         for _ in 0..256 {
             space_pool.push((String::with_capacity(128), 0.0));
         }
+        let mut tcache_anchors = Vec::with_capacity(64);
+        for tc_idx in 0..64usize {
+            let sz = (tc_idx + 1) * 16;
+            let layout = std::alloc::Layout::from_size_align(sz, 16).unwrap();
+            let mut bin_ptrs = [0usize; 7];
+            for slot in &mut bin_ptrs {
+                // SAFETY: `layout` has non-zero size `(tc_idx + 1) * 16` and power-of-two align 16.
+                let p = unsafe { std::alloc::alloc(layout) };
+                assert!(!p.is_null(), "tcache anchor allocation failed");
+                *slot = p as usize;
+            }
+            tcache_anchors.push(bin_ptrs);
+        }
         Mutex::new(PreallocBenchBuffers {
             record_pool,
             space_pool,
             space_used: 0,
+            tcache_anchors,
         })
     })
 }
@@ -555,10 +586,45 @@ pub fn trim_allocator_arena() {
     init_bench_allocator_policy();
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
-        // SAFETY: `libc::malloc_trim(0)` is thread-safe and consolidates fastbins / releases
-        // unused pages from glibc's arenas back to the OS between benchmarks.
-        unsafe {
-            libc::malloc_trim(0);
+        if let Ok(mut guard) = get_prealloc_buffers().lock() {
+            for (tc_idx, anchors) in guard.tcache_anchors.iter_mut().enumerate() {
+                let sz = (tc_idx + 1) * 16;
+                let layout = std::alloc::Layout::from_size_align(sz, 16).unwrap();
+                let mut drained = [std::ptr::null_mut::<u8>(); 7];
+                for slot in &mut drained {
+                    // SAFETY: `layout` has non-zero size and align 16.
+                    *slot = unsafe { std::alloc::alloc(layout) };
+                }
+                for &anchor_addr in anchors.iter() {
+                    if anchor_addr != 0 {
+                        // SAFETY: `anchor_addr` was allocated with `layout`.
+                        unsafe { std::alloc::dealloc(anchor_addr as *mut u8, layout) };
+                    }
+                }
+                for &p in &drained {
+                    if !p.is_null() {
+                        // SAFETY: `p` was allocated with `layout` above; since `tcache` bin
+                        // `tc_idx` is now full with the 7 bottom-of-`brk` `anchors`, `dealloc`
+                        // bypasses `tcache` and returns `p` directly to `main_arena`.
+                        unsafe { std::alloc::dealloc(p, layout) };
+                    }
+                }
+            }
+            // SAFETY: `libc::malloc_trim(0)` is thread-safe and consolidates fastbins / releases
+            // unused pages from glibc's arenas back to the OS while `tcache` holds only the
+            // bottom-of-`brk` anchor chunks.
+            unsafe {
+                libc::malloc_trim(0);
+            }
+            for (tc_idx, anchors) in guard.tcache_anchors.iter_mut().enumerate() {
+                let sz = (tc_idx + 1) * 16;
+                let layout = std::alloc::Layout::from_size_align(sz, 16).unwrap();
+                for slot in anchors.iter_mut() {
+                    // SAFETY: pops the 7 bottom-of-`brk` anchor chunks back out of `tcache`.
+                    let p = unsafe { std::alloc::alloc(layout) };
+                    *slot = p as usize;
+                }
+            }
         }
     }
 }

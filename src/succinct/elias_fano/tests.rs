@@ -1979,5 +1979,16 @@ mod tests {
         let _ = f_ef.next_geq(100);
         let mut cur = f_ef.cursor();
         let _ = cur.advance();
+
+        // S48-R9: Forged len = 2^40 or usize::MAX must be clamped against high_bits popcount
+        // and low_bits capacity so `.iter().collect()` and `get_low` never OOM-abort or overflow.
+        let mut forged_len: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&ef).unwrap()).unwrap();
+        forged_len["len"] = serde_json::json!(1u64 << 40);
+        forged_len["low_bit_width"] = serde_json::json!(63);
+        let f_len_ef: EliasFano = serde_json::from_value(forged_len).unwrap();
+        assert!(f_len_ef.len() <= n as usize);
+        let collected: Vec<u64> = f_len_ef.iter().collect();
+        assert_eq!(collected.len(), f_len_ef.len());
     }
 }

@@ -306,9 +306,7 @@ impl ContextualHuffmanEncoder {
 
     fn get_or_init_encode_cache(&self) -> &ContextualEncodeCache {
         self.encode_cache.get_or_init(|| {
-            let dense_count = if self.trees.len() <= MAX_DENSE_TREES
-                && self.trees.len() <= self.context_map.len().saturating_add(1)
-            {
+            let dense_count = if self.trees.len() <= MAX_DENSE_TREES {
                 self.trees.len()
             } else {
                 self.trees.len().min(1)
@@ -1290,14 +1288,13 @@ pub struct ContextualHuffmanDecoder {
     tree_luts: Vec<[FastDecEntry; CTX_LUT_SIZE]>,
     order1_ctx: [u32; 256],
     order2_ctx: Option<Box<[u16; 65536]>>,
+    all_dense_valid: bool,
 }
 
 impl ContextualHuffmanDecoder {
     /// Create decoder from encoder
     pub fn new(encoder: ContextualHuffmanEncoder) -> Self {
-        let dense_count = if encoder.trees.len() <= MAX_DENSE_TREES
-            && encoder.trees.len() <= encoder.context_map.len().saturating_add(1)
-        {
+        let dense_count = if encoder.trees.len() <= MAX_DENSE_TREES {
             encoder.trees.len()
         } else {
             encoder.trees.len().min(1)
@@ -1320,16 +1317,19 @@ impl ContextualHuffmanDecoder {
             }
         }
 
+        let lut_len = tree_luts.len();
+        let mut all_dense_valid =
+            lut_len == encoder.trees.len() && lut_len > 0 && lut_len < (u16::MAX as usize);
         let order2_ctx = if encoder.order == HuffmanOrder::Order2 {
             let mut tbl = vec![0u16; 65536].into_boxed_slice();
-            let lut_len = tree_luts.len();
             for (&ctx, &idx) in &encoder.context_map {
                 if let Some(slot) = tbl.get_mut(ctx as usize) {
-                    *slot = if idx < lut_len && idx < (u16::MAX as usize) {
-                        idx as u16
+                    if idx < lut_len && idx < (u16::MAX as usize) {
+                        *slot = idx as u16;
                     } else {
-                        u16::MAX
-                    };
+                        *slot = u16::MAX;
+                        all_dense_valid = false;
+                    }
                 }
             }
             tbl.try_into().ok()
@@ -1342,6 +1342,7 @@ impl ContextualHuffmanDecoder {
             tree_luts,
             order1_ctx,
             order2_ctx,
+            all_dense_valid,
         }
     }
 
@@ -1531,12 +1532,16 @@ impl ContextualHuffmanDecoder {
                 break;
             }
 
+            let tree = match self.encoder.trees.get(tree_idx) {
+                Some(t) if t.root().is_some() => t,
+                _ => &self.encoder.trees[0],
+            };
             if let Ok(symbol) = self.decode_symbol_slow(
                 encoded_data,
                 &mut byte_idx,
                 &mut bit_buf,
                 &mut bits_in_buf,
-                &self.encoder.trees[tree_idx],
+                tree,
             ) {
                 prev_sym = symbol;
                 result.push(symbol);
@@ -1590,10 +1595,8 @@ impl ContextualHuffmanDecoder {
         let order2_ctx = self.order2_ctx.as_deref().unwrap_or(&[0u16; 65536]);
         let mut prev2 = result[0] as usize;
         let mut prev1 = result[1] as usize;
-        let all_dense = self.tree_luts.len() == self.encoder.trees.len()
-            && self.tree_luts.len() < (u16::MAX as usize);
 
-        if all_dense {
+        if self.all_dense_valid {
             let luts_ptr = self.tree_luts.as_ptr();
             // Pre-size `result` to avoid per-byte Vec capacity checks inside the serial context loop.
             result.resize(output_length, 0);
@@ -1610,8 +1613,8 @@ impl ContextualHuffmanDecoder {
 
                 let context = (prev2 << 8) | prev1;
                 let tree_idx = order2_ctx[context] as usize;
-                // SAFETY: When `all_dense` is true, every entry in `order2_ctx` was clamped
-                // to `< self.tree_luts.len()` at construction time in `ContextualHuffmanDecoder::new`.
+                // SAFETY: `self.all_dense_valid` holds iff `tree_luts.len() == encoder.trees.len()`
+                // and every entry written into `order2_ctx` was verified `< self.tree_luts.len()`.
                 let lut = unsafe { &*luts_ptr.add(tree_idx) };
                 let entry = lut[(bit_buf & CTX_LUT_MASK) as usize];
                 let len = entry.bit_len as u32;
@@ -1631,12 +1634,17 @@ impl ContextualHuffmanDecoder {
                     break;
                 }
 
+                let tree = if self.encoder.trees[tree_idx].root().is_some() {
+                    &self.encoder.trees[tree_idx]
+                } else {
+                    &self.encoder.trees[0]
+                };
                 if let Ok(symbol) = self.decode_symbol_slow(
                     encoded_data,
                     &mut byte_idx,
                     &mut bit_buf,
                     &mut bits_in_buf,
-                    &self.encoder.trees[tree_idx],
+                    tree,
                 ) {
                     // SAFETY: `out_idx < output_length == result.len()`.
                     unsafe { *result.get_unchecked_mut(out_idx) = symbol };
@@ -1686,12 +1694,16 @@ impl ContextualHuffmanDecoder {
                     .copied()
                     .unwrap_or(0)
             };
+            let tree = match self.encoder.trees.get(real_tree_idx) {
+                Some(t) if t.root().is_some() => t,
+                _ => &self.encoder.trees[0],
+            };
             if let Ok(symbol) = self.decode_symbol_slow(
                 encoded_data,
                 &mut byte_idx,
                 &mut bit_buf,
                 &mut bits_in_buf,
-                &self.encoder.trees[real_tree_idx],
+                tree,
             ) {
                 result.push(symbol);
                 prev2 = prev1;

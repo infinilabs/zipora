@@ -56,7 +56,7 @@ impl<K, V> StandardTable<K, V> {
         unsafe {
             slots.set_len(cap);
         }
-        let load_limit = (cap as f64 * load_factor) as usize;
+        let load_limit = ((cap as f64 * load_factor) as usize).min(cap);
         Ok(Self {
             ctrl,
             slots,
@@ -90,46 +90,53 @@ impl<K, V> StandardTable<K, V> {
             return;
         }
         if std::mem::needs_drop::<(K, V)>() {
-            // Clear mirrored tail bytes upfront and mark each slot CTRL_EMPTY before
-            // dropping its value so that if `K::drop` or `V::drop` panics, unwinding
-            // will not drop already-dropped slots a second time while still dropping
-            // all remaining live slots (`i + 1..cap`).
-            self.ctrl.as_mut_slice()[cap..].fill(CTRL_EMPTY);
-            let ctrl_ptr = self.ctrl.as_mut_ptr();
-            let slots_ptr = self.slots.as_mut_ptr();
-            for i in 0..cap {
-                // SAFETY: `i < cap` and `is_ctrl_full` guarantees `slots[i]` is initialized.
-                unsafe {
-                    let c = *ctrl_ptr.add(i);
-                    *ctrl_ptr.add(i) = CTRL_EMPTY;
-                    if is_ctrl_full(c) {
-                        std::ptr::drop_in_place((*slots_ptr.add(i)).as_mut_ptr());
-                    }
-                }
-            }
+            let mut guard = ClearSlotsGuard {
+                table: self,
+                idx: 0,
+            };
+            guard.drop_remaining();
         } else {
             self.ctrl.as_mut_slice().fill(CTRL_EMPTY);
         }
     }
 }
 
-impl<K, V> Drop for StandardTable<K, V> {
-    fn drop(&mut self) {
-        let cap = self.slots.len();
-        if cap > 0 && std::mem::needs_drop::<(K, V)>() {
-            let ctrl_ptr = self.ctrl.as_mut_ptr();
-            let slots_ptr = self.slots.as_mut_ptr();
-            for i in 0..cap {
-                // SAFETY: `i < cap` and `is_ctrl_full` guarantees `slots[i]` is initialized.
-                unsafe {
-                    let c = *ctrl_ptr.add(i);
-                    *ctrl_ptr.add(i) = CTRL_EMPTY;
+struct ClearSlotsGuard<'a, K, V> {
+    table: &'a mut StandardTable<K, V>,
+    idx: usize,
+}
+
+impl<K, V> ClearSlotsGuard<'_, K, V> {
+    fn drop_remaining(&mut self) {
+        let cap = self.table.slots.len();
+        let ctrl_ptr = self.table.ctrl.as_mut_ptr();
+        let slots_ptr = self.table.slots.as_mut_ptr();
+        while self.idx < cap {
+            let i = self.idx;
+            self.idx += 1;
+            // SAFETY: `i < cap` and `is_ctrl_full` guarantees `slots[i]` is initialized.
+            unsafe {
+                let c = *ctrl_ptr.add(i);
+                if c != CTRL_EMPTY {
+                    self.table.set_ctrl(i, CTRL_EMPTY);
                     if is_ctrl_full(c) {
                         std::ptr::drop_in_place((*slots_ptr.add(i)).as_mut_ptr());
                     }
                 }
             }
         }
+    }
+}
+
+impl<K, V> Drop for ClearSlotsGuard<'_, K, V> {
+    fn drop(&mut self) {
+        self.drop_remaining();
+    }
+}
+
+impl<K, V> Drop for StandardTable<K, V> {
+    fn drop(&mut self) {
+        self.clear_slots();
     }
 }
 
@@ -155,18 +162,38 @@ pub(super) struct InlineStorage<K, V> {
     pub(super) occupied: u16,                    // Bit mask for occupied slots
 }
 
-impl<K, V> InlineStorage<K, V> {}
+impl<K, V> InlineStorage<K, V> {
+    pub(super) fn clear_slots(&mut self) {
+        let mut guard = ClearInlineGuard { inline_data: self };
+        guard.drop_remaining();
+    }
+}
+
+pub(super) struct ClearInlineGuard<'a, K, V> {
+    pub(super) inline_data: &'a mut InlineStorage<K, V>,
+}
+
+impl<K, V> ClearInlineGuard<'_, K, V> {
+    pub(super) fn drop_remaining(&mut self) {
+        while self.inline_data.occupied != 0 {
+            let i = self.inline_data.occupied.trailing_zeros() as usize;
+            self.inline_data.occupied &= !(1 << i);
+            // SAFETY: Bit `i` was set in `occupied`, so `_data[i]` is initialized.
+            unsafe {
+                std::ptr::drop_in_place(self.inline_data._data[i].as_mut_ptr());
+            }
+        }
+    }
+}
+
+impl<K, V> Drop for ClearInlineGuard<'_, K, V> {
+    fn drop(&mut self) {
+        self.drop_remaining();
+    }
+}
 
 impl<K, V> Drop for InlineStorage<K, V> {
     fn drop(&mut self) {
-        for i in 0..16 {
-            if (self.occupied >> i) & 1 == 1 {
-                self.occupied &= !(1 << i);
-                // SAFETY: Bit i was set in occupied, so slot i is initialized
-                unsafe {
-                    std::ptr::drop_in_place(self._data[i].as_mut_ptr());
-                }
-            }
-        }
+        self.clear_slots();
     }
 }

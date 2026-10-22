@@ -1421,3 +1421,185 @@ fn test_s47_r11_custom_link_type_with_zero_delmark() {
         assert_eq!(gm.get(&i), Some(&(i * 10)));
     }
 }
+
+#[test]
+fn test_s48_r1_small_inline_update_key_drop_panic() {
+    use std::hash::Hasher;
+
+    #[derive(Clone, Debug)]
+    struct KeyBomb {
+        k: u64,
+        armed: Arc<AtomicUsize>,
+        drops: Arc<AtomicUsize>,
+    }
+    impl PartialEq for KeyBomb {
+        fn eq(&self, other: &Self) -> bool {
+            self.k == other.k
+        }
+    }
+    impl Eq for KeyBomb {}
+    impl Hash for KeyBomb {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.k.hash(state);
+        }
+    }
+    impl Drop for KeyBomb {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, Ordering::SeqCst);
+            if self.armed.swap(0, Ordering::SeqCst) == 1 && !std::thread::panicking() {
+                panic!("key drop panic for {}", self.k);
+            }
+        }
+    }
+
+    let armed = Arc::new(AtomicUsize::new(0));
+    let drops = Arc::new(AtomicUsize::new(0));
+    let mut m: ZiporaHashMap<KeyBomb, String> =
+        ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(16)).unwrap();
+    for i in 0..4u64 {
+        m.insert(
+            KeyBomb {
+                k: i,
+                armed: Arc::clone(&armed),
+                drops: Arc::clone(&drops),
+            },
+            format!("v{i}"),
+        )
+        .unwrap();
+    }
+    armed.store(1, Ordering::SeqCst);
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = m.insert(
+            KeyBomb {
+                k: 2,
+                armed: Arc::clone(&armed),
+                drops: Arc::clone(&drops),
+            },
+            "updated".to_string(),
+        );
+    }));
+    assert!(res.is_err());
+    assert_eq!(m.len(), 4);
+    let probe = KeyBomb {
+        k: 2,
+        armed: Arc::clone(&armed),
+        drops: Arc::clone(&drops),
+    };
+    assert_eq!(m.get(&probe).map(|s| s.as_str()), Some("updated"));
+    drop(probe);
+    drop(m);
+    assert_eq!(drops.load(Ordering::SeqCst), 6);
+}
+
+#[test]
+fn test_s48_r3_clear_panic_then_use() {
+    #[derive(Clone, Debug)]
+    struct Bomb {
+        id: usize,
+        panic_id: usize,
+        drops: Arc<AtomicUsize>,
+    }
+    impl Drop for Bomb {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, Ordering::SeqCst);
+            if self.id == self.panic_id && !std::thread::panicking() {
+                panic!("drop panic on {}", self.id);
+            }
+        }
+    }
+
+    // 1. Standard table: clear() panics, then map is reused for new inserts
+    let drops = Arc::new(AtomicUsize::new(0));
+    let mut m: ZiporaHashMap<u64, Bomb> = ZiporaHashMap::with_capacity(32).unwrap();
+    for i in 0..20 {
+        m.insert(
+            i as u64,
+            Bomb {
+                id: i,
+                panic_id: 5,
+                drops: Arc::clone(&drops),
+            },
+        )
+        .unwrap();
+    }
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        m.clear();
+    }));
+    assert!(res.is_err());
+    assert_eq!(m.len(), 0);
+    assert_eq!(m.iter().count(), 0);
+    assert_eq!(drops.load(Ordering::SeqCst), 20);
+
+    for i in 0..40 {
+        m.insert(
+            i as u64 + 100,
+            Bomb {
+                id: 999,
+                panic_id: usize::MAX,
+                drops: Arc::clone(&drops),
+            },
+        )
+        .unwrap();
+    }
+    assert_eq!(m.len(), 40);
+    assert_eq!(m.iter().count(), 40);
+    drop(m);
+    assert_eq!(drops.load(Ordering::SeqCst), 60);
+
+    // 2. SmallInline table (unmigrated and migrated): clear() panics, then reused
+    for count in [8usize, 24usize] {
+        let drops_si = Arc::new(AtomicUsize::new(0));
+        let mut m_si: ZiporaHashMap<u64, Bomb> =
+            ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(16)).unwrap();
+        for i in 0..count {
+            m_si.insert(
+                i as u64,
+                Bomb {
+                    id: i,
+                    panic_id: 3,
+                    drops: Arc::clone(&drops_si),
+                },
+            )
+            .unwrap();
+        }
+        let res_si = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            m_si.clear();
+        }));
+        assert!(res_si.is_err());
+        assert_eq!(m_si.len(), 0);
+        assert_eq!(m_si.iter().count(), 0);
+        assert_eq!(drops_si.load(Ordering::SeqCst), count);
+
+        for i in 0..10 {
+            m_si.insert(
+                i as u64 + 500,
+                Bomb {
+                    id: 999,
+                    panic_id: usize::MAX,
+                    drops: Arc::clone(&drops_si),
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(m_si.len(), 10);
+        drop(m_si);
+        assert_eq!(drops_si.load(Ordering::SeqCst), count + 10);
+    }
+}
+
+#[test]
+fn test_s48_r9_large_load_factor_growth() {
+    let cfg = ZiporaHashMapConfig {
+        initial_capacity: 32,
+        load_factor: 3.0,
+        ..Default::default()
+    };
+    let mut m: ZiporaHashMap<u64, u64> = ZiporaHashMap::with_config(cfg).unwrap();
+    for i in 0..100u64 {
+        m.insert(i, i * 10).unwrap();
+    }
+    assert_eq!(m.len(), 100);
+    for i in 0..100u64 {
+        assert_eq!(m.get(&i), Some(&(i * 10)));
+    }
+}

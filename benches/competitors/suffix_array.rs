@@ -93,12 +93,7 @@ pub fn bench_suffix_array(
     maybe_repin_self_within_ccd();
     trim_allocator_arena();
     let n = sizes.suffix_array_bytes;
-    let zipora_sa_bytes = n * std::mem::size_of::<usize>()
-        + if n >= 4096 {
-            65_536 * std::mem::size_of::<(u32, u32)>()
-        } else {
-            0
-        };
+    let zipora_sa_bytes = SuffixArray::memory_usage_for_text_len(n);
     record_space_metric(
         space,
         "suffix_array/zipora_bytes_per_byte",
@@ -124,8 +119,8 @@ pub fn bench_suffix_array(
     sa_search_params.warmup_calls = 8;
     sa_search_params.bursts_per_trial = 12;
 
-    let mut sa_build_params = BenchParams::heavy(n as u64, n as u64, 3);
-    sa_build_params.warmup_calls = 1;
+    let mut sa_build_params = BenchParams::heavy(n as u64, n as u64, 4);
+    sa_build_params.warmup_calls = 2;
     sa_build_params.bursts_per_trial = 1;
     let mut expected_sa_sample: Option<Vec<u32>> = None;
     let mut expected_occ_hits: Option<usize> = None;
@@ -154,6 +149,7 @@ pub fn bench_suffix_array(
                 },
             );
             if let Some(ref built) = sa_pending {
+                assert_eq!(built.memory_usage(), zipora_sa_bytes);
                 verify_sa_usize_invariants(
                     &text0,
                     built.as_slice(),
@@ -167,6 +163,7 @@ pub fn bench_suffix_array(
         if should_run_bench("suffix_array/search_query") {
             trim_allocator_arena();
             let sa0 = SuffixArray::new(&text0).unwrap();
+            assert_eq!(sa0.memory_usage(), zipora_sa_bytes);
             verify_sa_usize_invariants(
                 &text0,
                 sa0.as_slice(),

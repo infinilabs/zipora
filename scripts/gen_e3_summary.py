@@ -65,55 +65,36 @@ def explain_parity_delta(name: str, delta_pct: float) -> str:
     if name.startswith("tries/") and name.endswith("/lookup"):
         inst = core_bench_instance_count(name)
         return (
-            f"`core_bench.rs` alternates across {inst.split(' ')[0]} trie replicas separated by `1.4–5.9 MiB` "
-            f"heap spacers (`2–8x` working set beyond L3); `competitor_bench.rs` uses `1` instance (`S42-R1`)"
+            f"`core_bench.rs` alternates across {inst.split(' ')[0]} trie replicas (`2–8x` working set beyond L3); "
+            f"`competitor_bench.rs` uses `1` instance (`S42-R1`)"
         )
     if name.startswith("tries/") and ("/build" in name):
         return (
-            "`core_bench.rs` pre-allocates/drops `6–11 x 24 MiB` `brk_holes` and pushes `352 KiB` per-trial "
-            "heap spacers in `setup`; `competitor_bench.rs` uses `1` clean slot with zero spacers (`S42-R1`)"
+            "`core_bench.rs` pre-allocates/drops `6–11 x 24 MiB` `brk_holes` before building; "
+            "`competitor_bench.rs` uses `1` clean slot (`S42-R1`)"
         )
     if name.startswith("hash_maps/"):
         return (
-            "`core_bench.rs` alternates across a `2`-map ring (`[q_idx & 1]` with `352 KiB` spacer, `2x` working set); "
-            "`competitor_bench.rs` uses `1` map instance (`S42-R1`)"
+            "`core_bench.rs` alternates across a `2`-map ring (`[q_idx & 1]`, `2x` working set) with default `StdSipHasher13`; "
+            "`competitor_bench.rs` uses `1` map instance with `ahash::RandomState` (`S42-R1`)"
         )
     if name.startswith("memory_pools/secure_pool/"):
         return (
-            "`core_bench.rs` rotates across a `64`-pool ring (`sec_pools` with `576–4,672 B` spacers via recursive "
-            "`run_sec_pool_quarter`); `competitor_bench.rs` uses `1` `SecureMemoryPool` instance per thread (`S42-R1`)"
+            "`core_bench.rs` rotates across a `64`-pool ring (`sec_pools` via recursive `run_sec_pool_quarter`); "
+            "`competitor_bench.rs` uses `1` `SecureMemoryPool` instance per thread (`S42-R1`)"
         )
     if name.startswith("rank_select/se256/") or name.startswith("rank_select/interleaved256/"):
         return (
-            "`1` instance in both (`137.5–172 MiB` DRAM/DTLB working set across 4 KiB THP-off pages; "
+            "`1` instance in both (`131.25–172 MiB` DRAM/DTLB working set across 4 KiB THP-off pages; "
             "within disclosed `9.0%` / `16.0%` random-DTLB threshold)"
         )
     if name == "entropy/huffman_o2/decode_64kib" or name == "entropy/huffman_o1/decode_64kib":
         return (
-            "`core_bench.rs` rotates across an `8`-decoder ring constructed on 8 concurrent threads with spacers; "
+            "`core_bench.rs` rotates across an `8`-decoder ring constructed on 8 concurrent threads; "
             "`competitor_bench.rs` uses `1` `ContextualHuffmanDecoder` instance (`S42-R1`)"
         )
-    if name == "entropy/huffman_o0/encode_64kib":
-        return (
-            "`1` instance in both (`3.9430` vs `4.1534 ns/byte` = `-5.07%`, within `±9.0%` `BenchParams::fast` band)"
-        )
-    if name == "radix_sort/lsd_u32":
-        return (
-            "`core_bench.rs` alternates across a `2`-sorter/`2`-buffer ring pushing a `352 KiB` spacer per setup; "
-            "`competitor_bench.rs` reuses `1` `RadixSort` and `1` buffer with zero spacers (`S42-R1`)"
-        )
-    if name == "suffix_array/construct":
-        return (
-            "`core_bench.rs` pre-faults `18 x 24 MiB = 432 MiB` `sa_holes` below a `64 KiB` `brk` anchor; "
-            "`competitor_bench.rs` runs a clean `1`-instance `SuffixArray::new` with zero `brk` holes (`S42-R1`)"
-        )
-    if name == "suffix_array/search_query":
-        return (
-            "`core_bench.rs` alternates across a `2`-instance `(text, SuffixArray)` ring (`100 MiB` working set); "
-            "`competitor_bench.rs` queries `1` `(text, SuffixArray)` instance (`50 MiB` working set, `S42-R1`)"
-        )
     return (
-        "1-instance execution in both binaries (`BenchParams::fast` `9.0%` threshold; sub-nanosecond L1 loop variance)"
+        "`1` instance in both binaries (`S47-R10` / `S48-R6`; within disclosed `9.0%` threshold)"
     )
 
 
@@ -544,8 +525,11 @@ def generate_markdown(
     lines.append("| `fc2d402` | `benches/common/{datasets,harness}.rs`, `benches/competitor_bench.rs`, `benches/competitors/suffix_array.rs`, `scripts/bench_compare.py` | `[S45-R1][S45-R2][S45-R4]` | fix(bench): align strchr/strstr across bench binaries, make competitor-only timing rows informational, and validate suffix-array outputs [S45-R1][S45-R2][S45-R4] |")
     lines.append("| `b4148fc` | `benches/baselines/bindiego/{core_bench,competitor_bench,e2e_search}.json`, `docs/review/{e1,e2_e3}.md`, `scripts/gen_e3_summary.py` | `[S45-R1][S45-R2][S45-R3][S45-R4]` | bench(baselines): update core_bench.json and binary metadata, disclose allocator policy in §4, and synchronize docs/review/e1.md and docs/review/e2_e3.md [S45-R1][S45-R2][S45-R3][S45-R4] |")
     lines.append("| `44ee835..b23bdb8` | `src/{io,succinct,fsa,hash_map,memory,entropy,compression,algorithms,string}/` | `[E4(a)..(g)][E3.1..E3.10]` | 10 atomic `perf(<scope>):` commits closing all Phase E `E4` optimization leads (see `docs/review/e4.md` §1 & §3) |")
-    lines.append(f"| `{meta['git_commit']}` | `benches/core_bench.rs`, `benches/competitor_bench.rs`, `benches/competitors/*.rs`, `scripts/bench_compare.py` | `[S44-R3][S46-R2]` | bench(phase-e): tighten core and competitor thresholds and document text pad [S44-R3][S46-R2] |")
-    lines.append("| `HEAD` | `benches/baselines/bindiego/*.json`, `docs/review/{e1,e2_e3,e4}.md`, `scripts/gen_e3_summary.py`, `GEMINI.md`, `CLAUDE.md` | `[S46-R1][S46-R2][S44-R3][E4]` | docs(phase-e): regenerate bindiego baselines and E1/E2/E3/E4 ledgers [S46-R1][S46-R2][S44-R3][E4] |")
+    lines.append("| `20ebfed` | `benches/core_bench.rs`, `benches/competitor_bench.rs`, `benches/competitors/*.rs`, `scripts/bench_compare.py` | `[S44-R3][S46-R2]` | bench(phase-e): tighten core and competitor thresholds and document text pad [S44-R3][S46-R2] |")
+    lines.append("| `59f6dd2` | `benches/baselines/bindiego/*.json`, `docs/review/{e1,e2_e3,e4}.md`, `scripts/gen_e3_summary.py` | `[S46-R1][S46-R2][S44-R3][E4]` | docs(phase-e): regenerate bindiego baselines and E1/E2/E3/E4 ledgers [S46-R1][S46-R2][S44-R3][E4] |")
+    lines.append("| `7f2028f` | `src/entropy/huffman/{encoder,interleaved,tests}.rs`, `src/entropy/fse.rs`, `docs/review/e4.md`, `scripts/gate_baseline.txt` | `[E4(c)][E4(d)][E3.6]` | fix(entropy,docs): harden deserialized Huffman models, fix FSE stats entropy, and sync e4.md identifiers [E4(c)][E4(d)][E3.6] |")
+    lines.append("| `f746fdb..1cb20d8` | `src/{hash_map,algorithms,memory,succinct,fsa,compression,io}/*`, `benches/*`, `docs/review/*`, `scripts/*` | `[S47-R1..R11]` | fix(stage16): resolve S47-R1..R11 soundness, wire-compatibility, magazine lifecycle, and 1-instance `core_bench.rs` harness alignment [S47-R1..R11] |")
+    lines.append(f"| `{meta['git_commit']}` / `HEAD` | `src/{{hash_map,memory,algorithms,succinct,entropy,io,fsa}}/*`, `benches/*`, `docs/review/{{e1,e2_e3,e4}}.md`, `scripts/gate_baseline.txt` | `[S48-R1..R9]` | fix(stage16): resolve S48-R1..R9 hash-map drop safety, pool magazine reclamation, radix KV fast paths, and native per-binary baseline provenance [S48-R1..R9] |")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -574,7 +558,7 @@ def generate_markdown(
     lines.append(f"- **`S42-R6`**: Created backup ref `backup/pre-s42` at `0788daa` and folded the four `clippy::manual_div_ceil` fixes into `6717a11` and `cb054b9`; every commit in `db6c6bb..HEAD` passes `make sanity`.")
     lines.append(f"- **`S42-R3`**: Compiled `competitor_bench` from clean committed tree `{meta['git_commit']}` (`binary_sha256 = {meta['binary_sha256'][:16]}...`) using the full `Makefile` `BENCH_RUSTFLAGS` (`{meta['rustflags']}`).")
     lines.append(f"- **`simd_strstr_64kib` Cross-Binary Delta Resolved (`S42-R3` + `S43-R2`)**: Building `competitor_bench` with the full `BENCH_RUSTFLAGS` and aligning `core_bench.rs` (`haystack0`) brings `search_and_scoring/simd_strstr_64kib` to **`{cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call`** vs `core_bench.json`'s **`{summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call`** (**`{(cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op'] - summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']) / summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op'] * 100.0:+.2f}%`**).")
-    lines.append(f"- **Condition 2 Parity (`{summary['within_5pct']}/80` within `±5.0%`, `{summary['within_9pct']}/80` within `±9.0%`, `{len(outliers)}/80` explained in §3.2)**: All rows outside `±5.0%` are faster in `competitor_bench.json` (because `core_bench.rs` uses `2`–`64`-instance rings and heap spacers whereas `competitor_bench.rs` uses `1` instance per `S42-R1`) or within the disclosed multi-megabyte random-DTLB/DRAM thresholds.")
+    lines.append(f"- **Condition 2 Parity (`{summary['within_5pct']}/80` within `±5.0%`, `{summary['within_9pct']}/80` within `±9.0%`, `{len(outliers)}/80` explained in §3.2)**: In `f746fdb` (`S47-R10` / `S48-R6`), `radix_sort/*` and `suffix_array/*` in `core_bench.rs` were aligned from 2-instance rings to `1` instance matching `competitor_bench.rs`, and each JSON baseline is generated directly from a full run of its own binary without cross-copying rows (`S48-R6`).")
     lines.append("")
     lines.append("### 2.4 `S42-R4`: Reproducible Loop-Only `perf_event_open` Profiler (`scripts/profile_e3_gaps.py`)")
     lines.append("- Added `ZIPORA_PROFILE_LOOP=1` and `ZIPORA_PROFILE_LOOP_MS=<ms>` in `benches/common/harness.rs:485-508`, which wraps the timed `f(state)` loop (strictly after construction and warmup) in `libc::prctl(PR_TASK_PERF_EVENTS_ENABLE)` / `libc::prctl(PR_TASK_PERF_EVENTS_DISABLE)` and snapshots `/proc/self/maps` via `ZIPORA_PROFILE_MAPS_OUT`.")
@@ -617,11 +601,11 @@ def generate_markdown(
     lines.append("- **`S44-R3` (Threshold Review & Tightening — Closed in Stage 16)**:")
     lines.append(f"  - Tightened all `22` `15.0%` rows (`16` `tries/*/build*` + `6` `memory_pools/*`), all `49` `22.0%` rows (`rank_select/*/select*`, `tries/*/lookup`, `hash_maps/*`, `suffix_array/*search_query`), and all `4` `16.0%` `*strstr_64kib` rows down to **`9.0%`**, keeping only the `2` `rank_select/{{interleaved256,se256}}/select1` rows at `16.0%` (`78/80 = 97.5%` at `5.0%`/`9.0%` in `core_bench.json`, `179/181 = 98.9%` at `5.0%`/`9.0%` in `competitor_bench.json`, and **`0` rows at `22.0%`**).")
     lines.append("")
-    lines.append("### 2.8 `S45-R1..R4` & `S46-R1..R2`: `core_bench` & `competitor_bench` Representative DRAM Baselines, Competitor Gate (`95 + 6 = 101` Third-Party Rows), Allocator Policy Disclosure (§4), & Suffix-Array Output Validation")
-    lines.append("- **`S45-R1` & `S46-R1` (`core_bench.json` & `competitor_bench.json` Multi-Run Representative Baselines + `docs/review/e1.md` Sync)**:")
+    lines.append("### 2.8 `S45-R1..R4`, `S46-R1..R2`, `S47-R10`, & `S48-R6`: Native Per-Binary DRAM Baselines, 1-Instance `core_bench.rs` Alignment, Competitor Gate (`95 + 6 = 101` Third-Party Rows), Allocator Policy Disclosure (§4), & Suffix-Array Output Validation")
+    lines.append("- **`S45-R1`, `S46-R1`, `S47-R10`, & `S48-R6` (Native Per-Binary Baselines, 1-Instance `core_bench.rs` Alignment, + `docs/review/e1.md` Sync)**:")
     lines.append("  - Moved `take_prealloc_record_buffers` to after the timed loop (`benches/common/harness.rs:726`) and marked it `#[inline(never)]`, and aligned `simd_strchr_64kib` and `simd_strstr_64kib` across both binaries (`"
                  f"{summary['core_benches']['search_and_scoring/simd_strchr_64kib']['min_ns_per_op']:.4f} ns/call` vs `{cb['search_and_scoring/simd_strchr_64kib']['min_ns_per_op']:.4f} ns/call` on `strchr`; `{summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call` vs `{cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call` on `strstr`).")
-    lines.append(f"  - Recorded multi-run representative DRAM baselines in both `core_bench.json` and `competitor_bench.json` (`S46-R1`) from clean tree `{meta['git_commit']}` (`S46-R2`), synchronizing all 1-instance (`1 vs 1`) shared Zipora rows verbatim (`suffix_array/construct = {cb['suffix_array/construct']['min_ns_per_op']:.4f} ns/byte`, `suffix_array/search_query = {summary['core_benches']['suffix_array/search_query']['min_ns_per_op']:.4f} ns/op` in `core_bench` / `{cb['suffix_array/search_query']['min_ns_per_op']:.4f} ns/op` in `competitor_bench`), and synchronized `docs/review/e1.md`, `docs/review/e2_e3.md`, and `docs/review/e4.md`.")
+    lines.append(f"  - In `f746fdb` (`S47-R10` / `S48-R6`), `radix_sort` (`lsd_u32`, `lsd_u64`, `kv_u64_u64`) and `suffix_array` (`construct`, `search_query`) in `benches/core_bench.rs` were aligned from 2-instance rings to `1` instance matching `benches/competitor_bench.rs` (`_spacer` heap allocations and the 256 MiB startup `brk` pre-fault in `init_bench_allocator_policy` removed, `suffix_array/construct` `trials: 5 -> 3`, and `suffix_array/search_query` threshold tightened from `15.0%` to `9.0%`), while `tries`, `hash_maps` (default `StdSipHasher13` on 2-map rings in `core_bench.rs` vs `ahash` on 1 map in `competitor_bench.rs`), `memory_pools/secure_pool`, `elias_fano`, and `entropy` retain their multi-instance `core_bench.rs` harnesses (documented in §3.2). Each committed baseline (`core_bench.json`, `competitor_bench.json`, `e2e_search.json`) is generated directly from a full run of its own binary on clean tree `{meta['git_commit']}` (`S48-R6`, `suffix_array/construct = {summary['core_benches']['suffix_array/construct']['min_ns_per_op']:.4f} ns/byte` in `core_bench` / `{cb['suffix_array/construct']['min_ns_per_op']:.4f} ns/byte` in `competitor_bench`, `suffix_array/search_query = {summary['core_benches']['suffix_array/search_query']['min_ns_per_op']:.4f} ns/op` in `core_bench` / `{cb['suffix_array/search_query']['min_ns_per_op']:.4f} ns/op` in `competitor_bench`, `int_codecs/stream_vbyte/decode_into = {summary['core_benches']['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.4f} ns/int` in `core_bench` / `{cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.4f} ns/int` in `competitor_bench`), and synchronized with `docs/review/e1.md`, `docs/review/e2_e3.md`, and `docs/review/e4.md`.")
     lines.append("- **`S45-R2` & `S46-R2` (`make bench_competitors` Third-Party Row Accounting `95 + 6 = 101` & `_zipora_competitor_bench_text_pad` Documentation)**:")
     lines.append("  - In `scripts/bench_compare.py`, all `181` rows in `competitor_bench.json` are strictly gated for presence (`MISSING`) and `dataset_size` integrity (`exit 1`). Of those `181` rows, **`86` are Zipora rows** (`80` shared with `core_bench.json` + `6` `elias_fano/*/ef_select,cef_select` rows) and are strictly gated on their `min_ns_per_op` regression thresholds (`REGRESSED` -> `--confirm-retries 5` -> `exit 1`). The remaining **`101` are third-party competitor-only rows**: **`95` timing-compared rows** derived from `same_run_comparisons` (`competitor_only_names`, reported informationally as `INFO(comp)` so third-party DRAM bandwidth contention under a 48-job `cargo build` loop never causes false gate failures) plus **`6` `enforce_threshold: false` `build_1m` rows** (`rank_select/{sucds_rank9,sucds_darray,vers_vecs,bitm}/build_1m` and `elias_fano/{sucds,vers_vecs}/build_1m`, `95 + 6 = 101`). Documented `_zipora_competitor_bench_text_pad` in `benches/competitor_bench.rs:235-238` (`S46-R2`).")
     lines.append("- **`S45-R3` (MEDIUM — Allocator Policy Disclosure in §4)**:")
@@ -653,9 +637,14 @@ def generate_markdown(
     lines.append(
         f"- **`{summary['within_5pct']}/80`** shared Zipora benchmarks are within `±5.0%` of `core_bench.json` (`{summary['within_9pct']}/80` within `±9.0%`)."
     )
-    lines.append(
-        f"- Of the **`{len(outliers)}/80`** rows outside `±5.0%`, `{len(faster_outliers)}/{len(outliers)}` are faster (`{max(r['delta_pct'] for r in faster_outliers):+.2f}%` to `{min(r['delta_pct'] for r in faster_outliers):+.2f}%`) in `competitor_bench.json` than in `core_bench.json` (because `core_bench.rs` uses `2`–`64`-instance rings and heap spacers whereas `competitor_bench.rs` uses `1` instance per `S42-R1`), and `{len(slower_outliers)}/{len(outliers)}` (`+{min(r['delta_pct'] for r in slower_outliers) if slower_outliers else 0.0:.2f}%` to `+{max(r['delta_pct'] for r in slower_outliers) if slower_outliers else 0.0:.2f}%`) are within the disclosed `9.0%` / `16.0%` random-DTLB/DRAM thresholds."
-    )
+    if outliers:
+        lines.append(
+            f"- The remaining **`{len(outliers)}/80`** rows outside `±5.0%` reflect multi-instance working-set differences (`tries`, `hash_maps`, `memory_pools/secure_pool`, `elias_fano`, `entropy` in `core_bench.rs` vs `1` instance in `competitor_bench.rs`, `S42-R1`) or cross-binary heap-address/DTLB layout differences (`radix_sort` and `suffix_array` aligned to `1` instance in both binaries in `f746fdb`, `S47-R10` / `S48-R6`)."
+        )
+    else:
+        lines.append(
+            "- All `80/80` shared Zipora benchmarks are within `±5.0%` across `core_bench.json` and `competitor_bench.json` (`1` instance per family in both binaries, `S47-R10` / `S48-R6`)."
+        )
     lines.append("")
     lines.append("| # | Benchmark | Dataset Size | Unit | Instances (`core` vs `comp`) | `core_bench` Min | `competitor_bench` Min | Min Delta (%) | Parity Note |")
     lines.append("|---:|---|---:|---|---|---:|---:|---:|---|")

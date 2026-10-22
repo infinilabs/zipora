@@ -2376,4 +2376,24 @@ mod tests {
             "S24-R3 timings: Vec<u64>={ns_u64:.3} ns/elem | Vec<Rc<u64>> de={ns_rc:.2} ns/elem ser={ns_rc_ser:.2} ns/elem | Vec<Vec<u32>> de={ns_vv32:.1} ns/inner ser={ns_vv32_ser:.1} ns/inner | Vec<Vec<u8>>(100kx3)={ns_vv8:.2} ns/inner | Vec<Box<u64>>={ns_box:.2} ns/elem"
         );
     }
+
+    #[test]
+    fn test_s48_r9_serialization_context_clear_drops_retained_primary() {
+        let rc = Rc::new(7u64);
+        let mut ctx = SerializationContext::new();
+        let mut out = VecDataOutput::new();
+        <Rc<u64> as SmartPtrSerialize<u64>>::serialize_with_context(&rc, &mut out, &mut ctx)
+            .unwrap();
+        assert_eq!(
+            Rc::strong_count(&rc),
+            2,
+            "SerializationContext must retain the first serialized Rc while active"
+        );
+        ctx.clear();
+        assert_eq!(
+            Rc::strong_count(&rc),
+            1,
+            "SerializationContext::clear() must drop retained_primary so Rc strong_count returns to 1"
+        );
+    }
 }

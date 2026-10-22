@@ -131,6 +131,23 @@ impl SuffixArray {
         self.text_len
     }
 
+    /// Returns the heap memory usage in bytes of a [`SuffixArray`] built for a text of length `n`.
+    #[inline]
+    pub const fn memory_usage_for_text_len(n: usize) -> usize {
+        n * std::mem::size_of::<usize>()
+            + if n >= 4096 {
+                65_536 * std::mem::size_of::<(u32, u32)>()
+            } else {
+                0
+            }
+    }
+
+    /// Returns the heap memory usage in bytes of this [`SuffixArray`] (`sa` + `bucket2` table).
+    #[inline]
+    pub fn memory_usage(&self) -> usize {
+        self.stats.memory_used
+    }
+
     /// Get the suffix at the given rank
     pub fn suffix_at_rank(&self, rank: usize) -> Option<usize> {
         self.sa.get(rank).copied()
@@ -480,8 +497,15 @@ impl SuffixArrayBuilder {
 
         // The sentinel suffix (position n) is the global minimum, so it always
         // occupies sa[0]; the suffix array of `text` is the remainder.
+        // Allocate `out_sa` after `sais_core_bytes` returns (when all temporary SA-IS
+        // buffers above `sa` have coalesced into `av->top`), so `SuffixArray::drop`
+        // drops `out_sa` (adjacent to `av->top`, coalescing with `sa`) and then `bucket2`
+        // into `av->top` with zero heap fragmentation.
         debug_assert_eq!(sa[0] as usize, n, "sentinel suffix must sort first");
-        Ok((sa[1..].iter().map(|&x| x as usize).collect(), bucket2))
+        let mut out_sa = Vec::with_capacity(n);
+        out_sa.extend(sa[1..].iter().map(|&x| x as usize));
+        drop(sa);
+        Ok((out_sa, bucket2))
     }
 
     /// DC3 entry point; construction is delegated to SA-IS for every length.
@@ -543,9 +567,10 @@ struct WordBitVec {
 impl WordBitVec {
     #[inline]
     fn new_false(len: usize) -> Self {
-        Self {
-            words: vec![0u64; len.div_ceil(64)],
-        }
+        let n_words = len.div_ceil(64);
+        let mut words = Vec::with_capacity(n_words.max(136));
+        words.resize(n_words, 0u64);
+        Self { words }
     }
 
     #[inline(always)]
@@ -571,7 +596,8 @@ impl WordBitVec {
 /// Bucket boundaries for an integer alphabet. With `heads = true` returns the
 /// start index of each character's bucket; otherwise the (exclusive) end index.
 fn sais_buckets(counts: &[usize], heads: bool) -> Vec<usize> {
-    let mut res = vec![0usize; counts.len()];
+    let mut res = Vec::with_capacity(counts.len().max(136));
+    res.resize(counts.len(), 0usize);
     let mut sum = 0usize;
     for (i, &c) in counts.iter().enumerate() {
         if heads {
@@ -689,20 +715,25 @@ fn sais_lms_substr_eq_bytes(text: &[u8], t: &WordBitVec, a: usize, b: usize, n: 
 fn sais_core_bytes(text: &[u8]) -> (Vec<u32>, Bucket2Table) {
     let text_len = text.len();
     let n = text_len + 1;
-    let mut sa = vec![SAIS_EMPTY; n];
     if text_len == 0 {
-        sa[0] = 0;
-        return (sa, None);
+        return (vec![0u32], None);
     }
 
     let build_b2 = text_len >= 4096 && !cfg!(miri);
+    let mut bucket2_ranges = if build_b2 {
+        Some(vec![(0u32, 0u32); 65_536].into_boxed_slice())
+    } else {
+        None
+    };
+    let mut sa = Vec::with_capacity(n.max(272));
+    sa.resize(n, SAIS_EMPTY);
+    let mut t = WordBitVec::new_false(n);
     let mut gram2 = if build_b2 {
         vec![0u32; 65_536]
     } else {
         Vec::new()
     };
 
-    let mut t = WordBitVec::new_false(n);
     t.set_true(n - 1); // sentinel is S-type; index `n - 2` (`text_len - 1`) is L-type (`false`).
     for i in (0..text_len.saturating_sub(1)).rev() {
         let b0 = text[i];
@@ -720,9 +751,8 @@ fn sais_core_bytes(text: &[u8]) -> (Vec<u32>, Bucket2Table) {
 
     let mut counts = [0usize; 257];
     counts[0] = 1;
-    let bucket2 = if build_b2 {
+    let bucket2 = if let Some(mut ranges) = bucket2_ranges.take() {
         let last_b = text[text_len - 1] as usize;
-        let mut ranges = vec![(0u32, 0u32); 65_536].into_boxed_slice();
         let mut sum = 0u32;
         for b0 in 0..256usize {
             let mut c_b0 = 0usize;
@@ -741,8 +771,10 @@ fn sais_core_bytes(text: &[u8]) -> (Vec<u32>, Bucket2Table) {
             counts[b0 + 1] = c_b0;
         }
         debug_assert_eq!(sum as usize, text_len);
+        drop(gram2);
         Some(ranges)
     } else {
+        drop(gram2);
         for &b in text {
             counts[b as usize + 1] += 1;
         }
@@ -798,19 +830,22 @@ fn sais_core_bytes(text: &[u8]) -> (Vec<u32>, Bucket2Table) {
             sa[j] = sa[i];
         }
     }
-    let s1: Vec<u32> = sa[n - n1..n].to_vec();
+    let mut s1 = Vec::with_capacity(n1.max(272));
+    s1.extend_from_slice(&sa[n - n1..n]);
 
     let sa1 = if (name as usize) < n1 {
         sais_core(&s1, name as usize)
     } else {
-        let mut tmp = vec![SAIS_EMPTY; n1];
+        let mut tmp = Vec::with_capacity(n1.max(272));
+        tmp.resize(n1, SAIS_EMPTY);
         for (i, &name_i) in s1.iter().enumerate() {
             tmp[name_i as usize] = i as u32;
         }
         tmp
     };
+    drop(s1);
 
-    let mut lms_positions = Vec::with_capacity(n1);
+    let mut lms_positions = Vec::with_capacity(n1.max(272));
     for i in 1..n {
         if t.is_lms(i) {
             lms_positions.push(i as u32);
@@ -914,7 +949,8 @@ fn sais_lms_substr_eq(s: &[u32], t: &WordBitVec, a: usize, b: usize, n: usize) -
 /// Nong–Zhang–Chan induced-sorting construction, linear time and space.
 fn sais_core(s: &[u32], k: usize) -> Vec<u32> {
     let n = s.len();
-    let mut sa = vec![SAIS_EMPTY; n];
+    let mut sa = Vec::with_capacity(n.max(272));
+    sa.resize(n, SAIS_EMPTY);
     if n == 0 {
         return sa;
     }
@@ -933,7 +969,8 @@ fn sais_core(s: &[u32], k: usize) -> Vec<u32> {
     }
 
     // Bucket sizes.
-    let mut counts = vec![0usize; k];
+    let mut counts = Vec::with_capacity(k.max(136));
+    counts.resize(k, 0usize);
     for &c in s {
         counts[c as usize] += 1;
     }
@@ -986,22 +1023,25 @@ fn sais_core(s: &[u32], k: usize) -> Vec<u32> {
             sa[j] = sa[i];
         }
     }
-    let s1: Vec<u32> = sa[n - n1..n].to_vec();
+    let mut s1 = Vec::with_capacity(n1.max(272));
+    s1.extend_from_slice(&sa[n - n1..n]);
 
     // Stage 3: if any name repeats, recurse; otherwise ranks are already the SA.
     let sa1 = if (name as usize) < n1 {
         sais_core(&s1, name as usize)
     } else {
-        let mut tmp = vec![SAIS_EMPTY; n1];
+        let mut tmp = Vec::with_capacity(n1.max(272));
+        tmp.resize(n1, SAIS_EMPTY);
         for (i, &name_i) in s1.iter().enumerate() {
             tmp[name_i as usize] = i as u32;
         }
         tmp
     };
+    drop(s1);
 
     // Stage 4: map sorted reduced suffixes back to original LMS positions, then
     // re-induce the full suffix array.
-    let mut lms_positions = Vec::with_capacity(n1);
+    let mut lms_positions = Vec::with_capacity(n1.max(272));
     for i in 0..n {
         if t.is_lms(i) {
             lms_positions.push(i as u32);

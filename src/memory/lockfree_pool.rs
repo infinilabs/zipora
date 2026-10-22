@@ -21,9 +21,9 @@ use super::CachePadded;
 use crate::error::{Result, ZiporaError};
 use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint};
 use crate::memory::simd_ops::{fast_fill, fast_prefetch};
-use std::alloc::{Layout, alloc, dealloc};
+use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::Duration;
@@ -92,14 +92,77 @@ const SIZE_CLASS_LUT: [u8; SIZE_CLASS_LUT_LEN] = {
 
 /// Per-thread magazine capacity per fast bin (matching tcache small-bin batching).
 const MAGAZINE_CAP: usize = 16;
+/// Magic prefix stored in `[user - 4 .. user]` while a fast-bin block is live.
+const FAST_BIN_LIVE_TAG: u32 = 0xA110_C800;
+/// Magic prefix stored in `[user - 4 .. user]` while a fast-bin block is free.
+const FAST_BIN_FREE_TAG: u32 = 0xF2EE_0800;
 
 static NEXT_LOCKFREE_POOL_ID: AtomicU64 = AtomicU64::new(1);
+
+#[repr(align(64))]
+struct ThreadMagazine {
+    steal_mode: AtomicBool,
+    slots: [[AtomicU32; MAGAZINE_CAP]; FAST_BIN_COUNT],
+}
+
+impl ThreadMagazine {
+    fn new() -> Self {
+        Self {
+            steal_mode: AtomicBool::new(false),
+            slots: std::array::from_fn(|_| std::array::from_fn(|_| AtomicU32::new(0))),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn pop_any(&self, bin: usize) -> Option<u32> {
+        for slot in &self.slots[bin] {
+            // ORDERING: Relaxed pre-check avoids unnecessary RMW when slot is empty;
+            // Acquire on swap synchronizes-with Release store in `push`.
+            if slot.load(Ordering::Relaxed) != 0 {
+                let off = slot.swap(0, Ordering::Acquire);
+                if off != 0 {
+                    return Some(off);
+                }
+            }
+        }
+        None
+    }
+
+    fn drain_into_arena(&self, arena: &PoolArena) -> usize {
+        let mut drained = 0usize;
+        // ORDERING: Relaxed pre-check avoids unnecessary RMW on empty slots;
+        // Acquire on swap synchronizes-with the owning thread's Release store in `push`.
+        for bin in 0..FAST_BIN_COUNT {
+            for slot in &self.slots[bin] {
+                if slot.load(Ordering::Relaxed) != 0 {
+                    let off = slot.swap(0, Ordering::Acquire);
+                    if off != 0 && arena.deallocate_to_fast_bin_offset(bin, off).is_ok() {
+                        drained += 1;
+                    }
+                }
+            }
+        }
+        drained
+    }
+
+    fn clear_all(&self) {
+        for bin in 0..FAST_BIN_COUNT {
+            for slot in &self.slots[bin] {
+                // ORDERING: Relaxed is sufficient when clearing dead pool offsets.
+                if slot.load(Ordering::Relaxed) != 0 {
+                    slot.store(0, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+}
 
 struct MagazineState {
     pool_id: u64,
     allocated_mask: u64,
     counts: [u8; FAST_BIN_COUNT],
-    slots: [[u32; MAGAZINE_CAP]; FAST_BIN_COUNT],
+    shared: *const ThreadMagazine,
 }
 
 impl MagazineState {
@@ -108,17 +171,7 @@ impl MagazineState {
             pool_id: 0,
             allocated_mask: 0,
             counts: [0; FAST_BIN_COUNT],
-            slots: [[0; MAGAZINE_CAP]; FAST_BIN_COUNT],
-        }
-    }
-
-    fn flush_into_arena(&mut self, arena: &PoolArena) {
-        for bin in 0..FAST_BIN_COUNT {
-            let c = std::mem::replace(&mut self.counts[bin], 0) as usize;
-            for i in 0..c {
-                let offset = self.slots[bin][i];
-                let _ = arena.deallocate_to_fast_bin_offset(bin, offset);
-            }
+            shared: std::ptr::null(),
         }
     }
 
@@ -127,17 +180,21 @@ impl MagazineState {
     fn flush_to_current_owner(&mut self) {
         self.pool_id = 0;
         self.allocated_mask = 0;
-        let prev_owner = MAGAZINE_OWNER_GUARD
-            .try_with(|guard| guard.borrow_mut().owner.take())
-            .ok()
-            .flatten();
-        if let Some(weak) = prev_owner
-            && let Some(arena) = weak.upgrade()
-        {
-            self.flush_into_arena(&arena);
-        } else {
-            self.counts = [0; FAST_BIN_COUNT];
-        }
+        self.counts = [0; FAST_BIN_COUNT];
+        self.shared = std::ptr::null();
+        let _ = MAGAZINE_OWNER_GUARD.try_with(|guard| {
+            let mut g = guard.borrow_mut();
+            let prev_owner = g.owner.take();
+            if let Some(shared) = &g.shared {
+                if let Some(weak) = prev_owner
+                    && let Some(arena) = weak.upgrade()
+                {
+                    shared.drain_into_arena(&arena);
+                } else {
+                    shared.clear_all();
+                }
+            }
+        });
     }
 
     #[cold]
@@ -146,17 +203,31 @@ impl MagazineState {
         if self.pool_id != 0 {
             self.flush_to_current_owner();
         }
-        self.pool_id = pool_id;
-        self.allocated_mask = 1u64 << (bin_index & (FAST_BIN_COUNT - 1));
-        let _ = MAGAZINE_OWNER_GUARD.try_with(|guard| {
-            guard.borrow_mut().owner = Some(Arc::downgrade(arena));
-        });
+        if let Ok(shared_ptr) = MAGAZINE_OWNER_GUARD.try_with(|guard| {
+            let mut g = guard.borrow_mut();
+            let shared = g
+                .shared
+                .get_or_insert_with(|| Arc::new(ThreadMagazine::new()))
+                .clone();
+            arena.register_magazine(&shared);
+            g.owner = Some(Arc::downgrade(arena));
+            Arc::as_ptr(&shared)
+        }) {
+            self.shared = shared_ptr;
+            self.pool_id = pool_id;
+            self.allocated_mask = 1u64 << (bin_index & (FAST_BIN_COUNT - 1));
+        }
     }
 }
 
 struct FastBinMagazine {
     state: std::cell::UnsafeCell<MagazineState>,
 }
+
+const _: () = assert!(
+    !std::mem::needs_drop::<FastBinMagazine>(),
+    "FastBinMagazine must not have Drop glue so thread_local .with() never panics during teardown"
+);
 
 impl FastBinMagazine {
     const fn new() -> Self {
@@ -180,25 +251,62 @@ impl FastBinMagazine {
         }
         let new_c = c - 1;
         state.counts[bin] = new_c;
-        Some(state.slots[bin][(new_c as usize) & (MAGAZINE_CAP - 1)])
+        // SAFETY: `state.pool_id == pool_id != 0`, which holds only while `MAGAZINE_OWNER_GUARD`
+        // is alive on this thread and owns the `Arc<ThreadMagazine>` pointed to by `state.shared`.
+        let shared = unsafe { &*state.shared };
+        let slot = &shared.slots[bin][(new_c as usize) & (MAGAZINE_CAP - 1)];
+        let off = if !shared.steal_mode.load(Ordering::Relaxed) {
+            // ORDERING: Relaxed load + store on the uncontended owner fast path avoids
+            // a locked RMW instruction while `steal_mode` is false.
+            let v = slot.load(Ordering::Relaxed);
+            slot.store(0, Ordering::Relaxed);
+            v
+        } else {
+            // ORDERING: Acquire synchronizes-with Release store in `push` and prevents
+            // double-claim if a concurrent `drain_all_magazines` steals from this slot.
+            slot.swap(0, Ordering::Acquire)
+        };
+        if off != 0 {
+            return Some(off);
+        }
+        state.counts[bin] = 0;
+        shared.pop_any(bin)
     }
 
     #[inline(always)]
-    fn push(&self, pool_id: u64, bin_index: usize, offset: u32) -> bool {
+    fn push(&self, pool_id: u64, bin_index: usize, offset: u32) -> std::result::Result<bool, ()> {
         // SAFETY: `FastBinMagazine` is stored in `thread_local!` (`!Sync`), and
         // `push` is a leaf function that never re-enters `FAST_BIN_MAGAZINE`.
         let state = unsafe { &mut *self.state.get() };
         let bin = bin_index & (FAST_BIN_COUNT - 1);
         if state.pool_id != pool_id || (state.allocated_mask & (1u64 << bin)) == 0 {
-            return false;
+            return Ok(false);
         }
-        let c = state.counts[bin] as usize;
-        if c >= MAGAZINE_CAP {
-            return false;
+        // SAFETY: `state.pool_id == pool_id != 0`, which holds only while `MAGAZINE_OWNER_GUARD`
+        // is alive on this thread and owns the `Arc<ThreadMagazine>` pointed to by `state.shared`.
+        let shared = unsafe { &*state.shared };
+        let mut c = state.counts[bin] as usize;
+        if c != 0 {
+            for i in 0..c.min(MAGAZINE_CAP) {
+                // ORDERING: Relaxed is sufficient because only the owning thread pushes to `slots`.
+                if shared.slots[bin][i].load(Ordering::Relaxed) == offset {
+                    return Err(());
+                }
+            }
+            if c >= MAGAZINE_CAP {
+                // ORDERING: Relaxed check detects whether `drain_all_magazines` emptied the bin.
+                if shared.slots[bin][0].load(Ordering::Relaxed) != 0 {
+                    return Ok(false);
+                }
+                c = 0;
+            }
         }
-        state.slots[bin][c & (MAGAZINE_CAP - 1)] = offset;
+        let slot = &shared.slots[bin][c & (MAGAZINE_CAP - 1)];
+        // ORDERING: Release store publishes block header/data writes before making `offset`
+        // visible to `drain_all_magazines`.
+        slot.store(offset, Ordering::Release);
         state.counts[bin] = (c + 1) as u8;
-        true
+        Ok(true)
     }
 
     fn record_alloc_miss(
@@ -233,8 +341,22 @@ impl FastBinMagazine {
             state.pool_id = 0;
             state.allocated_mask = 0;
             state.counts = [0; FAST_BIN_COUNT];
+            if !state.shared.is_null() {
+                // SAFETY: `state.pool_id == pool_id != 0` guarantees `state.shared` is valid.
+                unsafe { (&*state.shared).clear_all() };
+                state.shared = std::ptr::null();
+            }
             let _ = MAGAZINE_OWNER_GUARD.try_with(|guard| {
-                guard.borrow_mut().owner = None;
+                let mut g = guard.borrow_mut();
+                if let Some(shared) = g.shared.take() {
+                    if let Some(weak) = g.owner.take()
+                        && let Some(arena) = weak.upgrade()
+                    {
+                        arena.unregister_magazine(&shared);
+                    }
+                } else {
+                    g.owner = None;
+                }
             });
         }
     }
@@ -242,21 +364,29 @@ impl FastBinMagazine {
 
 struct MagazineOwnerGuard {
     owner: Option<Weak<PoolArena>>,
+    shared: Option<Arc<ThreadMagazine>>,
 }
 
 impl Drop for MagazineOwnerGuard {
     fn drop(&mut self) {
-        if let Some(weak) = self.owner.take()
-            && let Some(arena) = weak.upgrade()
-        {
-            let _ = FAST_BIN_MAGAZINE.try_with(|mag| {
-                // SAFETY: `FAST_BIN_MAGAZINE` has no `Drop` glue and remains valid
-                // throughout thread teardown; no re-entrant borrow occurs.
-                let state = unsafe { &mut *mag.state.get() };
-                state.pool_id = 0;
-                state.allocated_mask = 0;
-                state.flush_into_arena(&arena);
-            });
+        let _ = FAST_BIN_MAGAZINE.try_with(|mag| {
+            // SAFETY: `FAST_BIN_MAGAZINE` has no `Drop` glue and remains valid
+            // throughout thread teardown; no re-entrant borrow occurs.
+            let state = unsafe { &mut *mag.state.get() };
+            state.pool_id = 0;
+            state.allocated_mask = 0;
+            state.counts = [0; FAST_BIN_COUNT];
+            state.shared = std::ptr::null();
+        });
+        if let Some(shared) = self.shared.take() {
+            if let Some(weak) = self.owner.take()
+                && let Some(arena) = weak.upgrade()
+            {
+                shared.drain_into_arena(&arena);
+                arena.unregister_magazine(&shared);
+            } else {
+                shared.clear_all();
+            }
         }
     }
 }
@@ -264,7 +394,10 @@ impl Drop for MagazineOwnerGuard {
 thread_local! {
     static FAST_BIN_MAGAZINE: FastBinMagazine = const { FastBinMagazine::new() };
     static MAGAZINE_OWNER_GUARD: std::cell::RefCell<MagazineOwnerGuard> = const {
-        std::cell::RefCell::new(MagazineOwnerGuard { owner: None })
+        std::cell::RefCell::new(MagazineOwnerGuard {
+            owner: None,
+            shared: None,
+        })
     };
 }
 
@@ -564,6 +697,7 @@ struct PoolArena {
     fast_bins: Arc<Vec<CachePadded<LockFreeHead>>>,
     backoff_strategy: BackoffStrategy,
     stats: Option<Arc<LockFreePoolStats>>,
+    magazines: Mutex<Vec<Weak<ThreadMagazine>>>,
 }
 
 // SAFETY: PoolArena is Send because it owns the heap allocation in `memory`
@@ -571,10 +705,54 @@ struct PoolArena {
 // other fields are `Send`.
 unsafe impl Send for PoolArena {}
 
-// SAFETY: PoolArena is Sync because `fast_bins` uses ABA-safe lock-free atomics.
+// SAFETY: PoolArena is Sync because `fast_bins` uses ABA-safe lock-free atomics
+// and `magazines` is synchronized via `Mutex`.
 unsafe impl Sync for PoolArena {}
 
 impl PoolArena {
+    fn register_magazine(&self, mag: &Arc<ThreadMagazine>) {
+        if let Ok(mut list) = self.magazines.lock() {
+            list.retain(|w| w.strong_count() > 0);
+            let ptr = Arc::as_ptr(mag);
+            if !list.iter().any(|w| std::ptr::eq(w.as_ptr(), ptr)) {
+                list.push(Arc::downgrade(mag));
+            }
+        }
+    }
+
+    fn unregister_magazine(&self, mag: &Arc<ThreadMagazine>) {
+        if let Ok(mut list) = self.magazines.lock() {
+            let ptr = Arc::as_ptr(mag);
+            list.retain(|w| w.strong_count() > 0 && !std::ptr::eq(w.as_ptr(), ptr));
+        }
+    }
+
+    /// Reclaim all blocks cached in per-thread `FastBinMagazine` instances back into `fast_bins`.
+    #[cold]
+    #[inline(never)]
+    fn drain_all_magazines(&self) -> usize {
+        let mut total = 0usize;
+        if let Ok(mut list) = self.magazines.lock() {
+            let mut live = Vec::with_capacity(list.len());
+            list.retain(|weak| {
+                if let Some(mag) = weak.upgrade() {
+                    // ORDERING: Release ensures `steal_mode = true` is visible before draining.
+                    mag.steal_mode.store(true, Ordering::Release);
+                    live.push(mag);
+                    true
+                } else {
+                    false
+                }
+            });
+            // ORDERING: SeqCst fence orders `steal_mode = true` before slot swaps.
+            std::sync::atomic::fence(Ordering::SeqCst);
+            for mag in &live {
+                total += mag.drain_into_arena(self);
+            }
+        }
+        total
+    }
+
     #[inline(always)]
     fn offset_to_ptr(&self, offset: u32) -> Result<NonNull<u8>> {
         if offset == LIST_TAIL {
@@ -618,6 +796,25 @@ impl PoolArena {
     }
 
     fn deallocate_to_fast_bin_offset(&self, bin_index: usize, offset: u32) -> Result<()> {
+        let user = self.offset_to_ptr(offset)?;
+        // SAFETY: `offset` is a validated 8-byte-aligned user offset >= 16 inside `self.memory`.
+        let tag_slot = unsafe { &*(user.as_ptr().sub(4) as *const AtomicU32) };
+        let expected_live = FAST_BIN_LIVE_TAG | (bin_index as u32);
+        // ORDERING: AcqRel prevents two concurrent callers or a double-free from pushing
+        // the same block into `fast_bins` twice.
+        if tag_slot
+            .compare_exchange(
+                expected_live,
+                FAST_BIN_FREE_TAG | (bin_index as u32),
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            return Err(ZiporaError::invalid_data(
+                "Fast-bin block freed twice or pointer was not allocated at this size class",
+            ));
+        }
         let bin = &self.fast_bins[bin_index];
 
         let mut retry = 0u32;
@@ -767,15 +964,8 @@ impl LockFreeMemoryPool {
                 "LockFreeMemoryPool memory_size cannot exceed 4GB (32-bit offset limit)",
             ));
         }
-        // Allocate backing memory region
-        let layout = Layout::from_size_align(config.memory_size, ALIGN_SIZE)
-            .map_err(|e| ZiporaError::invalid_data(format!("Invalid layout: {}", e)))?;
 
-        // SAFETY: layout valid (size > 0, align power of 2)
-        let memory = NonNull::new(unsafe { alloc(layout) })
-            .ok_or_else(|| ZiporaError::out_of_memory(config.memory_size))?;
-
-        // Initialize fast bins
+        // Initialize fast bins and metadata before the large backing buffer
         let mut fast_bins = Vec::with_capacity(FAST_BIN_COUNT);
         for _ in 0..FAST_BIN_COUNT {
             fast_bins.push(CachePadded::new(LockFreeHead::new()));
@@ -802,6 +992,17 @@ impl LockFreeMemoryPool {
             None
         };
 
+        let magazines = Mutex::new(Vec::with_capacity(256));
+
+        // Allocate backing memory region
+        let layout = Layout::from_size_align(config.memory_size, ALIGN_SIZE)
+            .map_err(|e| ZiporaError::invalid_data(format!("Invalid layout: {}", e)))?;
+
+        // SAFETY: layout valid (size > 0, align power of 2); zero-initialized so
+        // fast-bin header tags start at 0 before first carve.
+        let memory = NonNull::new(unsafe { alloc_zeroed(layout) })
+            .ok_or_else(|| ZiporaError::out_of_memory(config.memory_size))?;
+
         // ORDERING: Relaxed is sufficient for unique monotonic pool ID assignment.
         let pool_id = NEXT_LOCKFREE_POOL_ID.fetch_add(1, Ordering::Relaxed);
         let use_tls_magazine = !config.enable_stats
@@ -819,6 +1020,7 @@ impl LockFreeMemoryPool {
             fast_bins: Arc::clone(&fast_bins),
             backoff_strategy: config.backoff_strategy,
             stats: stats.clone(),
+            magazines,
         });
 
         Ok(Self {
@@ -838,6 +1040,37 @@ impl LockFreeMemoryPool {
         })
     }
 
+    #[inline(always)]
+    fn find_fast_bin(aligned_size: usize) -> usize {
+        SIZE_CLASS_LUT[aligned_size >> 3] as usize
+    }
+
+    #[inline(always)]
+    fn mark_fast_bin_live(&self, ptr: NonNull<u8>, bin_index: usize) {
+        // SAFETY: `ptr` is an 8-byte-aligned user pointer inside `self.memory` at
+        // offset >= 16, so `ptr - 4` is the second 4-byte word of its 8-byte `BLOCK_HEADER`.
+        let tag_slot = unsafe { &*(ptr.as_ptr().sub(4) as *const AtomicU32) };
+        // ORDERING: Relaxed is sufficient because this block is exclusively owned by
+        // the allocating thread until handed off by the caller to `deallocate`.
+        tag_slot.store(FAST_BIN_LIVE_TAG | (bin_index as u32), Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    fn verify_fast_bin_live(&self, ptr: NonNull<u8>, bin_index: usize) -> Result<()> {
+        // SAFETY: `ptr_to_offset` already verified `16 <= offset < self.memory_size` and
+        // 8-byte alignment, so `ptr - 4` is a valid 4-byte-aligned `AtomicU32` in `BLOCK_HEADER`.
+        let tag_slot = unsafe { &*(ptr.as_ptr().sub(4) as *const AtomicU32) };
+        let expected = FAST_BIN_LIVE_TAG | (bin_index as u32);
+        // ORDERING: Relaxed is sufficient because `FAST_BIN_LIVE_TAG` was written before
+        // the block was handed to the caller.
+        if tag_slot.load(Ordering::Relaxed) != expected {
+            return Err(ZiporaError::invalid_data(
+                "Fast-bin block freed twice or pointer was not allocated at this size class",
+            ));
+        }
+        Ok(())
+    }
+
     /// Allocate memory from the pool
     #[inline(always)]
     pub fn allocate(&self, size: usize) -> Result<NonNull<u8>> {
@@ -848,7 +1081,7 @@ impl LockFreeMemoryPool {
         let aligned_size = self.align_size(size);
 
         if aligned_size <= FAST_BIN_THRESHOLD {
-            let bin_index = SIZE_CLASS_LUT[aligned_size >> 3] as usize;
+            let bin_index = Self::find_fast_bin(aligned_size);
             if self.use_tls_magazine
                 && let Some(offset) = FAST_BIN_MAGAZINE.with(|mag| mag.pop(self.pool_id, bin_index))
             {
@@ -875,11 +1108,18 @@ impl LockFreeMemoryPool {
 
         if aligned_size <= FAST_BIN_THRESHOLD {
             let offset = self.ptr_to_offset(ptr)?;
-            let bin_index = SIZE_CLASS_LUT[aligned_size >> 3] as usize;
-            if self.use_tls_magazine
-                && FAST_BIN_MAGAZINE.with(|mag| mag.push(self.pool_id, bin_index, offset))
-            {
-                return Ok(());
+            let bin_index = Self::find_fast_bin(aligned_size);
+            self.verify_fast_bin_live(ptr, bin_index)?;
+            if self.use_tls_magazine {
+                match FAST_BIN_MAGAZINE.with(|mag| mag.push(self.pool_id, bin_index, offset)) {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => {}
+                    Err(()) => {
+                        return Err(ZiporaError::invalid_data(
+                            "Fast-bin block freed twice in thread-local magazine",
+                        ));
+                    }
+                }
             }
             self.deallocate_to_fast_bin_offset(bin_index, offset)
         } else {
@@ -1038,7 +1278,9 @@ impl LockFreeMemoryPool {
         // willing to contend for one before carving fresh memory instead; it is
         // a throughput knob, not a correctness parameter.
         if let Some(offset) = self.pop_fast_bin(bin, self.config.max_cas_retries)? {
-            return self.offset_to_ptr(offset);
+            let ptr = self.offset_to_ptr(offset)?;
+            self.mark_fast_bin_live(ptr, bin_index);
+            return Ok(ptr);
         }
 
         // Empty bin, or the budget ran out: carve a fresh block at the class
@@ -1046,8 +1288,14 @@ impl LockFreeMemoryPool {
         // carved any smaller would later be handed to a larger request in the
         // same class and overrun its neighbour.
         match self.allocate_new_block(FAST_BIN_SIZES[bin_index]) {
-            Ok(ptr) => Ok(ptr),
+            Ok(ptr) => {
+                self.mark_fast_bin_live(ptr, bin_index);
+                Ok(ptr)
+            }
             Err(exhausted) => {
+                if self.use_tls_magazine {
+                    self.arena.drain_all_magazines();
+                }
                 // C3.18. The arena is spent, so the bin is the only source
                 // left, and a spent retry budget must not be allowed to turn a
                 // non-empty bin into an out-of-memory error -- which is exactly
@@ -1056,7 +1304,11 @@ impl LockFreeMemoryPool {
                 // with a strong CAS every failure means another thread
                 // completed a push or a pop, so this terminates.
                 match self.pop_fast_bin(bin, u32::MAX)? {
-                    Some(offset) => self.offset_to_ptr(offset),
+                    Some(offset) => {
+                        let ptr = self.offset_to_ptr(offset)?;
+                        self.mark_fast_bin_live(ptr, bin_index);
+                        Ok(ptr)
+                    }
                     None => Err(exhausted),
                 }
             }
@@ -2500,5 +2752,144 @@ mod tests {
         assert!(pool.deallocate(misaligned, 64).is_err());
 
         pool.deallocate(valid, 64).unwrap();
+    }
+
+    #[test]
+    fn test_s48_r2_idle_threads_magazines_reclaimed_on_exhaustion() {
+        let mut cfg = LockFreePoolConfig::high_performance();
+        cfg.memory_size = 16 * 1024 * 1024;
+        let pool = Arc::new(LockFreeMemoryPool::new(cfg).unwrap());
+        let cap_blocks = if cfg!(miri) { 64usize } else { 512usize };
+        let stride = 64 + BLOCK_HEADER;
+        pool.next_offset.store(
+            (16 * 1024 * 1024 - cap_blocks * stride) as u32,
+            Ordering::Relaxed,
+        );
+
+        let n_idle = if cfg!(miri) { 2usize } else { 16usize };
+        let barrier = Arc::new(std::sync::Barrier::new(n_idle + 1));
+        let done = Arc::new(std::sync::Barrier::new(n_idle + 1));
+        let mut handles = Vec::with_capacity(n_idle);
+        for _ in 0..n_idle {
+            let p = Arc::clone(&pool);
+            let b = Arc::clone(&barrier);
+            let d = Arc::clone(&done);
+            handles.push(thread::spawn(move || {
+                let mut v = Vec::with_capacity(16);
+                for _ in 0..16 {
+                    v.push(p.allocate(64).unwrap());
+                }
+                for ptr in v {
+                    p.deallocate(ptr, 64).unwrap();
+                }
+                b.wait();
+                d.wait();
+            }));
+        }
+        barrier.wait();
+
+        let mut held = Vec::with_capacity(cap_blocks);
+        for i in 0..cap_blocks {
+            held.push(
+                pool.allocate(64)
+                    .unwrap_or_else(|e| panic!("block {i}/{cap_blocks} stranded in idle TLS: {e}")),
+            );
+        }
+        for ptr in held {
+            pool.deallocate(ptr, 64).unwrap();
+        }
+        done.wait();
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_s48_r4_tls_dtor_alloc_after_guard_teardown_no_leak() {
+        struct AfterGuard(Option<Arc<LockFreeMemoryPool>>);
+        impl Drop for AfterGuard {
+            fn drop(&mut self) {
+                if let Some(p) = self.0.take() {
+                    let mut v = Vec::with_capacity(16);
+                    for _ in 0..16 {
+                        if let Ok(ptr) = p.allocate(64) {
+                            v.push(ptr);
+                        }
+                    }
+                    for ptr in v {
+                        let _ = p.deallocate(ptr, 64);
+                    }
+                }
+            }
+        }
+        thread_local! {
+            static AFTER_GUARD: std::cell::RefCell<AfterGuard> =
+                const { std::cell::RefCell::new(AfterGuard(None)) };
+        }
+
+        let mut cfg = LockFreePoolConfig::high_performance();
+        cfg.memory_size = 16 * 1024 * 1024;
+        let pool = Arc::new(LockFreeMemoryPool::new(cfg).unwrap());
+        let cap_blocks = 32usize;
+        let stride = 64 + BLOCK_HEADER;
+        pool.next_offset.store(
+            (16 * 1024 * 1024 - cap_blocks * stride) as u32,
+            Ordering::Relaxed,
+        );
+
+        let rounds = if cfg!(miri) { 4usize } else { 16usize };
+        for _ in 0..rounds {
+            let p = Arc::clone(&pool);
+            thread::spawn(move || {
+                AFTER_GUARD.with(|ag| *ag.borrow_mut() = AfterGuard(Some(Arc::clone(&p))));
+                let x = p.allocate(64).unwrap();
+                p.deallocate(x, 64).unwrap();
+            })
+            .join()
+            .unwrap();
+        }
+
+        let mut held = Vec::with_capacity(cap_blocks);
+        for i in 0..cap_blocks {
+            held.push(
+                pool.allocate(64)
+                    .unwrap_or_else(|e| panic!("block {i}/{cap_blocks} leaked in TLS dtor: {e}")),
+            );
+        }
+        for ptr in held {
+            pool.deallocate(ptr, 64).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_s48_r9_rejects_fast_bin_double_free_and_interior_pointer() {
+        let mut cfg = LockFreePoolConfig::high_performance();
+        cfg.memory_size = 16 * 1024 * 1024;
+        let pool = LockFreeMemoryPool::new(cfg).unwrap();
+
+        let p = pool.allocate(64).unwrap();
+        pool.deallocate(p, 64).unwrap();
+        assert!(
+            pool.deallocate(p, 64).is_err(),
+            "double-free of fast-bin block must return Err"
+        );
+
+        // Unallocated pointer inside pool memory must be rejected.
+        // SAFETY: `p.add(256)` is within the 16 MiB backing allocation.
+        let fake = NonNull::new(unsafe { p.as_ptr().add(256) }).unwrap();
+        assert!(
+            pool.deallocate(fake, 64).is_err(),
+            "unallocated pointer inside pool memory must return Err"
+        );
+
+        // Aligned interior pointer inside a live 256-byte fast-bin block must be rejected.
+        let big = pool.allocate(256).unwrap();
+        // SAFETY: `big.add(64)` is within the 256-byte allocated block.
+        let interior = NonNull::new(unsafe { big.as_ptr().add(64) }).unwrap();
+        assert!(
+            pool.deallocate(interior, 64).is_err(),
+            "interior pointer inside 256B block must return Err"
+        );
+        pool.deallocate(big, 256).unwrap();
     }
 }

@@ -410,21 +410,23 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let res = match &mut self.storage {
+        match &mut self.storage {
             HashMapStorage::Standard(table) => {
-                Self::remove_standard(&self.hash_builder, table, key)
+                Self::remove_standard(&self.hash_builder, table, &mut self.len, key)
             }
             HashMapStorage::SmallInline {
                 inline_data,
                 fallback,
                 len,
-            } => Self::remove_small_inline(&self.hash_builder, inline_data, fallback, len, key),
-        };
-
-        if res.is_some() {
-            self.len = self.len.saturating_sub(1);
+            } => Self::remove_small_inline(
+                &self.hash_builder,
+                inline_data,
+                fallback,
+                len,
+                &mut self.len,
+                key,
+            ),
         }
-        res
     }
 
     /// Clear all entries from the map

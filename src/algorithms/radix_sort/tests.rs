@@ -1277,3 +1277,73 @@ fn test_s47_r11_hybrid_lsd_u32_u64_kv_paths() {
         assert_eq!(kv32, kv32_want, "kv32 n={n}");
     }
 }
+
+#[test]
+fn test_s48_r5_r9_kv_radix_sort_primitive_widths_and_padded_key() {
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct PaddedKey {
+        a: u32,
+        b: u8,
+        // 3 bytes of uninitialized padding follow `b`
+    }
+
+    impl From<PaddedKey> for u64 {
+        fn from(k: PaddedKey) -> u64 {
+            ((k.a as u64) << 8) | (k.b as u64)
+        }
+    }
+
+    let n: usize = if cfg!(miri) { 128 } else { 20_000 };
+
+    // 1. Padded custom key (tests both sort_by_key materialized path and direct lsd_kv_in_cache
+    //    without reading uninitialized padding bytes via raw u64 pointer casts).
+    let mut padded: Vec<(PaddedKey, u64)> = (0..n)
+        .map(|i| {
+            let a = (i as u32).wrapping_mul(0x9E37_79B9).rotate_left(11);
+            let b = (i.wrapping_mul(251) & 0xFF) as u8;
+            (PaddedKey { a, b }, i as u64)
+        })
+        .collect();
+    let mut padded_want = padded.clone();
+    padded_want.sort_by_key(|&(k, _)| u64::from(k));
+
+    let mut padded_in_cache = padded.clone();
+    let mut scratch = Vec::<std::mem::MaybeUninit<(PaddedKey, u64)>>::with_capacity(n);
+    unsafe {
+        scratch.set_len(n);
+        KeyValueRadixSort::<PaddedKey, u64>::lsd_kv_in_cache(
+            &mut padded_in_cache,
+            scratch.as_mut_ptr() as *mut (PaddedKey, u64),
+            8,
+        );
+    }
+    assert_eq!(padded_in_cache, padded_want);
+
+    KeyValueRadixSort::<PaddedKey, u64>::new()
+        .sort_by_key(&mut padded)
+        .unwrap();
+    assert_eq!(padded, padded_want);
+
+    // 2. Primitive u16 and u8 keys take the trusted primitive fast path (both <= L2_THRESHOLD
+    //    and > L2_THRESHOLD).
+    let mut kv16: Vec<(u16, u32)> = (0..n)
+        .map(|i| ((i as u16).wrapping_mul(40503).rotate_left(5), i as u32))
+        .collect();
+    let mut kv16_want = kv16.clone();
+    kv16_want.sort_by_key(|&(k, _)| k);
+    KeyValueRadixSort::<u16, u32>::new()
+        .sort_by_key(&mut kv16)
+        .unwrap();
+    assert_eq!(kv16, kv16_want);
+
+    let mut kv8: Vec<(u8, u32)> = (0..n)
+        .map(|i| ((i.wrapping_mul(197) & 0xFF) as u8, i as u32))
+        .collect();
+    let mut kv8_want = kv8.clone();
+    kv8_want.sort_by_key(|&(k, _)| k);
+    KeyValueRadixSort::<u8, u32>::new()
+        .sort_by_key(&mut kv8)
+        .unwrap();
+    assert_eq!(kv8, kv8_want);
+}
