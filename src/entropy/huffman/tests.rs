@@ -1209,4 +1209,44 @@ mod tests {
         assert_eq!(c_dec.dense_lut_count(), 300);
         assert_eq!(c_dec.decode(&c_encoded, 6).unwrap(), b"ababaa");
     }
+
+    #[test]
+    fn test_s49_r8_contextual_huffman_partial_context_tree() {
+        let tree0 = serialize_custom_tree(&[
+            (b'a', &[false]),
+            (b'b', &[true, false]),
+            (b'c', &[true, true]),
+        ]);
+        // Non-empty context tree missing 'b': 'a' -> [0], 'c' -> [1]
+        let partial_ctx_tree = serialize_custom_tree(&[(b'a', &[false]), (b'c', &[true])]);
+        let trees = vec![tree0, partial_ctx_tree];
+
+        // 1. Order-1: context 'a' maps to trees[1] (which lacks 'b').
+        let model_o1 = serialize_custom_contextual_model(1, &[(b'a' as u32, 1u32)], &trees);
+        let enc_o1 = ContextualHuffmanEncoder::deserialize(&model_o1).unwrap();
+        assert!(
+            enc_o1.encode(b"abab").is_err(),
+            "Order-1 encode must reject symbol 'b' missing from active context tree instead of corrupting into 'acac'"
+        );
+        assert!(
+            enc_o1
+                .encode_with_interleaving(b"abab", InterleavingFactor::X1)
+                .is_err()
+        );
+        let valid_o1 = enc_o1.encode(b"acac").unwrap();
+        let dec_o1 = ContextualHuffmanDecoder::new(enc_o1);
+        assert_eq!(dec_o1.decode(&valid_o1, 4).unwrap(), b"acac");
+
+        // 2. Order-2: context "aa" maps to trees[1] (which lacks 'b').
+        let ctx_aa = ((b'a' as u32) << 8) | (b'a' as u32);
+        let model_o2 = serialize_custom_contextual_model(2, &[(ctx_aa, 1u32)], &trees);
+        let enc_o2 = ContextualHuffmanEncoder::deserialize(&model_o2).unwrap();
+        assert!(
+            enc_o2.encode(b"aabab").is_err(),
+            "Order-2 encode must reject symbol 'b' missing from active context tree instead of corrupting into 'aacab'"
+        );
+        let valid_o2 = enc_o2.encode(b"aacac").unwrap();
+        let dec_o2 = ContextualHuffmanDecoder::new(enc_o2);
+        assert_eq!(dec_o2.decode(&valid_o2, 5).unwrap(), b"aacac");
+    }
 }

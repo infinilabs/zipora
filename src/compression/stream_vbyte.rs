@@ -28,25 +28,55 @@
 /// Stream VByte encoder/decoder.
 pub struct StreamVByte;
 
+/// 64-byte-aligned wrapper for 256-entry 16-byte `pshufb` shuffle tables so
+/// no 16-byte entry ever straddles a 16-byte or 64-byte L1D cache-line boundary (`S49-R6`).
+#[cfg(target_arch = "x86_64")]
+#[repr(C, align(64))]
+struct AlignedShuffleTable([[u8; 16]; 256]);
+
+#[cfg(target_arch = "x86_64")]
+impl std::ops::Deref for AlignedShuffleTable {
+    type Target = [[u8; 16]; 256];
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// 64-byte-aligned wrapper for 256-entry byte lookup tables (`S49-R6`).
+#[cfg(target_arch = "x86_64")]
+#[repr(C, align(64))]
+struct AlignedByteTable([u8; 256]);
+
+#[cfg(target_arch = "x86_64")]
+impl std::ops::Deref for AlignedByteTable {
+    type Target = [u8; 256];
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Per-control-byte pshufb masks: expand a group's 1-4 byte packed values
 /// into four 32-bit lanes. 0xFF (high bit set) zero-fills the lane's
 /// unused bytes.
 #[cfg(target_arch = "x86_64")]
-const SHUFFLE_TABLE: [[u8; 16]; 256] = build_shuffle_table();
+static SHUFFLE_TABLE: AlignedShuffleTable = AlignedShuffleTable(build_shuffle_table());
 
 /// Per-control-byte total data bytes consumed by a full group (4..=16).
 #[cfg(target_arch = "x86_64")]
-const LENGTH_TABLE: [u8; 256] = build_length_table();
+static LENGTH_TABLE: AlignedByteTable = AlignedByteTable(build_length_table());
 
 /// Per-control-byte pshufb masks for encoding: pack four 32-bit lanes `[v0, v1, v2, v3]`
 /// into `LENGTH_TABLE[ctrl]` contiguous bytes (`0xFF` zero-fills trailing unused bytes).
 #[cfg(target_arch = "x86_64")]
-const ENCODE_SHUFFLE_TABLE: [[u8; 16]; 256] = build_encode_shuffle_table();
+static ENCODE_SHUFFLE_TABLE: AlignedShuffleTable =
+    AlignedShuffleTable(build_encode_shuffle_table());
 
 /// Maps an 8-bit non-zero byte mask (for 2 `u32` lanes = 8 bytes) to the low 4 control bits
 /// `code0 | (code1 << 2)`. Combining two lookups gives the full 8-bit control byte for 4 lanes.
 #[cfg(target_arch = "x86_64")]
-const MASK_TO_CTRL_PAIR: [u8; 256] = build_mask_to_ctrl_pair();
+static MASK_TO_CTRL_PAIR: AlignedByteTable = AlignedByteTable(build_mask_to_ctrl_pair());
 
 #[cfg(target_arch = "x86_64")]
 const fn build_shuffle_table() -> [[u8; 16]; 256] {
@@ -602,32 +632,71 @@ impl StreamVByte {
     ) -> (usize, usize, usize) {
         use std::arch::x86_64::*;
 
+        let max_groups = controls.len().min(limit >> 2);
+        let data_len = data.len();
+        let ctrl_ptr = controls.as_ptr();
+        let data_ptr = data.as_ptr();
+        let out_ptr = output.as_mut_ptr();
+        let shuf_ptr = SHUFFLE_TABLE.as_ptr();
+        let len_ptr = LENGTH_TABLE.as_ptr();
+
         let mut data_pos = 0usize;
-        let mut out_idx = 0usize;
         let mut ctrl_idx = 0usize;
 
-        while ctrl_idx < controls.len() && out_idx + 4 <= limit && data_pos + 16 <= data.len() {
-            let ctrl = controls[ctrl_idx] as usize;
-            // SAFETY: data_pos + 16 <= data.len() checked by the loop
-            // condition; a group consumes at most 16 bytes, so the load
-            // covers every byte the shuffle mask can reference.
-            let input = unsafe { _mm_loadu_si128(data.as_ptr().add(data_pos) as *const __m128i) };
-            let mask =
-                // SAFETY: SHUFFLE_TABLE entries are 16 bytes.
-                unsafe { _mm_loadu_si128(SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
-            let expanded = _mm_shuffle_epi8(input, mask);
-            // SAFETY: out_idx + 4 <= limit <= output.len() checked by the
-            // loop condition.
+        while ctrl_idx + 4 <= max_groups && data_pos + 64 <= data_len {
+            // SAFETY: `ctrl_idx + 4 <= max_groups <= controls.len()`, `(ctrl_idx + 4) * 4 <= limit <= output.len()`,
+            // and each group advances `data_pos` by `<= 16` (`4 * 16 == 64 <= data_len`).
             unsafe {
-                _mm_storeu_si128(output.as_mut_ptr().add(out_idx) as *mut __m128i, expanded);
-            }
+                let c0 = *ctrl_ptr.add(ctrl_idx) as usize;
+                let v0 = _mm_shuffle_epi8(
+                    _mm_loadu_si128(data_ptr.add(data_pos) as *const __m128i),
+                    _mm_loadu_si128((*shuf_ptr.add(c0)).as_ptr() as *const __m128i),
+                );
+                _mm_storeu_si128(out_ptr.add(ctrl_idx << 2) as *mut __m128i, v0);
+                data_pos += *len_ptr.add(c0) as usize;
 
-            data_pos += LENGTH_TABLE[ctrl] as usize;
-            out_idx += 4;
+                let c1 = *ctrl_ptr.add(ctrl_idx + 1) as usize;
+                let v1 = _mm_shuffle_epi8(
+                    _mm_loadu_si128(data_ptr.add(data_pos) as *const __m128i),
+                    _mm_loadu_si128((*shuf_ptr.add(c1)).as_ptr() as *const __m128i),
+                );
+                _mm_storeu_si128(out_ptr.add((ctrl_idx + 1) << 2) as *mut __m128i, v1);
+                data_pos += *len_ptr.add(c1) as usize;
+
+                let c2 = *ctrl_ptr.add(ctrl_idx + 2) as usize;
+                let v2 = _mm_shuffle_epi8(
+                    _mm_loadu_si128(data_ptr.add(data_pos) as *const __m128i),
+                    _mm_loadu_si128((*shuf_ptr.add(c2)).as_ptr() as *const __m128i),
+                );
+                _mm_storeu_si128(out_ptr.add((ctrl_idx + 2) << 2) as *mut __m128i, v2);
+                data_pos += *len_ptr.add(c2) as usize;
+
+                let c3 = *ctrl_ptr.add(ctrl_idx + 3) as usize;
+                let v3 = _mm_shuffle_epi8(
+                    _mm_loadu_si128(data_ptr.add(data_pos) as *const __m128i),
+                    _mm_loadu_si128((*shuf_ptr.add(c3)).as_ptr() as *const __m128i),
+                );
+                _mm_storeu_si128(out_ptr.add((ctrl_idx + 3) << 2) as *mut __m128i, v3);
+                data_pos += *len_ptr.add(c3) as usize;
+            }
+            ctrl_idx += 4;
+        }
+
+        while ctrl_idx < max_groups && data_pos + 16 <= data_len {
+            // SAFETY: `ctrl_idx < max_groups <= controls.len()`, `(ctrl_idx + 1) * 4 <= limit <= output.len()`,
+            // and `data_pos + 16 <= data_len`.
+            unsafe {
+                let ctrl = *ctrl_ptr.add(ctrl_idx) as usize;
+                let input = _mm_loadu_si128(data_ptr.add(data_pos) as *const __m128i);
+                let mask = _mm_loadu_si128((*shuf_ptr.add(ctrl)).as_ptr() as *const __m128i);
+                let expanded = _mm_shuffle_epi8(input, mask);
+                _mm_storeu_si128(out_ptr.add(ctrl_idx << 2) as *mut __m128i, expanded);
+                data_pos += *len_ptr.add(ctrl) as usize;
+            }
             ctrl_idx += 1;
         }
 
-        (data_pos, out_idx, ctrl_idx)
+        (data_pos, ctrl_idx << 2, ctrl_idx)
     }
 
     /// Compression ratio: encoded size / raw size.

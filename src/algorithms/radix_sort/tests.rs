@@ -1347,3 +1347,76 @@ fn test_s48_r5_r9_kv_radix_sort_primitive_widths_and_padded_key() {
         .unwrap();
     assert_eq!(kv8, kv8_want);
 }
+
+#[test]
+fn test_s49_r10_kv_radix_sort_primitive_key_with_drop_value() {
+    assert!(KeyValueRadixSort::<u64, String>::is_trusted_primitive_key());
+    assert!(KeyValueRadixSort::<u32, String>::is_trusted_primitive_key());
+    assert!(KeyValueRadixSort::<u16, Vec<u8>>::is_trusted_primitive_key());
+    assert!(KeyValueRadixSort::<u8, Box<u64>>::is_trusted_primitive_key());
+
+    let n: usize = if cfg!(miri) { 96 } else { 20_000 };
+    let mut pairs: Vec<(u64, String)> = (0..n)
+        .map(|i| {
+            let k = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(19);
+            (k, format!("val_{i}"))
+        })
+        .collect();
+    let mut expected = pairs.clone();
+    expected.sort_by_key(|&(k, _)| k);
+
+    KeyValueRadixSort::<u64, String>::new()
+        .sort_by_key(&mut pairs)
+        .unwrap();
+    assert_eq!(pairs, expected);
+}
+
+#[test]
+#[ignore = "Manual timing benchmark for S48-R5 / S49-R9 (u32, u64) 10M and (u64, u64) 10k KV radix sort"]
+fn bench_s49_r9_kv_radix_sort_u32_10m_and_u64_10k() {
+    let sorter_u32 = KeyValueRadixSort::<u32, u64>::new();
+    let n_10m = 10_000_000usize;
+    let base_u32: Vec<(u32, u64)> = (0..n_10m)
+        .map(|i| {
+            let k = (i as u32).wrapping_mul(0x9E37_79B9).rotate_left(13) ^ (i as u32);
+            (k, i as u64)
+        })
+        .collect();
+    let mut work_u32 = vec![(0u32, 0u64); n_10m];
+    let mut best_u32_ns = f64::INFINITY;
+    for _ in 0..5 {
+        work_u32.copy_from_slice(&base_u32);
+        let t0 = std::time::Instant::now();
+        sorter_u32.sort_by_key(&mut work_u32).unwrap();
+        let ns = t0.elapsed().as_nanos() as f64 / n_10m as f64;
+        best_u32_ns = best_u32_ns.min(ns);
+    }
+    assert!(work_u32.windows(2).all(|w| w[0].0 <= w[1].0));
+
+    let sorter_u64 = KeyValueRadixSort::<u64, u64>::new();
+    let n_10k = 10_000usize;
+    let base_u64: Vec<(u64, u64)> = (0..n_10k)
+        .map(|i| {
+            let k = (i as u64)
+                .wrapping_mul(0x517C_C1B7_2722_0A95)
+                .rotate_left(19)
+                ^ (i as u64);
+            (k, i as u64)
+        })
+        .collect();
+    let mut work_u64 = vec![(0u64, 0u64); n_10k];
+    let mut best_u64_ns = f64::INFINITY;
+    for _ in 0..50 {
+        work_u64.copy_from_slice(&base_u64);
+        let t0 = std::time::Instant::now();
+        sorter_u64.sort_by_key(&mut work_u64).unwrap();
+        let ns = t0.elapsed().as_nanos() as f64 / n_10k as f64;
+        best_u64_ns = best_u64_ns.min(ns);
+    }
+    assert!(work_u64.windows(2).all(|w| w[0].0 <= w[1].0));
+
+    println!(
+        "S49-R9 KV radix sort: (u32, u64) 10M = {:.3} ns/elem, (u64, u64) 10k = {:.3} ns/elem",
+        best_u32_ns, best_u64_ns
+    );
+}

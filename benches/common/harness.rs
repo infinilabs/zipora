@@ -471,11 +471,7 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         } else {
             1usize
         };
-    let retry_mult = if filtered_mode && read_nr_running() > 16 {
-        2usize
-    } else {
-        1usize
-    };
+    let retry_mult = if filtered_mode { 2usize } else { 1usize };
     for bench_attempt in 0..max_bench_attempts {
         let bench_start = Instant::now();
         let per_trial_burst_retries = (if params.bursts_per_trial == 1 {
@@ -512,17 +508,8 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         let mut b_sib_ns0 = t_sib_ns0;
         let mut b_ccd_ns0 = t_ccd_ns0;
         for sample_slot in samples.iter_mut().take(params.trials) {
-            let eff_bursts_per_trial = if filtered_mode
-                && read_nr_running() > 16
-                && params.bursts_per_trial == 1
-                && params.trials <= 4
-            {
-                2usize
-            } else {
-                params.bursts_per_trial
-            };
-            if filtered_mode && read_nr_running() > 16 {
-                wait_for_quiet_host_and_repin(12, allow_repin);
+            if filtered_mode && read_nr_running() > 6 {
+                wait_for_quiet_host_and_repin(2_000, allow_repin);
                 let (ns_after, pc_after, j_after, ccd_after) = read_current_sibling_activity();
                 t_sib_ns0 = ns_after;
                 b_sib_ns0 = ns_after;
@@ -537,7 +524,7 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
                 let mut trial_burst_retries = per_trial_burst_retries.min(total_burst_retries);
                 let mut trial_wall_ns = 0u64;
                 let mut b = 0usize;
-                while b < eff_bursts_per_trial {
+                while b < params.bursts_per_trial {
                     if HAS_SETUP {
                         let setup_start = Instant::now();
                         setup(state);
@@ -607,12 +594,10 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
                                     && b_sib_busy >= 3_000_000
                                     && b_sib_busy.saturating_mul(40) >= wall_ns)
                         };
-                        let nr_now = read_nr_running();
                         let ccd_contended = allow_repin
-                            && (!is_long_burst || nr_now <= 6)
                             && wall_ns >= 2_000_000
-                            && b_ccd_busy >= wall_ns.saturating_mul(3)
-                            && nr_now <= 16;
+                            && (b_ccd_busy.saturating_mul(2) >= wall_ns
+                                || (wall_ns >= 20_000_000 && read_nr_running() > 7));
                         if preempted || sib_contended || ccd_contended {
                             if allow_repin
                                 && (stolen >= 500_000 || b_sib_busy >= 150_000 || ccd_contended)
@@ -669,14 +654,12 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
                     t_ccd_ns0 = t_ccd_ns1;
                     if allow_repin
                         && bench_trial_retries > 0
-                        && (params.bursts_per_trial <= 2 || best_burst_ns == f64::MAX)
                         && ((sib_busy_ns >= 150_000
                             && sib_busy_ns.saturating_mul(16) >= trial_wall_ns)
                             || (sib_busy_ns >= 8_000_000
                                 && sib_busy_ns.saturating_mul(25) >= trial_wall_ns)
-                            || ((2_000_000..100_000_000).contains(&trial_wall_ns)
-                                && ccd_busy_ns >= trial_wall_ns.saturating_mul(3)
-                                && read_nr_running() <= 16))
+                            || (trial_wall_ns >= 2_000_000
+                                && ccd_busy_ns.saturating_mul(2) >= trial_wall_ns))
                     {
                         wait_for_quiet_sibling();
                         let (ns_after, pc_after, j_after, ccd_after) =

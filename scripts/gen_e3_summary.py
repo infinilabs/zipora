@@ -73,7 +73,12 @@ def explain_parity_delta(name: str, delta_pct: float) -> str:
             "`core_bench.rs` pre-allocates/drops `6–11 x 24 MiB` `brk_holes` before building; "
             "`competitor_bench.rs` uses `1` clean slot (`S42-R1`)"
         )
-    if name.startswith("hash_maps/"):
+    if name.startswith("hash_maps/zipora_hash_map/"):
+        return (
+            "`core_bench.rs` alternates across a `2`-map ring (`[q_idx & 1]`, `2x` working set) with `ahash::RandomState`; "
+            "`competitor_bench.rs` uses `1` map instance with `ahash::RandomState` (`S42-R1`)"
+        )
+    if name.startswith("hash_maps/gold_hash_map/"):
         return (
             "`core_bench.rs` alternates across a `2`-map ring (`[q_idx & 1]`, `2x` working set) with default `StdSipHasher13`; "
             "`competitor_bench.rs` uses `1` map instance with `ahash::RandomState` (`S42-R1`)"
@@ -93,8 +98,17 @@ def explain_parity_delta(name: str, delta_pct: float) -> str:
             "`core_bench.rs` rotates across an `8`-decoder ring constructed on 8 concurrent threads; "
             "`competitor_bench.rs` uses `1` `ContextualHuffmanDecoder` instance (`S42-R1`)"
         )
+    if name == "entropy/huffman_o2/encode_64kib":
+        return (
+            "`core_bench.rs` rotates across an `8`-encoder ring constructed on 8 concurrent threads; "
+            "`competitor_bench.rs` uses `1` `ContextualHuffmanEncoder` instance (`S42-R1`)"
+        )
+    if abs(delta_pct) <= 9.0:
+        return (
+            "`1` instance in both binaries (`S47-R10` / `S48-R6`; within disclosed `9.0%` threshold)"
+        )
     return (
-        "`1` instance in both binaries (`S47-R10` / `S48-R6`; within disclosed `9.0%` threshold)"
+        f"`1` instance in both binaries (`S47-R10` / `S48-R6`; `{delta_pct:+.2f}%` cross-binary layout delta)"
     )
 
 
@@ -379,7 +393,7 @@ def build_gap_analysis_sections(
             "e4_fix": (
                 "- Add a small per-thread magazine (`thread_local!` cache of up to `16` block offsets per fast bin, keyed by `pool_id: u64` and flushed on `Drop`/`reset`) "
                 "in front of the global ABA-tagged Treiber stack in `LockFreeMemoryPool`, and batch `bin.count` updates on magazine refill/flush (`E4(f)`).\n"
-                f"- Expected gain: **`3.8x–4.3x` speedup** on `LockFreeMemoryPool` 1T and 4T alloc+free (`{cb['memory_pools/lockfree_pool/alloc_free_1t']['min_ns_per_op']:.2f} ns -> ~5.5–6.0 ns/op`, matching `mimalloc`/`jemalloc`/`System`)."
+                f"- Measured Result & `S49-R5` Soundness Trade-Off Disclosure: `E4(f)` (`48d5a5a`..`1cb20d8`) initially reduced `alloc_free_1t` from `24.003` to `5.996 ns/op` and `alloc_free_4t` from `21.853` to `6.226 ns/op` using non-atomic `Cell<u32>` slot reads/writes. In `S49-R1..R4`, closing the owner-`pop` vs `drain_all_magazines`-steal race (`S49-R2`: atomic `slot.swap(0, AcqRel)` in `FastBinMagazine::pop`) and rejecting cross-thread double-frees of magazine-cached blocks (`S49-R3`: atomic `compare_exchange` `FAST_BIN_LIVE_TAG -> FAST_BIN_FREE_TAG` in `transition_fast_bin_live_to_free` before magazine push) added two L1D-resident atomic RMWs (`~0.65 ns` each = `~1.3 ns/pair`), bringing `alloc_free_1t` to `{cb['memory_pools/lockfree_pool/alloc_free_1t']['min_ns_per_op']:.3f} ns/op` (`+{(cb['memory_pools/lockfree_pool/alloc_free_1t']['min_ns_per_op'] - 5.996) / 5.996 * 100.0:.1f}%` vs `5.996 ns/op` at `1cb20d8`, still **`{24.0029 / cb['memory_pools/lockfree_pool/alloc_free_1t']['min_ns_per_op']:.2f}x` faster** than pre-`E4(f)` `24.003 ns/op`) and `alloc_free_4t` to `{cb['memory_pools/lockfree_pool/alloc_free_4t']['min_ns_per_op']:.3f} ns/op` (`+{(cb['memory_pools/lockfree_pool/alloc_free_4t']['min_ns_per_op'] - 6.226) / 6.226 * 100.0:.1f}%` vs `6.226 ns/op` at `1cb20d8`, still **`{21.853 / cb['memory_pools/lockfree_pool/alloc_free_4t']['min_ns_per_op']:.2f}x` faster** than pre-`E4(f)` `21.853 ns/op`)."
             ),
         },
         "E3.6": {
@@ -605,7 +619,7 @@ def generate_markdown(
     lines.append("- **`S45-R1`, `S46-R1`, `S47-R10`, & `S48-R6` (Native Per-Binary Baselines, 1-Instance `core_bench.rs` Alignment, + `docs/review/e1.md` Sync)**:")
     lines.append("  - Moved `take_prealloc_record_buffers` to after the timed loop (`benches/common/harness.rs:726`) and marked it `#[inline(never)]`, and aligned `simd_strchr_64kib` and `simd_strstr_64kib` across both binaries (`"
                  f"{summary['core_benches']['search_and_scoring/simd_strchr_64kib']['min_ns_per_op']:.4f} ns/call` vs `{cb['search_and_scoring/simd_strchr_64kib']['min_ns_per_op']:.4f} ns/call` on `strchr`; `{summary['core_benches']['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call` vs `{cb['search_and_scoring/simd_strstr_64kib']['min_ns_per_op']:.4f} ns/call` on `strstr`).")
-    lines.append(f"  - In `f746fdb` and `4b490ff` (`S47-R10` / `S48-R6`), `radix_sort` (`lsd_u32`, `lsd_u64`, `kv_u64_u64`) and `suffix_array` (`construct`, `search_query`) in `benches/core_bench.rs` were aligned from 2-instance rings to `1` instance matching `benches/competitor_bench.rs` (`_spacer` heap allocations and the 256 MiB startup `brk` pre-fault in `init_bench_allocator_policy` removed, `suffix_array/construct` `warmup_calls = 2, trials = 4`, and `suffix_array/search_query` threshold tightened from `15.0%` to `9.0%`), while `tries`, `hash_maps` (default `StdSipHasher13` on 2-map rings in `core_bench.rs` vs `ahash` on 1 map in `competitor_bench.rs`), `memory_pools/secure_pool`, `elias_fano`, and `entropy` retain their multi-instance `core_bench.rs` harnesses (documented in §3.2). Each committed baseline (`core_bench.json`, `competitor_bench.json`, `e2e_search.json`) is generated directly from a full run of its own binary on clean tree `{meta['git_commit']}` (`S48-R6`, `suffix_array/construct = {summary['core_benches']['suffix_array/construct']['min_ns_per_op']:.4f} ns/byte` in `core_bench` / `{cb['suffix_array/construct']['min_ns_per_op']:.4f} ns/byte` in `competitor_bench`, `suffix_array/search_query = {summary['core_benches']['suffix_array/search_query']['min_ns_per_op']:.4f} ns/op` in `core_bench` / `{cb['suffix_array/search_query']['min_ns_per_op']:.4f} ns/op` in `competitor_bench`, `int_codecs/stream_vbyte/decode_into = {summary['core_benches']['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.4f} ns/int` in `core_bench` / `{cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.4f} ns/int` in `competitor_bench`), and synchronized with `docs/review/e1.md`, `docs/review/e2_e3.md`, and `docs/review/e4.md`.")
+    lines.append(f"  - In `f746fdb` and `4b490ff` (`S47-R10` / `S48-R6`), `rank_select`, `radix_sort` (`lsd_u32`, `lsd_u64`, `kv_u64_u64`), and `suffix_array` (`construct`, `search_query`) in `benches/core_bench.rs` were aligned from 2-instance rings to `1` instance matching `benches/competitor_bench.rs` (removing the `96 MiB` and `432 MiB` `_spacer` heap allocations and the `256 MiB` `brk_prefault` in `benches/core_bench.rs`, aligning `suffix_array/construct` in `benches/competitors/suffix_array.rs` from `5` trials [`3` in `f746fdb`] to `warmup_calls = 2, trials = 4` matching `benches/core_bench.rs`, and tightening `suffix_array/search_query` from `16.0%` [`core_bench.rs`] / `15.0%` [`competitors/suffix_array.rs`] to `9.0%`), while `tries/*/lookup` (`2–8` replicas), `hash_maps` (`2`-map rings, with `ahash::RandomState` on `ZiporaHashMap` and default `StdSipHasher13` on `GoldHashMap` in `core_bench.rs` vs `ahash` on `1` map in `competitor_bench.rs`), `memory_pools/secure_pool` (`64`-pool ring), `elias_fano` (`4`-instance ring), and `entropy/huffman_o1/decode_64kib` + `huffman_o2/{{encode,decode}}_64kib` (`8`-instance rings) retain their multi-instance `core_bench.rs` harnesses (documented in §3.2). Each committed baseline (`core_bench.json`, `competitor_bench.json`, `e2e_search.json`) is generated directly from a full run of its own binary on clean tree `{meta['git_commit']}` (`S48-R6` / `S49-R6`, `suffix_array/construct = {summary['core_benches']['suffix_array/construct']['min_ns_per_op']:.4f} ns/byte` in `core_bench` / `{cb['suffix_array/construct']['min_ns_per_op']:.4f} ns/byte` in `competitor_bench`, `suffix_array/search_query = {summary['core_benches']['suffix_array/search_query']['min_ns_per_op']:.4f} ns/op` in `core_bench` / `{cb['suffix_array/search_query']['min_ns_per_op']:.4f} ns/op` in `competitor_bench`, `int_codecs/stream_vbyte/decode_into = {summary['core_benches']['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.4f} ns/int` in `core_bench` / `{cb['int_codecs/stream_vbyte/decode_into']['min_ns_per_op']:.4f} ns/int` in `competitor_bench`), and synchronized with `docs/review/e1.md`, `docs/review/e2_e3.md`, and `docs/review/e4.md`.")
     lines.append("- **`S45-R2` & `S46-R2` (`make bench_competitors` Third-Party Row Accounting `95 + 6 = 101` & `_zipora_competitor_bench_text_pad` Documentation)**:")
     lines.append("  - In `scripts/bench_compare.py`, all `181` rows in `competitor_bench.json` are strictly gated for presence (`MISSING`) and `dataset_size` integrity (`exit 1`). Of those `181` rows, **`86` are Zipora rows** (`80` shared with `core_bench.json` + `6` `elias_fano/*/ef_select,cef_select` rows) and are strictly gated on their `min_ns_per_op` regression thresholds (`REGRESSED` -> `--confirm-retries 5` -> `exit 1`). The remaining **`101` are third-party competitor-only rows**: **`95` timing-compared rows** derived from `same_run_comparisons` (`competitor_only_names`, reported informationally as `INFO(comp)` so third-party DRAM bandwidth contention under a 48-job `cargo build` loop never causes false gate failures) plus **`6` `enforce_threshold: false` `build_1m` rows** (`rank_select/{sucds_rank9,sucds_darray,vers_vecs,bitm}/build_1m` and `elias_fano/{sucds,vers_vecs}/build_1m`, `95 + 6 = 101`). Documented `_zipora_competitor_bench_text_pad` in `benches/competitor_bench.rs:235-238` (`S46-R2`).")
     lines.append("- **`S45-R3` (MEDIUM — Allocator Policy Disclosure in §4)**:")
@@ -799,8 +813,8 @@ def generate_markdown(
     lines.append("")
     lines.append("| Check | Result |")
     lines.append("|---|---|")
-    lines.append("| `make sanity` (`--locked`, default layout + `CARGO_TARGET_DIR`) | **PASS** (`3,207` debug lib / `3,223` release lib / `229` doctests + `8` `compile_fail` / `3,878` all targets) |")
-    lines.append("| `scripts/unsafe_audit.py` (`B7`) | **PASS** (`1,422/1,422 = 100.0%` documented `unsafe`, `0` undocumented, `0` §8.5 violations) |")
+    lines.append("| `make sanity` (`--locked`, default layout + `CARGO_TARGET_DIR`) | **PASS** (`3,222` debug lib / `3,238` release lib / `229` doctests + `8` `compile_fail` / `3,893` all targets) |")
+    lines.append("| `scripts/unsafe_audit.py` (`B7`) | **PASS** (`1,429/1,429 = 100.0%` documented `unsafe`, `0` undocumented, `0` §8.5 violations) |")
     lines.append("| `scripts/api_honesty.py` (`D1`) | **PASS** (`12 <= 12` markers) |")
     lines.append("| `scripts/unwrap_audit.py` (`D10`) | **PASS** (`0` `.unwrap()`, `75 <= 76` `.expect()`) |")
     lines.append("| `scripts/hygiene_audit.py` (`D6`/`D7`/`D11`) | **PASS** (`allow(dead_code) = 5/5`, `prints = 0/0`, `trait/arg allows = 22/22`) |")

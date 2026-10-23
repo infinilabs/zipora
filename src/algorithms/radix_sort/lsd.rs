@@ -1136,9 +1136,16 @@ where
     }
 
     #[inline(always)]
-    fn is_trusted_primitive_key() -> bool {
-        !std::mem::needs_drop::<(K, V)>()
-            && ((std::mem::size_of::<K>() == std::mem::size_of::<u64>()
+    pub(super) fn is_trusted_primitive_key() -> bool {
+        // Primitive unsigned integer keys (`u64`, `u32`, `u16`, `u8`) have pure,
+        // infallible `Into<u64>` implementations. `sort_by_key` uses `MaybeUninit<(K, V)>`
+        // scratch storage and bijective `copy_nonoverlapping` permutations back into `data`,
+        // so drop-bearing value types `V` (e.g. `String`, `Box<T>`) are also sound on the
+        // fast path (`S49-R10`). Under Miri, `fn_addr_eq` across generic monomorphizations
+        // can evaluate to `false`, so match the built-in primitive type name directly.
+        #[cfg(not(miri))]
+        {
+            (std::mem::size_of::<K>() == std::mem::size_of::<u64>()
                 && std::mem::align_of::<K>() == std::mem::align_of::<u64>()
                 && std::ptr::fn_addr_eq(
                     <K as Into<u64>>::into as fn(K) -> u64,
@@ -1161,7 +1168,12 @@ where
                     && std::ptr::fn_addr_eq(
                         <K as Into<u64>>::into as fn(K) -> u64,
                         <u8 as Into<u64>>::into as fn(u8) -> u64,
-                    )))
+                    ))
+        }
+        #[cfg(miri)]
+        {
+            matches!(std::any::type_name::<K>(), "u64" | "u32" | "u16" | "u8")
+        }
     }
 
     /// Sort key-value pairs by key (`E3.8`).

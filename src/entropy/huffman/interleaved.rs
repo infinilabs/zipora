@@ -336,19 +336,24 @@ impl ContextualHuffmanEncoder {
                 tree_codes.push(codes);
             }
 
-            let table0_complete = tree_codes
-                .first()
-                .is_some_and(|t0| t0.iter().all(|&(_, len)| len > 0 && len <= 64));
             let mut all_dense_short = dense_count == self.trees.len()
                 && dense_count > 0
                 && dense_count < (u16::MAX as usize)
                 && !has_long_code
-                && table0_complete;
+                && tree_codes.iter().enumerate().all(|(i, tc)| {
+                    (i > 0 && self.trees[i].root().is_none())
+                        || tc.iter().all(|&(_, len)| len > 0 && len <= 64)
+                });
 
             let mut order1_ctx = [0u32; 256];
             if self.order == HuffmanOrder::Order1 {
                 for (ctx, slot) in order1_ctx.iter_mut().enumerate() {
-                    let idx = self.context_map.get(&(ctx as u32)).copied().unwrap_or(0);
+                    let raw_idx = self.context_map.get(&(ctx as u32)).copied().unwrap_or(0);
+                    let idx = if self.trees.get(raw_idx).is_some_and(|t| t.root().is_some()) {
+                        raw_idx
+                    } else {
+                        0
+                    };
                     if idx >= dense_count {
                         all_dense_short = false;
                     }
@@ -358,7 +363,12 @@ impl ContextualHuffmanEncoder {
 
             let order2_ctx = if self.order == HuffmanOrder::Order2 {
                 let mut tbl = vec![0u16; 65536].into_boxed_slice();
-                for (&ctx, &idx) in &self.context_map {
+                for (&ctx, &raw_idx) in &self.context_map {
+                    let idx = if self.trees.get(raw_idx).is_some_and(|t| t.root().is_some()) {
+                        raw_idx
+                    } else {
+                        0
+                    };
                     if let Some(slot) = tbl.get_mut(ctx as usize) {
                         if idx >= dense_count {
                             all_dense_short = false;
@@ -452,17 +462,28 @@ impl ContextualHuffmanEncoder {
                         emit_code!(bits, len);
                     } else if len > 64 {
                         emit_long_code!(tidx, sym, format!("Symbol {} not found in any tree", sym));
-                    } else {
+                    } else if self.trees[tidx].root().is_none() {
                         emit_order0_sym!(sym, format!("Symbol {} not found in any tree", sym));
+                    } else {
+                        return Err(ZiporaError::invalid_data(format!(
+                            "Symbol {} not found in context Huffman tree {}",
+                            sym, tidx
+                        )));
                     }
                 } else {
-                    let real_tidx = if tidx < (u16::MAX as usize) {
+                    let raw_tidx = if tidx < (u16::MAX as usize) {
                         tidx
                     } else {
                         self.context_map
                             .get(&($ctx_val as u32))
                             .copied()
                             .unwrap_or(0)
+                    };
+                    let real_tidx = if self.trees.get(raw_tidx).is_some_and(|t| t.root().is_some())
+                    {
+                        raw_tidx
+                    } else {
+                        0
                     };
                     if let Some(code) = self.trees[real_tidx].get_code(sym) {
                         for chunk in code.chunks(64) {
@@ -475,7 +496,10 @@ impl ContextualHuffmanEncoder {
                             emit_code!(chunk_bits, chunk.len() as u8);
                         }
                     } else {
-                        emit_order0_sym!(sym, format!("Symbol {} not found in any tree", sym));
+                        return Err(ZiporaError::invalid_data(format!(
+                            "Symbol {} not found in context Huffman tree {}",
+                            sym, real_tidx
+                        )));
                     }
                 }
             }};
@@ -535,12 +559,8 @@ impl ContextualHuffmanEncoder {
                             };
                             let tree_idx = order2_ctx[context] as usize;
                             // SAFETY: `cache.all_dense_short` guarantees every `order2_ctx` entry
-                            // is `< cache.tree_codes.len()`, and `symbol < 256`.
-                            let (mut bits, mut len) =
-                                unsafe { (*tables_ptr.add(tree_idx))[symbol] };
-                            if len == 0 {
-                                (bits, len) = table0[symbol];
-                            }
+                            // is `< cache.tree_codes.len()`, `symbol < 256`, and `1 <= len <= 64`.
+                            let (bits, len) = unsafe { (*tables_ptr.add(tree_idx))[symbol] };
                             emit_code!(bits, len);
                         }
                     } else {
@@ -1728,6 +1748,31 @@ impl ContextualHuffmanDecoder {
         let root = tree
             .root()
             .ok_or_else(|| ZiporaError::invalid_data("Empty tree"))?;
+        if let HuffmanNode::Leaf { symbol, .. } = root {
+            let code = tree
+                .get_code(*symbol)
+                .ok_or_else(|| ZiporaError::invalid_data("Missing leaf code"))?;
+            for &expected_bit in code {
+                if *bits_in_buf == 0 {
+                    if let Some(&b) = encoded_data.get(*byte_idx) {
+                        *bit_buf = b as u64;
+                        *bits_in_buf = 8;
+                        *byte_idx += 1;
+                    } else {
+                        return Err(ZiporaError::invalid_data("Incomplete symbol"));
+                    }
+                }
+                let bit = (*bit_buf & 1) != 0;
+                *bit_buf >>= 1;
+                *bits_in_buf -= 1;
+                if bit != expected_bit {
+                    return Err(ZiporaError::invalid_data(
+                        "Invalid bit for single-symbol Huffman tree",
+                    ));
+                }
+            }
+            return Ok(*symbol);
+        }
         let mut current_node = root;
 
         loop {

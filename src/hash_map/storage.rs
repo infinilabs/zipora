@@ -56,7 +56,9 @@ impl<K, V> StandardTable<K, V> {
         unsafe {
             slots.set_len(cap);
         }
-        let load_limit = ((cap as f64 * load_factor) as usize).min(cap);
+        // Never allow 100% occupancy even if `load_factor >= 1.0`, preserving at least
+        // one `CTRL_EMPTY` slot so `find_or_prepare_insert` is guaranteed to terminate (`S49-R10`).
+        let load_limit = ((cap as f64 * load_factor) as usize).min(cap.saturating_sub(1).max(1));
         Ok(Self {
             ctrl,
             slots,
@@ -136,7 +138,9 @@ impl<K, V> Drop for ClearSlotsGuard<'_, K, V> {
 
 impl<K, V> Drop for StandardTable<K, V> {
     fn drop(&mut self) {
-        self.clear_slots();
+        if std::mem::needs_drop::<(K, V)>() {
+            self.clear_slots();
+        }
     }
 }
 

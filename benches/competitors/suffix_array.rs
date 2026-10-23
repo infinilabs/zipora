@@ -119,8 +119,8 @@ pub fn bench_suffix_array(
     sa_search_params.warmup_calls = 8;
     sa_search_params.bursts_per_trial = 12;
 
-    let mut sa_build_params = BenchParams::heavy(n as u64, n as u64, 4);
-    sa_build_params.warmup_calls = 2;
+    let mut sa_build_params = BenchParams::heavy(n as u64, n as u64, 3);
+    sa_build_params.warmup_calls = 1;
     sa_build_params.bursts_per_trial = 1;
     let mut expected_sa_sample: Option<Vec<u32>> = None;
     let mut expected_occ_hits: Option<usize> = None;

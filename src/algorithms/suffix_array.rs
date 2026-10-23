@@ -132,10 +132,13 @@ impl SuffixArray {
     }
 
     /// Returns the heap memory usage in bytes of a [`SuffixArray`] built for a text of length `n`.
+    ///
+    /// Includes the `65,536 * 8 = 512 KiB` `bucket2` 2-gram interval table when `n >= 4096`
+    /// (skipped under Miri to avoid slow interpreter initialization of 65,536 entries).
     #[inline]
     pub const fn memory_usage_for_text_len(n: usize) -> usize {
         n * std::mem::size_of::<usize>()
-            + if n >= 4096 {
+            + if n >= 4096 && !cfg!(miri) {
                 65_536 * std::mem::size_of::<(u32, u32)>()
             } else {
                 0
@@ -568,6 +571,8 @@ impl WordBitVec {
     #[inline]
     fn new_false(len: usize) -> Self {
         let n_words = len.div_ceil(64);
+        // Reserve >= 136 u64 words (1,088 B > glibc MAX_TCACHE_SIZE = 1,032 B) so
+        // temporary SA-IS allocations coalesce back into `av->top` on drop (`S49-R10`).
         let mut words = Vec::with_capacity(n_words.max(136));
         words.resize(n_words, 0u64);
         Self { words }

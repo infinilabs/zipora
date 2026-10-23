@@ -80,6 +80,12 @@ impl From<EliasFano> for EliasFanoWire {
 
 #[cfg(feature = "serde")]
 impl From<EliasFanoWire> for EliasFano {
+    /// Reconstructs an [`EliasFano`] from its serialized wire representation.
+    ///
+    /// Untrusted or malformed wire payloads with forged `high_len_bits` or `len` fields
+    /// are defensively clamped to the actual `high_bits` capacity, `high_bits` popcount,
+    /// and `low_bits` element capacity (`S48-R9`, `S49-R10`) so `select1`, `get`, and
+    /// `next_geq` can never index out of bounds.
     fn from(mut wire: EliasFanoWire) -> Self {
         let high_len_bits = wire
             .high_len_bits

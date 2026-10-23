@@ -134,7 +134,8 @@ where
         rehashes: &mut u64,
     ) -> Result<()> {
         let old_capacity = table.capacity();
-        let load_limit = ((old_capacity as f64 * load_factor) as usize).min(old_capacity);
+        let load_limit = ((old_capacity as f64 * load_factor) as usize)
+            .min(old_capacity.saturating_sub(1).max(1));
         let new_capacity = if old_capacity >= 32 && live < load_limit / 2 {
             old_capacity
         } else {
