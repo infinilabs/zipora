@@ -23,7 +23,7 @@ use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator, Pr
 use crate::memory::simd_ops::{fast_fill, fast_prefetch};
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::Duration;
@@ -102,7 +102,6 @@ static NEXT_LOCKFREE_POOL_ID: AtomicU64 = AtomicU64::new(1);
 #[repr(align(64))]
 struct ThreadMagazine {
     pool_id: u64,
-    is_dirty: AtomicBool,
     non_empty_bins: AtomicU64,
     slots: [[AtomicU32; MAGAZINE_CAP]; FAST_BIN_COUNT],
 }
@@ -111,7 +110,6 @@ impl ThreadMagazine {
     fn new(pool_id: u64) -> Self {
         Self {
             pool_id,
-            is_dirty: AtomicBool::new(false),
             non_empty_bins: AtomicU64::new(0),
             slots: std::array::from_fn(|_| std::array::from_fn(|_| AtomicU32::new(0))),
         }
@@ -121,21 +119,22 @@ impl ThreadMagazine {
         if self.pool_id != arena.pool_id {
             return 0;
         }
-        // ORDERING: AcqRel atomically claims the dirty state of this magazine so
-        // `arena.dirty_magazines` is decremented at most once per dirty transition.
-        if self.is_dirty.swap(false, Ordering::AcqRel) {
-            // ORDERING: Release ensures slot drains are ordered with the dirty-count update.
-            arena.dirty_magazines.fetch_sub(1, Ordering::Release);
-        }
-        // ORDERING: AcqRel atomically takes the bitmask of bins that have had items pushed.
+        // ORDERING: AcqRel atomically takes the bitmask of bins that have had items pushed,
+        // synchronizing with `FastBinMagazine::push`'s `fetch_or(bit, Ordering::AcqRel)`.
         let mut bins_mask = self.non_empty_bins.swap(0, Ordering::AcqRel);
+        if bins_mask == 0 {
+            return 0;
+        }
+        // ORDERING: AcqRel pairs with `dirty_magazines.fetch_add(1, Ordering::AcqRel)` on
+        // the `0 -> non-zero` transition of `non_empty_bins`.
+        arena.dirty_magazines.fetch_sub(1, Ordering::AcqRel);
         let mut drained = 0usize;
         while bins_mask != 0 {
             let bin = bins_mask.trailing_zeros() as usize;
             bins_mask &= bins_mask - 1;
             for slot in &self.slots[bin] {
                 // ORDERING: Relaxed pre-check avoids unnecessary RMW on empty slots;
-                // AcqRel on swap synchronizes-with the owning thread's AcqRel swap in `push`
+                // AcqRel on swap synchronizes-with the owning thread's Release store in `push`
                 // and prevents double-claim against concurrent owner `pop` (`S49-R2`).
                 if slot.load(Ordering::Relaxed) != 0 {
                     let off = slot.swap(0, Ordering::AcqRel);
@@ -149,8 +148,6 @@ impl ThreadMagazine {
     }
 
     fn clear_all(&self) {
-        // ORDERING: Relaxed is sufficient when clearing dead pool offsets after arena drop.
-        self.is_dirty.store(false, Ordering::Relaxed);
         // ORDERING: AcqRel takes the bitmask of non-empty bins to clear.
         let mut bins_mask = self.non_empty_bins.swap(0, Ordering::AcqRel);
         while bins_mask != 0 {
@@ -299,32 +296,35 @@ impl FastBinMagazine {
         let shared = unsafe { &*state.shared };
         let mut c = state.counts[bin] as usize;
         if c >= MAGAZINE_CAP {
-            // ORDERING: `drain_into_arena` drains `slots[bin][0..MAGAZINE_CAP]` in ascending
-            // order with `AcqRel`; observing `slots[bin][MAGAZINE_CAP - 1] == 0` with `Acquire`
-            // guarantees all `0..MAGAZINE_CAP` slots were drained to `0`.
             if shared.slots[bin][MAGAZINE_CAP - 1].load(Ordering::Acquire) != 0 {
                 return false;
             }
             c = 0;
         }
-        // ORDERING: Release publishes block header/data writes before making `offset` visible
-        // to `drain_all_magazines`. All slots at `>= c` are guaranteed `0`.
-        shared.slots[bin][c & (MAGAZINE_CAP - 1)].store(offset, Ordering::Release);
-        state.counts[bin] = (c + 1) as u8;
-        let bit = 1u64 << bin;
-        // ORDERING: Relaxed fast-path check avoids RMW when the bin bit is already set;
-        // Release on `fetch_or` makes the non-empty bin visible to `drain_into_arena`.
-        if (shared.non_empty_bins.load(Ordering::Relaxed) & bit) == 0 {
-            shared.non_empty_bins.fetch_or(bit, Ordering::Release);
+        while c < MAGAZINE_CAP {
+            // ORDERING: Only the owning thread writes non-zero offsets to `slots[bin]`, while
+            // concurrent drainers only transition slots from non-zero to `0` (`AcqRel`).
+            // Checking `Acquire == 0` ensures a wraparound after a mid-bin preempted drain can
+            // never overwrite an undrained live slot (`S50-R1`).
+            if shared.slots[bin][c].load(Ordering::Acquire) == 0 {
+                // ORDERING: Release publishes block header/data writes before making `offset`
+                // visible to `drain_into_arena`.
+                shared.slots[bin][c].store(offset, Ordering::Release);
+                state.counts[bin] = (c + 1) as u8;
+                let bit = 1u64 << bin;
+                // ORDERING: Unconditional `AcqRel` RMW on `non_empty_bins` establishes a
+                // total modification order with `drain_into_arena`'s `swap(0, AcqRel)`,
+                // preventing store-buffering from stranding a slot when a concurrent drain
+                // clears the bitmask mid-push (`S50-R1`).
+                if shared.non_empty_bins.fetch_or(bit, Ordering::AcqRel) == 0 {
+                    arena.dirty_magazines.fetch_add(1, Ordering::AcqRel);
+                }
+                return true;
+            }
+            c += 1;
         }
-        // ORDERING: Relaxed fast-path check avoids RMW when the magazine is already marked dirty;
-        // AcqRel on `swap` ensures `arena.dirty_magazines` is incremented once per transition (`S49-R4`).
-        if !shared.is_dirty.load(Ordering::Relaxed)
-            && !shared.is_dirty.swap(true, Ordering::AcqRel)
-        {
-            arena.dirty_magazines.fetch_add(1, Ordering::Release);
-        }
-        true
+        state.counts[bin] = MAGAZINE_CAP as u8;
+        false
     }
 
     fn record_alloc_miss(
@@ -744,9 +744,9 @@ impl PoolArena {
     }
 
     fn unregister_magazine(&self, mag: &Arc<ThreadMagazine>) {
-        // ORDERING: AcqRel ensures `dirty_magazines` is decremented at most once if `mag` was still dirty.
-        if mag.pool_id == self.pool_id && mag.is_dirty.swap(false, Ordering::AcqRel) {
-            self.dirty_magazines.fetch_sub(1, Ordering::Release);
+        // ORDERING: AcqRel ensures `dirty_magazines` is decremented at most once if `mag` had non-empty bins.
+        if mag.pool_id == self.pool_id && mag.non_empty_bins.swap(0, Ordering::AcqRel) != 0 {
+            self.dirty_magazines.fetch_sub(1, Ordering::AcqRel);
         }
         if let Ok(mut list) = self.magazines.lock() {
             let ptr = Arc::as_ptr(mag);
@@ -1130,7 +1130,8 @@ impl LockFreeMemoryPool {
             let bin_index = Self::find_fast_bin(aligned_size);
             self.transition_fast_bin_live_to_free(ptr, bin_index)?;
             if self.use_tls_magazine
-                && FAST_BIN_MAGAZINE.with(|mag| mag.push(self.pool_id, &self.arena, bin_index, offset))
+                && FAST_BIN_MAGAZINE
+                    .with(|mag| mag.push(self.pool_id, &self.arena, bin_index, offset))
             {
                 return Ok(());
             }
@@ -3145,5 +3146,128 @@ mod tests {
         for h in handles {
             h.join().unwrap();
         }
+    }
+
+    #[test]
+    fn test_s50_r1_push_vs_drain_store_buffering_no_lost_blocks() {
+        let mut cfg = LockFreePoolConfig::high_performance();
+        cfg.memory_size = 16 * 1024 * 1024;
+        cfg.enable_stats = false;
+        let pool = Arc::new(LockFreeMemoryPool::new(cfg).unwrap());
+        let (to_main, from_t) = std::sync::mpsc::channel::<Vec<usize>>();
+        let (to_t, from_main) = std::sync::mpsc::channel::<()>();
+        let p = Arc::clone(&pool);
+        let t = thread::spawn(move || {
+            let a = p.allocate(64).unwrap();
+            let b = p.allocate(64).unwrap();
+            to_main
+                .send(vec![a.as_ptr() as usize, b.as_ptr() as usize])
+                .unwrap();
+            p.deallocate(a, 64).unwrap();
+            from_main.recv().unwrap();
+            p.deallocate(b, 64).unwrap();
+        });
+        let mine = from_t.recv().unwrap();
+        let mut held = Vec::new();
+        while let Ok(q) = pool.allocate(1 << 20) {
+            held.push((q, 1usize << 20));
+        }
+        for s in [8192usize, 1024, 64] {
+            while let Ok(q) = pool.allocate(s) {
+                held.push((q, s));
+            }
+        }
+        to_t.send(()).unwrap();
+        for _ in 0..2 {
+            if let Ok(q) = pool.allocate(64) {
+                held.push((q, 64));
+            }
+        }
+        t.join().unwrap();
+        let mut seen: std::collections::HashSet<usize> = mine.into_iter().collect();
+        for &(q, s) in &held {
+            if s == 64 {
+                seen.insert(q.as_ptr() as usize);
+            }
+        }
+        for (q, s) in held {
+            pool.deallocate(q, s).unwrap();
+        }
+        let p2 = Arc::clone(&pool);
+        let back: std::collections::HashSet<usize> = thread::spawn(move || {
+            let mut v = std::collections::HashSet::new();
+            while let Ok(q) = p2.allocate(64) {
+                v.insert(q.as_ptr() as usize);
+            }
+            v
+        })
+        .join()
+        .unwrap();
+        let lost = seen.iter().filter(|a| !back.contains(a)).count();
+        assert_eq!(
+            lost, 0,
+            "{lost} blocks stranded by push/drain store-buffering"
+        );
+    }
+
+    #[test]
+    fn test_s50_r1_push_does_not_overwrite_undrained_slots() {
+        let mut cfg = LockFreePoolConfig::high_performance();
+        cfg.memory_size = 16 * 1024 * 1024;
+        cfg.enable_stats = false;
+        let pool = Arc::new(LockFreeMemoryPool::new(cfg).unwrap());
+        let p = Arc::clone(&pool);
+        thread::spawn(move || {
+            let mut held: Vec<_> = (0..22).map(|_| p.allocate(64).unwrap()).collect();
+            let all_addrs: std::collections::HashSet<usize> =
+                held.iter().map(|q| q.as_ptr() as usize).collect();
+
+            // Fill all 16 slots of the 64-byte magazine bin.
+            for _ in 0..16 {
+                p.deallocate(held.pop().unwrap(), 64).unwrap();
+            }
+
+            // Simulate a concurrent drain that was preempted before slot 6:
+            // drain slots 0..4 and 6..16 to the central freelist, leaving slots 4..6 occupied
+            // while `counts[bin]` is still 16 and `slots[bin][15] == 0`.
+            let bin = LockFreeMemoryPool::find_fast_bin(64);
+            FAST_BIN_MAGAZINE.with(|mag| {
+                // SAFETY: Single-threaded access to this thread's magazine state in test.
+                let state = unsafe { &*mag.state.get() };
+                // SAFETY: `state.shared` is valid while `p` is active on this thread.
+                let shared = unsafe { &*state.shared };
+                for idx in (0..4).chain(6..MAGAZINE_CAP) {
+                    let off = shared.slots[bin][idx].swap(0, Ordering::AcqRel);
+                    assert_ne!(off, 0);
+                    p.arena.push_free_fast_bin_offset(bin, off).unwrap();
+                }
+            });
+
+            // Free the remaining 6 blocks: wraparound at `c == 16` must skip non-zero slots 4..6
+            // instead of overwriting them.
+            for ptr in held {
+                p.deallocate(ptr, 64).unwrap();
+            }
+
+            // Drain magazine and verify all 22 unique blocks are recoverable.
+            p.arena.drain_all_magazines();
+            let mut recovered = std::collections::HashSet::new();
+            while recovered.len() < all_addrs.len() {
+                let q = p.allocate(64).unwrap();
+                recovered.insert(q.as_ptr() as usize);
+            }
+            for &addr in &all_addrs {
+                assert!(
+                    recovered.contains(&addr),
+                    "block {addr:#x} lost by magazine slot overwrite"
+                );
+            }
+            for addr in recovered {
+                p.deallocate(NonNull::new(addr as *mut u8).unwrap(), 64)
+                    .unwrap();
+            }
+        })
+        .join()
+        .unwrap();
     }
 }
