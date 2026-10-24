@@ -325,7 +325,7 @@ impl ContextualHuffmanEncoder {
                                 }
                             }
                             codes[symbol as usize] = (bits, code.len() as u8);
-                        } else {
+                        } else if code.len() > 64 {
                             // Codes longer than 64 bits (reachable via deserialized models)
                             // use u8::MAX as a sentinel so `encode` emits from `tree.get_code`.
                             codes[symbol as usize] = (0, u8::MAX);
@@ -485,7 +485,10 @@ impl ContextualHuffmanEncoder {
                     } else {
                         0
                     };
-                    if let Some(code) = self.trees[real_tidx].get_code(sym) {
+                    if let Some(code) = self.trees[real_tidx]
+                        .get_code(sym)
+                        .filter(|c| !c.is_empty())
+                    {
                         for chunk in code.chunks(64) {
                             let mut chunk_bits = 0u64;
                             for (bit_idx, &bit) in chunk.iter().enumerate() {
@@ -1103,11 +1106,16 @@ impl ContextualHuffmanEncoder {
 
         // For each context, build codes for all symbols
         for context in 0..=256usize {
-            // Get the tree for this context
-            let tree_idx = if context == 256 {
+            // Get the tree for this context (falling back to tree 0 if empty)
+            let raw_idx = if context == 256 {
                 0 // Initial context uses Order-0 tree
             } else {
                 *self.context_map.get(&(context as u32)).unwrap_or(&0)
+            };
+            let tree_idx = if self.trees.get(raw_idx).is_some_and(|t| t.root().is_some()) {
+                raw_idx
+            } else {
+                0
             };
 
             let tree = &self.trees[tree_idx];
@@ -1163,7 +1171,10 @@ impl ContextualHuffmanEncoder {
         let build_tree_table = |tree: &HuffmanTree| -> Vec<DecodeEntry> {
             let mut tree_table = vec![(0u64, 0u8, 0u8); 1 << BLOCK_BITS];
 
-            if let Some(root) = tree.root() {
+            // Single-symbol (Leaf root) trees leave `tree_table` with `bits_used = 0`
+            // so `decode_one_symbol` delegates to `decode_one_symbol_tree`, which
+            // consumes and verifies the single symbol's exact code bits.
+            if let Some(root @ HuffmanNode::Internal { .. }) = tree.root() {
                 for peek_value in 0..(1 << BLOCK_BITS) {
                     let mut current = root;
                     let mut bits_used = 0;
@@ -1202,10 +1213,15 @@ impl ContextualHuffmanEncoder {
         };
 
         for context in 0..=256u16 {
-            let tree_idx = if context == 256 {
+            let raw_idx = if context == 256 {
                 0
             } else {
                 *self.context_map.get(&(context as u32)).unwrap_or(&0)
+            };
+            let tree_idx = if self.trees.get(raw_idx).is_some_and(|t| t.root().is_some()) {
+                raw_idx
+            } else {
+                0
             };
 
             // Build table using the tree for this context
@@ -1263,17 +1279,49 @@ impl ContextualHuffmanEncoder {
 
     /// Decode a single symbol using tree-based decoding (fallback for end-of-stream)
     fn decode_one_symbol_tree(&self, reader: &mut BitStreamReader, context: u16) -> Result<u8> {
-        // Get the tree for this context
-        let tree_idx = if context == 256 {
+        // Get the tree for this context (falling back to tree 0 if empty)
+        let raw_idx = if context == 256 {
             0
         } else {
             *self.context_map.get(&(context as u32)).unwrap_or(&0)
+        };
+        let tree_idx = if self.trees.get(raw_idx).is_some_and(|t| t.root().is_some()) {
+            raw_idx
+        } else {
+            0
         };
 
         let tree = &self.trees[tree_idx];
         let root = tree
             .root()
             .ok_or_else(|| ZiporaError::invalid_data("Empty tree"))?;
+
+        if let HuffmanNode::Leaf { symbol, .. } = root {
+            let code = tree
+                .get_code(*symbol)
+                .ok_or_else(|| ZiporaError::invalid_data("Missing leaf code"))?;
+            if code.is_empty() {
+                return Err(ZiporaError::invalid_data(
+                    "Empty code for single-symbol Huffman tree",
+                ));
+            }
+            for &expected_bit in code {
+                if reader.bit_count == 0 {
+                    reader.refill();
+                    if reader.bit_count == 0 {
+                        return Err(ZiporaError::invalid_data("Unexpected end of stream"));
+                    }
+                }
+                let bit = (reader.peek(1) & 1) != 0;
+                reader.consume(1);
+                if bit != expected_bit {
+                    return Err(ZiporaError::invalid_data(
+                        "Invalid bit for single-symbol Huffman tree",
+                    ));
+                }
+            }
+            return Ok(*symbol);
+        }
 
         let mut current = root;
 
@@ -1752,6 +1800,11 @@ impl ContextualHuffmanDecoder {
             let code = tree
                 .get_code(*symbol)
                 .ok_or_else(|| ZiporaError::invalid_data("Missing leaf code"))?;
+            if code.is_empty() {
+                return Err(ZiporaError::invalid_data(
+                    "Empty code for single-symbol Huffman tree",
+                ));
+            }
             for &expected_bit in code {
                 if *bits_in_buf == 0 {
                     if let Some(&b) = encoded_data.get(*byte_idx) {

@@ -1249,4 +1249,97 @@ mod tests {
         let dec_o2 = ContextualHuffmanDecoder::new(enc_o2);
         assert_eq!(dec_o2.decode(&valid_o2, 5).unwrap(), b"aacac");
     }
+
+    #[test]
+    fn test_s50_r2_single_symbol_context_tree_all_decoders_and_zero_len_rejected() {
+        // 1. Zero-length code (`code_length == 0`) must be rejected during deserialization.
+        let leaf_b_len0 = serialize_custom_tree(&[(b'b', &[])]);
+        assert!(
+            HuffmanTree::deserialize(&leaf_b_len0).is_err(),
+            "HuffmanTree::deserialize must reject code_length == 0"
+        );
+        let tree0 = serialize_custom_tree(&[(b'a', &[false]), (b'b', &[true])]);
+        let model_len0 = serialize_custom_contextual_model(
+            1,
+            &[(b'a' as u32, 1u32)],
+            &[tree0.clone(), leaf_b_len0],
+        );
+        assert!(
+            ContextualHuffmanEncoder::deserialize(&model_len0).is_err(),
+            "ContextualHuffmanEncoder::deserialize must reject context tree with code_length == 0"
+        );
+
+        // 2. Single-symbol context trees (`b -> [0]`, `b -> [1]`, `b -> [1, 0, 1]`)
+        // must round-trip across single-threaded Order-1/Order-2 and interleaved X1/X2/X4/X8
+        // without leaving unconsumed bits that corrupt `"abab..."` into `"abba..."`.
+        let leaf_b_len1_0 = serialize_custom_tree(&[(b'b', &[false])]);
+        let leaf_b_len1_1 = serialize_custom_tree(&[(b'b', &[true])]);
+        let leaf_b_len3 = serialize_custom_tree(&[(b'b', &[true, false, true])]);
+
+        for leaf in [&leaf_b_len1_0, &leaf_b_len1_1, &leaf_b_len3] {
+            let model_o1 = serialize_custom_contextual_model(
+                1,
+                &[(b'a' as u32, 1u32)],
+                &[tree0.clone(), leaf.clone()],
+            );
+            let enc = ContextualHuffmanEncoder::deserialize(&model_o1).unwrap();
+            let dec = ContextualHuffmanDecoder::new(
+                ContextualHuffmanEncoder::deserialize(&model_o1).unwrap(),
+            );
+
+            for msg in [
+                b"abab".as_slice(),
+                &b"ab".repeat(40),
+                &b"abb".repeat(30),
+                b"abbabbbab",
+            ] {
+                let encoded = enc.encode(msg).unwrap();
+                assert_eq!(dec.decode(&encoded, msg.len()).unwrap(), msg);
+
+                for factor in [
+                    InterleavingFactor::X1,
+                    InterleavingFactor::X2,
+                    InterleavingFactor::X4,
+                    InterleavingFactor::X8,
+                ] {
+                    let ix = enc.encode_with_interleaving(msg, factor).unwrap();
+                    let out = enc
+                        .decode_with_interleaving(&ix, msg.len(), factor)
+                        .unwrap();
+                    assert_eq!(
+                        out, msg,
+                        "Interleaved {:?} corrupted single-symbol context tree stream",
+                        factor
+                    );
+                }
+            }
+
+            // Unrepresentable symbol 'a' in context 'a' (when context 'a' only has 'b') must error on encode.
+            assert!(enc.encode(b"aa").is_err());
+            for factor in [
+                InterleavingFactor::X1,
+                InterleavingFactor::X2,
+                InterleavingFactor::X4,
+                InterleavingFactor::X8,
+            ] {
+                assert!(enc.encode_with_interleaving(&[b'a'; 16], factor).is_err());
+            }
+
+            // Order-2 single-symbol context tree round-trip.
+            let ctx_ab = ((b'a' as u32) << 8) | (b'b' as u32);
+            let model_o2 = serialize_custom_contextual_model(
+                2,
+                &[(ctx_ab, 1u32)],
+                &[tree0.clone(), leaf.clone()],
+            );
+            let enc2 = ContextualHuffmanEncoder::deserialize(&model_o2).unwrap();
+            let dec2 = ContextualHuffmanDecoder::new(
+                ContextualHuffmanEncoder::deserialize(&model_o2).unwrap(),
+            );
+            for msg in [b"abbb".as_slice(), &b"abb".repeat(30)] {
+                let encoded2 = enc2.encode(msg).unwrap();
+                assert_eq!(dec2.decode(&encoded2, msg.len()).unwrap(), msg);
+            }
+        }
+    }
 }
