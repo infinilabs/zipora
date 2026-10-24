@@ -1141,8 +1141,11 @@ where
         // infallible `Into<u64>` implementations. `sort_by_key` uses `MaybeUninit<(K, V)>`
         // scratch storage and bijective `copy_nonoverlapping` permutations back into `data`,
         // so drop-bearing value types `V` (e.g. `String`, `Box<T>`) are also sound on the
-        // fast path (`S49-R10`). Under Miri, `fn_addr_eq` across generic monomorphizations
-        // can evaluate to `false`, so match the built-in primitive type name directly.
+        // fast path (`S49-R10`). Requiring exact primitive `type_name` on both native and
+        // Miri ensures Miri and native builds never diverge on custom newtypes (`S50-R4`).
+        if !matches!(std::any::type_name::<K>(), "u64" | "u32" | "u16" | "u8") {
+            return false;
+        }
         #[cfg(not(miri))]
         {
             (std::mem::size_of::<K>() == std::mem::size_of::<u64>()
@@ -1172,7 +1175,7 @@ where
         }
         #[cfg(miri)]
         {
-            matches!(std::any::type_name::<K>(), "u64" | "u32" | "u16" | "u8")
+            true
         }
     }
 
@@ -1199,8 +1202,8 @@ where
         const L2_THRESHOLD: usize = 16_384;
         if n <= L2_THRESHOLD {
             let mut buffer = Vec::<std::mem::MaybeUninit<(K, V)>>::with_capacity(n);
-            // SAFETY: `MaybeUninit<(K, V)>` does not require initialization; `is_trusted_primitive_key`
-            // verified `!needs_drop::<(K, V)>()` and pure primitive `K::into()`.
+            // SAFETY: `MaybeUninit<(K, V)>` does not require initialization and does not run drops,
+            // and `is_trusted_primitive_key` verified pure primitive `K::into()`.
             unsafe {
                 buffer.set_len(n);
                 Self::lsd_kv_in_cache(

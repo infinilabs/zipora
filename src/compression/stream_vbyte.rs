@@ -1560,4 +1560,30 @@ mod tests {
         );
         assert_eq!(StreamVByte::decode_deltas(&svb, n), sorted);
     }
+
+    #[test]
+    fn test_s49_r6_shuffle_table_is_64_byte_cacheline_aligned() {
+        let addr = (&SHUFFLE_TABLE as *const AlignedShuffleTable) as usize;
+        assert_eq!(
+            addr % 64,
+            0,
+            "SHUFFLE_TABLE at {:#x} must be 64-byte cache-line aligned",
+            addr
+        );
+        for n in 0..=48 {
+            let input: Vec<u32> = (0..n as u32)
+                .map(|i| match i % 4 {
+                    0 => i,
+                    1 => 300 + i * 7,
+                    2 => 70_000 + i * 13,
+                    _ => 20_000_000 + i * 29,
+                })
+                .collect();
+            let enc = StreamVByte::encode_raw(&input);
+            let mut out = vec![0u32; n];
+            let dec_n = StreamVByte::decode_into(&enc, n, &mut out);
+            assert_eq!(dec_n, n);
+            assert_eq!(out, input);
+        }
+    }
 }
