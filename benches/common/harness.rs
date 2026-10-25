@@ -158,6 +158,10 @@ pub struct BenchRecord {
     pub spread_pct: f64,
     pub max_regression_pct: f64,
     pub samples: Vec<f64>,
+    #[serde(default)]
+    pub measured_at_commit: String,
+    #[serde(default)]
+    pub binary_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -722,8 +726,14 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
     } else {
         0.0
     };
-    let (name_owned, category_owned, unit_owned, mut rounded_samples) =
-        super::datasets::take_prealloc_record_buffers(name, category, unit);
+    let (
+        name_owned,
+        category_owned,
+        unit_owned,
+        mut rounded_samples,
+        measured_at_commit,
+        binary_sha256,
+    ) = super::datasets::take_prealloc_record_buffers(name, category, unit);
     for &s in s_slice.iter() {
         rounded_samples.push(round4(s));
     }
@@ -741,5 +751,7 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         spread_pct: round2(spread_pct),
         max_regression_pct: params.max_regression_pct,
         samples: rounded_samples,
+        measured_at_commit,
+        binary_sha256,
     });
 }

@@ -419,25 +419,51 @@ pub fn gen_radix_kv_template(n: usize) -> Vec<(u64, u64)> {
 }
 
 use std::collections::BTreeMap;
+use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
+type PreallocRecordTuple = (String, String, String, Vec<f64>, String, String);
+
 struct PreallocBenchBuffers {
-    record_pool: Vec<(String, String, String, Vec<f64>)>,
+    record_pool: Vec<PreallocRecordTuple>,
     space_pool: Vec<(String, f64)>,
     space_used: usize,
+    git_commit: String,
+    binary_sha256: String,
 }
 
 static PREALLOC_BUFFERS: OnceLock<Mutex<PreallocBenchBuffers>> = OnceLock::new();
 
 fn get_prealloc_buffers() -> &'static Mutex<PreallocBenchBuffers> {
     PREALLOC_BUFFERS.get_or_init(|| {
+        let git_commit = Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    String::from_utf8(o.stdout).ok()
+                } else {
+                    None
+                }
+            })
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let (_binary_path, binary_sha256) =
+            super::binary_meta::detect_self_binary_path_and_sha256();
         let mut record_pool = Vec::with_capacity(512);
         for _ in 0..512 {
+            let mut commit_buf = String::with_capacity(32);
+            commit_buf.push_str(&git_commit);
+            let mut sha_buf = String::with_capacity(64);
+            sha_buf.push_str(&binary_sha256);
             record_pool.push((
                 String::with_capacity(128),
                 String::with_capacity(64),
                 String::with_capacity(32),
                 Vec::with_capacity(32),
+                commit_buf,
+                sha_buf,
             ));
         }
         let mut space_pool = Vec::with_capacity(256);
@@ -448,22 +474,23 @@ fn get_prealloc_buffers() -> &'static Mutex<PreallocBenchBuffers> {
             record_pool,
             space_pool,
             space_used: 0,
+            git_commit,
+            binary_sha256,
         })
     })
 }
 
-/// Pops a pre-allocated `(name, category, unit, samples)` buffer tuple from the bottom-of-`brk`
-/// pool initialized by [`init_bench_allocator_policy`], so `measure_bench_inner` performs zero
-/// heap allocations while a benchmark's multi-megabyte data structure is alive on `brk`.
+/// Pops a pre-allocated `(name, category, unit, samples, measured_at_commit, binary_sha256)`
+/// buffer tuple from the bottom-of-`brk` pool initialized by [`init_bench_allocator_policy`], so
+/// `measure_bench_inner` performs zero heap allocations while a benchmark's multi-megabyte data
+/// structure is alive on `brk`.
 #[inline(never)]
-pub fn take_prealloc_record_buffers(
-    name: &str,
-    category: &str,
-    unit: &str,
-) -> (String, String, String, Vec<f64>) {
+pub fn take_prealloc_record_buffers(name: &str, category: &str, unit: &str) -> PreallocRecordTuple {
     init_bench_allocator_policy();
     let mut guard = get_prealloc_buffers().lock().unwrap();
-    if let Some((mut n_buf, mut c_buf, mut u_buf, mut s_buf)) = guard.record_pool.pop() {
+    if let Some((mut n_buf, mut c_buf, mut u_buf, mut s_buf, commit_buf, sha_buf)) =
+        guard.record_pool.pop()
+    {
         n_buf.clear();
         assert!(n_buf.capacity() >= name.len());
         n_buf.push_str(name);
@@ -474,13 +501,17 @@ pub fn take_prealloc_record_buffers(
         assert!(u_buf.capacity() >= unit.len());
         u_buf.push_str(unit);
         s_buf.clear();
-        (n_buf, c_buf, u_buf, s_buf)
+        (n_buf, c_buf, u_buf, s_buf, commit_buf, sha_buf)
     } else {
+        let commit_buf = guard.git_commit.clone();
+        let sha_buf = guard.binary_sha256.clone();
         (
             name.to_string(),
             category.to_string(),
             unit.to_string(),
             Vec::with_capacity(32),
+            commit_buf,
+            sha_buf,
         )
     }
 }

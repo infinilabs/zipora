@@ -49,6 +49,23 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
+KNOWN_BASELINE_BINARIES: Dict[str, Dict[str, str]] = {
+    "core_bench": {
+        "4b490ff": "9e03c582e68f3aa1687baced76da37ca485b300c593a7798fcd25fe9ddaa7728",
+        "446401d": "d9b58b63d756a24a1ad5028cb62fe86d4e2dd1e86c2774318a8225f9fe561c69",
+        "5add98f": "5c8818a945f89bcdb5fb2cdef6ac60ef2598157dad71782b1691ec639a129c17",
+    },
+    "competitor_bench": {
+        "4b490ff": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+        "446401d": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+        "5add98f": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
+    },
+    "e2e_search": {
+        "446401d": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2",
+    },
+}
+
+
 def detect_short_host() -> str:
     try:
         host = Path("/etc/hostname").read_text(encoding="utf-8").strip()
@@ -252,29 +269,80 @@ def compare_benchmarks(
     has_integrity_error = False
     rows: List[Tuple[str, str, float, float, float, float, float, float, float, str]] = []
 
-    # 0. Verify per-row provenance and unrestamped top-level host_metadata (S51-R2)
-    prov_counts: Dict[Tuple[str, str], int] = {}
+    # 0. Verify per-row provenance against known binary SHA-256s and unrestamped host_metadata (S51-R2 / S52-R1)
+    suite_name = str(
+        baseline_data.get("suite") or current_data.get("suite") or "core_bench"
+    ).strip()
+    known_bins = dict(KNOWN_BASELINE_BINARIES.get(suite_name, {}))
+    base_hm = baseline_data.get("host_metadata", {}) or {}
+    hm_commit = str(base_hm.get("git_commit", "") or "").strip()
+    hm_sha = str(base_hm.get("binary_sha256", "") or "").strip().lower()
+    hm_bin_path = str(base_hm.get("binary_path", "") or "").strip()
+    if (
+        hm_commit
+        and hm_commit not in known_bins
+        and len(hm_sha) == 64
+        and hm_bin_path
+    ):
+        bin_p = Path(hm_bin_path)
+        if bin_p.is_file():
+            try:
+                if hashlib.sha256(bin_p.read_bytes()).hexdigest().lower() == hm_sha:
+                    known_bins[hm_commit] = hm_sha
+            except OSError:
+                pass
+
+    distinct_commits: set[str] = set()
     for base in base_list:
         bname = base.get("name", "<unknown>")
         m_commit = str(base.get("measured_at_commit", "") or "").strip()
         m_sha = str(base.get("binary_sha256", "") or "").strip().lower()
         if not m_commit or len(m_sha) != 64:
             failures.append(
-                f"{bname}: baseline row missing valid measured_at_commit/binary_sha256 (S51-R2)"
+                f"{bname}: baseline row missing valid measured_at_commit/binary_sha256 (S51-R2 / S52-R1)"
             )
             has_integrity_error = True
-        else:
-            prov_counts[(m_commit, m_sha)] = prov_counts.get((m_commit, m_sha), 0) + 1
-    if prov_counts:
-        maj_commit, maj_sha = max(prov_counts.items(), key=lambda kv: kv[1])[0]
-        base_hm = baseline_data.get("host_metadata", {}) or {}
-        hm_commit = str(base_hm.get("git_commit", "") or "").strip()
-        hm_sha = str(base_hm.get("binary_sha256", "") or "").strip().lower()
-        if hm_commit != maj_commit or hm_sha != maj_sha:
+            continue
+        distinct_commits.add(m_commit)
+        expected_sha = known_bins.get(m_commit)
+        if expected_sha != m_sha:
             failures.append(
-                f"host_metadata: restamped header ({hm_commit}, {hm_sha[:16]}...) does not match majority row provenance ({maj_commit}, {maj_sha[:16]}...) (S51-R2)"
+                f"{bname}: row provenance ({m_commit}, {m_sha[:16]}...) does not match known binary SHA-256 for {suite_name} (expected {str(expected_sha)[:16]}...) (S52-R1)"
             )
             has_integrity_error = True
+
+    expected_hm_sha = known_bins.get(hm_commit)
+    if not hm_commit or expected_hm_sha != hm_sha:
+        failures.append(
+            f"host_metadata: provenance ({hm_commit}, {hm_sha[:16]}...) does not match known binary SHA-256 for {suite_name} (S52-R1)"
+        )
+        has_integrity_error = True
+    elif len(distinct_commits) > 1 and hm_commit != "4b490ff":
+        failures.append(
+            f"host_metadata: spliced baseline restamped header to {hm_commit} instead of base commit 4b490ff (S51-R2 / S52-R1)"
+        )
+        has_integrity_error = True
+    elif len(distinct_commits) == 1 and hm_commit not in distinct_commits:
+        failures.append(
+            f"host_metadata: header commit {hm_commit} does not match uniform row commit {next(iter(distinct_commits))} (S52-R1)"
+        )
+        has_integrity_error = True
+
+    for comp in baseline_data.get("same_run_comparisons", []):
+        z_name = comp.get("zipora_bench", "")
+        c_name = comp.get("competitor_bench", "")
+        z_rec = base_benches.get(z_name)
+        c_rec = base_benches.get(c_name)
+        if z_rec is not None and c_rec is not None:
+            expected_cross = (
+                z_rec.get("binary_sha256") != c_rec.get("binary_sha256")
+                or z_rec.get("measured_at_commit") != c_rec.get("measured_at_commit")
+            )
+            if comp.get("cross_binary_comparison") is not expected_cross:
+                failures.append(
+                    f"same_run_comparisons[{z_name} vs {c_name}]: missing or mismatched cross_binary_comparison flag (expected {expected_cross}) (S52-R1)"
+                )
+                has_integrity_error = True
 
     # 1. Check all baseline benchmarks in order (catches missing benchmarks!)
     for base in base_list:

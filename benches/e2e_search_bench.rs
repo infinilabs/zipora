@@ -75,6 +75,10 @@ struct BenchRecord {
     spread_pct: f64,
     max_regression_pct: f64,
     samples_ns_per_op: Vec<f64>,
+    #[serde(default)]
+    measured_at_commit: String,
+    #[serde(default)]
+    binary_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -387,6 +391,8 @@ fn measure_bench<F>(
 
     let (min_ns, median_ns, p95_ns, spread_pct) = compute_stats(&samples);
     let rounded_samples: Vec<f64> = samples.into_iter().map(round4).collect();
+    let measured_at_commit = detect_git_commit();
+    let (_binary_path, binary_sha256) = detect_self_binary_path_and_sha256();
     records.push(BenchRecord {
         category: "e2e_search".to_string(),
         name: name.to_string(),
@@ -400,6 +406,8 @@ fn measure_bench<F>(
         spread_pct: round2(spread_pct),
         max_regression_pct: 9.0,
         samples_ns_per_op: rounded_samples,
+        measured_at_commit,
+        binary_sha256,
     });
 }
 

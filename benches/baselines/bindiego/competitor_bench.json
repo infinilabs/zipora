@@ -404,7 +404,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -426,7 +427,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -448,7 +450,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -470,7 +473,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -492,7 +496,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -514,7 +519,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -536,7 +542,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -558,7 +565,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -580,7 +588,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -602,7 +611,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -624,7 +634,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "rank_select",
@@ -646,7 +657,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -668,7 +680,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -690,7 +703,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -712,7 +726,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -734,7 +749,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -756,7 +772,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -778,7 +795,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -800,7 +818,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -822,7 +841,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -844,7 +864,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -866,7 +887,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -888,7 +910,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -910,7 +933,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -932,7 +956,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -954,7 +979,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -976,7 +1002,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -998,7 +1025,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1020,7 +1048,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1042,7 +1071,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1064,7 +1094,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1086,7 +1117,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1108,7 +1140,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1130,7 +1163,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1152,7 +1186,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1174,7 +1209,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1196,7 +1232,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1218,7 +1255,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1240,7 +1278,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "elias_fano",
@@ -1262,7 +1301,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1284,7 +1324,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1306,7 +1347,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1328,7 +1370,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1350,7 +1393,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1372,7 +1416,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1394,7 +1439,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1416,7 +1462,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1438,7 +1485,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1460,7 +1508,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1482,7 +1531,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1504,7 +1554,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1526,7 +1577,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1548,7 +1600,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1570,7 +1623,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1592,7 +1646,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1614,7 +1669,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1636,7 +1692,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1658,7 +1715,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1680,7 +1738,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1702,7 +1761,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1724,7 +1784,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1746,7 +1807,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1768,7 +1830,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1790,7 +1853,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1812,7 +1876,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1834,7 +1899,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1856,7 +1922,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1878,7 +1945,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1900,7 +1968,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1922,7 +1991,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1944,7 +2014,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1966,7 +2037,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -1988,7 +2060,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -2010,7 +2083,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -2032,7 +2106,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "tries",
@@ -2054,7 +2129,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2076,7 +2152,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2098,7 +2175,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2120,7 +2198,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2142,7 +2221,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2164,7 +2244,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2186,7 +2267,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2208,7 +2290,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2230,7 +2313,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2252,7 +2336,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2274,7 +2359,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2296,7 +2382,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2318,7 +2405,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2340,7 +2428,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2362,7 +2451,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2384,7 +2474,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "hash_maps",
@@ -2406,7 +2497,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "memory_pools",
@@ -2428,7 +2520,8 @@
       "zipora_measured_at_commit": "5add98f",
       "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "memory_pools",
@@ -2450,7 +2543,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "memory_pools",
@@ -2472,7 +2566,8 @@
       "zipora_measured_at_commit": "5add98f",
       "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "memory_pools",
@@ -2494,7 +2589,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "memory_pools",
@@ -2516,7 +2612,8 @@
       "zipora_measured_at_commit": "5add98f",
       "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "memory_pools",
@@ -2538,7 +2635,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "memory_pools",
@@ -2560,7 +2658,8 @@
       "zipora_measured_at_commit": "5add98f",
       "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "memory_pools",
@@ -2582,7 +2681,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "memory_pools",
@@ -2604,7 +2704,8 @@
       "zipora_measured_at_commit": "5add98f",
       "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "memory_pools",
@@ -2626,7 +2727,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "memory_pools",
@@ -2648,7 +2750,8 @@
       "zipora_measured_at_commit": "5add98f",
       "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "memory_pools",
@@ -2670,7 +2773,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2692,7 +2796,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2714,7 +2819,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2736,7 +2842,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2758,7 +2865,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2780,7 +2888,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2802,7 +2911,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2824,7 +2934,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2846,7 +2957,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2868,7 +2980,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2890,7 +3003,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -2912,7 +3026,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2934,7 +3049,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -2956,7 +3072,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -2978,7 +3095,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -3000,7 +3118,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3022,7 +3141,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -3044,7 +3164,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3066,7 +3187,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -3088,7 +3210,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3110,7 +3233,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -3132,7 +3256,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3154,7 +3279,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -3176,7 +3302,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3198,7 +3325,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -3220,7 +3348,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -3242,7 +3371,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3264,7 +3394,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -3286,7 +3417,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3308,7 +3440,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -3330,7 +3463,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3352,7 +3486,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "entropy",
@@ -3374,7 +3509,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3396,7 +3532,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3418,7 +3555,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3440,7 +3578,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3462,7 +3601,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3484,7 +3624,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3506,7 +3647,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3528,7 +3670,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3550,7 +3693,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3572,7 +3716,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3594,7 +3739,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3616,7 +3762,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3638,7 +3785,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3660,7 +3808,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3682,7 +3831,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3704,7 +3854,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3726,7 +3877,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3748,7 +3900,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3770,7 +3923,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3792,7 +3946,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3814,7 +3969,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3836,7 +3992,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3858,7 +4015,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3880,7 +4038,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "entropy",
@@ -3902,7 +4061,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -3924,7 +4084,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -3946,7 +4107,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "int_codecs",
@@ -3968,7 +4130,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -3990,7 +4153,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -4012,7 +4176,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -4034,7 +4199,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -4056,7 +4222,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "int_codecs",
@@ -4078,7 +4245,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -4100,7 +4268,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -4122,7 +4291,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -4144,7 +4314,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -4166,7 +4337,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "int_codecs",
@@ -4188,7 +4360,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -4210,7 +4383,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "int_codecs",
@@ -4232,7 +4406,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "radix_sort",
@@ -4254,7 +4429,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "radix_sort",
@@ -4276,7 +4452,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "radix_sort",
@@ -4298,7 +4475,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "radix_sort",
@@ -4320,7 +4498,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "radix_sort",
@@ -4342,7 +4521,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "radix_sort",
@@ -4364,7 +4544,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "radix_sort",
@@ -4386,7 +4567,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "radix_sort",
@@ -4408,7 +4590,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "radix_sort",
@@ -4430,7 +4613,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "suffix_array",
@@ -4452,7 +4636,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "suffix_array",
@@ -4474,7 +4659,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "suffix_array",
@@ -4496,7 +4682,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "suffix_array",
@@ -4518,7 +4705,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "suffix_array",
@@ -4540,7 +4728,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "suffix_array",
@@ -4562,7 +4751,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "suffix_array",
@@ -4584,7 +4774,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "suffix_array",
@@ -4606,7 +4797,8 @@
       "zipora_measured_at_commit": "446401d",
       "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": true
     },
     {
       "category": "search_and_scoring",
@@ -4628,7 +4820,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "search_and_scoring",
@@ -4650,7 +4843,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "search_and_scoring",
@@ -4672,7 +4866,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     },
     {
       "category": "search_and_scoring",
@@ -4694,7 +4889,8 @@
       "zipora_measured_at_commit": "4b490ff",
       "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
       "competitor_measured_at_commit": "4b490ff",
-      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "cross_binary_comparison": false
     }
   ],
   "benchmarks": [

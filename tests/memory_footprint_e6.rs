@@ -405,12 +405,31 @@ fn test_e6_rank_select_space_overhead_percent_and_mem_size() {
 fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
     use std::collections::HashMap;
     use std::path::Path;
+    use std::process::Command;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for (suite, expected_base_commit, expected_base_count, expected_total) in [
-        ("core_bench", "4b490ff", 71usize, 80usize),
-        ("competitor_bench", "4b490ff", 175usize, 181usize),
-        ("e2e_search", "446401d", 7usize, 7usize),
+
+    // 1. S52-R1: BenchRecord in benches/common/harness.rs and benches/e2e_search_bench.rs
+    // must emit measured_at_commit + binary_sha256 per row so UPDATE_BASELINE=1 produces valid files.
+    let harness_src = std::fs::read_to_string(manifest_dir.join("benches/common/harness.rs"))
+        .expect("read benches/common/harness.rs");
+    assert!(
+        harness_src.contains("pub measured_at_commit: String")
+            && harness_src.contains("pub binary_sha256: String"),
+        "benches/common/harness.rs BenchRecord must emit measured_at_commit and binary_sha256"
+    );
+    let comparisons_src =
+        std::fs::read_to_string(manifest_dir.join("benches/competitors/comparisons.rs"))
+            .expect("read benches/competitors/comparisons.rs");
+    assert!(
+        comparisons_src.contains("pub cross_binary_comparison: bool"),
+        "benches/competitors/comparisons.rs SameRunComparison must emit cross_binary_comparison"
+    );
+
+    for (suite, expected_total) in [
+        ("core_bench", 80usize),
+        ("competitor_bench", 181usize),
+        ("e2e_search", 7usize),
     ] {
         let path = manifest_dir
             .join("benches/baselines/bindiego")
@@ -433,7 +452,7 @@ fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
             .unwrap_or_else(|| panic!("{suite}: missing benchmarks array"));
         assert_eq!(benches.len(), expected_total, "{suite}: row count mismatch");
 
-        let mut commit_counts: HashMap<(String, String), usize> = HashMap::new();
+        let mut commit_shas: HashMap<String, String> = HashMap::new();
         let mut row_provenance: HashMap<String, (String, String)> = HashMap::new();
 
         for row in benches {
@@ -453,42 +472,42 @@ fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
                 row_sha.len() == 64 && row_sha.chars().all(|c| c.is_ascii_hexdigit()),
                 "{suite}: benchmark '{name}' has invalid binary_sha256 '{row_sha}'"
             );
-            *commit_counts
-                .entry((row_commit.to_string(), row_sha.to_string()))
-                .or_insert(0) += 1;
+            // Every commit within a suite must map to a single consistent binary_sha256.
+            if let Some(prev_sha) = commit_shas.get(row_commit) {
+                assert_eq!(
+                    prev_sha, row_sha,
+                    "{suite}: inconsistent binary_sha256 for commit {row_commit}"
+                );
+            } else {
+                let status = Command::new("git")
+                    .args(["cat-file", "-e", &format!("{row_commit}^{{commit}}")])
+                    .current_dir(manifest_dir)
+                    .status()
+                    .expect("git cat-file");
+                assert!(
+                    status.success(),
+                    "{suite}: measured_at_commit '{row_commit}' does not exist in git history"
+                );
+                commit_shas.insert(row_commit.to_string(), row_sha.to_string());
+            }
             row_provenance.insert(
                 name.to_string(),
                 (row_commit.to_string(), row_sha.to_string()),
             );
         }
 
-        // Top-level host_metadata must match the majority (base full-run) commit and binary_sha256,
-        // never restamped over spliced rows.
-        let ((maj_commit, maj_sha), maj_count) = commit_counts
-            .into_iter()
-            .max_by_key(|(_, count)| *count)
-            .expect("non-empty benchmarks");
+        // Top-level host_metadata must match the known binary_sha256 for header_commit.
         assert_eq!(
-            maj_commit, expected_base_commit,
-            "{suite}: unexpected majority commit"
-        );
-        assert_eq!(
-            maj_count, expected_base_count,
-            "{suite}: unexpected base-commit row count"
-        );
-        assert_eq!(
-            header_commit, maj_commit,
-            "{suite}: host_metadata.git_commit '{header_commit}' was restamped over majority commit '{maj_commit}'"
-        );
-        assert_eq!(
-            header_sha, maj_sha,
-            "{suite}: host_metadata.binary_sha256 '{header_sha}' was restamped over majority sha '{maj_sha}'"
+            commit_shas.get(header_commit).map(String::as_str),
+            Some(header_sha),
+            "{suite}: host_metadata ({header_commit}, {header_sha}) does not match row provenance for {header_commit}"
         );
 
         if suite == "competitor_bench" {
             let comparisons = doc["same_run_comparisons"]
                 .as_array()
                 .expect("competitor_bench: missing same_run_comparisons");
+            let mut cross_count = 0usize;
             for cmp in comparisons {
                 let zb = cmp["zipora_bench"].as_str().expect("zipora_bench");
                 let cb = cmp["competitor_bench"].as_str().expect("competitor_bench");
@@ -514,9 +533,66 @@ fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
                     Some(exp_c_sha.as_str()),
                     "comparison {zb} vs {cb}: competitor_binary_sha256 mismatch"
                 );
+                let expected_cross = exp_z_sha != exp_c_sha;
+                let actual_cross = cmp["cross_binary_comparison"].as_bool().unwrap_or_else(|| {
+                    panic!("comparison {zb} vs {cb}: missing cross_binary_comparison boolean")
+                });
+                assert_eq!(
+                    actual_cross, expected_cross,
+                    "comparison {zb} vs {cb}: cross_binary_comparison mismatch"
+                );
+                if actual_cross {
+                    cross_count += 1;
+                }
             }
+            assert!(
+                cross_count == 0 || cross_count == 25,
+                "competitor_bench: expected either 0 (uniform re-baseline) or 25 cross-binary comparisons, got {cross_count}"
+            );
         }
     }
+
+    // Verify bench_compare.py validates each row's sha against known binaries for that commit
+    // (not a majority vote), so a self-consistent restamp with a forged sha fails closed.
+    let bench_compare = std::fs::read_to_string(manifest_dir.join("scripts/bench_compare.py"))
+        .expect("read scripts/bench_compare.py");
+    assert!(
+        bench_compare.contains("KNOWN_BASELINE_BINARIES")
+            && !bench_compare.contains("maj_commit, maj_sha = max("),
+        "scripts/bench_compare.py must validate against KNOWN_BASELINE_BINARIES rather than a majority vote"
+    );
+    let mut forged: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(manifest_dir.join("benches/baselines/bindiego/core_bench.json"))
+            .expect("read core_bench.json"),
+    )
+    .expect("parse core_bench.json");
+    let fake_sha = "a".repeat(64);
+    forged["host_metadata"]["git_commit"] = serde_json::Value::String("4b490ff".to_string());
+    forged["host_metadata"]["binary_sha256"] = serde_json::Value::String(fake_sha.clone());
+    for row in forged["benchmarks"].as_array_mut().unwrap() {
+        row["measured_at_commit"] = serde_json::Value::String("4b490ff".to_string());
+        row["binary_sha256"] = serde_json::Value::String(fake_sha.clone());
+    }
+    let tmp_forged = std::env::temp_dir().join(format!(
+        "zipora_test_s52_r1_forged_sha_{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&tmp_forged, serde_json::to_string(&forged).unwrap()).unwrap();
+    let status = std::process::Command::new("python3")
+        .arg(manifest_dir.join("scripts/bench_compare.py"))
+        .arg("--suite")
+        .arg("core_bench")
+        .arg("--baseline")
+        .arg(&tmp_forged)
+        .arg("--current")
+        .arg(manifest_dir.join("benches/baselines/bindiego/core_bench.json"))
+        .output()
+        .expect("run bench_compare.py on forged sha baseline");
+    let _ = std::fs::remove_file(&tmp_forged);
+    assert!(
+        !status.status.success(),
+        "bench_compare.py must reject a baseline whose rows and host_metadata are uniformly restamped with a forged binary_sha256"
+    );
 
     let e2_e3 = std::fs::read_to_string(manifest_dir.join("docs/review/e2_e3.md"))
         .expect("read docs/review/e2_e3.md");
@@ -525,8 +601,8 @@ fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
         "docs/review/e2_e3.md must not claim spliced baselines were generated from a single full run"
     );
     assert!(
-        e2_e3.contains("measured_at_commit") && e2_e3.contains("175/181"),
-        "docs/review/e2_e3.md must document per-row measured_at_commit provenance"
+        e2_e3.contains("measured_at_commit") && e2_e3.contains("25 cross-binary"),
+        "docs/review/e2_e3.md must document per-row measured_at_commit provenance and all 25 cross-binary comparisons"
     );
 
     let e4 = std::fs::read_to_string(manifest_dir.join("docs/review/e4.md"))
@@ -536,8 +612,8 @@ fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
         "docs/review/e4.md must not claim spliced baselines came from a single clean tree without per-row provenance"
     );
     assert!(
-        e4.contains("measured_at_commit") && e4.contains("71/80") && e4.contains("175/181"),
-        "docs/review/e4.md must document per-row measured_at_commit provenance"
+        e4.contains("measured_at_commit") && e4.contains("25 cross-binary"),
+        "docs/review/e4.md must document per-row measured_at_commit provenance and all 25 cross-binary comparisons"
     );
 
     let e1 = std::fs::read_to_string(manifest_dir.join("docs/review/e1.md"))
@@ -547,8 +623,8 @@ fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
         "docs/review/e1.md:98 must not claim all 80 core_bench rows were measured at 4b490ff"
     );
     assert!(
-        e1.contains("71/80") && e1.contains("446401d") && e1.contains("5add98f"),
-        "docs/review/e1.md:98 must document the 71/80 (4b490ff), 7/80 (446401d), and 2/80 (5add98f) row provenance"
+        e1.contains("measured_at_commit"),
+        "docs/review/e1.md must document per-row measured_at_commit provenance"
     );
 }
 
