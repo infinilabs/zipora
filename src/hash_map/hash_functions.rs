@@ -264,9 +264,8 @@ pub fn bmi2_golden_ratio_next_size(current_size: usize) -> usize {
 /// size without), and the final `as usize` truncated on 32-bit targets.
 #[inline]
 fn scalar_golden_ratio_next_size(current_size: usize) -> usize {
-    let next = current_size as u128 * GOLDEN_RATIO_FRAC_NUM as u128
-        / GOLDEN_RATIO_FRAC_DEN as u128
-        + 1;
+    let next =
+        current_size as u128 * GOLDEN_RATIO_FRAC_NUM as u128 / GOLDEN_RATIO_FRAC_DEN as u128 + 1;
     usize::try_from(next).unwrap_or(usize::MAX)
 }
 
@@ -850,6 +849,9 @@ fn bmi2_linear_probe(hash: u64, occupied_mask: u64) -> Option<u32> {
             return unsafe { bmi2_linear_probe_hardware(hash, occupied_mask) };
         }
     }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = hash;
 
     // Fallback: find first free slot
     let free_mask = !occupied_mask;
@@ -2042,7 +2044,10 @@ mod tests {
 
         // Products that overflow u64: a panic with overflow checks, a wrapped
         // (far smaller) result without.
-        assert_eq!(golden_ratio_next_size(usize::MAX / 2), 14_843_864_371_813_154_815);
+        assert_eq!(
+            golden_ratio_next_size(usize::MAX / 2),
+            14_843_864_371_813_154_815
+        );
         assert_eq!(optimal_bucket_count(usize::MAX / 2), 1 << (usize::BITS - 1));
         // Past usize, growth clamps to usize::MAX and the bucket count
         // saturates at the largest power of two.

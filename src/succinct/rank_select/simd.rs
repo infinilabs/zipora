@@ -50,8 +50,7 @@ use std::arch::x86_64::*;
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{
-    uint8x8_t, uint8x16_t, vaddvq_u8, vcntq_u8, vcombine_u8, vdup_n_u8, vget_high_u8, vget_low_u8,
-    vld1q_u8,
+    vaddvq_u8, vcntq_u8, vcombine_u8, vdup_n_u8, vget_high_u8, vget_low_u8, vld1q_u8,
 };
 
 // Re-export enhanced CPU features from system module
@@ -111,6 +110,8 @@ impl SimdCapabilities {
             return (2, 8 * 1024, true); // POPCNT: 8KB chunks with prefetch
         }
 
+        #[cfg(target_arch = "aarch64")]
+        let _ = features;
         #[cfg(target_arch = "aarch64")]
         if cfg!(feature = "simd") && std::arch::is_aarch64_feature_detected!("neon") {
             return (1, 16 * 1024, false); // ARM NEON: 16KB chunks, no x86 prefetch
@@ -634,8 +635,7 @@ fn bulk_rank1_neon(bit_data: &[u64], positions: &[usize]) -> Vec<usize> {
                 let ptr = bit_data.as_ptr().add(base_idx) as *const u8;
 
                 // Load 16 bytes (2 u64s)
-                // SAFETY: NEON guaranteed, ptr valid from bit_data.as_ptr().add(base_idx) cast to u8
-                let vec = unsafe { vld1q_u8(ptr) };
+                let vec = vld1q_u8(ptr);
 
                 // Count bits using NEON popcount
                 let popcount_vec = vcntq_u8(vec);
@@ -687,8 +687,7 @@ fn bulk_popcount_neon(bit_data: &[u64]) -> Vec<usize> {
             let ptr = bit_data.as_ptr().add(base_idx) as *const u8;
 
             // Load 16 bytes (2 u64s)
-            // SAFETY: NEON guaranteed for popcount_vec
-            let vec = unsafe { vld1q_u8(ptr) };
+            let vec = vld1q_u8(ptr);
 
             // Count bits for each 8-byte chunk
             let popcount_vec = vcntq_u8(vec);

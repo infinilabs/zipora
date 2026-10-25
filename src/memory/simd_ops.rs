@@ -27,6 +27,7 @@ use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 use std::ptr;
 
 /// Size thresholds for different optimization strategies
+#[cfg(target_arch = "x86_64")]
 const MEDIUM_COPY_THRESHOLD: usize = 4096;
 const CACHE_LINE_SIZE: usize = 64;
 
@@ -97,7 +98,9 @@ impl SimdMemOps {
                 cpu_features.has_avx512f && cpu_features.has_avx512vl && cpu_features.has_avx512bw
             }
             SimdTier::Avx2 => cpu_features.has_avx2,
-            SimdTier::Sse2 => cfg!(target_arch = "x86_64") || (cpu_features.has_sse41 && cpu_features.has_sse42),
+            SimdTier::Sse2 => {
+                cfg!(target_arch = "x86_64") || (cpu_features.has_sse41 && cpu_features.has_sse42)
+            }
             SimdTier::Scalar => true,
         };
         if !supported {
@@ -934,7 +937,8 @@ impl SimdMemOps {
         while len >= 128 {
             // SAFETY: avx2 guaranteed by #[target_feature], `len >= 128` checked
             unsafe {
-                let c0 = _mm256_cmpeq_epi8(_mm256_loadu_si256(haystack as *const __m256i), needle_vec);
+                let c0 =
+                    _mm256_cmpeq_epi8(_mm256_loadu_si256(haystack as *const __m256i), needle_vec);
                 let c1 = _mm256_cmpeq_epi8(
                     _mm256_loadu_si256(haystack.add(32) as *const __m256i),
                     needle_vec,
@@ -1399,7 +1403,6 @@ pub fn fast_prefetch_range(data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     /// C3.25 (S8-R4). `SimdMemOps::prefetch_range` computed
     /// `step_size = cache_line_size.min(prefetch_distance)` and passed it
@@ -1675,10 +1678,15 @@ mod tests {
     #[test]
     fn test_cross_tier_consistency() {
         let scalar = SimdMemOps::with_tier(SimdTier::Scalar).unwrap();
-        let tiers: Vec<SimdMemOps> = [SimdTier::Scalar, SimdTier::Sse2, SimdTier::Avx2, SimdTier::Avx512]
-            .into_iter()
-            .filter_map(|t| SimdMemOps::with_tier(t).ok())
-            .collect();
+        let tiers: Vec<SimdMemOps> = [
+            SimdTier::Scalar,
+            SimdTier::Sse2,
+            SimdTier::Avx2,
+            SimdTier::Avx512,
+        ]
+        .into_iter()
+        .filter_map(|t| SimdMemOps::with_tier(t).ok())
+        .collect();
 
         #[cfg(not(miri))]
         let sizes: &[usize] = &[
@@ -1704,12 +1712,18 @@ mod tests {
                     // 1. copy_nonoverlapping
                     let mut got_copy = vec![0u8; len];
                     ops.copy_nonoverlapping(src, &mut got_copy).unwrap();
-                    assert_eq!(got_copy, expected_copy, "copy mismatch at tier={tier:?} len={len} off={offset}");
+                    assert_eq!(
+                        got_copy, expected_copy,
+                        "copy mismatch at tier={tier:?} len={len} off={offset}"
+                    );
 
                     // 2. fill
                     let mut got_fill = vec![0u8; len];
                     ops.fill(&mut got_fill, 0x5A);
-                    assert_eq!(got_fill, expected_fill, "fill mismatch at tier={tier:?} len={len}");
+                    assert_eq!(
+                        got_fill, expected_fill,
+                        "fill mismatch at tier={tier:?} len={len}"
+                    );
 
                     // 3. compare (equal, less, greater at first/middle/last byte)
                     assert_eq!(
@@ -1730,7 +1744,13 @@ mod tests {
                     }
 
                     // 4. find_byte (hit at first/middle/last, and miss)
-                    for &needle in &[0u8, 0x5A, 0xFF, src.first().copied().unwrap_or(0), src.last().copied().unwrap_or(0)] {
+                    for &needle in &[
+                        0u8,
+                        0x5A,
+                        0xFF,
+                        src.first().copied().unwrap_or(0),
+                        src.last().copied().unwrap_or(0),
+                    ] {
                         assert_eq!(
                             ops.find_byte(src, needle),
                             scalar.find_byte(src, needle),

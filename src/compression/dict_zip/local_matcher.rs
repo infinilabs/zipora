@@ -709,7 +709,7 @@ impl LocalMatcher {
         };
 
         // Use SIMD comparison if enabled and beneficial
-        #[cfg(feature = "simd")]
+        #[cfg(all(feature = "simd", target_arch = "x86_64"))]
         if self.config.enable_simd && max_length >= 16 {
             let start_time = std::time::Instant::now();
             let result = self.simd_compare_and_find_length(input_slice, history_slice, max_length);
@@ -783,7 +783,7 @@ impl LocalMatcher {
     }
 
     /// SIMD-accelerated string comparison and find length
-    #[cfg(feature = "simd")]
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     fn simd_compare_and_find_length(
         &self,
         input: &[u8],

@@ -19,8 +19,12 @@
 
 use super::CachePadded;
 use crate::error::{Result, ZiporaError};
-use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint};
-use crate::memory::simd_ops::{fast_fill, fast_prefetch};
+#[cfg(target_arch = "x86_64")]
+use crate::memory::cache_layout::PrefetchHint;
+use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator};
+use crate::memory::simd_ops::fast_fill;
+#[cfg(target_arch = "x86_64")]
+use crate::memory::simd_ops::fast_prefetch;
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -1191,6 +1195,8 @@ impl LockFreeMemoryPool {
                     {
                         fast_prefetch(&self.fast_bins[bin_idx], PrefetchHint::T0);
                     }
+                    #[cfg(not(target_arch = "x86_64"))]
+                    let _ = bin_idx;
                 }
             }
 

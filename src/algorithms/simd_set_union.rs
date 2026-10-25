@@ -21,6 +21,7 @@
 //! ```
 
 /// Minimum size to attempt SIMD merge (below this, scalar is faster).
+#[cfg(target_arch = "x86_64")]
 const SIMD_MIN_SIZE: usize = 8;
 
 // ============================================================================

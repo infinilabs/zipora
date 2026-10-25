@@ -223,13 +223,20 @@ pub fn prefetch_hint(ptr: *const u8) {
             std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
         }
     }
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
-        // SAFETY: __pldl1keep is a CPU hint instruction that never fails or dereferences ptr,
-        // simply signals the CPU to preload the cache line containing ptr
+        // SAFETY: `prfm pldl1keep` is a non-faulting L1 cache prefetch hint on aarch64.
         unsafe {
-            std::arch::aarch64::__pldl1keep(ptr);
+            std::arch::asm!(
+                "prfm pldl1keep, [{ptr}]",
+                ptr = in(reg) ptr,
+                options(nostack, preserves_flags, readonly)
+            );
         }
+    }
+    #[cfg(not(any(target_arch = "x86_64", all(target_arch = "aarch64", not(miri)))))]
+    {
+        let _ = ptr;
     }
 }
 

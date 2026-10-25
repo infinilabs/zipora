@@ -31,10 +31,12 @@
 
 use super::CachePadded;
 use crate::error::{Result, ZiporaError};
-use crate::memory::cache_layout::{
-    AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint,
-};
-use crate::memory::simd_ops::{fast_compare, fast_fill, fast_prefetch};
+#[cfg(target_arch = "x86_64")]
+use crate::memory::cache_layout::PrefetchHint;
+use crate::memory::cache_layout::{AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator};
+#[cfg(target_arch = "x86_64")]
+use crate::memory::simd_ops::fast_prefetch;
+use crate::memory::simd_ops::{fast_compare, fast_fill};
 use crate::simd::Operation;
 use crate::simd::adaptive::AdaptiveSimdSelector;
 use std::alloc::{Layout, alloc, dealloc};
@@ -950,16 +952,14 @@ impl SecureMemoryPool {
         self.alloc_count.fetch_add(1, Ordering::Relaxed);
 
         // Try thread-local cache first
-        let local_cache = self
-            .local_caches
-            .get_or(|| {
-                RefCell::new(LocalCache::new(
-                    self.config.local_cache_size,
-                    self.config.zero_on_free,
-                    self.config.enable_simd_ops,
-                    self.config.simd_threshold,
-                ))
-            });
+        let local_cache = self.local_caches.get_or(|| {
+            RefCell::new(LocalCache::new(
+                self.config.local_cache_size,
+                self.config.zero_on_free,
+                self.config.enable_simd_ops,
+                self.config.simd_threshold,
+            ))
+        });
 
         if let Some(mut chunk) = local_cache.borrow_mut().try_pop() {
             self.local_cache_hits.fetch_add(1, Ordering::Relaxed);
@@ -1139,16 +1139,14 @@ impl SecureMemoryPool {
         }
 
         // Try to return to thread-local cache
-        let local_cache = self
-            .local_caches
-            .get_or(|| {
-                RefCell::new(LocalCache::new(
-                    self.config.local_cache_size,
-                    self.config.zero_on_free,
-                    self.config.enable_simd_ops,
-                    self.config.simd_threshold,
-                ))
-            });
+        let local_cache = self.local_caches.get_or(|| {
+            RefCell::new(LocalCache::new(
+                self.config.local_cache_size,
+                self.config.zero_on_free,
+                self.config.enable_simd_ops,
+                self.config.simd_threshold,
+            ))
+        });
 
         if let Err(chunk_to_push) = local_cache.borrow_mut().try_push(chunk) {
             // Local cache full, push the chunk directly to global stack
@@ -1269,12 +1267,8 @@ impl SecureMemoryPool {
     /// during allocation. Most beneficial for large batch allocations.
     #[inline]
     fn prefetch_allocation_metadata(&self, _size: usize) {
-        if !self.config.enable_cache_alignment {
-            return;
-        }
-
         #[cfg(target_arch = "x86_64")]
-        {
+        if self.config.enable_cache_alignment {
             // Prefetch the global stack head (most frequently accessed metadata)
             fast_prefetch(&self.global_stack, PrefetchHint::T0);
 

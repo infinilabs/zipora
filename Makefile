@@ -12,7 +12,7 @@
 .PHONY: test test_debug test_release test_simd_base64
 .PHONY: bench bench_all bench_core bench_competitors bench_smoke bench_e2e_search bench_compare bench_avx512 bench_fsa bench_io bench_serialization
 .PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
-.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_c12 miri_scalar
+.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_c12 miri_scalar miri_weak
 .PHONY: tsan_cspp tsan_pool tsan_concurrency
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity feature_matrix
@@ -412,6 +412,32 @@ miri_c12:
 # not been fully measured.
 miri_scalar:
 	$(MAKE) --no-print-directory MIRI_SCALAR=1 miri_cspp miri_string miri_io miri_algorithms miri_c12
+
+# Weak-memory correctness and AArch64 compilation gate (plan.md B2.2):
+# - Miri weak-memory / preemption / many-seeds stress on LockFreeMemoryPool,
+#   ConcurrentCsppTrie, WorkStealingQueue/Executor, and Pipeline.
+# - AArch64 (`aarch64-unknown-linux-gnu`) clippy check with `-D warnings`.
+miri_weak:
+	@echo "=== B2.2: LockFreeMemoryPool weak-memory store-buffering & magazine steal stress ==="
+	MIRIFLAGS="-Zmiri-many-seeds=0..4" \
+	$(CARGO_MIRI) test --lib -- --test-threads=1 --exact \
+		memory::lockfree_pool::tests::test_s49_r2_owner_pop_vs_steal_no_duplicate_blocks \
+		memory::lockfree_pool::tests::test_s50_r1_push_vs_drain_store_buffering_no_lost_blocks \
+		memory::lockfree_pool::tests::test_s50_r1_push_does_not_overwrite_undrained_slots
+	@echo "=== B2.2: ConcurrentCsppTrie weak-memory contended CAS & split stress ==="
+	MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks -Zmiri-many-seeds=0..4" \
+	$(CARGO_MIRI) test --lib -- --test-threads=1 --exact \
+		fsa::cspp_trie_concurrent::tests::test_contended_root_fastnode_cas \
+		fsa::cspp_trie_concurrent::tests::test_concurrent_trie_multithreaded
+	@echo "=== B2.2: WorkStealingQueue & Pipeline weak-memory stress ==="
+	MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-many-seeds=0..4" \
+	$(CARGO_MIRI) test --lib -- --test-threads=1 --exact \
+		concurrency::work_stealing::tests::test_c10_ws1_balanced_tasks_are_popped_by_owner_and_single_worker_executor \
+		concurrency::work_stealing::tests::test_c10_ws5_steal_takes_single_queued_stealable_task \
+		concurrency::pipeline::tests::test_s25_r7_multithreaded_execute_stream_payload_writes_and_concurrent_stage_stats
+	@echo "=== B2.2: AArch64 (aarch64-unknown-linux-gnu) clippy gate ==="
+	RUSTFLAGS="" $(CARGO) clippy --locked --target aarch64-unknown-linux-gnu \
+		--no-default-features --features simd,mmap,serde,lz4,async,ffi,avx512 --lib -- -D warnings
 
 # =============================================================================
 # FUZZING (plan.md 6.1) — requires: cargo install cargo-fuzz; nightly toolchain

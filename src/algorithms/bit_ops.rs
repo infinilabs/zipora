@@ -71,9 +71,10 @@ pub fn popcount_slice(words: &[u64]) -> usize {
     #[cfg(target_arch = "aarch64")]
     {
         // SAFETY: NEON is always available on aarch64.
-        return unsafe { popcount_neon(words) };
+        unsafe { popcount_neon(words) }
     }
 
+    #[cfg(not(target_arch = "aarch64"))]
     popcount_scalar(words)
 }
 
@@ -366,6 +367,7 @@ fn select_in_word_pdep(word: u64, rank: usize) -> usize {
 /// Uses hardware popcount to binary-search for the byte containing the
 /// rank-th set bit, then narrows to the exact bit. Branch-free friendly
 /// on modern out-of-order CPUs.
+#[cfg(any(target_arch = "x86_64", test))]
 #[inline(always)]
 fn select_in_word_popcnt(word: u64, rank: usize) -> usize {
     // Honor the documented total contract: out-of-range rank returns the
@@ -675,8 +677,16 @@ mod tests {
             (u64::MAX, 64),
             (u64::MAX, usize::MAX), // also proves the scalar loop is bounded
         ] {
-            assert_eq!(select_in_word_scalar(word, rank), 64, "scalar {word:#x}/{rank}");
-            assert_eq!(select_in_word_popcnt(word, rank), 64, "popcnt {word:#x}/{rank}");
+            assert_eq!(
+                select_in_word_scalar(word, rank),
+                64,
+                "scalar {word:#x}/{rank}"
+            );
+            assert_eq!(
+                select_in_word_popcnt(word, rank),
+                64,
+                "popcnt {word:#x}/{rank}"
+            );
         }
         #[cfg(target_arch = "x86_64")]
         if has_fast_bmi2() {

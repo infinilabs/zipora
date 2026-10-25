@@ -37,7 +37,9 @@
 //! ```
 
 use crate::error::{Result, ZiporaError};
-use crate::succinct::rank_select::bmi2_acceleration::{Bmi2BextrOps, Bmi2Capabilities};
+#[cfg(target_arch = "x86_64")]
+use crate::succinct::rank_select::bmi2_acceleration::Bmi2BextrOps;
+use crate::succinct::rank_select::bmi2_acceleration::Bmi2Capabilities;
 use std::collections::HashMap;
 
 /// Comprehensive BMI2 string processing operations
@@ -2028,7 +2030,12 @@ mod tests {
         assert!(bmi2.wildcard_match_bmi2("ééééabcd", "????abcd"));
 
         // 5. Hash and char_class_match parity between BMI2 and scalar across lengths.
-        for s in ["short", "exactly8", "longer_ascii_string_12345", "ééééabcd1234"] {
+        for s in [
+            "short",
+            "exactly8",
+            "longer_ascii_string_12345",
+            "ééééabcd1234",
+        ] {
             assert_eq!(
                 bmi2.hash_string_bmi2(s, 0x1234),
                 scalar.hash_string_bmi2(s, 0x1234),
@@ -2043,9 +2050,10 @@ mod tests {
 
         // 6. extract_substrings_bmi2 on non-char-boundary and overflow returns Err instead of panicking.
         assert!(bmi2.extract_substrings_bmi2("éaaaaaaa", &[(0, 1)]).is_err());
-        assert!(bmi2
-            .extract_substrings_bmi2("éaaaaaaa", &[(usize::MAX, 2)])
-            .is_err());
+        assert!(
+            bmi2.extract_substrings_bmi2("éaaaaaaa", &[(usize::MAX, 2)])
+                .is_err()
+        );
     }
 
     /// Reference glob matcher for S20-R1: O(text * pattern) DP over Unicode

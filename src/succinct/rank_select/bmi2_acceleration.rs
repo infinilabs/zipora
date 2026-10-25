@@ -94,6 +94,8 @@ impl Bmi2PrefetchOps {
                 }
             }
         }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = (bit_data, word_index);
     }
 
     /// Prefetch rank cache data
@@ -109,6 +111,8 @@ impl Bmi2PrefetchOps {
                 }
             }
         }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = (rank_cache, block_index);
     }
 
     /// Prefetch multiple cache lines ahead for sequential access
@@ -126,6 +130,8 @@ impl Bmi2PrefetchOps {
                 }
             }
         }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = (bit_data, start_word, prefetch_distance);
     }
 }
 
@@ -1966,7 +1972,6 @@ pub struct Bmi2Stats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn test_bmi2_capabilities() {

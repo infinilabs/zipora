@@ -350,6 +350,8 @@ impl MemoryMappedInput {
                             std::arch::x86_64::_MM_HINT_NTA,
                         );
                     }
+                    #[cfg(not(target_arch = "x86_64"))]
+                    let _ = cache_line;
                 }
 
                 offset += prefetch_size;

@@ -25,7 +25,7 @@ use crate::error::Result;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "simd")]
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use std::arch::x86_64::*;
 
 use std::cmp::Ordering;
@@ -427,7 +427,7 @@ impl PatternMatcher {
             .min(input_remaining.len())
             .min(dict_remaining.len());
 
-        #[cfg(feature = "simd")]
+        #[cfg(all(feature = "simd", target_arch = "x86_64"))]
         {
             if max_compare >= 16 && self.config.enable_simd {
                 return Ok(self.simd_compare_and_extend(
@@ -448,7 +448,7 @@ impl PatternMatcher {
     }
 
     /// SIMD-accelerated string comparison and extension
-    #[cfg(feature = "simd")]
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     fn simd_compare_and_extend(&self, input: &[u8], dict: &[u8], max_len: usize) -> usize {
         // SAFETY: SIMD operations are guarded by cfg(feature = "simd"), bounds checked before each SSE2 intrinsic call
         unsafe {

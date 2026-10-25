@@ -593,9 +593,8 @@ fn detect_x86_cache_hierarchy() -> CacheHierarchy {
 
                     let cache_level = (result.eax >> 5) & 0x7;
                     let line_size = ((result.ebx & 0xFFF) + 1) as usize;
-                    let cache_size = ((result.ebx >> 22) + 1) as usize
-                        * ((result.ecx + 1) as usize)
-                        * line_size;
+                    let cache_size =
+                        ((result.ebx >> 22) + 1) as usize * ((result.ecx + 1) as usize) * line_size;
 
                     match cache_level {
                         1 => {
@@ -634,37 +633,33 @@ fn detect_arm_cache_hierarchy() -> CacheHierarchy {
     {
         if let Ok(l1_size) =
             std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index0/size")
+            && let Ok(size) = parse_cache_size(&l1_size)
         {
-            if let Ok(size) = parse_cache_size(&l1_size) {
-                hierarchy.l1_size = size;
-            }
+            hierarchy.l1_size = size;
         }
 
         if let Ok(l2_size) =
             std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index2/size")
+            && let Ok(size) = parse_cache_size(&l2_size)
         {
-            if let Ok(size) = parse_cache_size(&l2_size) {
-                hierarchy.l2_size = size;
-            }
+            hierarchy.l2_size = size;
         }
 
         if let Ok(l3_size) =
             std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index3/size")
+            && let Ok(size) = parse_cache_size(&l3_size)
         {
-            if let Ok(size) = parse_cache_size(&l3_size) {
-                hierarchy.l3_size = size;
-            }
+            hierarchy.l3_size = size;
         }
 
         // Read cache line size
         if let Ok(line_size) =
             std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size")
+            && let Ok(size) = line_size.trim().parse::<usize>()
         {
-            if let Ok(size) = line_size.trim().parse::<usize>() {
-                hierarchy.l1_line_size = size;
-                hierarchy.l2_line_size = size;
-                hierarchy.l3_line_size = size;
-            }
+            hierarchy.l1_line_size = size;
+            hierarchy.l2_line_size = size;
+            hierarchy.l3_line_size = size;
         }
     }
 
@@ -679,18 +674,18 @@ fn parse_cache_size(size_str: &str) -> Result<usize> {
         return Err(ZiporaError::invalid_data("Empty cache size string"));
     }
 
-    let (number_part, unit) = if size_str.ends_with('K') {
-        (&size_str[..size_str.len() - 1], 1024)
-    } else if size_str.ends_with('M') {
-        (&size_str[..size_str.len() - 1], 1024 * 1024)
-    } else if size_str.ends_with('G') {
-        (&size_str[..size_str.len() - 1], 1024 * 1024 * 1024)
+    let (number_part, unit) = if let Some(stripped) = size_str.strip_suffix('K') {
+        (stripped, 1024)
+    } else if let Some(stripped) = size_str.strip_suffix('M') {
+        (stripped, 1024 * 1024)
+    } else if let Some(stripped) = size_str.strip_suffix('G') {
+        (stripped, 1024 * 1024 * 1024)
     } else {
         (size_str, 1)
     };
 
     let number: usize = number_part.parse().map_err(|_| {
-        ZiporaError::invalid_data(&format!("Invalid cache size number: {}", number_part))
+        ZiporaError::invalid_data(format!("Invalid cache size number: {}", number_part))
     })?;
 
     Ok(number * unit)
@@ -1016,7 +1011,11 @@ mod tests {
         // `hot_data`.
         assert_eq!(
             separator.hot_slice(),
-            &["item0".to_string(), "item1".to_string(), "item2".to_string()],
+            &[
+                "item0".to_string(),
+                "item1".to_string(),
+                "item2".to_string()
+            ],
             "reorganize must keep the hot items in hot_slice, not swap them with cold_slice"
         );
         assert_eq!(separator.cold_slice().len(), 7);

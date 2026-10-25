@@ -31,7 +31,9 @@
 //! ```
 
 use crate::entropy::huffman::{HuffmanEncoder, HuffmanTree};
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
+#[cfg(target_arch = "x86_64")]
+use crate::error::ZiporaError;
 use crate::memory::simd_ops::SimdMemOps;
 use crate::succinct::rank_select::bmi2_acceleration::Bmi2Capabilities;
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
@@ -95,6 +97,7 @@ pub struct SimdHuffmanEncoder {
     /// CPU features
     _cpu_features: &'static CpuFeatures,
     /// Configuration
+    #[cfg(target_arch = "x86_64")]
     config: SimdHuffmanConfig,
     /// SIMD memory operations
     _simd_ops: SimdMemOps,
@@ -119,6 +122,7 @@ impl SimdHuffmanEncoder {
             tier,
             _bmi2_caps: bmi2_caps,
             _cpu_features: cpu_features,
+            #[cfg(target_arch = "x86_64")]
             config,
             _simd_ops: simd_ops,
         })
@@ -534,12 +538,14 @@ impl SimdHuffmanEncoder {
 }
 
 /// Efficient bit buffer for SIMD encoding
+#[cfg(target_arch = "x86_64")]
 struct BitBuffer {
     bytes: Vec<u8>,
     current_byte: u8,
     bit_count: usize,
 }
 
+#[cfg(target_arch = "x86_64")]
 impl BitBuffer {
     fn with_capacity(estimated_bits: usize) -> Self {
         let estimated_bytes = estimated_bits.div_ceil(8);

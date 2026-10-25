@@ -450,10 +450,10 @@ impl StreamVByte {
     /// returned `Vec` will contain fewer than `count` values without panicking.
     /// Callers requiring complete stream integrity should verify `result.len() == count`.
     pub fn decode_deltas(stream: &EncodedStream, count: usize) -> Vec<u32> {
-        let max_possible = stream.controls.len().saturating_mul(4);
-        let alloc_count = count.min(max_possible);
         #[cfg(target_arch = "x86_64")]
         {
+            let max_possible = stream.controls.len().saturating_mul(4);
+            let alloc_count = count.min(max_possible);
             if std::arch::is_x86_feature_detected!("ssse3") && alloc_count >= 4 {
                 let mut values = Vec::with_capacity(alloc_count);
                 // SAFETY: SSSE3 is available and `values` has capacity `alloc_count`.

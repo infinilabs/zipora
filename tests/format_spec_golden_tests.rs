@@ -492,3 +492,47 @@ fn test_b6_rustdoc_warnings_gate() {
         "src/memory/five_level_pool.rs must not link to private item [`reject_zero_size`] in public rustdoc"
     );
 }
+
+#[cfg(not(miri))]
+#[test]
+fn test_b2_2_weak_memory_and_aarch64_gates() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
+    assert!(
+        makefile.contains("miri_weak:")
+            && makefile.contains("-Zmiri-many-seeds")
+            && makefile.contains("--target aarch64-unknown-linux-gnu"),
+        "Makefile must define miri_weak running Miri weak-memory many-seeds stress and aarch64 clippy"
+    );
+
+    let adv_yml_path = root.join(".github/workflows/adversarial.yml");
+    assert!(
+        adv_yml_path.exists(),
+        "B2/B2.2 requires committed .github/workflows/adversarial.yml"
+    );
+    let adv_yml = std::fs::read_to_string(&adv_yml_path).unwrap();
+    for item in [
+        "fuzz_smoke",
+        "weekly_miri_tsan",
+        "weekly_fuzz_soak",
+        "weekly_aarch64",
+        "make miri_weak",
+        "cross test --target aarch64-unknown-linux-gnu --all-features --lib",
+    ] {
+        assert!(
+            adv_yml.contains(item),
+            ".github/workflows/adversarial.yml must include '{item}'"
+        );
+    }
+
+    let cache_mod = std::fs::read_to_string(root.join("src/cache/mod.rs")).unwrap();
+    assert!(
+        !cache_mod.contains("__pldl1keep"),
+        "src/cache/mod.rs must not call non-existent std::arch::aarch64::__pldl1keep"
+    );
+    let bm25 = std::fs::read_to_string(root.join("src/scoring/bm25.rs")).unwrap();
+    assert!(
+        !bm25.contains("std::arch::aarch64::_prefetch"),
+        "src/scoring/bm25.rs must not call unstable std::arch::aarch64::_prefetch"
+    );
+}

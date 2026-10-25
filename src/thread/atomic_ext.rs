@@ -285,8 +285,6 @@ pub mod x86_64_optimized {
 /// ARM-specific optimizations
 #[cfg(target_arch = "aarch64")]
 pub mod aarch64_optimized {
-    use super::*;
-
     /// ARM yield instruction for spin loops
     #[inline]
     pub fn yield_now() {

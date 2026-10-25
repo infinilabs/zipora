@@ -713,6 +713,8 @@ impl RankSelectInterleaved256 {
                 }
             }
         }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = (lines, bitpos);
     }
 
     /// Prefetch select cache entry for upcoming select1 operation
@@ -736,6 +738,8 @@ impl RankSelectInterleaved256 {
                     }
                 }
             }
+            #[cfg(not(target_arch = "x86_64"))]
+            let _ = (id, cache);
         }
     }
 

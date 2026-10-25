@@ -1,0 +1,148 @@
+name: Adversarial & Weak-Memory Verification (B2 / B2.2)
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Weekly adversarial run: Sunday 03:00 UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fuzz_smoke:
+    name: Fuzz Smoke (60s/target per PR - B2)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Install Rust nightly toolchain
+      uses: dtolnay/rust-toolchain@nightly
+
+    - name: Install cargo-fuzz
+      run: command -v cargo-fuzz >/dev/null 2>&1 || cargo install cargo-fuzz
+
+    - name: Seed fuzz corpora and run 60s smoke per target
+      run: make fuzz_smoke
+
+  weekly_miri_tsan:
+    name: Weekly Miri & TSan & Weak-Memory Suite (B2 / B2.2)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Install Rust nightly toolchain with miri and rust-src
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: miri, rust-src, clippy
+        targets: aarch64-unknown-linux-gnu
+
+    - name: Run Miri suites (core, simd, cspp, pool, thread, io, string, algorithms, ffi, c12, weak)
+      run: |
+        make miri_core
+        make miri_simd
+        make miri_cspp
+        make miri_pool
+        make miri_thread
+        make miri_io
+        make miri_string
+        make miri_algorithms
+        make miri_ffi
+        make miri_c12
+        make miri_weak
+
+    - name: Run ThreadSanitizer suites (cspp, pool, concurrency)
+      run: |
+        make tsan_cspp
+        make tsan_pool
+        make tsan_concurrency
+
+    - name: Open issue on scheduled failure
+      if: failure() && github.event_name == 'schedule'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `[B2] Weekly Miri/TSan/Weak-Memory job failed (${context.sha.slice(0, 7)})`,
+            body: `Scheduled adversarial workflow failed in \`weekly_miri_tsan\`.\n\nRun URL: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+          });
+
+  weekly_fuzz_soak:
+    name: Weekly Fuzz Soak (1h/target - B2)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Install Rust nightly toolchain
+      uses: dtolnay/rust-toolchain@nightly
+
+    - name: Install cargo-fuzz
+      run: command -v cargo-fuzz >/dev/null 2>&1 || cargo install cargo-fuzz
+
+    - name: Run 1h fuzz soak
+      run: make fuzz_soak
+
+    - name: Open issue on scheduled failure
+      if: failure() && github.event_name == 'schedule'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `[B2] Weekly Fuzz Soak job failed (${context.sha.slice(0, 7)})`,
+            body: `Scheduled adversarial workflow failed in \`weekly_fuzz_soak\`.\n\nRun URL: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+          });
+
+  weekly_aarch64:
+    name: Weekly AArch64 Cross Compile & Test (B2.2)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Install Rust stable toolchain with aarch64 target
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+        targets: aarch64-unknown-linux-gnu
+
+    - name: Clippy check on aarch64-unknown-linux-gnu
+      run: |
+        RUSTFLAGS="" cargo clippy --locked --target aarch64-unknown-linux-gnu \
+          --no-default-features --features simd,mmap,serde,lz4,async,ffi,avx512 --lib -- -D warnings
+
+    - name: Install cross and run aarch64 unit tests
+      run: |
+        command -v cross >/dev/null 2>&1 || cargo install cross --git https://github.com/cross-rs/cross
+        cross test --target aarch64-unknown-linux-gnu --all-features --lib
+
+    - name: Open issue on scheduled failure
+      if: failure() && github.event_name == 'schedule'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `[B2.2] Weekly AArch64 job failed (${context.sha.slice(0, 7)})`,
+            body: `Scheduled adversarial workflow failed in \`weekly_aarch64\`.\n\nRun URL: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+          });

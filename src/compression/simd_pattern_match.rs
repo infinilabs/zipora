@@ -43,6 +43,7 @@ use crate::compression::dict_zip::compression_types::{CompressionType, Match};
 use crate::compression::dict_zip::matcher::{MatcherConfig, PatternMatcher};
 use crate::error::Result;
 use crate::memory::simd_ops::{SimdMemOps, get_global_simd_ops};
+#[cfg(target_arch = "x86_64")]
 use crate::string::{SimdStringSearch, get_global_simd_search};
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 
@@ -368,6 +369,7 @@ pub struct SimdPatternMatcher {
     /// SIMD memory operations instance
     simd_ops: &'static SimdMemOps,
     /// SIMD string search instance
+    #[cfg(target_arch = "x86_64")]
     simd_search: &'static SimdStringSearch,
     /// Reference to suffix array for fallback
     suffix_array: Option<Arc<SuffixArray>>,
@@ -391,6 +393,7 @@ impl SimdPatternMatcher {
         let cpu_features = get_cpu_features();
         let simd_tier = Self::select_optimal_tier(&config, cpu_features);
         let simd_ops = get_global_simd_ops();
+        #[cfg(target_arch = "x86_64")]
         let simd_search = get_global_simd_search();
 
         Self {
@@ -398,6 +401,7 @@ impl SimdPatternMatcher {
             cpu_features,
             simd_tier,
             simd_ops,
+            #[cfg(target_arch = "x86_64")]
             simd_search,
             suffix_array: None,
             dictionary_text: None,

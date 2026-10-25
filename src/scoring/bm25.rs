@@ -355,16 +355,21 @@ pub fn prefetch_fieldnorm(fieldnorm_bytes: &[u8], doc_id: u32) {
             }
         }
 
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", not(miri)))]
         {
-            // SAFETY: inline asm performs read-only prefetch, bounds checked above, no memory modification
+            // SAFETY: `prfm pldl1keep` is a non-faulting read-only cache prefetch hint
+            // with no memory modification or side effects.
             unsafe {
-                std::arch::aarch64::_prefetch(
-                    fieldnorm_bytes.as_ptr().add(idx) as *const i8,
-                    std::arch::aarch64::_PREFETCH_READ,
-                    std::arch::aarch64::_PREFETCH_LOCALITY3,
+                std::arch::asm!(
+                    "prfm pldl1keep, [{ptr}]",
+                    ptr = in(reg) fieldnorm_bytes.as_ptr().add(idx),
+                    options(nostack, readonly, preserves_flags)
                 );
             }
+        }
+        #[cfg(all(target_arch = "aarch64", miri))]
+        {
+            let _ = (fieldnorm_bytes, idx);
         }
     }
 }
@@ -900,4 +905,3 @@ mod tests {
         );
     }
 }
-

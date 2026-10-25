@@ -5,6 +5,7 @@
 //! performance monitoring. Inspired by state-of-the-art research in cache-conscious data structures.
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
+#[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{_MM_HINT_NTA, _MM_HINT_T0, _MM_HINT_T1, _MM_HINT_T2, _mm_prefetch};
 use std::marker::PhantomData;
 use std::mem::{align_of, size_of};
@@ -144,6 +145,10 @@ impl Prefetcher {
                 PrefetchHint::L3Only => _mm_prefetch(ptr as *const i8, _MM_HINT_T2),
                 PrefetchHint::NonTemporal => _mm_prefetch(ptr as *const i8, _MM_HINT_NTA),
             }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let _ = (ptr, hint);
         }
     }
 

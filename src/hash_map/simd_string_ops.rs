@@ -8,6 +8,7 @@
 
 use crate::memory::simd_ops::fast_compare;
 use crate::system::cpu_features::CpuFeatures;
+#[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
 /// SIMD-accelerated string operations for hash maps
@@ -95,17 +96,19 @@ impl SimdStringOps {
         // Use size threshold of 16 bytes for SIMD activation to match core SIMD ops
         if bytes1.len() >= 16 {
             match self.impl_tier {
-                #[cfg(feature = "avx512")]
+                #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
                 SimdTier::Avx512 if bytes1.len() >= 64 => {
                     // SAFETY: AVX-512 support verified by tier selection, length >= 64 checked,
                     // equal lengths checked at the top of this function
                     unsafe { self.avx512_string_compare(bytes1, bytes2, cached_prefix) }
                 }
+                #[cfg(target_arch = "x86_64")]
                 SimdTier::Avx2 if bytes1.len() >= 32 => {
                     // SAFETY: AVX2 support verified by tier selection, length >= 32 checked,
                     // equal lengths checked at the top of this function
                     unsafe { self.avx2_string_compare(bytes1, bytes2, cached_prefix) }
                 }
+                #[cfg(target_arch = "x86_64")]
                 SimdTier::Sse42 if bytes1.len() >= 16 => {
                     // SAFETY: SSE4.2 support verified by tier selection, length >= 16 checked,
                     // equal lengths checked at the top of this function
@@ -133,15 +136,17 @@ impl SimdStringOps {
 
         // Use SIMD implementations based on tier and size thresholds
         match self.impl_tier {
-            #[cfg(feature = "avx512")]
+            #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
             SimdTier::Avx512 if bytes.len() >= 64 => {
                 // SAFETY: AVX-512 support verified by tier selection, length >= 64 checked
                 unsafe { self.avx512_string_hash(bytes, base_hash) }
             }
+            #[cfg(target_arch = "x86_64")]
             SimdTier::Avx2 if bytes.len() >= 32 => {
                 // SAFETY: AVX2 support verified by tier selection, length >= 32 checked
                 unsafe { self.avx2_string_hash(bytes, base_hash) }
             }
+            #[cfg(target_arch = "x86_64")]
             SimdTier::Sse42 if bytes.len() >= 16 => {
                 // SAFETY: SSE4.2 support verified by tier selection, length >= 16 checked
                 unsafe { self.sse42_string_hash(bytes, base_hash) }
@@ -193,6 +198,7 @@ impl SimdStringOps {
     /// # Safety
     /// The CPU must support `avx2`, and `bytes1.len() == bytes2.len()`: the
     /// chunk count comes from `bytes1` and both slices are loaded with it.
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_string_compare(
         &self,
@@ -232,6 +238,7 @@ impl SimdStringOps {
     ///
     /// # Safety
     /// The CPU must support `avx2`.
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_string_hash(&self, bytes: &[u8], mut hash: u64) -> u64 {
         let len = bytes.len();
@@ -271,6 +278,7 @@ impl SimdStringOps {
     /// # Safety
     /// The CPU must support `sse4.2`, and `bytes1.len() == bytes2.len()`: the
     /// chunk count comes from `bytes1` and both slices are loaded with it.
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_string_compare(
         &self,
@@ -310,6 +318,7 @@ impl SimdStringOps {
     ///
     /// # Safety
     /// The CPU must support `sse4.2`.
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_string_hash(&self, bytes: &[u8], mut hash: u64) -> u64 {
         let len = bytes.len();
@@ -349,7 +358,7 @@ impl SimdStringOps {
     /// The CPU must support `avx512f` and `avx512bw`, and
     /// `bytes1.len() == bytes2.len()`: the chunk count comes from `bytes1`
     /// and both slices are loaded with it.
-    #[cfg(feature = "avx512")]
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn avx512_string_compare(
         &self,
@@ -388,7 +397,7 @@ impl SimdStringOps {
     ///
     /// # Safety
     /// The CPU must support `avx512f`.
-    #[cfg(feature = "avx512")]
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     #[target_feature(enable = "avx512f")]
     unsafe fn avx512_string_hash(&self, bytes: &[u8], mut hash: u64) -> u64 {
         let len = bytes.len();
@@ -693,10 +702,10 @@ mod tests {
 
         // Every string length (especially lengths with >=8-byte tails past 16/32/64-byte SIMD chunks,
         // such as 24, 27, 40, 45, 72, 95 bytes) must produce the exact same hash across tiers.
-        for len in [0usize, 1, 7, 8, 9, 15, 16, 23, 24, 27, 31, 32, 40, 45, 63, 64, 72, 95, 130] {
-            let s: String = (0..len)
-                .map(|i| (b'a' + (i % 26) as u8) as char)
-                .collect();
+        for len in [
+            0usize, 1, 7, 8, 9, 15, 16, 23, 24, 27, 31, 32, 40, 45, 63, 64, 72, 95, 130,
+        ] {
+            let s: String = (0..len).map(|i| (b'a' + (i % 26) as u8) as char).collect();
             let expected = scalar_ops.fast_string_hash(&s, 0x1234_5678);
             let actual = active_ops.fast_string_hash(&s, 0x1234_5678);
             assert_eq!(

@@ -36,8 +36,14 @@ impl Default for SimdConfig {
             use_avx512: is_x86_feature_detected!("avx512f"),
             #[cfg(not(all(target_arch = "x86_64", feature = "avx512")))]
             use_avx512: false,
+            #[cfg(target_arch = "x86_64")]
             use_avx2: is_x86_feature_detected!("avx2"),
+            #[cfg(not(target_arch = "x86_64"))]
+            use_avx2: false,
+            #[cfg(target_arch = "x86_64")]
             use_bmi2: is_x86_feature_detected!("bmi2"),
+            #[cfg(not(target_arch = "x86_64"))]
+            use_bmi2: false,
             min_vector_size: 8,
             prefetch_distance: 2,
         }
