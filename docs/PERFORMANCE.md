@@ -1,108 +1,60 @@
 # Verified Performance
 
-> **Test Machine**: AMD EPYC 7B13 (Zen 3), 64 vCPUs, 117 GB RAM, AVX2/BMI2/POPCNT, rustc 1.91.1, Linux 6.17.
-> Results vary across hardware — Intel may differ on BMI2 (native vs microcode), ARM lacks x86 SIMD paths.
-> Run `cargo bench` to reproduce on your own hardware.
+Every performance and space figure in this document is generated directly from the committed benchmark baselines under [`benches/baselines/bindiego/`](../benches/baselines/bindiego/) by [`scripts/perf_table.py`](../scripts/perf_table.py) and verified in CI / `make sanity` (`python3 scripts/perf_table.py --check`).
 
-## Trie / Term Dictionary (DoubleArrayTrie)
+For full per-benchmark methodology, dataset specifications, hardware pinning, THP sensitivity analysis, and row-level provenance (`measured_at_commit` and `binary_sha256`), see:
+- **[Stage 14 Core Benchmarks & E1.1 Systemic BM25 Search](review/e1.md)** (`benches/core_bench.rs`, `benches/e2e_search_bench.rs`)
+- **[Stage 15 Competitor Benchmark Matrix & E3 Standing Table](review/e2_e3.md)** (`benches/competitor_bench.rs`)
+- **[Stage 16 Optimization Ledger](review/e4.md)**
 
-| Operation (5000 terms) | Time | Per-op |
-|------------------------|------|--------|
-| Lookup hit | 103 µs | 20.6 ns/lookup |
-| Lookup miss | 19 µs | 3.8 ns/lookup |
-| Prefix search (5 queries) | 14 µs | 2.8 µs/query |
-| Insert (incremental) | 967 µs | 193 ns/term |
+## Reproducing Benchmarks
 
-XOR transitions, terminal bit in NInfo, unsafe `get_unchecked` — 3 ops, 1 branch per transition.
-Supports arbitrary binary keys including `\x00` bytes.
+```bash
+# Run core benchmark suite and verify against benches/baselines/<host>/core_bench.json
+make bench_core
 
-## Trie (CSPP)
+# Run competitor benchmark suite and verify against benches/baselines/<host>/competitor_bench.json
+make bench_competitors
 
-| Metric | Value |
-|--------|-------|
-| CsppTrie insert | 6.9M ops/s |
-| CsppTrie lookup | 8.0M ops/s |
-| Memory | 10.7 bytes/key |
-| ConcurrentCsppTrie (16 threads) | 10+ M keys/s |
+# Run end-to-end BM25 search benchmark against tantivy
+make bench_e2e_search
 
-## BitVector (scatter + popcount)
+# Verify that README.md, README_cn.md, docs/PERFORMANCE.md, CLAUDE.md, and GEMINI.md match baselines
+python3 scripts/perf_table.py --check
+```
 
-| Operation (1M bits) | Zipora | Scalar Vec\<u64\> | Ratio |
-|---------------------|--------|-------------------|-------|
-| Scatter + popcount (20×5K docs) | **1.08 ms** | 1.35 ms | **0.80x (faster)** |
-| Allocation (`with_size(1M, false)`) | **155 µs** | 247 µs | **0.63x (faster)** |
-| Popcount only (50% density) | 9.25 µs | 9.26 µs | Tied |
+## Baseline Summary
 
-`alloc_zeroed` (calloc), zero-copy `from_blocks`, SIMD `popcount_slice` (AVX-512 / POPCNT / NEON).
+<!-- BEGIN GENERATED PERF TABLE (scripts/perf_table.py) -->
+Measured on reference host `bindiego` (AMD EPYC 7B13, 64 logical cores, pinned core 23, `THP-off` via `PR_SET_THP_DISABLE`, `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32`).
+Across all **197** head-to-head comparisons in [`docs/review/e2_e3.md`](docs/review/e2_e3.md) and [`docs/review/e4.md`](docs/review/e4.md), Zipora is **`LEADING` on 68/197** (primary within `-3.0%` and secondary space `<= +10.0%`) and **faster or tied on primary on 105/197 (53.3%)**.
 
-## popcount_slice (SIMD population count)
+### Head-to-Head Competitor Highlights (`benches/baselines/bindiego/competitor_bench.json` & `e2e_search.json`)
 
-| Slice size | Throughput | Rate |
-|------------|-----------|------|
-| 16 words (128B) | 4.4 ns | 3.7 Gwords/s |
-| 781 words (6KB, engine union buffer) | 150 ns | 5.2 Gwords/s |
-| 10K words (80KB) | 1.9 µs | 5.4 Gwords/s |
+| Family | Zipora Operation | Zipora (`min`) | Space / Secondary | Competitor | Competitor (`min`) | Speedup |
+|---|---|---:|---:|---|---:|---:|
+| Rank/Select (`1 Gbit`) | `RankSelectInterleaved256::rank1` | `35.03 ns/op` | `131.25% of raw` | `sucds::Rank9Sel` | `43.33 ns/op` | **`1.24x`** |
+| Rank/Select (`1 Gbit`) | `RankSelectSE256::select1` | `145.77 ns/op` | `137.50% of raw` | `sucds::Rank9Sel` | `206.40 ns/op` | **`1.42x`** |
+| Elias-Fano (`100k`) | `EliasFano::next_geq` (uniform) | `22.14 ns/op` | `8.62 bits/elem` | `sucds::EliasFano` | `47.53 ns/op` | **`2.15x`** |
+| Elias-Fano (`100k`) | `OptimalPartitionedEliasFano::next_geq` | `26.21 ns/op` | `5.42 bits/elem` | `vers-vecs::EliasFanoVec` | `61.26 ns/op` | **`2.34x`** |
+| Elias-Fano (`100k`) | `ClusteredEliasFano::get` (dense) | `3.39 ns/op` | `2.51 bits/elem` | `sucds::EliasFano` | `8.05 ns/op` | **`2.37x`** |
+| Tries (`1M` keys) | `DoubleArrayTrie::contains` (shared prefix) | `254.87 ns/op` | `25.60 B/key` | `qp-trie::Trie` | `533.08 ns/op` | **`2.09x`** |
+| Tries (`1M` keys) | `CsppTrie::contains` (shared prefix) | `255.50 ns/op` | `9.60 B/key` | `radix_trie::Trie` | `977.94 ns/op` | **`3.83x`** |
+| Hash Maps (`1M` keys) | `ZiporaHashMap<[u8; 16], u64>::get` | `87.13 ns/op` | `52.43 B/entry` | `hashbrown::HashMap` (`ahash`) | `184.62 ns/op` | **`2.12x`** |
+| Hash Maps (`1M` keys) | `ZiporaHashMap<u64, u64>::get` | `66.12 ns/op` | `35.65 B/entry` | `std::collections::HashMap` | `90.22 ns/op` | **`1.36x`** |
+| Entropy (`64 KiB`) | `HuffmanDecoder::decode` (O0) | `3.50 ns/byte` | `4.01 bits/B` | `huffman-compress` | `9.45 ns/byte` | **`2.70x`** |
+| Entropy (`64 KiB`) | `Rans64Decoder<ParallelX4>::decode` | `2.51 ns/byte` | `4.05 bits/B` | `constriction` ANS | `6.16 ns/byte` | **`2.46x`** |
+| Integer Codecs (`100k`) | `StreamVByte::encode_deltas` (SSSE3) | `0.49 ns/int` | `10.00 bits/int` | `stream-vbyte` SIMD | `1.28 ns/int` | **`2.62x`** |
+| Integer Codecs (`100k`) | `StreamVByte::decode_into` (SSSE3) | `0.19 ns/int` | `10.00 bits/int` | `stream-vbyte` SIMD | `0.25 ns/int` | **`1.36x`** |
+| Radix Sort (`10M`) | `RadixSort::sort_u32` (hybrid MSB+LSD) | `5.70 ns/elem` | `8.00 B/elem` | `voracious_radix_sort` | `10.10 ns/elem` | **`1.77x`** |
+| String Search (`64 KiB`) | `simd_strchr` (128B AVX2) | `644.45 ns/call` | `0 B aux` | `memchr::memchr` | `637.03 ns/call` | **`0.99x`** |
+| String Search (`64 KiB`) | `simd_strstr` (128B AVX2) | `649.06 ns/call` | `0 B aux` | `memchr::memmem` | `1957.34 ns/call` | **`3.02x`** |
+| Systemic Search (`100k` docs) | `Zipora BMW` top-10 (`p50 = 21.31 us`) | `19,677.1 QPS` | `1.219 B/posting` (postings) | `tantivy` v0.26.2 (`p50 = 53.69 us`) | `12,176.3 QPS` | **`1.62x`** (`2.31x` vs uncompressed) |
 
-Multi-tier dispatch: AVX-512 VPOPCNTDQ → hardware POPCNT → NEON → scalar.
-Used internally by `BitVector::count_ones()` and available as `zipora::algorithms::popcount_slice`.
+### Additional Core Suite Baselines (`benches/baselines/bindiego/core_bench.json`)
 
-## Succinct Data Structures
-
-| Operation | Zipora | Baseline | Speedup |
-|-----------|--------|----------|---------|
-| Rank1 query (100K bits) | 192 ns | — | ~5.2 Gops/s |
-| Select1 query (100K bits) | 5.4 ms / 100K queries | — | ~18.5 Mops/s |
-| Bulk rank (SIMD, 50K) | 8.4 µs | 84.1 µs (individual) | **10x** |
-| Bulk bitwise ops (SIMD, 50K) | 3.1 µs | 128.4 µs (individual) | **41x** |
-| Range set (SIMD, 50K) | 3.2 µs | 17.9 µs (individual) | **5.6x** |
-
-## Containers vs std
-
-| Operation | Zipora | std | Ratio |
-|-----------|--------|-----|-------|
-| ValVec32 push (100K) | 119 µs | 120 µs | 1.0x |
-| ValVec32 random access (100K) | 706 ns | 729 ns | **0.97x** |
-| ValVec32 iteration (10K) | 778 ns | 783 ns | 1.0x |
-| ValVec32 bulk extend (100K) | 21.8 µs | 28.7 µs | **0.76x** |
-| SmallMap insert+lookup (8 keys) | 444 ns | 805 ns (HashMap) | **1.8x** |
-| SmallMap lookup-intensive | 36.9 µs | 141.7 µs (HashMap) | **3.8x** |
-| CircularQueue push+pop (100K) | 326 µs | 381 µs (VecDeque) | **0.86x** |
-| FixedStr16Vec push (100K) | 755 µs | 5,906 µs (Vec\<String\>) | **7.8x** |
-| SortableStrVec sort (5K) | 390 µs | 448 µs (Vec\<String\>) | **1.15x** |
-
-## Entropy Coding (65KB input)
-
-| Algorithm | Entropy 0.5 | Entropy 2.0 | Entropy 6.0 |
-|-----------|-------------|-------------|-------------|
-| Huffman O0 | 1,124 µs | 1,235 µs | 1,720 µs |
-| Huffman O1 (x1 stream) | 188 µs | 173 µs | 188 µs |
-| rANS64 | 405 µs | 351 µs | 426 µs |
-
-## StreamVByte SIMD Decoding (100K integers)
-
-| Implementation | Time | Per-integer | Speedup |
-|----------------|------|-------------|---------|
-| Scalar reference | 2,130 µs | 21.3 ns | 1.0x |
-| **SSSE3 Shuffle Table** | **246 µs** | **2.46 ns** | **8.7x faster** |
-
-Lemire's SSSE3 shuffle-table algorithm (`pshufb`) expanding four 1–4 byte integers per cycle via a 256-entry precomputed lookup table, with scalar remainder fallback.
-
-## Cache (LRU vs HashMap)
-
-| Operation | LruMap | HashMap | Note |
-|-----------|--------|---------|------|
-| Hot get (cap=64, 10K ops) | 5.7 µs | 152 µs | **26x** faster (hot-set fits in cache) |
-| Hot get (cap=1024, 10K ops) | 94.6 µs | 152 µs | **1.6x** faster |
-| Insert (cap=64, 10K ops) | 1,897 µs | 1,177 µs | 0.62x (eviction overhead) |
-
-## BM25 Scoring (FieldnormEncoder + Bm25BatchScorer)
-
-| Operation (1M docs) | UintVecMin0 + float | FieldnormEncoder | Improvement |
-|---------------------|---------------------|------------------|-------------|
-| Memory | 1.13 MB | **1.00 MB** | **2.0x smaller** |
-| Random access | 190 µs | **92 µs** | **2.06x faster** |
-| BM25 pre-compute (scalar) | 5.13 ms | **2.78 ms** | **1.85x faster** |
-| BM25 pre-compute (AVX2 SIMD) | 5.13 ms | **381 µs** | **13.5x faster** |
-| Phrase query scoring (1K random) | 3.63 µs | **1.22 µs** | **2.98x faster** |
-
-Lucene SmallFloat encoding (1 byte/doc), 256-entry norm table (zero per-posting division), AVX2 batch scorer (8 scores/iteration).
+- **BM25 & Fieldnorm Scoring**: `Bm25BatchScorer` AVX2 batch `0.4726 ns/doc`, `FieldnormEncoder::build_score_table` `0.1734 ns/cell` (`1.0 B/doc` fieldnorms).
+- **Memory Pools**: `LockFreeMemoryPool` 64B alloc+free `9.111 ns/op` (1T) / `9.120 ns/op` (4T).
+- **Rank9 (`1 Gbit`)**: `Rank9::rank1` `45.01 ns/op` at `25.00%` space overhead.
+- **Suffix Array (`10M` bytes, SA-IS)**: construction `81.68 ns/byte` (`9.05 B/byte`), `search_range` query `1446.15 ns/op`.
+<!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->

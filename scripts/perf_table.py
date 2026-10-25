@@ -285,22 +285,68 @@ def replace_between_markers(content: str, generated: str) -> str:
     raise ValueError(f"Markers {BEGIN_MARKER} .. {END_MARKER} not found")
 
 
+def strip_generated_perf_section(text: str) -> str:
+    if BEGIN_MARKER in text and END_MARKER in text:
+        start = text.index(BEGIN_MARKER)
+        end = text.index(END_MARKER) + len(END_MARKER)
+        return text[:start] + text[end:]
+    return text
+
+
+def collect_public_type_names() -> set[str]:
+    pub_types: set[str] = set()
+    decl_re = re.compile(r"\bpub\s+(?:struct|enum|trait|type)\s+([A-Z][A-Za-z0-9_]*)\b")
+    for rs_path in (ROOT / "src").rglob("*.rs"):
+        content = rs_path.read_text(encoding="utf-8")
+        for m in decl_re.finditer(content):
+            pub_types.add(m.group(1))
+    return pub_types
+
+
+def audit_prose_numeric_claims(
+    doc_label: str,
+    prose_text: str,
+    allowed_claims: set[str],
+    errors: list[str],
+) -> None:
+    metric_pattern = re.compile(
+        r"\b(\d+(?:\.\d+)?(?:[–-]\d+(?:\.\d+)?)?\s*"
+        r"(?:B/entry|B/key|bytes/key|字节/键|B/state|B/doc|B/posting|B/elem|B/byte|"
+        r"bits/elem|bits/B|bits/int|ns/op|ns/key|ns/lookup|ns/term|ns/doc|ns/cell|"
+        r"ns/byte|ns/int|ns/elem|ns/call|us/query|µs/query|QPS|ops/s|Gops/s|Mops/s|"
+        r"Gwords/s|%|x\s+faster|x\s+smaller|倍))"
+    )
+    for m in metric_pattern.finditer(prose_text):
+        token = re.sub(r"\s+", " ", m.group(1).strip())
+        if token not in allowed_claims:
+            errors.append(
+                f"{doc_label} contains unverified or drifted numeric claim outside generated table: `{token}` "
+                f"(allowed baseline/E6 claims: {sorted(allowed_claims)})"
+            )
+
+
 def audit_readme_claims(
     readme_text: str,
     core: dict[str, Any],
     comp: dict[str, Any],
     e2e: dict[str, Any],
 ) -> list[str]:
-    """Audit every numeric and capability claim in README.md against tests and baselines (Rule F2)."""
+    """Audit every numeric and capability claim in README.md, README_cn.md, and docs/PERFORMANCE.md against tests and baselines (Rule F2 / S52-R5)."""
     errors: list[str] = []
 
-    # 1. Generated perf table must be present and up-to-date in README.md (and CLAUDE.md/GEMINI.md if present)
+    # 1. Generated perf table must be present and up-to-date in all tracked docs
     expected_perf = generate_perf_section(core, comp, e2e)
-    for doc_name in ("README.md", "CLAUDE.md", "GEMINI.md"):
+    for doc_name in (
+        "README.md",
+        "README_cn.md",
+        "docs/PERFORMANCE.md",
+        "CLAUDE.md",
+        "GEMINI.md",
+    ):
         doc_path = ROOT / doc_name
         if not doc_path.exists():
             continue
-        doc_text = doc_path.read_text(encoding="utf-8")
+        doc_text = readme_text if doc_name == "README.md" else doc_path.read_text(encoding="utf-8")
         if BEGIN_MARKER not in doc_text or END_MARKER not in doc_text:
             errors.append(f"{doc_name} is missing BEGIN/END GENERATED PERF TABLE markers")
         else:
@@ -335,26 +381,77 @@ def audit_readme_claims(
             errors.append(
                 f"README.md unsafe count does not match unsafe_audit.py ({formatted_total})"
             )
+        readme_cn_path = ROOT / "README_cn.md"
+        if readme_cn_path.exists():
+            readme_cn_text = readme_cn_path.read_text(encoding="utf-8")
+            if formatted_total not in readme_cn_text:
+                errors.append(
+                    f"README_cn.md unsafe count does not match unsafe_audit.py ({formatted_total})"
+                )
         if "1,122" in readme_text:
             errors.append("README.md still contains stale unsafe block count 1,122")
 
-    # 4. Check CsppTrie bytes/key, DoubleArrayTrie B/state, FieldnormEncoder B/doc, and ZiporaHashMap B/entry
-    cspp_bpk = core["space_metrics"]["tries/cspp_shared_prefix_bytes_per_key"]
-    if f"{cspp_bpk:.2f} B/key" not in readme_text:
-        errors.append(
-            f"README.md must cite CsppTrie {cspp_bpk:.2f} B/key from core_bench.json"
-        )
-    if "10.7 bytes/key" in readme_text or "20.6 ns/lookup" in readme_text:
-        errors.append("README.md still contains stale pre-Phase-E performance claims")
+    # 4. Compare prose numeric claims directly against baseline JSON values + E6 test figures
+    hashmap_bpe = float(comp["space_metrics"]["hash_maps/zipora_u64_bytes_per_entry"])
+    cspp_bpk = float(core["space_metrics"]["tries/cspp_shared_prefix_bytes_per_key"])
+    rank9_ovh = float(core["space_metrics"]["rank_select/rank9_overhead_pct"])
+    il256_ovh = float(comp["space_metrics"]["rank_select/interleaved256_overhead_pct"])
 
     e6_test = (ROOT / "tests" / "memory_footprint_e6.rs").read_text(encoding="utf-8")
-    for required_claim in ("8.0 B/state", "12.0 B/state", "1.0 B/doc", "25.00%", "31.25%"):
-        if required_claim not in readme_text:
-            errors.append(f"README.md missing E6-verified claim: {required_claim}")
-    if "test_e6_" not in e6_test:
-        errors.append("tests/memory_footprint_e6.rs must contain test_e6_ footprint assertions")
+    if "dat.total_states() * 12" not in e6_test or "(12.0..=16.0).contains(&map_bytes_per_state)" not in e6_test:
+        errors.append("tests/memory_footprint_e6.rs must assert 12 B/state for DoubleArrayTrie and 12.0..=16.0 B/state for DoubleArrayTrieMap<u32>")
 
-    # 5. Check named types in README.md Key Features exist in src/
+    expected_claims = {
+        f"{hashmap_bpe:.2f} B/entry",
+        f"{cspp_bpk:.2f} B/key",
+        f"{rank9_ovh:.2f}%",
+        f"{il256_ovh:.2f}%",
+        "12.0 B/state",
+        "12.0–16.0 B/state",
+        "1.0 B/doc",
+        "100%",
+    }
+
+    prose_readme = strip_generated_perf_section(readme_text)
+    for req in (
+        f"{hashmap_bpe:.2f} B/entry",
+        f"{cspp_bpk:.2f} B/key",
+        f"{rank9_ovh:.2f}%",
+        f"{il256_ovh:.2f}%",
+        "12.0 B/state",
+        "12.0–16.0 B/state",
+        "1.0 B/doc",
+    ):
+        if req not in prose_readme:
+            errors.append(f"README.md missing baseline/E6-verified claim: {req}")
+
+    audit_prose_numeric_claims("README.md", prose_readme, expected_claims, errors)
+    for extra_doc in ("README_cn.md", "docs/PERFORMANCE.md"):
+        p = ROOT / extra_doc
+        if p.exists():
+            audit_prose_numeric_claims(
+                extra_doc,
+                strip_generated_perf_section(p.read_text(encoding="utf-8")),
+                expected_claims,
+                errors,
+            )
+
+    # 5. Check every backticked PascalCase type in README.md Key Features exists as a pub type in src/
+    pub_types = collect_public_type_names()
+    non_type_identifiers = {"SmallFloat", "SwissTable"}
+    if "## Key Features" in prose_readme and "## Quick Start" in prose_readme:
+        key_features_block = prose_readme[
+            prose_readme.index("## Key Features") : prose_readme.index("## Quick Start")
+        ]
+        for m_type in re.finditer(r"`([A-Z][A-Za-z0-9_]+)(?:<[^`]+>)?`", key_features_block):
+            type_name = m_type.group(1)
+            if type_name in non_type_identifiers:
+                continue
+            if type_name not in pub_types:
+                errors.append(
+                    f"README.md Key Features references non-existent public type `{type_name}`"
+                )
+
     blob_mod = (ROOT / "src" / "blob_store" / "mod.rs").read_text(encoding="utf-8")
     for store_name in (
         "MemoryBlobStore",
@@ -383,12 +480,12 @@ def main() -> int:
     parser.add_argument(
         "--update",
         action="store_true",
-        help="Update Verified Performance section in README.md (and CLAUDE.md/GEMINI.md if present)",
+        help="Update Verified Performance section in README.md, README_cn.md, docs/PERFORMANCE.md, CLAUDE.md, and GEMINI.md",
     )
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Verify README.md Verified Performance table and F2 claims match baselines/tests",
+        help="Verify README.md, README_cn.md, and docs/PERFORMANCE.md performance tables and F2 claims match baselines/tests",
     )
     args = parser.parse_args()
 
@@ -396,7 +493,13 @@ def main() -> int:
     perf_section = generate_perf_section(core, comp, e2e)
 
     if args.update:
-        for fname in ("README.md", "CLAUDE.md", "GEMINI.md"):
+        for fname in (
+            "README.md",
+            "README_cn.md",
+            "docs/PERFORMANCE.md",
+            "CLAUDE.md",
+            "GEMINI.md",
+        ):
             fpath = ROOT / fname
             if fpath.exists():
                 text = fpath.read_text(encoding="utf-8")

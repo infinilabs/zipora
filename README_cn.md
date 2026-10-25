@@ -11,28 +11,28 @@
 ## 核心特性
 
 - **高性能**：零拷贝操作、SIMD 优化（AVX2、AVX-512）、缓存友好的内存布局、Block-Max WAND SIMD 游标原语
-- **内存安全**：100% 生产环境 unsafe 代码块文档覆盖率，全部 1,122 个生产 unsafe 代码块均附有 `// SAFETY:` 注释
-- **安全内存管理**：线程安全的生产级内存池，支持 RAII
-- **Blob 存储**：8 种专用存储引擎，支持 Trie 索引和压缩
-- **简洁数据结构**：12 种 rank/select 变体、Rank9（Vigna 2008）、Elias-Fano / Partitioned / DP-Optimal Partitioned Elias-Fano（支持游标 `advance_to_index`）、HybridPostingList（自动选择编码策略）、AMD 安全 PDEP（`has_fast_bmi2` 检测）
-- **BM25 评分**：FieldnormEncoder（Lucene SmallFloat，1 字节字段长度） + Bm25BatchScorer（AVX2 SIMD 批量评分、预取）
-- **专用容器**：13+ 种容器（VecTrbSet/Map、MinimalSso、SortedUintVec、LruMap 等）
-- **哈希表**：黄金比例优化、字符串优化、缓存优化的多种实现
-- **高级 Trie**：双数组（DoubleArrayTrie，XOR 转移）、LOUDS、Critical-Bit（BMI2）、Patricia Trie + rank/select、NestTrieDawg、惰性前缀/模糊迭代器、CsppTrie（压缩稀疏并行 Patricia，10 种节点编码，10.7 字节/键）、ConcurrentCsppTrie（多写多读，基于 epoch 的回收，线程本地分配）
-- **压缩算法**：PA-Zip、Huffman O0/O1/O2、FSE、rANS、ZSTD 集成
-- **C FFI 支持**：完整的 C API（`--features ffi`）
+- **内存安全**：100% 生产环境 unsafe 代码块文档覆盖率，全部 1,427 个生产 unsafe 位置均附有 `// SAFETY:` 或 `# Safety` 注释（`scripts/unsafe_audit.py`）
+- **安全内存管理**：线程安全的生产级内存池（`SecureMemoryPool`、`LockFreeMemoryPool`、`FixedCapacityPool`、`AdaptiveFiveLevelPool`、`BumpArena`），支持 RAII（`tests/memory_pool_contract.rs`）
+- **Blob 存储**：9 种专用存储引擎（`MemoryBlobStore`、`PlainBlobStore`、`SimpleZipBlobStore`、`MixedLenBlobStore`、`ZipOffsetBlobStore`、`NestLoudsTrieBlobStore`、`DictZipBlobStore`、`ZstdBlobStore`、`Lz4BlobStore`），支持 Trie 索引和压缩（`tests/format_spec_golden_tests.rs`）
+- **简洁数据结构**：`Rank9`（Vigna 2008，`25.00%` 额外开销）、`RankSelectInterleaved256`（仅 rank `25.00%` / 含 select 缓存 `31.25%`）、`RankSelectSE256`、Elias-Fano / Partitioned / DP-Optimal Partitioned / Clustered Elias-Fano（支持游标 `advance_to_index`）、`HybridPostingList`（自动选择编码策略）、AMD 安全 PDEP（`has_fast_bmi2` 检测）（`tests/memory_footprint_e6.rs`）
+- **BM25 评分**：`FieldnormEncoder`（Lucene SmallFloat，`1.0 B/doc` 字段长度） + `Bm25BatchScorer`（AVX2/AVX-512 SIMD 批量评分、预取）（`tests/memory_footprint_e6.rs`、`benches/core_bench.rs`）
+- **专用容器**：13+ 种容器（`FastVec`、`ValVec32`、`IntVec`、`UintVecMin0`、`ZipIntVec`、`FixedLenStrVec`、`SortableStrVec`、`ZoSortedStrVec`、`VecTrbSet`/`VecTrbMap`、`MinimalSso`、`LruMap`、`ConcurrentLruMap`、`FixedCircularQueue`）
+- **哈希表**：SwissTable 16 路 SSE2 组探测 `ZiporaHashMap`（`1M` `u64` 下 `35.65 B/entry`）、`GoldHashMap`（`benches/competitor_bench.rs`）
+- **高级 Trie**：双数组（`DoubleArrayTrie`，`12.0 B/state`；`DoubleArrayTrieMap<u32>`，`12.0–16.0 B/state`）、LOUDS、Critical-Bit（BMI2）、Patricia Trie、惰性前缀/模糊迭代器、`CsppTrie`（压缩稀疏并行 Patricia，10 种节点编码，共享前缀键 `9.60 B/key`）、`ConcurrentCsppTrie`（多写多读，基于 epoch 的回收）（`tests/memory_footprint_e6.rs`）
+- **压缩与整数编码**：PA-Zip、Huffman O0/O1/O2、FSE、rANS（64 位 X1/X2/X4/X8）、`StreamVByte`（SSSE3）、`GroupVarint`（SSSE3）、ZSTD 与 LZ4 集成（`benches/competitor_bench.rs`）
+- **C FFI 支持**：完整的 C11/C++17 API（`--features ffi`，`tests/ffi_c_smoke.rs`）
 
 ## 快速开始
 
 ```toml
 [dependencies]
-zipora = "4.0.3"
+zipora = "4.2.0"
 
 # 启用 C FFI 绑定
-zipora = { version = "4.0.3", features = ["ffi"] }
+zipora = { version = "4.2.0", features = ["ffi"] }
 
 # AVX-512
-zipora = { version = "4.0.3", features = ["avx512"] }
+zipora = { version = "4.2.0", features = ["avx512"] }
 ```
 
 ### 基本用法
@@ -152,9 +152,41 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## 性能验证
 
-详见 **[性能基准测试](docs/PERFORMANCE.md)**，涵盖所有组件的详细结果（Trie、BitVector、位计数、rank/select、容器、熵编码、LRU 缓存、BM25 评分）。
+详见 **[Stage 14 核心基准测试](docs/review/e1.md)**、**[Stage 15 竞品对比矩阵](docs/review/e2_e3.md)**、**[Stage 16 优化台账](docs/review/e4.md)** 以及 **[性能基准测试](docs/PERFORMANCE.md)**。
 
-**亮点**：DoubleArrayTrie 20.6 ns/次查找，CsppTrie 690 万次插入/秒 + 800 万次查找/秒（10.7 字节/键），ConcurrentCsppTrie 1000 万+ 键/秒（16 线程），SIMD 位计数 5.2 Gwords/s，批量位运算快 41 倍，BM25 SIMD 快 13.5 倍，LRU 热读取快 26 倍。
+<!-- BEGIN GENERATED PERF TABLE (scripts/perf_table.py) -->
+Measured on reference host `bindiego` (AMD EPYC 7B13, 64 logical cores, pinned core 23, `THP-off` via `PR_SET_THP_DISABLE`, `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32`).
+Across all **197** head-to-head comparisons in [`docs/review/e2_e3.md`](docs/review/e2_e3.md) and [`docs/review/e4.md`](docs/review/e4.md), Zipora is **`LEADING` on 68/197** (primary within `-3.0%` and secondary space `<= +10.0%`) and **faster or tied on primary on 105/197 (53.3%)**.
+
+### Head-to-Head Competitor Highlights (`benches/baselines/bindiego/competitor_bench.json` & `e2e_search.json`)
+
+| Family | Zipora Operation | Zipora (`min`) | Space / Secondary | Competitor | Competitor (`min`) | Speedup |
+|---|---|---:|---:|---|---:|---:|
+| Rank/Select (`1 Gbit`) | `RankSelectInterleaved256::rank1` | `35.03 ns/op` | `131.25% of raw` | `sucds::Rank9Sel` | `43.33 ns/op` | **`1.24x`** |
+| Rank/Select (`1 Gbit`) | `RankSelectSE256::select1` | `145.77 ns/op` | `137.50% of raw` | `sucds::Rank9Sel` | `206.40 ns/op` | **`1.42x`** |
+| Elias-Fano (`100k`) | `EliasFano::next_geq` (uniform) | `22.14 ns/op` | `8.62 bits/elem` | `sucds::EliasFano` | `47.53 ns/op` | **`2.15x`** |
+| Elias-Fano (`100k`) | `OptimalPartitionedEliasFano::next_geq` | `26.21 ns/op` | `5.42 bits/elem` | `vers-vecs::EliasFanoVec` | `61.26 ns/op` | **`2.34x`** |
+| Elias-Fano (`100k`) | `ClusteredEliasFano::get` (dense) | `3.39 ns/op` | `2.51 bits/elem` | `sucds::EliasFano` | `8.05 ns/op` | **`2.37x`** |
+| Tries (`1M` keys) | `DoubleArrayTrie::contains` (shared prefix) | `254.87 ns/op` | `25.60 B/key` | `qp-trie::Trie` | `533.08 ns/op` | **`2.09x`** |
+| Tries (`1M` keys) | `CsppTrie::contains` (shared prefix) | `255.50 ns/op` | `9.60 B/key` | `radix_trie::Trie` | `977.94 ns/op` | **`3.83x`** |
+| Hash Maps (`1M` keys) | `ZiporaHashMap<[u8; 16], u64>::get` | `87.13 ns/op` | `52.43 B/entry` | `hashbrown::HashMap` (`ahash`) | `184.62 ns/op` | **`2.12x`** |
+| Hash Maps (`1M` keys) | `ZiporaHashMap<u64, u64>::get` | `66.12 ns/op` | `35.65 B/entry` | `std::collections::HashMap` | `90.22 ns/op` | **`1.36x`** |
+| Entropy (`64 KiB`) | `HuffmanDecoder::decode` (O0) | `3.50 ns/byte` | `4.01 bits/B` | `huffman-compress` | `9.45 ns/byte` | **`2.70x`** |
+| Entropy (`64 KiB`) | `Rans64Decoder<ParallelX4>::decode` | `2.51 ns/byte` | `4.05 bits/B` | `constriction` ANS | `6.16 ns/byte` | **`2.46x`** |
+| Integer Codecs (`100k`) | `StreamVByte::encode_deltas` (SSSE3) | `0.49 ns/int` | `10.00 bits/int` | `stream-vbyte` SIMD | `1.28 ns/int` | **`2.62x`** |
+| Integer Codecs (`100k`) | `StreamVByte::decode_into` (SSSE3) | `0.19 ns/int` | `10.00 bits/int` | `stream-vbyte` SIMD | `0.25 ns/int` | **`1.36x`** |
+| Radix Sort (`10M`) | `RadixSort::sort_u32` (hybrid MSB+LSD) | `5.70 ns/elem` | `8.00 B/elem` | `voracious_radix_sort` | `10.10 ns/elem` | **`1.77x`** |
+| String Search (`64 KiB`) | `simd_strchr` (128B AVX2) | `644.45 ns/call` | `0 B aux` | `memchr::memchr` | `637.03 ns/call` | **`0.99x`** |
+| String Search (`64 KiB`) | `simd_strstr` (128B AVX2) | `649.06 ns/call` | `0 B aux` | `memchr::memmem` | `1957.34 ns/call` | **`3.02x`** |
+| Systemic Search (`100k` docs) | `Zipora BMW` top-10 (`p50 = 21.31 us`) | `19,677.1 QPS` | `1.219 B/posting` (postings) | `tantivy` v0.26.2 (`p50 = 53.69 us`) | `12,176.3 QPS` | **`1.62x`** (`2.31x` vs uncompressed) |
+
+### Additional Core Suite Baselines (`benches/baselines/bindiego/core_bench.json`)
+
+- **BM25 & Fieldnorm Scoring**: `Bm25BatchScorer` AVX2 batch `0.4726 ns/doc`, `FieldnormEncoder::build_score_table` `0.1734 ns/cell` (`1.0 B/doc` fieldnorms).
+- **Memory Pools**: `LockFreeMemoryPool` 64B alloc+free `9.111 ns/op` (1T) / `9.120 ns/op` (4T).
+- **Rank9 (`1 Gbit`)**: `Rank9::rank1` `45.01 ns/op` at `25.00%` space overhead.
+- **Suffix Array (`10M` bytes, SA-IS)**: construction `81.68 ns/byte` (`9.05 B/byte`), `search_range` query `1446.15 ns/op`.
+<!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->
 
 ## 依赖
 

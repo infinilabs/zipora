@@ -862,17 +862,83 @@ fn test_e7_f2_perf_table_and_readme_claims_audit() {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    for doc_rel in ["README.md", "README_cn.md", "docs/PERFORMANCE.md"] {
+        let doc = std::fs::read_to_string(root.join(doc_rel)).unwrap();
+        assert!(
+            doc.contains("<!-- BEGIN GENERATED PERF TABLE (scripts/perf_table.py) -->")
+                && doc.contains("<!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->"),
+            "{doc_rel} must embed generated performance table from scripts/perf_table.py"
+        );
+        for stale in [
+            "1,122",
+            "10.7 bytes/key",
+            "10.7 字节/键",
+            "20.6 ns",
+            "5.2 Gwords/s",
+            "2.46 ns",
+            "CacheOptimizedHashMap",
+            "NestTrieDawg",
+            "8.0 B/state",
+        ] {
+            assert!(
+                !doc.contains(stale),
+                "{doc_rel} must not contain stale or nonexistent claim `{stale}`"
+            );
+        }
+    }
+
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
     assert!(
-        readme.contains("<!-- BEGIN GENERATED PERF TABLE (scripts/perf_table.py) -->")
-            && readme.contains("<!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->"),
-        "README.md must embed generated performance table from scripts/perf_table.py"
+        readme.contains("`DoubleArrayTrie`, `12.0 B/state`")
+            && readme.contains("`DoubleArrayTrieMap<u32>`, `12.0–16.0 B/state`"),
+        "README.md must match E6 test figures for DoubleArrayTrie (12.0 B/state) and DoubleArrayTrieMap<u32> (12.0–16.0 B/state)"
     );
+
+    let e4_md = std::fs::read_to_string(root.join("docs/review/e4.md")).unwrap();
+    for invented in [
+        "test_s51_r1_deserialize_rejects_non_prefix_code_sets_regardless_of_map_order",
+        "test_s51_r1_deserialize_rejects_incomplete_code_sets_and_enforces_1bit_single_symbol",
+        "test_s51_r1_decode_order0_single_symbol_verifies_bits_and_decode_xn_empty_data_errors",
+    ] {
+        assert!(
+            !e4_md.contains(invented),
+            "docs/review/e4.md must not cite invented test name `{invented}`"
+        );
+    }
+    for real_test in [
+        "test_s51_r1_prefix_violating_codes_rejected_all_orders_and_interleaved",
+        "test_s51_r1_incomplete_code_sets_rejected_except_single_symbol_1bit",
+        "test_s51_r1_decode_order0_single_symbol_checks_stream_bits_and_decode_xn_empty_data",
+        "test_s51_r1_trained_model_wire_format_matrix",
+    ] {
+        assert!(
+            e4_md.contains(real_test),
+            "docs/review/e4.md must cite real test name `{real_test}`"
+        );
+    }
+
+    // Verify scripts/perf_table.py audit_readme_claims rejects numeric mutations and appended unmeasured claims.
+    let mut_check = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(
+            "import sys; sys.path.insert(0, 'scripts'); import perf_table as pt; \
+             core, comp, e2e = pt.load_baselines(); \
+             readme = (pt.ROOT / 'README.md').read_text(); \
+             e1 = pt.audit_readme_claims(readme.replace('35.65 B/entry', '99.99 B/entry'), core, comp, e2e); \
+             assert e1, 'audit_readme_claims must reject mutated 99.99 B/entry'; \
+             e2 = pt.audit_readme_claims(readme + '\\nExtra claim: 5.2 Gops/s, 26x faster\\n', core, comp, e2e); \
+             assert e2, 'audit_readme_claims must reject appended unmeasured claims'; \
+             e3 = pt.audit_readme_claims(readme.replace('GoldHashMap', 'GoldHashMap, `CacheOptimizedHashMap`'), core, comp, e2e); \
+             assert e3, 'audit_readme_claims must reject nonexistent type CacheOptimizedHashMap'",
+        )
+        .current_dir(root)
+        .output()
+        .expect("python3 mutation check must execute");
     assert!(
-        !readme.contains("1,122")
-            && !readme.contains("10.7 bytes/key")
-            && !readme.contains("20.6 ns/lookup"),
-        "README.md must not retain stale pre-Phase-E claims"
+        mut_check.status.success(),
+        "scripts/perf_table.py mutation checks failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&mut_check.stdout),
+        String::from_utf8_lossy(&mut_check.stderr)
     );
 }
 
