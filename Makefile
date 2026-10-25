@@ -17,7 +17,7 @@
 .PHONY: fuzz_seed fuzz_smoke fuzz_soak
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity feature_matrix
-.PHONY: unsafe_audit api_honesty index_audit unwrap_audit hygiene_audit
+.PHONY: unsafe_audit api_honesty index_audit unwrap_audit hygiene_audit perf_table
 .PHONY: clean update outdated audit help
 
 CARGO := cargo
@@ -518,6 +518,9 @@ unwrap_audit:
 hygiene_audit:
 	python3 scripts/hygiene_audit.py
 
+perf_table:
+	python3 scripts/perf_table.py --check
+
 # Feature-matrix and MSRV 1.95 gate (Rule B4):
 # - --no-default-features (clippy --lib --bins --tests + unit tests)
 # - each of simd, mmap, zstd, lz4, serde, async, ffi, avx512 alone
@@ -555,6 +558,8 @@ sanity:
 	python3 scripts/unwrap_audit.py
 	@echo "=== Phase D Hygiene Audit (Rules D6 / D7 / D11) ==="
 	python3 scripts/hygiene_audit.py
+	@echo "=== Performance Table & README Claims Audit (Rules E7 / F2 / G7) ==="
+	python3 scripts/perf_table.py --check
 	@echo "=== No default features (guard feature-gated cfg attrs) ==="
 	$(CARGO) clippy --locked --lib --bins --tests --no-default-features -- -D warnings
 	@echo "=== Docs gate (Rule B6: RUSTDOCFLAGS=-D warnings) ==="

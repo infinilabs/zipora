@@ -11,16 +11,16 @@ High-performance Rust data structures and compression algorithms with memory saf
 ## Key Features
 
 - **High Performance**: Zero-copy operations, SIMD optimizations (AVX2, AVX-512), cache-friendly layouts, SIMD cursor primitives for Block-Max WAND
-- **Memory Safety**: 100% production unsafe block documentation coverage, all 1,122 production unsafe blocks annotated with `// SAFETY:` comments
-- **Secure Memory Management**: Production-ready memory pools with thread safety and RAII
-- **Blob Storage**: 8 specialized stores with trie-based indexing and compression
-- **Succinct Data Structures**: 12 rank/select variants, Rank9 (Vigna 2008), Elias-Fano / Partitioned / DP-Optimal Partitioned Elias-Fano with cursor `advance_to_index`, HybridPostingList (auto-select encoding), AMD-safe PDEP with `has_fast_bmi2`
-- **BM25 Scoring**: FieldnormEncoder (Lucene SmallFloat, 1-byte fieldnorms) + Bm25BatchScorer (AVX2 SIMD batch, prefetch)
-- **Specialized Containers**: 13+ containers (VecTrbSet/Map, MinimalSso, SortedUintVec, LruMap, etc.)
-- **Hash Maps**: Golden ratio optimized, string-optimized, cache-optimized implementations
-- **Advanced Tries**: Double-Array (DoubleArrayTrie, XOR transitions), LOUDS, Critical-Bit (BMI2), Patricia tries with rank/select, NestTrieDawg, lazy prefix/fuzzy iterators, CsppTrie (Compressed Sparse Parallel Patricia, 10 node encodings, 10.7 bytes/key), ConcurrentCsppTrie (multi-writer/multi-reader, epoch-based reclamation, thread-local allocation)
-- **Compression**: PA-Zip, Huffman O0/O1/O2, FSE, rANS, ZSTD integration
-- **C FFI Support**: Complete C API (`--features ffi`)
+- **Memory Safety**: 100% production unsafe block documentation coverage, all 1,427 production unsafe sites annotated with `// SAFETY:` or `# Safety` comments (`scripts/unsafe_audit.py`)
+- **Secure Memory Management**: Production-ready memory pools (`SecureMemoryPool`, `LockFreeMemoryPool`, `FixedCapacityPool`, `FiveLevelPool`, `BumpArena`) with thread safety and RAII (`tests/memory_pool_contract.rs`)
+- **Blob Storage**: Specialized stores (`MemoryBlobStore`, `PlainBlobStore`, `SimpleZipBlobStore`, `MixedLenBlobStore`, `ZipOffsetBlobStore`, `NestLoudsTrieBlobStore`, `DictZipBlobStore`, `ZstdBlobStore`, `Lz4BlobStore`) with trie-based indexing and compression (`tests/format_spec_golden_tests.rs`)
+- **Succinct Data Structures**: `Rank9` (Vigna 2008, `25.00%` overhead), `RankSelectInterleaved256` (`25.00%` rank-only / `31.25%` with select caches), `RankSelectSE256`, Elias-Fano / Partitioned / DP-Optimal Partitioned / Clustered Elias-Fano with cursor `advance_to_index`, `HybridPostingList` (auto-select encoding), AMD-safe PDEP with `has_fast_bmi2` (`tests/memory_footprint_e6.rs`)
+- **BM25 Scoring**: `FieldnormEncoder` (Lucene SmallFloat, `1.0 B/doc` fieldnorms) + `Bm25BatchScorer` (AVX2/AVX-512 SIMD batch, prefetch) (`tests/memory_footprint_e6.rs`, `benches/core_bench.rs`)
+- **Specialized Containers**: 13+ containers (`FastVec`, `ValVec32`, `IntVec`, `UintVecMin0`, `ZipIntVec`, `FixedLenStrVec`, `SortableStrVec`, `ZoSortedStrVec`, `VecTrbSet`/`VecTrbMap`, `MinimalSso`, `LruMap`, `ConcurrentLruMap`, `FixedCircularQueue`)
+- **Hash Maps**: SwissTable 16-way SSE2 group-probing `ZiporaHashMap` (`35.65 B/entry` on `1M` `u64`), `GoldHashMap`, `CacheOptimizedHashMap` (`benches/competitor_bench.rs`)
+- **Advanced Tries**: Double-Array (`DoubleArrayTrie`, `8.0 B/state`; `DoubleArrayTrieMap`, `12.0 B/state`), LOUDS, Critical-Bit (BMI2), Patricia tries, `NestTrieDawg`, lazy prefix/fuzzy iterators, `CsppTrie` (Compressed Sparse Parallel Patricia, 10 node encodings, `9.60 B/key` on shared-prefix keys), `ConcurrentCsppTrie` (multi-writer/multi-reader, epoch-based reclamation) (`tests/memory_footprint_e6.rs`)
+- **Compression & Integer Codecs**: PA-Zip, Huffman O0/O1/O2, FSE, rANS (64-bit X1/X2/X4/X8), `StreamVByte` (SSSE3), `GroupVarint` (SSSE3), ZSTD & LZ4 integration (`benches/competitor_bench.rs`)
+- **C FFI Support**: Complete C11/C++17 API (`--features ffi`, `tests/ffi_c_smoke.rs`)
 
 ## Quick Start
 
@@ -152,9 +152,41 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## Verified Performance
 
-See **[Performance Benchmarks](docs/PERFORMANCE.md)** for detailed results across all components (Trie, BitVector, popcount, rank/select, containers, entropy coding, LRU cache, BM25 scoring).
+See **[Stage 14 Core Benchmarks](docs/review/e1.md)**, **[Stage 15 Competitor Matrix](docs/review/e2_e3.md)**, and **[Stage 16 Optimization Ledger](docs/review/e4.md)** for full methodology and per-benchmark provenance.
 
-**Highlights**: DoubleArrayTrie 20.6 ns/lookup, CsppTrie 6.9M insert/sec + 8.0M lookup/sec (10.7 bytes/key), ConcurrentCsppTrie 10+ M keys/sec (16 threads), SIMD popcount 5.2 Gwords/s, bulk bitwise 41x faster, BM25 SIMD 13.5x faster, LRU hot-get 26x faster.
+<!-- BEGIN GENERATED PERF TABLE (scripts/perf_table.py) -->
+Measured on reference host `bindiego` (AMD EPYC 7B13, 64 logical cores, pinned core 23, `THP-off` via `PR_SET_THP_DISABLE`, `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32`).
+Across all **197** head-to-head comparisons in [`docs/review/e2_e3.md`](docs/review/e2_e3.md) and [`docs/review/e4.md`](docs/review/e4.md), Zipora is **`LEADING` on 68/197** (primary within `-3.0%` and secondary space `<= +10.0%`) and **faster or tied on primary on 105/197 (53.3%)**.
+
+### Head-to-Head Competitor Highlights (`benches/baselines/bindiego/competitor_bench.json` & `e2e_search.json`)
+
+| Family | Zipora Operation | Zipora (`min`) | Space / Secondary | Competitor | Competitor (`min`) | Speedup |
+|---|---|---:|---:|---|---:|---:|
+| Rank/Select (`1 Gbit`) | `RankSelectInterleaved256::rank1` | `35.03 ns/op` | `131.25% of raw` | `sucds::Rank9Sel` | `43.33 ns/op` | **`1.24x`** |
+| Rank/Select (`1 Gbit`) | `RankSelectSE256::select1` | `145.77 ns/op` | `137.50% of raw` | `sucds::Rank9Sel` | `206.40 ns/op` | **`1.42x`** |
+| Elias-Fano (`100k`) | `EliasFano::next_geq` (uniform) | `22.14 ns/op` | `8.62 bits/elem` | `sucds::EliasFano` | `47.53 ns/op` | **`2.15x`** |
+| Elias-Fano (`100k`) | `OptimalPartitionedEliasFano::next_geq` | `26.21 ns/op` | `5.42 bits/elem` | `vers-vecs::EliasFanoVec` | `61.26 ns/op` | **`2.34x`** |
+| Elias-Fano (`100k`) | `ClusteredEliasFano::get` (dense) | `3.39 ns/op` | `2.51 bits/elem` | `sucds::EliasFano` | `8.05 ns/op` | **`2.37x`** |
+| Tries (`1M` keys) | `DoubleArrayTrie::contains` (shared prefix) | `254.87 ns/op` | `25.60 B/key` | `qp-trie::Trie` | `533.08 ns/op` | **`2.09x`** |
+| Tries (`1M` keys) | `CsppTrie::contains` (shared prefix) | `255.50 ns/op` | `9.60 B/key` | `radix_trie::Trie` | `977.94 ns/op` | **`3.83x`** |
+| Hash Maps (`1M` keys) | `ZiporaHashMap<[u8; 16], u64>::get` | `87.13 ns/op` | `52.43 B/entry` | `hashbrown::HashMap` (`ahash`) | `184.62 ns/op` | **`2.12x`** |
+| Hash Maps (`1M` keys) | `ZiporaHashMap<u64, u64>::get` | `66.12 ns/op` | `35.65 B/entry` | `std::collections::HashMap` | `90.22 ns/op` | **`1.36x`** |
+| Entropy (`64 KiB`) | `HuffmanDecoder::decode` (O0) | `3.50 ns/byte` | `4.01 bits/B` | `huffman-compress` | `9.45 ns/byte` | **`2.70x`** |
+| Entropy (`64 KiB`) | `Rans64Decoder<ParallelX4>::decode` | `2.51 ns/byte` | `4.05 bits/B` | `constriction` ANS | `6.16 ns/byte` | **`2.46x`** |
+| Integer Codecs (`100k`) | `StreamVByte::encode_deltas` (SSSE3) | `0.49 ns/int` | `10.00 bits/int` | `stream-vbyte` SIMD | `1.28 ns/int` | **`2.62x`** |
+| Integer Codecs (`100k`) | `StreamVByte::decode_into` (SSSE3) | `0.19 ns/int` | `10.00 bits/int` | `stream-vbyte` SIMD | `0.25 ns/int` | **`1.36x`** |
+| Radix Sort (`10M`) | `RadixSort::sort_u32` (hybrid MSB+LSD) | `5.70 ns/elem` | `8.00 B/elem` | `voracious_radix_sort` | `10.10 ns/elem` | **`1.77x`** |
+| String Search (`64 KiB`) | `simd_strchr` (128B AVX2) | `644.45 ns/call` | `0 B aux` | `memchr::memchr` | `637.03 ns/call` | **`0.99x`** |
+| String Search (`64 KiB`) | `simd_strstr` (128B AVX2) | `649.06 ns/call` | `0 B aux` | `memchr::memmem` | `1957.34 ns/call` | **`3.02x`** |
+| Systemic Search (`100k` docs) | `Zipora BMW` top-10 (`p50 = 21.31 us`) | `19,677.1 QPS` | `1.219 B/posting` (postings) | `tantivy` v0.26.2 (`p50 = 53.69 us`) | `12,176.3 QPS` | **`1.62x`** (`2.31x` vs uncompressed) |
+
+### Additional Core Suite Baselines (`benches/baselines/bindiego/core_bench.json`)
+
+- **BM25 & Fieldnorm Scoring**: `Bm25BatchScorer` AVX2 batch `0.4726 ns/doc`, `FieldnormEncoder::build_score_table` `0.1734 ns/cell` (`1.0 B/doc` fieldnorms).
+- **Memory Pools**: `LockFreeMemoryPool` 64B alloc+free `9.111 ns/op` (1T) / `9.120 ns/op` (4T).
+- **Rank9 (`1 Gbit`)**: `Rank9::rank1` `45.01 ns/op` at `25.00%` space overhead.
+- **Suffix Array (`10M` bytes, SA-IS)**: construction `81.68 ns/byte` (`9.05 B/byte`), `search_range` query `1446.15 ns/op`.
+<!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->
 
 ## Dependencies
 

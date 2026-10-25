@@ -809,3 +809,40 @@ fn test_b2_1_fuzz_seed_corpora_and_structure_aware_targets() {
         assert!(!pairs.is_empty());
     }
 }
+
+#[cfg(not(miri))]
+#[test]
+fn test_e7_f2_perf_table_and_readme_claims_audit() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let script_path = root.join("scripts/perf_table.py");
+    assert!(
+        script_path.exists(),
+        "E7 requires committed scripts/perf_table.py"
+    );
+
+    let output = std::process::Command::new("python3")
+        .arg(&script_path)
+        .arg("--check")
+        .current_dir(root)
+        .output()
+        .expect("python3 scripts/perf_table.py --check must execute");
+    assert!(
+        output.status.success(),
+        "scripts/perf_table.py --check failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    assert!(
+        readme.contains("<!-- BEGIN GENERATED PERF TABLE (scripts/perf_table.py) -->")
+            && readme.contains("<!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->"),
+        "README.md must embed generated performance table from scripts/perf_table.py"
+    );
+    assert!(
+        !readme.contains("1,122")
+            && !readme.contains("10.7 bytes/key")
+            && !readme.contains("20.6 ns/lookup"),
+        "README.md must not retain stale pre-Phase-E claims"
+    );
+}
