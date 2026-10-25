@@ -391,10 +391,9 @@ def build_gap_analysis_sections(
         "E3.5": {
             "files": "`src/memory/lockfree_pool.rs`, `src/memory/secure_pool.rs`",
             "root_cause": (
-                "1. In `LockFreeMemoryPool::pop_fast_bin` (`src/memory/lockfree_pool.rs:595-652`) and `deallocate_to_fast_bin` (`src/memory/lockfree_pool.rs:689-745`), "
-                "every single `allocate(256)` + `deallocate(ptr, 256)` pair executes **4 atomic RMW instructions** (`2 x lock cmpxchgq` on `bin.head` + `2 x lock xaddq` on `bin.count`, "
-                f"visible directly in the loop disassembly above at `{cb['memory_pools/lockfree_pool/alloc_free_1t']['min_ns_per_op']:.3f} ns/op` 1T and "
-                f"`{cb['memory_pools/lockfree_pool/alloc_free_4t']['min_ns_per_op']:.3f} ns/op` 4T).\n"
+                "1. Pre-`E4(f)` (Stage 15 `b4148fc`, `24.003 ns/op` 1T and `21.853 ns/op` 4T in `e3_gap_profiles.json` above), every `allocate(256)` + `deallocate(ptr, 256)` pair hit the global ABA-tagged Treiber stack (`LockFreeMemoryPool::pop_fast_bin` at `src/memory/lockfree_pool.rs:1221-1275` and `PoolArena::push_free_fast_bin_offset` at `src/memory/lockfree_pool.rs:828-876`), executing **4 atomic RMW instructions** (`2 x lock cmpxchgq` on `bin.head` + `2 x lock xaddq` on `bin.count`, visible in the pre-`E4(f)` loop disassembly above). At Stage 16 `HEAD` (`"
+                f"{cb['memory_pools/lockfree_pool/alloc_free_1t']['min_ns_per_op']:.3f} ns/op` 1T and "
+                f"`{cb['memory_pools/lockfree_pool/alloc_free_4t']['min_ns_per_op']:.3f} ns/op` 4T), the per-thread magazine path (`FastBinMagazine::pop` + `transition_fast_bin_live_to_free` + `FastBinMagazine::push`) executes **3 L1D-resident atomic RMW instructions** per alloc/free pair (`slot.swap(0, AcqRel)` on magazine pop, `compare_exchange` `FAST_BIN_LIVE_TAG -> FAST_BIN_FREE_TAG` before magazine push, and `shared.non_empty_bins.fetch_or(bit, Ordering::AcqRel)` on magazine push).\n"
                 f"2. By contrast, `mimalloc` (`{cb['memory_pools/mimalloc/alloc_free_1t']['min_ns_per_op']:.3f} ns` 1T, `{cb['memory_pools/mimalloc/alloc_free_4t']['min_ns_per_op']:.3f} ns` 4T), "
                 f"`jemalloc` (`{cb['memory_pools/jemalloc/alloc_free_1t']['min_ns_per_op']:.3f} ns` 1T, `{cb['memory_pools/jemalloc/alloc_free_4t']['min_ns_per_op']:.3f} ns` 4T), and "
                 f"`std::alloc::System` (`{cb['memory_pools/system_alloc/alloc_free_1t']['min_ns_per_op']:.3f} ns` 1T, `{cb['memory_pools/system_alloc/alloc_free_4t']['min_ns_per_op']:.3f} ns` 4T) "
@@ -826,7 +825,7 @@ def generate_markdown(
     lines.append("")
     lines.append("| Check | Result |")
     lines.append("|---|---|")
-    lines.append("| `make sanity` (`--locked`, default layout + `CARGO_TARGET_DIR`) | **PASS** (`3,226` debug lib / `3,242` release lib / `229` doctests + `8` `compile_fail` / `3,897` all targets) |")
+    lines.append("| `make sanity` (`--locked`, default layout + `CARGO_TARGET_DIR`) | **PASS** (`3,230` debug lib / `3,246` release lib / `229` doctests + `8` `compile_fail` / `3,903` all targets) |")
     lines.append("| `scripts/unsafe_audit.py` (`B7`) | **PASS** (`1,429/1,429 = 100.0%` documented `unsafe`, `0` undocumented, `0` §8.5 violations) |")
     lines.append("| `scripts/api_honesty.py` (`D1`) | **PASS** (`12 <= 12` markers) |")
     lines.append("| `scripts/unwrap_audit.py` (`D10`) | **PASS** (`0` `.unwrap()`, `75 <= 76` `.expect()`) |")

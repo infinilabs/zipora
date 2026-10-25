@@ -551,3 +551,110 @@ fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
         "docs/review/e1.md:98 must document the 71/80 (4b490ff), 7/80 (446401d), and 2/80 (5add98f) row provenance"
     );
 }
+
+#[test]
+fn test_s51_r3_review_ledger_identifiers_and_metrics_match_code_and_baselines() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    let lockfree_pool = std::fs::read_to_string(manifest_dir.join("src/memory/lockfree_pool.rs"))
+        .expect("read src/memory/lockfree_pool.rs");
+    let e4 = std::fs::read_to_string(manifest_dir.join("docs/review/e4.md"))
+        .expect("read docs/review/e4.md");
+    let e2_e3 = std::fs::read_to_string(manifest_dir.join("docs/review/e2_e3.md"))
+        .expect("read docs/review/e2_e3.md");
+    let e1 = std::fs::read_to_string(manifest_dir.join("docs/review/e1.md"))
+        .expect("read docs/review/e1.md");
+    let gen_e3 = std::fs::read_to_string(manifest_dir.join("scripts/gen_e3_summary.py"))
+        .expect("read scripts/gen_e3_summary.py");
+
+    // 1. Nonexistent `deallocate_to_fast_bin` must not appear in active source, scripts, or Stage 15/16 ledgers.
+    for (label, content) in [
+        ("src/memory/lockfree_pool.rs", &lockfree_pool),
+        ("docs/review/e4.md", &e4),
+        ("docs/review/e2_e3.md", &e2_e3),
+        ("scripts/gen_e3_summary.py", &gen_e3),
+    ] {
+        assert!(
+            !content.contains("deallocate_to_fast_bin"),
+            "{label} still references nonexistent identifier `deallocate_to_fast_bin`"
+        );
+    }
+    assert!(
+        e4.contains("push_free_fast_bin_offset") && e2_e3.contains("push_free_fast_bin_offset"),
+        "docs/review/e4.md and e2_e3.md must reference PoolArena::push_free_fast_bin_offset"
+    );
+
+    // 2. suffix_array/construct trial/warmup count in benches/core_bench.rs vs benches/competitors/suffix_array.rs.
+    assert!(
+        !e4.contains("warmup_calls = 2, trials = 4"),
+        "docs/review/e4.md must not claim benches/core_bench.rs uses warmup_calls = 2, trials = 4"
+    );
+
+    // 3. `non_empty_bins.fetch_or` instruction lowering (`lock cmpxchgq` loop, not `lock orq`).
+    assert!(
+        !e4.contains("lock orq"),
+        "docs/review/e4.md must not claim fetch_or lowers to `lock orq` when prev == 0 is inspected"
+    );
+    assert!(
+        e4.contains("lock cmpxchgq"),
+        "docs/review/e4.md must document `lock cmpxchgq`"
+    );
+
+    // 4. `e2_e3.md` E3.5 must distinguish pre-E4(f) 4-RMW Treiber stack (24.003 / 21.853 ns/op) from Stage 16 3-RMW magazine path.
+    assert!(
+        !e2_e3.contains(
+            "visible directly in the loop disassembly above at `9.104 ns/op` 1T and `9.201 ns/op` 4T"
+        ),
+        "docs/review/e2_e3.md must not attribute 9.104 / 9.201 ns/op to the pre-E4(f) 4-RMW Treiber disassembly"
+    );
+
+    // 5. StreamVByte line references and attribution in docs/review/e4.md.
+    assert!(
+        !e4.contains("stream_vbyte.rs:78-83") && !e4.contains("stream_vbyte.rs:646-697"),
+        "docs/review/e4.md contains stale stream_vbyte.rs line numbers"
+    );
+    assert!(
+        e4.contains("src/compression/stream_vbyte.rs:34-64")
+            && e4.contains("src/compression/stream_vbyte.rs:627-700"),
+        "docs/review/e4.md must cite exact stream_vbyte.rs:34-64 and 627-700 line ranges"
+    );
+    assert!(
+        e4.contains("aligning `SHUFFLE_TABLE` (`AlignedShuffleTable`) alone")
+            || e4.contains("aligning `SHUFFLE_TABLE` alone"),
+        "docs/review/e4.md must disclose that aligning SHUFFLE_TABLE alone kept the 0.209-0.235 ns/int swing and the flat ~0.186 ns/int comes from the 4x-unrolled raw-pointer loop"
+    );
+
+    // 6. `stream_vbyte` unit test count in docs/review/e4.md is 21/21, not 22/22.
+    assert!(
+        !e4.contains("`22/22` `stream_vbyte`"),
+        "docs/review/e4.md must not claim 22/22 stream_vbyte unit tests"
+    );
+    assert!(
+        e4.contains("`21/21` `stream_vbyte`"),
+        "docs/review/e4.md must report 21/21 stream_vbyte unit tests"
+    );
+
+    // 7. `docs/review/e1.md:351` radix_sort test name matches src/algorithms/radix_sort/tests.rs.
+    let radix_tests =
+        std::fs::read_to_string(manifest_dir.join("src/algorithms/radix_sort/tests.rs"))
+            .expect("read src/algorithms/radix_sort/tests.rs");
+    assert!(
+        radix_tests.contains("fn test_s20_r3_parallel_merge_tree_stable_and_matches_std"),
+        "expected test_s20_r3_parallel_merge_tree_stable_and_matches_std in radix_sort/tests.rs"
+    );
+    assert!(
+        !e1.contains("test_s20_r3_par_merge_preserves_cross_half_tie_order_exhaustively")
+            && e1.contains("test_s20_r3_parallel_merge_tree_stable_and_matches_std"),
+        "docs/review/e1.md must cite the real test name test_s20_r3_parallel_merge_tree_stable_and_matches_std"
+    );
+
+    // 8. `docs/review/e4.md` must not make an unproven binary code-layout placement claim on huffman_o1/decode_64kib.
+    assert!(
+        !e4.contains("reflects binary code-layout placement rather than an algorithmic change"),
+        "docs/review/e4.md must not attribute huffman_o1/decode_64kib re-baseline to an unproven layout shift"
+    );
+    assert!(
+        e4.contains("438.26 us") && e4.contains("348.90 us"),
+        "docs/review/e4.md must report the exact JSON total_ns 438.26 us -> 348.90 us for huffman_o1/decode_64kib"
+    );
+}

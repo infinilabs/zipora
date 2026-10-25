@@ -56,9 +56,9 @@ const LIST_TAIL: u32 = 0;
 const BLOCK_HEADER: usize = ALIGN_SIZE;
 
 /// Backoff schedule cap for the unbudgeted fast-bin push loop. The loop is
-/// unbounded (see `deallocate_to_fast_bin`), so the retry counter it feeds to
-/// `backoff` has to stop growing somewhere: a linear schedule would otherwise
-/// sleep for longer and longer with every failure.
+/// unbounded (see `PoolArena::push_free_fast_bin_offset`), so the retry counter
+/// it feeds to `backoff` has to stop growing somewhere: a linear schedule would
+/// otherwise sleep for longer and longer with every failure.
 const MAX_BACKOFF_RETRY: u32 = 16;
 
 /// Size classes for fast bins (similar to jemalloc)
@@ -1234,7 +1234,7 @@ impl LockFreeMemoryPool {
             // only ever overlaps a pusher's atomic store. If it was stale the
             // generation tag makes the CAS below fail and the value is dropped.
             // ORDERING: The Acquire load of `bin.head` above synchronizes-with the pusher's
-            // Release CAS in `deallocate_to_fast_bin`, which happens-after the pusher's
+            // Release CAS in `PoolArena::push_free_fast_bin_offset`, which happens-after the pusher's
             // `link_slot(offset).store(current_offset, Relaxed)`, establishing happens-before.
             let next_offset = self.link_slot(current_offset)?.load(Ordering::Relaxed);
 
@@ -2057,7 +2057,8 @@ mod tests {
         assert_eq!(pool.align_size(16), 16);
     }
 
-    /// Regression: when CAS retries were exhausted, deallocate_to_fast_bin
+    /// Regression: when CAS retries were exhausted, fast-bin deallocation (now
+    /// `PoolArena::push_free_fast_bin_offset`)
     /// returned Err without recording the block anywhere, permanently
     /// leaking it from the pool. max_cas_retries=0 makes the *pop* budget
     /// zero, which is the harshest configuration there is.
