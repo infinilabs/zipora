@@ -846,3 +846,48 @@ fn test_e7_f2_perf_table_and_readme_claims_audit() {
         "README.md must not retain stale pre-Phase-E claims"
     );
 }
+
+#[test]
+fn test_f4_release_prep_gate() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
+
+    let release_prep_line = makefile
+        .lines()
+        .find(|line| line.starts_with("release_prep:"))
+        .expect("Makefile must define a release_prep target");
+    for required_dep in [
+        "sanity",
+        "feature_matrix",
+        "audit",
+        "miri_core",
+        "miri_simd",
+        "miri_cspp",
+        "miri_weak",
+        "tsan_cspp",
+        "tsan_pool",
+        "fuzz_smoke",
+    ] {
+        assert!(
+            release_prep_line
+                .split_whitespace()
+                .any(|tok| tok == required_dep),
+            "Makefile release_prep must depend on `{required_dep}` (got: {release_prep_line})"
+        );
+    }
+
+    assert!(
+        makefile.contains("publish --dry-run --locked"),
+        "Makefile release_prep must run `cargo publish --dry-run --locked`"
+    );
+    assert!(
+        makefile.contains("publish: release_prep"),
+        "Makefile `publish` target must depend on `release_prep` (Rule F4)"
+    );
+
+    let release_yml = std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+    assert!(
+        release_yml.contains("make release_prep"),
+        ".github/workflows/release.yml must gate releases on `make release_prep`"
+    );
+}

@@ -16,7 +16,7 @@
 .PHONY: tsan_cspp tsan_pool tsan_concurrency
 .PHONY: fuzz_seed fuzz_smoke fuzz_soak
 .PHONY: format clippy doc
-.PHONY: dev validate ci pre_commit release_prep sanity feature_matrix
+.PHONY: dev validate ci pre_commit release_prep publish sanity feature_matrix
 .PHONY: unsafe_audit api_honesty index_audit unwrap_audit hygiene_audit perf_table
 .PHONY: clean update outdated audit help
 
@@ -501,7 +501,16 @@ ci: format clippy build test safety_tests
 
 pre_commit: format clippy test_debug safety_tests
 
-release_prep: clean format clippy build_release test_release bench doc audit
+# Authoritative pre-publish release gate (Rule F4 / plan.md §1.7):
+# `make release_prep` is the only path to `cargo publish`. It runs `sanity`,
+# B4 `feature_matrix`, B5 `audit`, B2.2 `miri_weak`, and A3's adversarial set
+# (`miri_core`, `miri_simd`, `miri_cspp`, `tsan_cspp`, `tsan_pool`, `fuzz_smoke`),
+# followed by `cargo publish --dry-run --locked`.
+release_prep: sanity feature_matrix audit miri_core miri_simd miri_cspp miri_weak tsan_cspp tsan_pool fuzz_smoke
+	$(CARGO) publish --dry-run --locked
+
+publish: release_prep
+	$(CARGO) publish --locked
 
 unsafe_audit:
 	python3 scripts/unsafe_audit.py
