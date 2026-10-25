@@ -1017,24 +1017,40 @@ mod tests {
 
     #[test]
     fn test_deserialized_codes_longer_than_64_bits_roundtrip() {
-        // Build a prefix-free code table with lengths 1, 65, 130, and 200 bits:
+        // Build a complete prefix-free caterpillar code table of depth 200 (201 symbols)
+        // where 'a', 'b', 'c', 'd' have lengths 1, 65, 130, and 200 bits:
         // 'a': [0] (1 bit)
         // 'b': [1, 1, ..., 1, 0] (64 ones + 0 = 65 bits)
         // 'c': [1, 1, ..., 1, 0] (129 ones + 0 = 130 bits)
         // 'd': [1, 1, ..., 1, 1] (200 ones = 200 bits)
-        let code_a = vec![false];
-        let mut code_b = vec![true; 64];
-        code_b.push(false);
-        let mut code_c = vec![true; 129];
-        code_c.push(false);
-        let code_d = vec![true; 200];
+        let mut owned_codes: Vec<(u8, Vec<bool>)> = Vec::with_capacity(201);
+        let mut next_filler = 0u8;
+        let mut alloc_filler = || -> u8 {
+            while matches!(next_filler, b'a' | b'b' | b'c' | b'd') {
+                next_filler += 1;
+            }
+            let sym = next_filler;
+            next_filler += 1;
+            sym
+        };
+        for depth in 1..=200usize {
+            let sym = match depth {
+                1 => b'a',
+                65 => b'b',
+                130 => b'c',
+                _ => alloc_filler(),
+            };
+            let mut code = vec![true; depth - 1];
+            code.push(false);
+            owned_codes.push((sym, code));
+        }
+        owned_codes.push((b'd', vec![true; 200]));
+        let code_refs: Vec<(u8, &[bool])> = owned_codes
+            .iter()
+            .map(|(s, c)| (*s, c.as_slice()))
+            .collect();
 
-        let raw_tree = serialize_custom_tree(&[
-            (b'a', &code_a),
-            (b'b', &code_b),
-            (b'c', &code_c),
-            (b'd', &code_d),
-        ]);
+        let raw_tree = serialize_custom_tree(&code_refs);
         let tree = HuffmanTree::deserialize(&raw_tree).unwrap();
         let msg = b"abacadaaaabbbcccdddcba";
 
@@ -1269,14 +1285,17 @@ mod tests {
             "ContextualHuffmanEncoder::deserialize must reject context tree with code_length == 0"
         );
 
-        // 2. Single-symbol context trees (`b -> [0]`, `b -> [1]`, `b -> [1, 0, 1]`)
+        // 2. Single-symbol context trees with 1-bit codes (`b -> [0]`, `b -> [1]`)
         // must round-trip across single-threaded Order-1/Order-2 and interleaved X1/X2/X4/X8
-        // without leaving unconsumed bits that corrupt `"abab..."` into `"abba..."`.
+        // without leaving unconsumed bits that corrupt `"abab..."` into `"abba..."`,
+        // whereas a single-symbol tree with code length > 1 (`b -> [1, 0, 1]`) is incomplete
+        // and rejected at deserialization.
         let leaf_b_len1_0 = serialize_custom_tree(&[(b'b', &[false])]);
         let leaf_b_len1_1 = serialize_custom_tree(&[(b'b', &[true])]);
         let leaf_b_len3 = serialize_custom_tree(&[(b'b', &[true, false, true])]);
+        assert!(HuffmanTree::deserialize(&leaf_b_len3).is_err());
 
-        for leaf in [&leaf_b_len1_0, &leaf_b_len1_1, &leaf_b_len3] {
+        for leaf in [&leaf_b_len1_0, &leaf_b_len1_1] {
             let model_o1 = serialize_custom_contextual_model(
                 1,
                 &[(b'a' as u32, 1u32)],
@@ -1339,6 +1358,247 @@ mod tests {
             for msg in [b"abbb".as_slice(), &b"abb".repeat(30)] {
                 let encoded2 = enc2.encode(msg).unwrap();
                 assert_eq!(dec2.decode(&encoded2, msg.len()).unwrap(), msg);
+            }
+        }
+    }
+
+    #[test]
+    fn test_s51_r1_prefix_violating_codes_rejected_all_orders_and_interleaved() {
+        let valid_tree0 = serialize_custom_tree(&[(b'a', &[false]), (b'b', &[true])]);
+        let non_prefix_cases: [&[(u8, &[bool])]; 4] = [
+            // 'a' ([0]) is a prefix of 'b' ([0, 1]), longer inserted first
+            &[(b'b', &[false, true]), (b'a', &[false]), (b'c', &[true])],
+            // 'a' ([0]) is a prefix of 'b' ([0, 1]), shorter inserted first
+            &[(b'a', &[false]), (b'b', &[false, true]), (b'c', &[true])],
+            // Duplicate code: 'a' ([0]) and 'b' ([0])
+            &[(b'a', &[false]), (b'b', &[false]), (b'c', &[true])],
+            // Duplicate symbol: 'a' twice
+            &[(b'a', &[false]), (b'a', &[true])],
+        ];
+
+        for case in non_prefix_cases {
+            let bad_tree = serialize_custom_tree(case);
+            for _ in 0..64 {
+                assert!(
+                    HuffmanTree::deserialize(&bad_tree).is_err(),
+                    "HuffmanTree::deserialize must reject non-prefix-free code set {:?}",
+                    case
+                );
+                let m_o0 =
+                    serialize_custom_contextual_model(0, &[], std::slice::from_ref(&bad_tree));
+                assert!(
+                    ContextualHuffmanEncoder::deserialize(&m_o0).is_err(),
+                    "Order-0 deserialize must reject non-prefix-free code set {:?}",
+                    case
+                );
+                let m_o1_root = serialize_custom_contextual_model(
+                    1,
+                    &[(b'a' as u32, 0u32)],
+                    std::slice::from_ref(&bad_tree),
+                );
+                assert!(ContextualHuffmanEncoder::deserialize(&m_o1_root).is_err());
+                let m_o1_ctx = serialize_custom_contextual_model(
+                    1,
+                    &[(b'a' as u32, 1u32)],
+                    &[valid_tree0.clone(), bad_tree.clone()],
+                );
+                assert!(ContextualHuffmanEncoder::deserialize(&m_o1_ctx).is_err());
+                let m_o2_ctx = serialize_custom_contextual_model(
+                    2,
+                    &[(((b'a' as u32) << 8) | (b'b' as u32), 1u32)],
+                    &[valid_tree0.clone(), bad_tree.clone()],
+                );
+                assert!(ContextualHuffmanEncoder::deserialize(&m_o2_ctx).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn test_s51_r1_incomplete_code_sets_rejected_except_single_symbol_1bit() {
+        let valid_tree0 = serialize_custom_tree(&[(b'a', &[false]), (b'b', &[true])]);
+        let incomplete_cases: [&[(u8, &[bool])]; 4] = [
+            // Incomplete 2-symbol tree: 'a' -> [0], 'b' -> [1, 0] (missing [1, 1])
+            &[(b'a', &[false]), (b'b', &[true, false])],
+            // Incomplete 2-symbol tree: 'a' -> [0, 0], 'b' -> [1, 0]
+            &[(b'a', &[false, false]), (b'b', &[true, false])],
+            // Single-symbol tree with 2-bit code
+            &[(b'a', &[false, false])],
+            // Single-symbol tree with 3-bit code
+            &[(b'b', &[true, false, true])],
+        ];
+
+        for case in incomplete_cases {
+            let bad_tree = serialize_custom_tree(case);
+            assert!(
+                HuffmanTree::deserialize(&bad_tree).is_err(),
+                "HuffmanTree::deserialize must reject incomplete code set {:?}",
+                case
+            );
+            let m_o0 = serialize_custom_contextual_model(0, &[], std::slice::from_ref(&bad_tree));
+            assert!(ContextualHuffmanEncoder::deserialize(&m_o0).is_err());
+            let m_o1 = serialize_custom_contextual_model(
+                1,
+                &[(b'a' as u32, 1u32)],
+                &[valid_tree0.clone(), bad_tree.clone()],
+            );
+            assert!(ContextualHuffmanEncoder::deserialize(&m_o1).is_err());
+            let m_o2 = serialize_custom_contextual_model(
+                2,
+                &[(((b'a' as u32) << 8) | (b'b' as u32), 1u32)],
+                &[valid_tree0.clone(), bad_tree],
+            );
+            assert!(ContextualHuffmanEncoder::deserialize(&m_o2).is_err());
+        }
+
+        // Valid single-symbol 1-bit trees ([0] and [1]) and empty 0-symbol filler trees must be accepted.
+        for bit in [false, true] {
+            let t1 = serialize_custom_tree(&[(b'x', &[bit])]);
+            assert!(HuffmanTree::deserialize(&t1).is_ok());
+        }
+        let empty = serialize_custom_tree(&[]);
+        assert!(HuffmanTree::deserialize(&empty).is_ok());
+    }
+
+    #[test]
+    fn test_s51_r1_decode_order0_single_symbol_checks_stream_bits_and_decode_xn_empty_data() {
+        // 1. Order-0 single-symbol model must verify stream bits and length.
+        let enc_o0 = ContextualHuffmanEncoder::new(b"aaaaaa", HuffmanOrder::Order0).unwrap();
+        let dec_o0 = ContextualHuffmanDecoder::new(
+            ContextualHuffmanEncoder::new(b"aaaaaa", HuffmanOrder::Order0).unwrap(),
+        );
+        let standalone_enc = HuffmanEncoder::new(b"aaaaaa").unwrap();
+        let standalone_dec = HuffmanDecoder::new(standalone_enc.tree().clone());
+
+        let valid_bits = enc_o0.encode(b"aaaaaa").unwrap();
+        assert_eq!(valid_bits, vec![0b0000_0000]);
+        assert_eq!(dec_o0.decode(&valid_bits, 6).unwrap(), b"aaaaaa");
+        assert_eq!(standalone_dec.decode(&valid_bits, 6).unwrap(), b"aaaaaa");
+
+        // Corrupted stream bit (bit 1 is 1 instead of 0) must fail.
+        assert!(
+            dec_o0.decode(&[0b0000_0010], 6).is_err(),
+            "ContextualHuffmanDecoder::decode (Order-0 leaf) must reject mismatched stream bits"
+        );
+        assert!(
+            standalone_dec.decode(&[0b0000_0010], 6).is_err(),
+            "HuffmanDecoder::decode (leaf) must reject mismatched stream bits"
+        );
+
+        // Truncated stream (1 byte = 8 bits, requesting 9 symbols) must fail.
+        assert!(
+            dec_o0.decode(&[0b0000_0000], 9).is_err(),
+            "ContextualHuffmanDecoder::decode (Order-0 leaf) must reject truncated stream for 9 symbols"
+        );
+        assert!(
+            standalone_dec.decode(&[0b0000_0000], 9).is_err(),
+            "HuffmanDecoder::decode (leaf) must reject truncated stream for 9 symbols"
+        );
+
+        // 2. Empty encoded data with output_size > 0 must return Err across X1-X8 and single-threaded decoders.
+        let enc_o1 = ContextualHuffmanEncoder::new(b"abababab", HuffmanOrder::Order1).unwrap();
+        let dec_o1 = ContextualHuffmanDecoder::new(
+            ContextualHuffmanEncoder::new(b"abababab", HuffmanOrder::Order1).unwrap(),
+        );
+        for factor in [
+            InterleavingFactor::X1,
+            InterleavingFactor::X2,
+            InterleavingFactor::X4,
+            InterleavingFactor::X8,
+        ] {
+            assert_eq!(
+                enc_o1.decode_with_interleaving(&[], 0, factor).unwrap(),
+                Vec::<u8>::new()
+            );
+            assert!(
+                enc_o1.decode_with_interleaving(&[], 5, factor).is_err(),
+                "decode_with_interleaving({:?}) must reject empty data when output_size > 0",
+                factor
+            );
+        }
+        assert_eq!(dec_o0.decode(&[], 0).unwrap(), Vec::<u8>::new());
+        assert!(dec_o0.decode(&[], 5).is_err());
+        assert_eq!(dec_o1.decode(&[], 0).unwrap(), Vec::<u8>::new());
+        assert!(dec_o1.decode(&[], 5).is_err());
+        assert_eq!(standalone_dec.decode(&[], 0).unwrap(), Vec::<u8>::new());
+        assert!(standalone_dec.decode(&[], 5).is_err());
+    }
+
+    #[test]
+    fn test_s51_r1_trained_model_wire_format_matrix() {
+        let mut corpora: Vec<Vec<u8>> = vec![
+            vec![],
+            vec![b'a'],
+            vec![b'a'; 64],
+            b"ab".to_vec(),
+            b"abababababababab".to_vec(),
+            b"abcabcabcabcabc".to_vec(),
+            b"the quick brown fox jumps over the lazy dog".repeat(8),
+            (0..=255u8).collect(),
+            (0..=255u8).cycle().take(1024).collect(),
+            fibonacci_ladder_corpus(20),
+        ];
+        // Add skewed k-symbol corpora across k in [1, 2, 3, 4, 8, 16, 32, 64, 128, 256]
+        for k in [1usize, 2, 3, 4, 8, 16, 32, 64, 128, 256] {
+            let mut v = Vec::new();
+            for s in 0..k {
+                v.extend(std::iter::repeat_n(s as u8, (k - s).min(16)));
+            }
+            corpora.push(v);
+        }
+
+        for corpus in &corpora {
+            // Standalone HuffmanTree + HuffmanEncoder/HuffmanDecoder
+            let tree = HuffmanTree::from_data(corpus).unwrap();
+            let raw_tree = tree.serialize();
+            let tree_rt = HuffmanTree::deserialize(&raw_tree).unwrap();
+            assert_eq!(tree.codes, tree_rt.codes);
+            assert_eq!(tree.max_code_length, tree_rt.max_code_length);
+            let enc = HuffmanEncoder::from_tree(tree);
+            let enc_rt = HuffmanEncoder::from_tree(tree_rt.clone());
+            let stream = enc.encode(corpus).unwrap();
+            let stream_rt = enc_rt.encode(corpus).unwrap();
+            assert_eq!(stream, stream_rt);
+            let dec = HuffmanDecoder::new(tree_rt);
+            assert_eq!(dec.decode(&stream, corpus.len()).unwrap(), *corpus);
+
+            // ContextualHuffmanEncoder across Order0, Order1, Order2
+            for order in [
+                HuffmanOrder::Order0,
+                HuffmanOrder::Order1,
+                HuffmanOrder::Order2,
+            ] {
+                let c_enc = ContextualHuffmanEncoder::new(corpus, order).unwrap();
+                let model_bytes = c_enc.serialize();
+                let c_enc_rt = ContextualHuffmanEncoder::deserialize(&model_bytes).unwrap();
+                let c_stream = c_enc.encode(corpus).unwrap();
+                let c_stream_rt = c_enc_rt.encode(corpus).unwrap();
+                assert_eq!(c_stream, c_stream_rt);
+
+                let c_dec = ContextualHuffmanDecoder::new(c_enc);
+                let c_dec_rt = ContextualHuffmanDecoder::new(
+                    ContextualHuffmanEncoder::deserialize(&model_bytes).unwrap(),
+                );
+                assert_eq!(c_dec.decode(&c_stream_rt, corpus.len()).unwrap(), *corpus);
+                assert_eq!(c_dec_rt.decode(&c_stream, corpus.len()).unwrap(), *corpus);
+
+                if c_enc_rt.order() == HuffmanOrder::Order1 {
+                    for factor in [
+                        InterleavingFactor::X1,
+                        InterleavingFactor::X2,
+                        InterleavingFactor::X4,
+                        InterleavingFactor::X8,
+                    ] {
+                        let ix = c_enc_rt.encode_with_interleaving(corpus, factor).unwrap();
+                        let ix_orig = c_dec
+                            .decode_with_interleaving(&ix, corpus.len(), factor)
+                            .unwrap();
+                        let ix_rt = c_dec_rt
+                            .decode_with_interleaving(&ix, corpus.len(), factor)
+                            .unwrap();
+                        assert_eq!(ix_orig, *corpus);
+                        assert_eq!(ix_rt, *corpus);
+                    }
+                }
             }
         }
     }

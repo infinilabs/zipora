@@ -1026,8 +1026,13 @@ impl ContextualHuffmanEncoder {
     fn decode_xn<const N: usize>(&self, data: &[u8], output_size: usize) -> Result<Vec<u8>> {
         debug_assert!(N > 0 && N <= 8);
 
-        if data.is_empty() {
+        if output_size == 0 {
             return Ok(Vec::new());
+        }
+        if data.is_empty() {
+            return Err(ZiporaError::invalid_data(
+                "Empty encoded data for non-zero output_size",
+            ));
         }
 
         // Build decode table (block-based lookup)
@@ -1421,8 +1426,13 @@ impl ContextualHuffmanDecoder {
 
     /// Decode context-based Huffman data  
     pub fn decode(&self, encoded_data: &[u8], output_length: usize) -> Result<Vec<u8>> {
-        if encoded_data.is_empty() || output_length == 0 {
+        if output_length == 0 {
             return Ok(Vec::new());
+        }
+        if encoded_data.is_empty() {
+            return Err(ZiporaError::invalid_data(
+                "Empty encoded data for non-zero output_length",
+            ));
         }
 
         let result = match self.encoder.order {
@@ -1499,13 +1509,22 @@ impl ContextualHuffmanDecoder {
         let root = tree
             .root()
             .ok_or_else(|| ZiporaError::invalid_data("Empty tree"))?;
-        if let HuffmanNode::Leaf { symbol, .. } = root {
-            let max_len = encoded_data
-                .len()
-                .saturating_mul(8)
-                .saturating_add(1)
-                .min(output_length);
-            return Ok(vec![*symbol; max_len]);
+        if matches!(root, HuffmanNode::Leaf { .. }) {
+            let mut result = Vec::with_capacity(output_length);
+            let mut bit_buf: u64 = 0;
+            let mut bits_in_buf: u32 = 0;
+            let mut byte_idx: usize = 0;
+            for _ in 0..output_length {
+                let sym = self.decode_symbol_slow(
+                    encoded_data,
+                    &mut byte_idx,
+                    &mut bit_buf,
+                    &mut bits_in_buf,
+                    tree,
+                )?;
+                result.push(sym);
+            }
+            return Ok(result);
         }
 
         let lut = &self.tree_luts[0];

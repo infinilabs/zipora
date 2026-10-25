@@ -135,9 +135,8 @@ impl HuffmanTree {
         })
     }
 
-    /// Build tree with fixed-length codes for pathological cases
+    /// Build tree with balanced codes for pathological cases
     fn from_frequencies_fixed_length(frequencies: &[u32; 256]) -> Result<Self> {
-        // Count symbols
         let symbols: Vec<u8> = frequencies
             .iter()
             .enumerate()
@@ -153,27 +152,44 @@ impl HuffmanTree {
             });
         }
 
-        // Use 8-bit fixed codes (we have at most 256 symbols)
-        let code_length = 8;
-        let mut codes = HashMap::new();
-
-        for (i, &symbol) in symbols.iter().enumerate() {
-            let mut code = Vec::with_capacity(code_length);
-            let mut val = i;
-            for _ in 0..code_length {
-                code.push((val & 1) != 0);
-                val >>= 1;
-            }
-            codes.insert(symbol, code);
+        if symbols.len() == 1 {
+            let symbol = symbols[0];
+            let mut codes = HashMap::new();
+            codes.insert(symbol, vec![false]);
+            return Ok(Self {
+                root: Some(HuffmanNode::Leaf {
+                    symbol,
+                    frequency: 1,
+                }),
+                codes,
+                max_code_length: 1,
+            });
         }
 
-        // Build decoding tree from codes
-        let root = Self::build_decoding_tree_from_codes(&codes)?;
+        fn build_balanced_node(syms: &[u8]) -> HuffmanNode {
+            if syms.len() == 1 {
+                return HuffmanNode::Leaf {
+                    symbol: syms[0],
+                    frequency: 1,
+                };
+            }
+            let mid = syms.len() / 2;
+            HuffmanNode::Internal {
+                frequency: 0,
+                left: Box::new(build_balanced_node(&syms[..mid])),
+                right: Box::new(build_balanced_node(&syms[mid..])),
+            }
+        }
+
+        let root = build_balanced_node(&symbols);
+        let mut codes = HashMap::with_capacity(symbols.len());
+        let mut max_code_length = 0;
+        Self::generate_codes(&root, Vec::new(), &mut codes, &mut max_code_length);
 
         Ok(Self {
-            root,
+            root: Some(root),
             codes,
-            max_code_length: code_length,
+            max_code_length,
         })
     }
 
@@ -315,7 +331,11 @@ impl HuffmanTree {
                 code.push(bit);
             }
 
-            codes.insert(symbol, code);
+            if codes.insert(symbol, code).is_some() {
+                return Err(ZiporaError::invalid_data(
+                    "Duplicate symbol in Huffman tree",
+                ));
+            }
             offset += byte_count;
         }
 
@@ -337,13 +357,18 @@ impl HuffmanTree {
             return Ok(None);
         }
 
-        // Special case: single symbol
+        // Special case: single symbol must have a 1-bit code
         if codes.len() == 1 {
             // SAFETY: codes.len() == 1 guarantees iter().next() returns Some
-            let (&symbol, _) = codes
+            let (&symbol, code) = codes
                 .iter()
                 .next()
                 .expect("codes map contains exactly one symbol");
+            if code.len() != 1 {
+                return Err(ZiporaError::invalid_data(
+                    "Single-symbol Huffman tree must have a 1-bit code",
+                ));
+            }
             return Ok(Some(HuffmanNode::Leaf {
                 symbol,
                 frequency: 1, // Dummy frequency for leaf node
@@ -368,13 +393,43 @@ impl HuffmanTree {
             Self::insert_code_into_tree(&mut root, symbol, code)?;
         }
 
+        if Self::has_unassigned_leaf(&root) {
+            return Err(ZiporaError::invalid_data(
+                "Incomplete Huffman code set: tree has unassigned branches",
+            ));
+        }
+
         Ok(Some(root))
+    }
+
+    /// Check whether any unassigned leaf (`frequency == 0`) remains in the tree
+    fn has_unassigned_leaf(root: &HuffmanNode) -> bool {
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            match node {
+                HuffmanNode::Leaf { frequency, .. } => {
+                    if *frequency == 0 {
+                        return true;
+                    }
+                }
+                HuffmanNode::Internal { left, right, .. } => {
+                    stack.push(left);
+                    stack.push(right);
+                }
+            }
+        }
+        false
     }
 
     /// Insert a symbol and its code into the decoding tree
     fn insert_code_into_tree(node: &mut HuffmanNode, symbol: u8, code: &[bool]) -> Result<()> {
         if code.is_empty() {
-            // Replace this node with a leaf
+            if !matches!(node, HuffmanNode::Leaf { frequency: 0, .. }) {
+                return Err(ZiporaError::invalid_data(
+                    "Non-prefix-free Huffman code set: code is a prefix of another symbol",
+                ));
+            }
+            // Replace unassigned leaf with an assigned leaf
             *node = HuffmanNode::Leaf {
                 symbol,
                 frequency: 1, // Dummy frequency

@@ -144,8 +144,13 @@ impl HuffmanDecoder {
 
     /// Decode Huffman-encoded data
     pub fn decode(&self, encoded_data: &[u8], output_length: usize) -> Result<Vec<u8>> {
-        if encoded_data.is_empty() || output_length == 0 {
+        if output_length == 0 {
             return Ok(Vec::new());
+        }
+        if encoded_data.is_empty() {
+            return Err(ZiporaError::invalid_data(
+                "Empty encoded data for non-zero output_length",
+            ));
         }
 
         let root = match self.tree.root() {
@@ -163,12 +168,41 @@ impl HuffmanDecoder {
         }
 
         if let HuffmanNode::Leaf { symbol, .. } = root {
-            let max_single_len = encoded_data.len().saturating_mul(8).saturating_add(1);
-            if output_length > max_single_len {
-                return Err(ZiporaError::invalid_data(format!(
-                    "Decoded length {} != expected {}",
-                    max_single_len, output_length
-                )));
+            let code = self
+                .tree
+                .get_code(*symbol)
+                .ok_or_else(|| ZiporaError::invalid_data("Missing leaf code"))?;
+            if code.is_empty() {
+                return Err(ZiporaError::invalid_data(
+                    "Empty code for single-symbol Huffman tree",
+                ));
+            }
+            let mut bit_buf: u64 = 0;
+            let mut bits_in_buf: u32 = 0;
+            let mut byte_idx: usize = 0;
+            for _ in 0..output_length {
+                for &expected_bit in code {
+                    if bits_in_buf == 0 {
+                        if let Some(&b) = encoded_data.get(byte_idx) {
+                            bit_buf = b as u64;
+                            bits_in_buf = 8;
+                            byte_idx += 1;
+                        } else {
+                            return Err(ZiporaError::invalid_data(format!(
+                                "Decoded length < expected {}",
+                                output_length
+                            )));
+                        }
+                    }
+                    let bit = (bit_buf & 1) != 0;
+                    bit_buf >>= 1;
+                    bits_in_buf -= 1;
+                    if bit != expected_bit {
+                        return Err(ZiporaError::invalid_data(
+                            "Invalid bit for single-symbol Huffman tree",
+                        ));
+                    }
+                }
             }
             return Ok(vec![*symbol; output_length]);
         }
