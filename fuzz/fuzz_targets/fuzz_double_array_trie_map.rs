@@ -1,5 +1,5 @@
 //! Structure-aware `arbitrary` fuzz target for `DoubleArrayTrieMap<u32>` (plan.md B2.1).
-//! Verifies incremental `insert`, `get`, `shrink_to_fit`, and `remove` against a BTreeMap oracle.
+//! Verifies incremental `insert`, `get`, and `shrink_to_fit` against a BTreeMap oracle.
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use std::collections::BTreeMap;

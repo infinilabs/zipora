@@ -544,6 +544,7 @@ feature_matrix:
 	@for f in $(FEATURE_MATRIX_SINGLE); do \
 		echo "=== B4: single feature --no-default-features --features $$f ==="; \
 		$(CARGO) clippy --locked --lib --bins --tests --no-default-features --features $$f -- -D warnings || exit 1; \
+		$(CARGO) test --locked --no-default-features --features $$f --lib || exit 1; \
 	done
 	@echo "=== B4: --all-features clippy ==="
 	$(CARGO) clippy --locked --all-targets --all-features -- -D warnings

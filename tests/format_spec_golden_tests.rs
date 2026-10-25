@@ -905,3 +905,50 @@ fn test_s52_r6_simd_isa_module_is_pub_crate() {
         "src/simd/mod.rs must not publicly export `simd::isa`"
     );
 }
+
+#[test]
+fn test_s52_r9_package_exclude_single_feature_tests_ci_toolchain_and_fuzz_doc() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // 1. Cargo.toml [package] must specify `exclude` covering plan.md and cpp_benchmark/wrapper_test
+    let cargo_toml = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert!(
+        cargo_toml.contains("exclude = [")
+            && cargo_toml.contains("\"plan.md\"")
+            && cargo_toml.contains("\"cpp_benchmark/"),
+        "Cargo.toml [package] must define `exclude` covering `plan.md` and `cpp_benchmark/`"
+    );
+
+    // 2. Makefile feature_matrix must run `cargo test` on each single-feature build, not just clippy
+    let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
+    let fm_idx = makefile
+        .find("feature_matrix:")
+        .expect("Makefile must have feature_matrix target");
+    let fm_block = &makefile[fm_idx..];
+    let fm_end = fm_block.find("\nsanity:").unwrap_or(fm_block.len());
+    let fm_section = &fm_block[..fm_end];
+    assert!(
+        fm_section.contains("test --locked --no-default-features --features $$f --lib"),
+        "Makefile feature_matrix must run unit tests (`test --locked --no-default-features --features $$f --lib`) for each single feature"
+    );
+
+    // 3. .github/workflows/ci.yml must not pass comma-separated `toolchain: stable, 1.95.0`
+    let ci_yml = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
+    assert!(
+        !ci_yml.contains("toolchain: stable, 1.95.0"),
+        ".github/workflows/ci.yml must not pass comma-separated toolchains to dtolnay/rust-toolchain"
+    );
+    assert!(
+        ci_yml.contains("toolchain: 1.95.0"),
+        ".github/workflows/ci.yml must install toolchain 1.95.0 in its own step"
+    );
+
+    // 4. fuzz/fuzz_targets/fuzz_double_array_trie_map.rs doc comment must accurately describe operations
+    let fuzz_dat =
+        std::fs::read_to_string(root.join("fuzz/fuzz_targets/fuzz_double_array_trie_map.rs"))
+            .unwrap();
+    assert!(
+        !fuzz_dat.contains("and `remove`"),
+        "fuzz_double_array_trie_map.rs doc comment must not claim `remove` when it only tests insert, get, and shrink_to_fit"
+    );
+}
