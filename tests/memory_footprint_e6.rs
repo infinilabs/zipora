@@ -733,4 +733,42 @@ fn test_s51_r3_review_ledger_identifiers_and_metrics_match_code_and_baselines() 
         e4.contains("438.26 us") && e4.contains("348.90 us"),
         "docs/review/e4.md must report the exact JSON total_ns 438.26 us -> 348.90 us for huffman_o1/decode_64kib"
     );
+
+    // 9. S52-R8: no nonexistent identifiers, stale line ranges, anachronistic Stage 15 refs, or stale unsafe counts.
+    for (label, content) in [
+        ("docs/review/e4.md", &e4),
+        ("docs/review/e2_e3.md", &e2_e3),
+        ("docs/review/e1.md", &e1),
+        ("scripts/gen_e3_summary.py", &gen_e3),
+    ] {
+        for forbidden in [
+            "insert_code_checked",
+            "Kraft-dyadic",
+            "row_provenance_git_commit",
+            "row_provenance_binary_sha256",
+            "benches/competitors/suffix_array.rs:116-118",
+            "while standalone `DoubleArrayTrie` remains `8 B/state`",
+            "1,429/1,429",
+            "benches/common/datasets.rs:424-441",
+            "benches/common/datasets.rs:530-545",
+            "benches/common/harness.rs:726",
+        ] {
+            assert!(
+                !content.contains(forbidden),
+                "S52-R8: {label} still contains stale or nonexistent reference `{forbidden}`"
+            );
+        }
+    }
+    assert!(
+        e4.contains("benches/competitors/suffix_array.rs:122-124")
+            && e4.contains("1,427/1,427 = 100.0%"),
+        "S52-R8: docs/review/e4.md must cite benches/competitors/suffix_array.rs:122-124 and 1,427/1,427 unsafe sites"
+    );
+    assert!(
+        e2_e3.contains("benches/common/datasets.rs:564-579")
+            && e2_e3.contains("benches/common/harness.rs:736")
+            && e2_e3.contains("1,427/1,427 = 100.0%")
+            && e2_e3.contains("later refactored into `LockFreeMemoryPool::pop_fast_bin` and `PoolArena::push_free_fast_bin_offset`"),
+        "S52-R8: docs/review/e2_e3.md must have accurate datasets.rs/harness.rs line refs, 1,427 unsafe count, and non-anachronistic E3.5 Stage 15/16 pool attribution"
+    );
 }
