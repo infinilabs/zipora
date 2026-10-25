@@ -103,9 +103,10 @@ callgrind.out.*
 # Valgrind
 vgcore.*
 
-# Fuzzing (fuzz/Cargo.toml + fuzz/fuzz_targets/ ARE checked in; generated dirs are not)
+# Fuzzing (fuzz/Cargo.toml + fuzz/fuzz_targets/ + fuzz/corpus/*/seed_* ARE checked in; generated dirs/mutations are not)
 /fuzz/artifacts/
-/fuzz/corpus/
+/fuzz/corpus/*/*
+!/fuzz/corpus/*/seed_*
 /fuzz/target/
 /fuzz/coverage/
 /fuzz/Cargo.lock

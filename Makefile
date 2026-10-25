@@ -14,6 +14,7 @@
 .PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
 .PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_c12 miri_scalar miri_weak
 .PHONY: tsan_cspp tsan_pool tsan_concurrency
+.PHONY: fuzz_seed fuzz_smoke fuzz_soak
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity feature_matrix
 .PHONY: unsafe_audit api_honesty index_audit unwrap_audit hygiene_audit
@@ -440,12 +441,13 @@ miri_weak:
 		--no-default-features --features simd,mmap,serde,lz4,async,ffi,avx512 --lib -- -D warnings
 
 # =============================================================================
-# FUZZING (plan.md 6.1) — requires: cargo install cargo-fuzz; nightly toolchain
+# FUZZING (plan.md 6.1 / B2.1) — requires: cargo install cargo-fuzz; nightly toolchain
 # =============================================================================
 
 FUZZ_TARGETS = fuzz_zip_offset_load fuzz_simple_zip_build fuzz_mixed_len_build \
 	fuzz_huffman_decode fuzz_rans_decode fuzz_fse_decompress \
-	fuzz_double_array_trie fuzz_uint_vec
+	fuzz_double_array_trie fuzz_uint_vec \
+	fuzz_hybrid_posting_list fuzz_double_array_trie_map fuzz_blob_store_roundtrip
 
 # 1 GiB, not the libFuzzer default of 2 GiB and not the 4 GiB this used to
 # pass: a decoder that turns a few bytes of input into a multi-gigabyte
@@ -455,17 +457,23 @@ FUZZ_TARGETS = fuzz_zip_offset_load fuzz_simple_zip_build fuzz_mixed_len_build \
 # flagged it.
 FUZZ_RSS_LIMIT_MB = 1024
 
+# Deterministic seed corpus generator (plan.md B2.1): writes one minimal valid
+# artifact per fuzz target from the real encoders into fuzz/corpus/<target>/seed_0001.bin.
+fuzz_seed:
+	ZIPORA_WRITE_FUZZ_SEEDS=1 $(CARGO) test --locked --test format_spec_golden_tests \
+		test_b2_1_fuzz_seed_corpora_and_structure_aware_targets -- --exact --nocapture
+
 # Quick smoke: 60s per target, sequential.
-fuzz_smoke:
+fuzz_smoke: fuzz_seed
 	@for t in $(FUZZ_TARGETS); do \
 		echo "=== $$t (60s) ==="; \
-		cargo +nightly fuzz run $$t -- -max_total_time=60 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) || exit 1; \
+		cargo +nightly fuzz run $$t fuzz/corpus/$$t -- -max_total_time=60 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) -print_final_stats=1 || exit 1; \
 	done
 
 # Soak: 1 hour per target, all in parallel (needs ~8 cores).
-fuzz_soak:
+fuzz_soak: fuzz_seed
 	@for t in $(FUZZ_TARGETS); do \
-		cargo +nightly fuzz run $$t -- -max_total_time=3600 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) & \
+		cargo +nightly fuzz run $$t fuzz/corpus/$$t -- -max_total_time=3600 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) -print_final_stats=1 & \
 	done; wait
 
 # =============================================================================

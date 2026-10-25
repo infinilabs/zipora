@@ -8,6 +8,7 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
+arbitrary = { version = "1.4", features = ["derive"] }
 libfuzzer-sys = "0.4"
 
 [dependencies.zipora]
@@ -66,6 +67,27 @@ bench = false
 [[bin]]
 name = "fuzz_uint_vec"
 path = "fuzz_targets/fuzz_uint_vec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_hybrid_posting_list"
+path = "fuzz_targets/fuzz_hybrid_posting_list.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_double_array_trie_map"
+path = "fuzz_targets/fuzz_double_array_trie_map.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_blob_store_roundtrip"
+path = "fuzz_targets/fuzz_blob_store_roundtrip.rs"
 test = false
 doc = false
 bench = false

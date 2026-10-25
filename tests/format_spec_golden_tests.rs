@@ -9,13 +9,12 @@ use tempfile::tempdir;
 use zipora::blob_store::file_header::ChecksumType;
 #[cfg(feature = "mmap")]
 use zipora::blob_store::reorder_map::{ZReorderMap, ZReorderMapBuilder};
+use zipora::blob_store::{
+    BlobStore, BlobStoreFileFooter, FileHeaderBase, SortedUintVec, SortedUintVecBuilder,
+    SortedUintVecConfig,
+};
 #[cfg(feature = "zstd")]
-use zipora::blob_store::{
-    BlobStore, ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig,
-};
-use zipora::blob_store::{
-    BlobStoreFileFooter, FileHeaderBase, SortedUintVec, SortedUintVecBuilder, SortedUintVecConfig,
-};
+use zipora::blob_store::{ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig};
 use zipora::containers::ZoSortedStrVec;
 use zipora::entropy::dictionary::{Dictionary, DictionaryEntry};
 use zipora::error::Result;
@@ -535,4 +534,278 @@ fn test_b2_2_weak_memory_and_aarch64_gates() {
         !bm25.contains("std::arch::aarch64::_prefetch"),
         "src/scoring/bm25.rs must not call unstable std::arch::aarch64::_prefetch"
     );
+}
+
+#[cfg(not(miri))]
+#[test]
+fn test_b2_1_fuzz_seed_corpora_and_structure_aware_targets() {
+    use arbitrary::{Arbitrary, Unstructured};
+    use std::collections::BTreeMap;
+    use zipora::blob_store::{MixedLenBlobStore, SimpleZipBlobStore, SimpleZipConfig};
+    use zipora::containers::UintVecMin0;
+    use zipora::entropy::{
+        FseConfig, FseDecoder, FseEncoder, HuffmanDecoder, HuffmanEncoder, HuffmanTree, ParallelX1,
+        Rans64Encoder, RansDecoder,
+    };
+    use zipora::fsa::{DoubleArrayTrie, DoubleArrayTrieMap};
+    use zipora::succinct::elias_fano::HybridPostingList;
+
+    #[derive(Arbitrary, Debug)]
+    struct PostingInput {
+        list_a: Vec<u32>,
+        list_b: Vec<u32>,
+        queries: Vec<u32>,
+        encoding_sel: u8,
+    }
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let write_seeds = std::env::var("ZIPORA_WRITE_FUZZ_SEEDS").as_deref() == Ok("1");
+
+    let all_targets = [
+        "fuzz_zip_offset_load",
+        "fuzz_simple_zip_build",
+        "fuzz_mixed_len_build",
+        "fuzz_huffman_decode",
+        "fuzz_rans_decode",
+        "fuzz_fse_decompress",
+        "fuzz_double_array_trie",
+        "fuzz_uint_vec",
+        "fuzz_hybrid_posting_list",
+        "fuzz_double_array_trie_map",
+        "fuzz_blob_store_roundtrip",
+    ];
+
+    let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
+    assert!(
+        makefile.contains("fuzz_seed:"),
+        "B2.1 requires fuzz_seed target in Makefile"
+    );
+    let fuzz_toml = std::fs::read_to_string(root.join("fuzz/Cargo.toml")).unwrap();
+    assert!(
+        fuzz_toml.contains("arbitrary ="),
+        "B2.1 requires arbitrary dependency in fuzz/Cargo.toml"
+    );
+    for t in all_targets {
+        assert!(
+            makefile.contains(t),
+            "Makefile FUZZ_TARGETS must include {t}"
+        );
+        assert!(
+            fuzz_toml.contains(&format!("name = \"{t}\"")),
+            "fuzz/Cargo.toml must register binary {t}"
+        );
+        assert!(
+            root.join(format!("fuzz/fuzz_targets/{t}.rs")).exists(),
+            "fuzz/fuzz_targets/{t}.rs must exist"
+        );
+    }
+
+    let write_or_load_seed = |target: &str, generated: Option<Vec<u8>>| -> Vec<u8> {
+        let dir = root.join("fuzz/corpus").join(target);
+        let seed_path = dir.join("seed_0001.bin");
+        if write_seeds && let Some(ref bytes) = generated {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(&seed_path, bytes).unwrap();
+        }
+        assert!(
+            seed_path.exists(),
+            "B2.1 seed file missing: {} (run `make fuzz_seed`)",
+            seed_path.display()
+        );
+        let on_disk = std::fs::read(&seed_path).unwrap();
+        assert!(!on_disk.is_empty(), "seed file must not be empty");
+        if let Some(expected) = generated {
+            assert_eq!(
+                on_disk, expected,
+                "committed seed for {target} drifted from encoder output"
+            );
+        }
+        on_disk
+    };
+
+    // 1. fuzz_zip_offset_load: real ZipOffsetBlobStore wire image
+    #[cfg(feature = "zstd")]
+    let zip_offset_generated = {
+        let mut builder = ZipOffsetBlobStoreBuilder::new().unwrap();
+        for rec in [
+            &b"alpha-record-0"[..],
+            &b"beta-record-1"[..],
+            &b"gamma-record-2"[..],
+        ] {
+            builder.add_record(rec).unwrap();
+        }
+        let store = builder.finish().unwrap();
+        let mut buf = Vec::new();
+        store.save_to_writer(&mut buf).unwrap();
+        Some(buf)
+    };
+    #[cfg(not(feature = "zstd"))]
+    let zip_offset_generated: Option<Vec<u8>> = None;
+
+    let seed_zip_offset = write_or_load_seed("fuzz_zip_offset_load", zip_offset_generated);
+    assert!(seed_zip_offset.len() > 80);
+    #[cfg(feature = "zstd")]
+    {
+        let mut cursor = Cursor::new(&seed_zip_offset);
+        let loaded = ZipOffsetBlobStore::load_from_reader(&mut cursor)
+            .expect("fuzz_zip_offset_load seed must pass header+checksum validation");
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded.get(0).unwrap(), b"alpha-record-0");
+    }
+
+    // 2. fuzz_simple_zip_build & 3. fuzz_mixed_len_build: length-prefixed record stream
+    let len_prefixed_seed = vec![
+        5, b'a', b'l', b'p', b'h', b'a', 4, b'b', b'e', b't', b'a', 5, b'g', b'a', b'm', b'm', b'a',
+    ];
+    let seed_simple_zip =
+        write_or_load_seed("fuzz_simple_zip_build", Some(len_prefixed_seed.clone()));
+    {
+        let records = vec![b"alpha".to_vec(), b"beta".to_vec(), b"gamma".to_vec()];
+        let store = SimpleZipBlobStore::build_from(&records, &SimpleZipConfig::default()).unwrap();
+        assert_eq!(store.get(0).unwrap(), b"alpha");
+        assert!(!seed_simple_zip.is_empty());
+    }
+    let seed_mixed_len = write_or_load_seed("fuzz_mixed_len_build", Some(len_prefixed_seed));
+    {
+        let records = vec![b"alpha".to_vec(), b"beta".to_vec(), b"gamma".to_vec()];
+        let store = MixedLenBlobStore::build_from(&records).unwrap();
+        assert_eq!(store.get_ref(1).unwrap(), b"beta");
+        assert!(!seed_mixed_len.is_empty());
+    }
+
+    // 4. fuzz_huffman_decode: 8-byte frequency/len header + real HuffmanEncoder bitstream
+    let huff_msg = b"abcaabcbabcc";
+    let huff_header = [2u8, b'a', b'b', b'c', (huff_msg.len() as u8), 0, 0, 0];
+    let mut huff_freqs = [0u32; 256];
+    let n_syms = (huff_header[0] as usize % 8) + 2;
+    for i in 0..n_syms {
+        huff_freqs[huff_header[1 + (i % 4)] as usize % 256] += 1 + huff_header[i] as u32;
+    }
+    let huff_enc = HuffmanEncoder::from_frequencies(&huff_freqs).unwrap();
+    let huff_payload = huff_enc.encode(huff_msg).unwrap();
+    let mut huff_seed = Vec::from(huff_header);
+    huff_seed.extend_from_slice(&huff_payload);
+    let seed_huff = write_or_load_seed("fuzz_huffman_decode", Some(huff_seed));
+    {
+        let tree = HuffmanTree::from_frequencies(&huff_freqs).unwrap();
+        let dec = HuffmanDecoder::new(tree);
+        let decoded = dec
+            .decode(&seed_huff[8..], huff_msg.len())
+            .expect("fuzz_huffman_decode seed must decode cleanly");
+        assert_eq!(decoded, huff_msg);
+    }
+
+    // 5. fuzz_rans_decode: 8-byte frequency/len header + real Rans64Encoder<ParallelX1> stream
+    let rans_msg = b"abcdabcdabcd";
+    let rans_header = [b'a', b'b', b'c', b'd', 10, 8, (rans_msg.len() as u8), 0];
+    let mut rans_freqs = [0u32; 256];
+    for i in 0..4 {
+        rans_freqs[rans_header[i] as usize] += 1 + rans_header[i + 4] as u32;
+    }
+    let rans_enc = Rans64Encoder::<ParallelX1>::new(&rans_freqs).unwrap();
+    let rans_payload = rans_enc.encode(rans_msg).unwrap();
+    let mut rans_seed = Vec::from(rans_header);
+    rans_seed.extend_from_slice(&rans_payload);
+    let seed_rans = write_or_load_seed("fuzz_rans_decode", Some(rans_seed));
+    {
+        let dec = RansDecoder::new(&rans_enc);
+        let decoded = dec
+            .decode(&seed_rans[8..], rans_msg.len())
+            .expect("fuzz_rans_decode seed must decode cleanly");
+        assert_eq!(decoded, rans_msg);
+    }
+
+    // 6. fuzz_fse_decompress: real FseEncoder frame
+    let fse_msg = b"zipora-fse-seed-corpus-payload-zipora-fse-seed-corpus-payload";
+    let fse_frame = FseEncoder::new(FseConfig::default())
+        .unwrap()
+        .compress(fse_msg)
+        .unwrap();
+    let seed_fse = write_or_load_seed("fuzz_fse_decompress", Some(fse_frame));
+    {
+        let mut dec = FseDecoder::new();
+        let decoded = dec
+            .decompress(&seed_fse)
+            .expect("fuzz_fse_decompress seed must pass header check and decompress");
+        assert_eq!(decoded, fse_msg);
+    }
+
+    // 7. fuzz_double_array_trie: 0xFF-delimited keys
+    let dat_seed = b"alpha\xffbeta\xffgamma\xffdelta".to_vec();
+    let seed_dat = write_or_load_seed("fuzz_double_array_trie", Some(dat_seed));
+    {
+        let mut trie = DoubleArrayTrie::new();
+        for k in seed_dat.split(|&b| b == 0xFF) {
+            trie.insert(k).unwrap();
+        }
+        assert!(trie.contains(b"alpha") && trie.contains(b"delta"));
+    }
+
+    // 8. fuzz_uint_vec: 10-byte header + three 10-byte (idx, val) operations
+    let mut uint_seed = Vec::with_capacity(40);
+    uint_seed.extend_from_slice(&8u16.to_le_bytes());
+    uint_seed.extend_from_slice(&1023u64.to_le_bytes());
+    for (idx, val) in [(0u16, 42u64), (3u16, 511u64), (7u16, 1023u64)] {
+        uint_seed.extend_from_slice(&idx.to_le_bytes());
+        uint_seed.extend_from_slice(&val.to_le_bytes());
+    }
+    let seed_uint = write_or_load_seed("fuzz_uint_vec", Some(uint_seed));
+    {
+        let mut v = UintVecMin0::new(8, 1023);
+        v.set(3, 511);
+        assert_eq!(v.get(3), 511);
+        assert_eq!(seed_uint.len(), 40);
+    }
+
+    // 9..11. Structure-aware arbitrary targets: 128 payload bytes + 64 tail control bytes
+    // (`arbitrary::Unstructured` pops bool continuation bytes from the tail: odd = true, 0 = false).
+    let mut arb_bytes: Vec<u8> = (0u8..128u8)
+        .map(|i| i.wrapping_mul(37).wrapping_add(11) | 1)
+        .collect();
+    for i in 0u8..64u8 {
+        arb_bytes.push(if i % 3 == 1 { 0 } else { 3 });
+    }
+
+    let seed_posting = write_or_load_seed("fuzz_hybrid_posting_list", Some(arb_bytes.clone()));
+    {
+        let mut u = Unstructured::new(&seed_posting);
+        let input = PostingInput::arbitrary(&mut u).unwrap();
+        let mut a = input.list_a;
+        a.sort_unstable();
+        a.dedup();
+        let mut b = input.list_b;
+        b.sort_unstable();
+        b.dedup();
+        assert!(!a.is_empty() && !b.is_empty() && !input.queries.is_empty());
+        let _ = input.encoding_sel;
+        let pl_a = HybridPostingList::from_sorted(&a);
+        let pl_b = HybridPostingList::from_sorted(&b);
+        assert_eq!(pl_a.len(), a.len());
+        assert_eq!(pl_a.next_geq(a[0] as u64), Some((0, a[0] as u64)));
+        let _ = pl_a.intersect_count(&pl_b);
+    }
+
+    let seed_dat_map = write_or_load_seed("fuzz_double_array_trie_map", Some(arb_bytes.clone()));
+    {
+        let mut u = Unstructured::new(&seed_dat_map);
+        let keys = Vec::<Vec<u8>>::arbitrary(&mut u).unwrap();
+        let mut oracle = BTreeMap::new();
+        let mut trie = DoubleArrayTrieMap::<u32>::new();
+        for (idx, k) in keys.into_iter().filter(|k| !k.is_empty()).enumerate() {
+            let val = idx as u32;
+            oracle.insert(k.clone(), val);
+            trie.insert(&k, val).unwrap();
+        }
+        assert!(!oracle.is_empty());
+        for (k, &v) in &oracle {
+            assert_eq!(trie.get(k), Some(v));
+        }
+    }
+
+    let seed_blob_rt = write_or_load_seed("fuzz_blob_store_roundtrip", Some(arb_bytes));
+    {
+        let mut u = Unstructured::new(&seed_blob_rt);
+        let pairs = Vec::<(Vec<u8>, Vec<u8>)>::arbitrary(&mut u).unwrap();
+        assert!(!pairs.is_empty());
+    }
 }
