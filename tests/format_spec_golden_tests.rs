@@ -425,3 +425,45 @@ fn test_b4_feature_matrix_and_msrv_1_95_gates() {
         ".github/workflows/ci.yml must verify MSRV 1.95"
     );
 }
+
+#[cfg(not(miri))]
+#[test]
+fn test_b5_supply_chain_audit_and_deny_gates() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let deny_toml_path = root.join("deny.toml");
+    assert!(
+        deny_toml_path.exists(),
+        "B5 requires committed deny.toml at repository root"
+    );
+    let deny_toml = std::fs::read_to_string(&deny_toml_path).unwrap();
+    for section in ["[advisories]", "[licenses]", "[bans]", "[sources]"] {
+        assert!(
+            deny_toml.contains(section),
+            "deny.toml must configure {section}"
+        );
+    }
+
+    let cargo_lock = std::fs::read_to_string(root.join("Cargo.lock")).unwrap();
+    assert!(
+        !cargo_lock.contains("name = \"bytes\"\nversion = \"1.10.1\""),
+        "Cargo.lock must upgrade bytes past 1.10.1 (RUSTSEC-2026-0007)"
+    );
+    assert!(
+        !cargo_lock.contains("name = \"crossbeam-epoch\"\nversion = \"0.9.18\""),
+        "Cargo.lock must upgrade crossbeam-epoch past 0.9.18 (RUSTSEC-2026-0204)"
+    );
+
+    let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
+    assert!(
+        makefile.contains("$(CARGO) audit") && makefile.contains("$(CARGO) deny check"),
+        "Makefile audit target must run both cargo audit and cargo deny check"
+    );
+
+    let ci_yml = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
+    assert!(
+        ci_yml.contains("supply_chain:")
+            && ci_yml.contains("cargo audit")
+            && ci_yml.contains("cargo deny check"),
+        ".github/workflows/ci.yml must define supply_chain job running cargo audit and cargo deny check"
+    );
+}

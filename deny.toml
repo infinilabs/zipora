@@ -1,0 +1,42 @@
+# cargo-deny configuration for Zipora (Rule B5)
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+ignore = [
+    # bincode 1.3.3 is marked unmaintained; retained for pre-stable serde/bincode wire compatibility
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x wire format compatibility" },
+    # tokio 1.50.0 is the latest MSRV 1.95 compatible version; Zipora does not use AsyncFd
+    { id = "RUSTSEC-2026-0386", reason = "latest MSRV 1.95 compatible tokio; AsyncFd is unused" },
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "Unicode-3.0",
+    "Zlib",
+    "BSL-1.0",
+    "MPL-2.0",
+]
+
+[[licenses.clarify]]
+crate = "zipora"
+expression = "MIT"
+license-files = [
+    { path = "LICENSE", hash = 0xe304124d },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

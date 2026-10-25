@@ -91,6 +91,35 @@ jobs:
     - name: Run B4 feature matrix and MSRV 1.95 gate
       run: make feature_matrix
 
+  supply_chain:
+    name: Supply Chain Audit & Deny (B5)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo audit & deny binaries
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/cargo-audit
+          ~/.cargo/bin/cargo-deny
+        key: ${{ runner.os }}-cargo-supply-chain-v1
+
+    - name: Install cargo-audit and cargo-deny
+      run: |
+        command -v cargo-audit >/dev/null 2>&1 || cargo install --locked cargo-audit
+        command -v cargo-deny >/dev/null 2>&1 || cargo install --locked cargo-deny
+
+    - name: Run B5 cargo audit and cargo deny check
+      run: |
+        cargo audit
+        cargo deny check
+
   # The job above builds the committed Cargo.lock. This one runs
   # `cargo update` first, so it tests the newest versions Cargo.toml allows
   # and shows drift between lock refreshes (Makefile `update` target). It does

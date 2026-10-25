@@ -561,12 +561,10 @@ outdated:
 		echo "Install: cargo install cargo-outdated"; \
 	fi
 
+# Supply-chain audit gate (Rule B5): cargo audit + cargo deny check.
 audit:
-	@if command -v cargo-audit >/dev/null 2>&1; then \
-		$(CARGO) audit; \
-	else \
-		echo "Install: cargo install cargo-audit"; \
-	fi
+	$(CARGO) audit
+	$(CARGO) deny check
 
 # =============================================================================
 # HELP
