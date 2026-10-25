@@ -252,6 +252,30 @@ def compare_benchmarks(
     has_integrity_error = False
     rows: List[Tuple[str, str, float, float, float, float, float, float, float, str]] = []
 
+    # 0. Verify per-row provenance and unrestamped top-level host_metadata (S51-R2)
+    prov_counts: Dict[Tuple[str, str], int] = {}
+    for base in base_list:
+        bname = base.get("name", "<unknown>")
+        m_commit = str(base.get("measured_at_commit", "") or "").strip()
+        m_sha = str(base.get("binary_sha256", "") or "").strip().lower()
+        if not m_commit or len(m_sha) != 64:
+            failures.append(
+                f"{bname}: baseline row missing valid measured_at_commit/binary_sha256 (S51-R2)"
+            )
+            has_integrity_error = True
+        else:
+            prov_counts[(m_commit, m_sha)] = prov_counts.get((m_commit, m_sha), 0) + 1
+    if prov_counts:
+        maj_commit, maj_sha = max(prov_counts.items(), key=lambda kv: kv[1])[0]
+        base_hm = baseline_data.get("host_metadata", {}) or {}
+        hm_commit = str(base_hm.get("git_commit", "") or "").strip()
+        hm_sha = str(base_hm.get("binary_sha256", "") or "").strip().lower()
+        if hm_commit != maj_commit or hm_sha != maj_sha:
+            failures.append(
+                f"host_metadata: restamped header ({hm_commit}, {hm_sha[:16]}...) does not match majority row provenance ({maj_commit}, {maj_sha[:16]}...) (S51-R2)"
+            )
+            has_integrity_error = True
+
     # 1. Check all baseline benchmarks in order (catches missing benchmarks!)
     for base in base_list:
         name = base["name"]

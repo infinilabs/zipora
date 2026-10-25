@@ -400,3 +400,154 @@ fn test_e6_rank_select_space_overhead_percent_and_mem_size() {
         few.space_overhead_percent()
     );
 }
+
+#[test]
+fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (suite, expected_base_commit, expected_base_count, expected_total) in [
+        ("core_bench", "4b490ff", 71usize, 80usize),
+        ("competitor_bench", "4b490ff", 175usize, 181usize),
+        ("e2e_search", "446401d", 7usize, 7usize),
+    ] {
+        let path = manifest_dir
+            .join("benches/baselines/bindiego")
+            .join(format!("{suite}.json"));
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+        let doc: serde_json::Value = serde_json::from_str(&raw)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()));
+
+        let host_meta = &doc["host_metadata"];
+        let header_commit = host_meta["git_commit"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{suite}: missing host_metadata.git_commit"));
+        let header_sha = host_meta["binary_sha256"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{suite}: missing host_metadata.binary_sha256"));
+
+        let benches = doc["benchmarks"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{suite}: missing benchmarks array"));
+        assert_eq!(benches.len(), expected_total, "{suite}: row count mismatch");
+
+        let mut commit_counts: HashMap<(String, String), usize> = HashMap::new();
+        let mut row_provenance: HashMap<String, (String, String)> = HashMap::new();
+
+        for row in benches {
+            let name = row["name"].as_str().expect("benchmark row name");
+            let row_commit = row["measured_at_commit"].as_str().unwrap_or_else(|| {
+                panic!("{suite}: benchmark '{name}' missing per-row measured_at_commit")
+            });
+            let row_sha = row["binary_sha256"].as_str().unwrap_or_else(|| {
+                panic!("{suite}: benchmark '{name}' missing per-row binary_sha256")
+            });
+            assert!(
+                (7..=40).contains(&row_commit.len())
+                    && row_commit.chars().all(|c| c.is_ascii_hexdigit()),
+                "{suite}: benchmark '{name}' has invalid measured_at_commit '{row_commit}'"
+            );
+            assert!(
+                row_sha.len() == 64 && row_sha.chars().all(|c| c.is_ascii_hexdigit()),
+                "{suite}: benchmark '{name}' has invalid binary_sha256 '{row_sha}'"
+            );
+            *commit_counts
+                .entry((row_commit.to_string(), row_sha.to_string()))
+                .or_insert(0) += 1;
+            row_provenance.insert(
+                name.to_string(),
+                (row_commit.to_string(), row_sha.to_string()),
+            );
+        }
+
+        // Top-level host_metadata must match the majority (base full-run) commit and binary_sha256,
+        // never restamped over spliced rows.
+        let ((maj_commit, maj_sha), maj_count) = commit_counts
+            .into_iter()
+            .max_by_key(|(_, count)| *count)
+            .expect("non-empty benchmarks");
+        assert_eq!(
+            maj_commit, expected_base_commit,
+            "{suite}: unexpected majority commit"
+        );
+        assert_eq!(
+            maj_count, expected_base_count,
+            "{suite}: unexpected base-commit row count"
+        );
+        assert_eq!(
+            header_commit, maj_commit,
+            "{suite}: host_metadata.git_commit '{header_commit}' was restamped over majority commit '{maj_commit}'"
+        );
+        assert_eq!(
+            header_sha, maj_sha,
+            "{suite}: host_metadata.binary_sha256 '{header_sha}' was restamped over majority sha '{maj_sha}'"
+        );
+
+        if suite == "competitor_bench" {
+            let comparisons = doc["same_run_comparisons"]
+                .as_array()
+                .expect("competitor_bench: missing same_run_comparisons");
+            for cmp in comparisons {
+                let zb = cmp["zipora_bench"].as_str().expect("zipora_bench");
+                let cb = cmp["competitor_bench"].as_str().expect("competitor_bench");
+                let (exp_z_commit, exp_z_sha) = &row_provenance[zb];
+                let (exp_c_commit, exp_c_sha) = &row_provenance[cb];
+                assert_eq!(
+                    cmp["zipora_measured_at_commit"].as_str(),
+                    Some(exp_z_commit.as_str()),
+                    "comparison {zb} vs {cb}: zipora_measured_at_commit mismatch"
+                );
+                assert_eq!(
+                    cmp["zipora_binary_sha256"].as_str(),
+                    Some(exp_z_sha.as_str()),
+                    "comparison {zb} vs {cb}: zipora_binary_sha256 mismatch"
+                );
+                assert_eq!(
+                    cmp["competitor_measured_at_commit"].as_str(),
+                    Some(exp_c_commit.as_str()),
+                    "comparison {zb} vs {cb}: competitor_measured_at_commit mismatch"
+                );
+                assert_eq!(
+                    cmp["competitor_binary_sha256"].as_str(),
+                    Some(exp_c_sha.as_str()),
+                    "comparison {zb} vs {cb}: competitor_binary_sha256 mismatch"
+                );
+            }
+        }
+    }
+
+    let e2_e3 = std::fs::read_to_string(manifest_dir.join("docs/review/e2_e3.md"))
+        .expect("read docs/review/e2_e3.md");
+    assert!(
+        !e2_e3.contains("generated directly from a full run of its own binary"),
+        "docs/review/e2_e3.md must not claim spliced baselines were generated from a single full run"
+    );
+    assert!(
+        e2_e3.contains("measured_at_commit") && e2_e3.contains("175/181"),
+        "docs/review/e2_e3.md must document per-row measured_at_commit provenance"
+    );
+
+    let e4 = std::fs::read_to_string(manifest_dir.join("docs/review/e4.md"))
+        .expect("read docs/review/e4.md");
+    assert!(
+        !e4.contains("generated from its own compiled benchmark binary on the clean code tree"),
+        "docs/review/e4.md must not claim spliced baselines came from a single clean tree without per-row provenance"
+    );
+    assert!(
+        e4.contains("measured_at_commit") && e4.contains("71/80") && e4.contains("175/181"),
+        "docs/review/e4.md must document per-row measured_at_commit provenance"
+    );
+
+    let e1 = std::fs::read_to_string(manifest_dir.join("docs/review/e1.md"))
+        .expect("read docs/review/e1.md");
+    assert!(
+        !e1.contains("natively measured at `4b490ff`, default `THP-off`"),
+        "docs/review/e1.md:98 must not claim all 80 core_bench rows were measured at 4b490ff"
+    );
+    assert!(
+        e1.contains("71/80") && e1.contains("446401d") && e1.contains("5add98f"),
+        "docs/review/e1.md:98 must document the 71/80 (4b490ff), 7/80 (446401d), and 2/80 (5add98f) row provenance"
+    );
+}

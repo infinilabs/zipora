@@ -14,9 +14,26 @@
     "cpu_governor": "unavailable (virtualized/no-cpufreq)",
     "rustflags": "-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32",
     "runner_command": "RUSTFLAGS=\"-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32\" cargo bench --locked --bench competitor_bench && python3 scripts/bench_compare.py --suite competitor_bench --confirm-retries 5",
-    "git_commit": "5add98f",
+    "git_commit": "4b490ff",
     "binary_path": "/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/release/deps/competitor_bench-7a7ee89b36b4acf8",
-    "binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1"
+    "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+    "row_provenance_summary": [
+      {
+        "measured_at_commit": "4b490ff",
+        "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+        "row_count": 175
+      },
+      {
+        "measured_at_commit": "446401d",
+        "binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+        "row_count": 4
+      },
+      {
+        "measured_at_commit": "5add98f",
+        "binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
+        "row_count": 2
+      }
+    ]
   },
   "competitor_configs": {
     "aho-corasick": {
@@ -383,7 +400,11 @@
       "zipora_secondary": 131.25,
       "competitor_secondary": 131.2501,
       "secondary_delta_pct": -0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -401,7 +422,11 @@
       "zipora_secondary": 137.5,
       "competitor_secondary": 131.2501,
       "secondary_delta_pct": 4.76,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -419,7 +444,11 @@
       "zipora_secondary": 137.5,
       "competitor_secondary": 131.2501,
       "secondary_delta_pct": 4.76,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -437,7 +466,11 @@
       "zipora_secondary": 137.5,
       "competitor_secondary": 131.2501,
       "secondary_delta_pct": 4.76,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -455,7 +488,11 @@
       "zipora_secondary": 131.25,
       "competitor_secondary": 104.6875,
       "secondary_delta_pct": 25.37,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -473,7 +510,11 @@
       "zipora_secondary": 137.5,
       "competitor_secondary": 104.6875,
       "secondary_delta_pct": 31.34,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -491,7 +532,11 @@
       "zipora_secondary": 137.5,
       "competitor_secondary": 104.6875,
       "secondary_delta_pct": 31.34,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -509,7 +554,11 @@
       "zipora_secondary": 137.5,
       "competitor_secondary": 104.6875,
       "secondary_delta_pct": 31.34,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -527,7 +576,11 @@
       "zipora_secondary": 131.25,
       "competitor_secondary": 103.9063,
       "secondary_delta_pct": 26.32,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -545,7 +598,11 @@
       "zipora_secondary": 137.5,
       "competitor_secondary": 103.9063,
       "secondary_delta_pct": 32.33,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -563,7 +620,11 @@
       "zipora_secondary": 137.5,
       "competitor_secondary": 103.9063,
       "secondary_delta_pct": 32.33,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "rank_select",
@@ -581,7 +642,11 @@
       "zipora_secondary": 137.5,
       "competitor_secondary": 103.9063,
       "secondary_delta_pct": 32.33,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -599,7 +664,11 @@
       "zipora_secondary": 8.616,
       "competitor_secondary": 9.033,
       "secondary_delta_pct": -4.62,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -617,7 +686,11 @@
       "zipora_secondary": 8.616,
       "competitor_secondary": 9.033,
       "secondary_delta_pct": -4.62,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -635,7 +708,11 @@
       "zipora_secondary": 10.4077,
       "competitor_secondary": 9.033,
       "secondary_delta_pct": 15.22,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -653,7 +730,11 @@
       "zipora_secondary": 8.4064,
       "competitor_secondary": 9.033,
       "secondary_delta_pct": -6.94,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -671,7 +752,11 @@
       "zipora_secondary": 8.616,
       "competitor_secondary": 7.8755,
       "secondary_delta_pct": 9.4,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -689,7 +774,11 @@
       "zipora_secondary": 8.616,
       "competitor_secondary": 7.8755,
       "secondary_delta_pct": 9.4,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -707,7 +796,11 @@
       "zipora_secondary": 10.4077,
       "competitor_secondary": 7.8755,
       "secondary_delta_pct": 32.15,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -725,7 +818,11 @@
       "zipora_secondary": 8.4064,
       "competitor_secondary": 7.8755,
       "secondary_delta_pct": 6.74,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -743,7 +840,11 @@
       "zipora_secondary": 10.8845,
       "competitor_secondary": 11.3131,
       "secondary_delta_pct": -3.79,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -761,7 +862,11 @@
       "zipora_secondary": 5.4202,
       "competitor_secondary": 11.3131,
       "secondary_delta_pct": -52.09,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -779,7 +884,11 @@
       "zipora_secondary": 10.8845,
       "competitor_secondary": 11.3131,
       "secondary_delta_pct": -3.79,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -797,7 +906,11 @@
       "zipora_secondary": 11.1949,
       "competitor_secondary": 11.3131,
       "secondary_delta_pct": -1.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -815,7 +928,11 @@
       "zipora_secondary": 5.4202,
       "competitor_secondary": 11.3131,
       "secondary_delta_pct": -52.09,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -833,7 +950,11 @@
       "zipora_secondary": 10.8845,
       "competitor_secondary": 9.9685,
       "secondary_delta_pct": 9.19,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -851,7 +972,11 @@
       "zipora_secondary": 5.4202,
       "competitor_secondary": 9.9685,
       "secondary_delta_pct": -45.63,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -869,7 +994,11 @@
       "zipora_secondary": 10.8845,
       "competitor_secondary": 9.9685,
       "secondary_delta_pct": 9.19,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -887,7 +1016,11 @@
       "zipora_secondary": 11.1949,
       "competitor_secondary": 9.9685,
       "secondary_delta_pct": 12.3,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -905,7 +1038,11 @@
       "zipora_secondary": 5.4202,
       "competitor_secondary": 9.9685,
       "secondary_delta_pct": -45.63,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -923,7 +1060,11 @@
       "zipora_secondary": 2.7536,
       "competitor_secondary": 3.1355,
       "secondary_delta_pct": -12.18,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -941,7 +1082,11 @@
       "zipora_secondary": 2.5146,
       "competitor_secondary": 3.1355,
       "secondary_delta_pct": -19.8,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -959,7 +1104,11 @@
       "zipora_secondary": 2.7536,
       "competitor_secondary": 3.1355,
       "secondary_delta_pct": -12.18,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -977,7 +1126,11 @@
       "zipora_secondary": 2.5146,
       "competitor_secondary": 3.1355,
       "secondary_delta_pct": -19.8,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -995,7 +1148,11 @@
       "zipora_secondary": 2.7578,
       "competitor_secondary": 3.1355,
       "secondary_delta_pct": -12.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -1013,7 +1170,11 @@
       "zipora_secondary": 2.7536,
       "competitor_secondary": 2.0971,
       "secondary_delta_pct": 31.3,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -1031,7 +1192,11 @@
       "zipora_secondary": 2.5146,
       "competitor_secondary": 2.0971,
       "secondary_delta_pct": 19.91,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -1049,7 +1214,11 @@
       "zipora_secondary": 2.7536,
       "competitor_secondary": 2.0971,
       "secondary_delta_pct": 31.3,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -1067,7 +1236,11 @@
       "zipora_secondary": 2.5146,
       "competitor_secondary": 2.0971,
       "secondary_delta_pct": 19.91,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "elias_fano",
@@ -1085,7 +1258,11 @@
       "zipora_secondary": 2.7578,
       "competitor_secondary": 2.0971,
       "secondary_delta_pct": 31.5,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1103,7 +1280,11 @@
       "zipora_secondary": 69.1937,
       "competitor_secondary": 0.8534,
       "secondary_delta_pct": 8007.71,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1121,7 +1302,11 @@
       "zipora_secondary": 15.6979,
       "competitor_secondary": 0.8534,
       "secondary_delta_pct": 1739.39,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1139,7 +1324,11 @@
       "zipora_secondary": 69.1937,
       "competitor_secondary": 0.8534,
       "secondary_delta_pct": 8007.71,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1157,7 +1346,11 @@
       "zipora_secondary": 15.6979,
       "competitor_secondary": 0.8534,
       "secondary_delta_pct": 1739.39,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1175,7 +1368,11 @@
       "zipora_secondary": 69.1937,
       "competitor_secondary": 119.0728,
       "secondary_delta_pct": -41.89,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1193,7 +1390,11 @@
       "zipora_secondary": 15.6979,
       "competitor_secondary": 119.0728,
       "secondary_delta_pct": -86.82,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1211,7 +1412,11 @@
       "zipora_secondary": 69.1937,
       "competitor_secondary": 119.0728,
       "secondary_delta_pct": -41.89,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1229,7 +1434,11 @@
       "zipora_secondary": 15.6979,
       "competitor_secondary": 119.0728,
       "secondary_delta_pct": -86.82,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1247,7 +1456,11 @@
       "zipora_secondary": 69.1937,
       "competitor_secondary": 379.2483,
       "secondary_delta_pct": -81.76,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1265,7 +1478,11 @@
       "zipora_secondary": 15.6979,
       "competitor_secondary": 379.2483,
       "secondary_delta_pct": -95.86,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1283,7 +1500,11 @@
       "zipora_secondary": 69.1937,
       "competitor_secondary": 379.2483,
       "secondary_delta_pct": -81.76,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1301,7 +1522,11 @@
       "zipora_secondary": 15.6979,
       "competitor_secondary": 379.2483,
       "secondary_delta_pct": -95.86,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1319,7 +1544,11 @@
       "zipora_secondary": 184.1203,
       "competitor_secondary": 16.5429,
       "secondary_delta_pct": 1012.99,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1337,7 +1566,11 @@
       "zipora_secondary": 23.4063,
       "competitor_secondary": 16.5429,
       "secondary_delta_pct": 41.49,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1355,7 +1588,11 @@
       "zipora_secondary": 184.1203,
       "competitor_secondary": 16.5429,
       "secondary_delta_pct": 1012.99,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1373,7 +1610,11 @@
       "zipora_secondary": 23.4063,
       "competitor_secondary": 16.5429,
       "secondary_delta_pct": 41.49,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1391,7 +1632,11 @@
       "zipora_secondary": 184.1203,
       "competitor_secondary": 93.61,
       "secondary_delta_pct": 96.69,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1409,7 +1654,11 @@
       "zipora_secondary": 23.4063,
       "competitor_secondary": 93.61,
       "secondary_delta_pct": -75.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1427,7 +1676,11 @@
       "zipora_secondary": 184.1203,
       "competitor_secondary": 93.61,
       "secondary_delta_pct": 96.69,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1445,7 +1698,11 @@
       "zipora_secondary": 23.4063,
       "competitor_secondary": 93.61,
       "secondary_delta_pct": -75.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1463,7 +1720,11 @@
       "zipora_secondary": 184.1203,
       "competitor_secondary": 389.2931,
       "secondary_delta_pct": -52.7,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1481,7 +1742,11 @@
       "zipora_secondary": 23.4063,
       "competitor_secondary": 389.2931,
       "secondary_delta_pct": -93.99,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1499,7 +1764,11 @@
       "zipora_secondary": 184.1203,
       "competitor_secondary": 389.2931,
       "secondary_delta_pct": -52.7,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1517,7 +1786,11 @@
       "zipora_secondary": 23.4063,
       "competitor_secondary": 389.2931,
       "secondary_delta_pct": -93.99,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1535,7 +1808,11 @@
       "zipora_secondary": 25.602,
       "competitor_secondary": 0.0003,
       "secondary_delta_pct": 9734519.01,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1553,7 +1830,11 @@
       "zipora_secondary": 9.6011,
       "competitor_secondary": 0.0003,
       "secondary_delta_pct": 3650499.24,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1571,7 +1852,11 @@
       "zipora_secondary": 25.602,
       "competitor_secondary": 0.0003,
       "secondary_delta_pct": 9734519.01,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1589,7 +1874,11 @@
       "zipora_secondary": 9.6011,
       "competitor_secondary": 0.0003,
       "secondary_delta_pct": 3650499.24,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1607,7 +1896,11 @@
       "zipora_secondary": 25.602,
       "competitor_secondary": 114.1368,
       "secondary_delta_pct": -77.57,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1625,7 +1918,11 @@
       "zipora_secondary": 9.6011,
       "competitor_secondary": 114.1368,
       "secondary_delta_pct": -91.59,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1643,7 +1940,11 @@
       "zipora_secondary": 25.602,
       "competitor_secondary": 114.1368,
       "secondary_delta_pct": -77.57,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1661,7 +1962,11 @@
       "zipora_secondary": 9.6011,
       "competitor_secondary": 114.1368,
       "secondary_delta_pct": -91.59,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1679,7 +1984,11 @@
       "zipora_secondary": 25.602,
       "competitor_secondary": 352.0,
       "secondary_delta_pct": -92.73,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1697,7 +2006,11 @@
       "zipora_secondary": 9.6011,
       "competitor_secondary": 352.0,
       "secondary_delta_pct": -97.27,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1715,7 +2028,11 @@
       "zipora_secondary": 25.602,
       "competitor_secondary": 352.0,
       "secondary_delta_pct": -92.73,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "tries",
@@ -1733,7 +2050,11 @@
       "zipora_secondary": 9.6011,
       "competitor_secondary": 352.0,
       "secondary_delta_pct": -97.27,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1751,7 +2072,11 @@
       "zipora_secondary": 35.6516,
       "competitor_secondary": 35.6516,
       "secondary_delta_pct": -0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1769,7 +2094,11 @@
       "zipora_secondary": 31.9305,
       "competitor_secondary": 35.6516,
       "secondary_delta_pct": -10.44,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1787,7 +2116,11 @@
       "zipora_secondary": 35.6516,
       "competitor_secondary": 35.6516,
       "secondary_delta_pct": -0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1805,7 +2138,11 @@
       "zipora_secondary": 31.9305,
       "competitor_secondary": 35.6516,
       "secondary_delta_pct": -10.44,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1823,7 +2160,11 @@
       "zipora_secondary": 35.6516,
       "competitor_secondary": 35.6516,
       "secondary_delta_pct": -0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1841,7 +2182,11 @@
       "zipora_secondary": 31.9305,
       "competitor_secondary": 35.6516,
       "secondary_delta_pct": -10.44,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1859,7 +2204,11 @@
       "zipora_secondary": 35.6516,
       "competitor_secondary": 35.6516,
       "secondary_delta_pct": -0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1877,7 +2226,11 @@
       "zipora_secondary": 31.9305,
       "competitor_secondary": 35.6516,
       "secondary_delta_pct": -10.44,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1895,7 +2248,11 @@
       "zipora_secondary": 52.4288,
       "competitor_secondary": 52.4288,
       "secondary_delta_pct": -0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1913,7 +2270,11 @@
       "zipora_secondary": 39.9305,
       "competitor_secondary": 52.4288,
       "secondary_delta_pct": -23.84,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1931,7 +2292,11 @@
       "zipora_secondary": 52.4288,
       "competitor_secondary": 52.4288,
       "secondary_delta_pct": -0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1949,7 +2314,11 @@
       "zipora_secondary": 39.9305,
       "competitor_secondary": 52.4288,
       "secondary_delta_pct": -23.84,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1967,7 +2336,11 @@
       "zipora_secondary": 52.4288,
       "competitor_secondary": 52.4288,
       "secondary_delta_pct": -0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -1985,7 +2358,11 @@
       "zipora_secondary": 39.9305,
       "competitor_secondary": 52.4288,
       "secondary_delta_pct": -23.84,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -2003,7 +2380,11 @@
       "zipora_secondary": 52.4288,
       "competitor_secondary": 52.4288,
       "secondary_delta_pct": -0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "hash_maps",
@@ -2021,7 +2402,11 @@
       "zipora_secondary": 39.9305,
       "competitor_secondary": 52.4288,
       "secondary_delta_pct": -23.84,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2039,7 +2424,11 @@
       "zipora_secondary": 256.0,
       "competitor_secondary": 256.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "5add98f",
+      "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2057,7 +2446,11 @@
       "zipora_secondary": 384.0,
       "competitor_secondary": 256.0,
       "secondary_delta_pct": 50.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2075,7 +2468,11 @@
       "zipora_secondary": 256.0,
       "competitor_secondary": 256.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "5add98f",
+      "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2093,7 +2490,11 @@
       "zipora_secondary": 384.0,
       "competitor_secondary": 256.0,
       "secondary_delta_pct": 50.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2111,7 +2512,11 @@
       "zipora_secondary": 256.0,
       "competitor_secondary": 256.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "5add98f",
+      "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2129,7 +2534,11 @@
       "zipora_secondary": 384.0,
       "competitor_secondary": 256.0,
       "secondary_delta_pct": 50.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2147,7 +2556,11 @@
       "zipora_secondary": 256.0,
       "competitor_secondary": 256.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "5add98f",
+      "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2165,7 +2578,11 @@
       "zipora_secondary": 384.0,
       "competitor_secondary": 256.0,
       "secondary_delta_pct": 50.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2183,7 +2600,11 @@
       "zipora_secondary": 256.0,
       "competitor_secondary": 272.0,
       "secondary_delta_pct": -5.88,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "5add98f",
+      "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2201,7 +2622,11 @@
       "zipora_secondary": 384.0,
       "competitor_secondary": 272.0,
       "secondary_delta_pct": 41.18,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2219,7 +2644,11 @@
       "zipora_secondary": 256.0,
       "competitor_secondary": 272.0,
       "secondary_delta_pct": -5.88,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "5add98f",
+      "zipora_binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "memory_pools",
@@ -2237,7 +2666,11 @@
       "zipora_secondary": 384.0,
       "competitor_secondary": 272.0,
       "secondary_delta_pct": 41.18,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2255,7 +2688,11 @@
       "zipora_secondary": 4.0083,
       "competitor_secondary": 4.0083,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2273,7 +2710,11 @@
       "zipora_secondary": 4.0083,
       "competitor_secondary": 4.0083,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2291,7 +2732,11 @@
       "zipora_secondary": 4.0083,
       "competitor_secondary": 4.0126,
       "secondary_delta_pct": -0.11,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2309,7 +2754,11 @@
       "zipora_secondary": 4.0083,
       "competitor_secondary": 4.0126,
       "secondary_delta_pct": -0.11,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2327,7 +2776,11 @@
       "zipora_secondary": 4.0083,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 91.47,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2345,7 +2798,11 @@
       "zipora_secondary": 4.0083,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 91.47,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2363,7 +2820,11 @@
       "zipora_secondary": 4.0083,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 98.19,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2381,7 +2842,11 @@
       "zipora_secondary": 4.0083,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 98.19,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2399,7 +2864,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 4.0083,
       "secondary_delta_pct": -35.22,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2417,7 +2886,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 4.0083,
       "secondary_delta_pct": -35.22,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2435,7 +2908,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 4.0126,
       "secondary_delta_pct": -35.29,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2453,7 +2930,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 4.0126,
       "secondary_delta_pct": -35.29,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2471,7 +2952,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 24.04,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2489,7 +2974,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 24.04,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2507,7 +2996,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 28.39,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2525,7 +3018,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 28.39,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2543,7 +3040,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 4.0083,
       "secondary_delta_pct": -35.22,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2561,7 +3062,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 4.0083,
       "secondary_delta_pct": -35.22,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2579,7 +3084,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 4.0126,
       "secondary_delta_pct": -35.29,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2597,7 +3106,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 4.0126,
       "secondary_delta_pct": -35.29,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2615,7 +3128,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 24.04,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2633,7 +3150,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 24.04,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2651,7 +3172,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 28.39,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2669,7 +3194,11 @@
       "zipora_secondary": 2.5967,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 28.39,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2687,7 +3216,11 @@
       "zipora_secondary": 2.2781,
       "competitor_secondary": 4.0083,
       "secondary_delta_pct": -43.17,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2705,7 +3238,11 @@
       "zipora_secondary": 2.2781,
       "competitor_secondary": 4.0083,
       "secondary_delta_pct": -43.17,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2723,7 +3260,11 @@
       "zipora_secondary": 2.2781,
       "competitor_secondary": 4.0126,
       "secondary_delta_pct": -43.23,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2741,7 +3282,11 @@
       "zipora_secondary": 2.2781,
       "competitor_secondary": 4.0126,
       "secondary_delta_pct": -43.23,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2759,7 +3304,11 @@
       "zipora_secondary": 2.2781,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 8.82,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2777,7 +3326,11 @@
       "zipora_secondary": 2.2781,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 8.82,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2795,7 +3348,11 @@
       "zipora_secondary": 2.2781,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 12.64,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2813,7 +3370,11 @@
       "zipora_secondary": 2.2781,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 12.64,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2831,7 +3392,11 @@
       "zipora_secondary": 3.9854,
       "competitor_secondary": 4.0498,
       "secondary_delta_pct": -1.59,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2849,7 +3414,11 @@
       "zipora_secondary": 3.9854,
       "competitor_secondary": 4.0498,
       "secondary_delta_pct": -1.59,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2867,7 +3436,11 @@
       "zipora_secondary": 3.9854,
       "competitor_secondary": 3.9744,
       "secondary_delta_pct": 0.28,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2885,7 +3458,11 @@
       "zipora_secondary": 3.9854,
       "competitor_secondary": 3.9744,
       "secondary_delta_pct": 0.28,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2903,7 +3480,11 @@
       "zipora_secondary": 3.9854,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 90.38,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2921,7 +3502,11 @@
       "zipora_secondary": 3.9854,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 90.38,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2939,7 +3524,11 @@
       "zipora_secondary": 3.9854,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 97.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2957,7 +3546,11 @@
       "zipora_secondary": 3.9854,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 97.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2975,7 +3568,11 @@
       "zipora_secondary": 4.0503,
       "competitor_secondary": 4.0498,
       "secondary_delta_pct": 0.01,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -2993,7 +3590,11 @@
       "zipora_secondary": 4.0503,
       "competitor_secondary": 4.0498,
       "secondary_delta_pct": 0.01,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3011,7 +3612,11 @@
       "zipora_secondary": 4.0503,
       "competitor_secondary": 3.9744,
       "secondary_delta_pct": 1.91,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3029,7 +3634,11 @@
       "zipora_secondary": 4.0503,
       "competitor_secondary": 3.9744,
       "secondary_delta_pct": 1.91,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3047,7 +3656,11 @@
       "zipora_secondary": 4.0503,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 93.48,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3065,7 +3678,11 @@
       "zipora_secondary": 4.0503,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 93.48,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3083,7 +3700,11 @@
       "zipora_secondary": 4.0503,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 100.27,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3101,7 +3722,11 @@
       "zipora_secondary": 4.0503,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 100.27,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3119,7 +3744,11 @@
       "zipora_secondary": 4.0549,
       "competitor_secondary": 4.0498,
       "secondary_delta_pct": 0.13,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3137,7 +3766,11 @@
       "zipora_secondary": 4.0549,
       "competitor_secondary": 4.0498,
       "secondary_delta_pct": 0.13,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3155,7 +3788,11 @@
       "zipora_secondary": 4.0549,
       "competitor_secondary": 3.9744,
       "secondary_delta_pct": 2.03,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3173,7 +3810,11 @@
       "zipora_secondary": 4.0549,
       "competitor_secondary": 3.9744,
       "secondary_delta_pct": 2.03,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3191,7 +3832,11 @@
       "zipora_secondary": 4.0549,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 93.7,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3209,7 +3854,11 @@
       "zipora_secondary": 4.0549,
       "competitor_secondary": 2.0934,
       "secondary_delta_pct": 93.7,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3227,7 +3876,11 @@
       "zipora_secondary": 4.0549,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 100.49,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "entropy",
@@ -3245,7 +3898,11 @@
       "zipora_secondary": 4.0549,
       "competitor_secondary": 2.0225,
       "secondary_delta_pct": 100.49,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3263,7 +3920,11 @@
       "zipora_secondary": 10.0,
       "competitor_secondary": 10.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3281,7 +3942,11 @@
       "zipora_secondary": 10.0,
       "competitor_secondary": 10.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3299,7 +3964,11 @@
       "zipora_secondary": 10.0,
       "competitor_secondary": 10.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3317,7 +3986,11 @@
       "zipora_secondary": 10.0001,
       "competitor_secondary": 10.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3335,7 +4008,11 @@
       "zipora_secondary": 10.0001,
       "competitor_secondary": 10.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3353,7 +4030,11 @@
       "zipora_secondary": 10.0,
       "competitor_secondary": 10.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3371,7 +4052,11 @@
       "zipora_secondary": 10.0,
       "competitor_secondary": 10.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3389,7 +4074,11 @@
       "zipora_secondary": 10.0,
       "competitor_secondary": 10.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3407,7 +4096,11 @@
       "zipora_secondary": 10.0001,
       "competitor_secondary": 10.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3425,7 +4118,11 @@
       "zipora_secondary": 10.0001,
       "competitor_secondary": 10.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3443,7 +4140,11 @@
       "zipora_secondary": 10.0,
       "competitor_secondary": 8.0702,
       "secondary_delta_pct": 23.91,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3461,7 +4162,11 @@
       "zipora_secondary": 10.0,
       "competitor_secondary": 8.0702,
       "secondary_delta_pct": 23.91,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3479,7 +4184,11 @@
       "zipora_secondary": 10.0,
       "competitor_secondary": 8.0702,
       "secondary_delta_pct": 23.91,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3497,7 +4206,11 @@
       "zipora_secondary": 10.0001,
       "competitor_secondary": 8.0702,
       "secondary_delta_pct": 23.91,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "int_codecs",
@@ -3515,7 +4228,11 @@
       "zipora_secondary": 10.0001,
       "competitor_secondary": 8.0702,
       "secondary_delta_pct": 23.91,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "radix_sort",
@@ -3533,7 +4250,11 @@
       "zipora_secondary": 8.0,
       "competitor_secondary": 8.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "radix_sort",
@@ -3551,7 +4272,11 @@
       "zipora_secondary": 8.0,
       "competitor_secondary": 8.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "radix_sort",
@@ -3569,7 +4294,11 @@
       "zipora_secondary": 8.0,
       "competitor_secondary": 4.0,
       "secondary_delta_pct": 100.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "radix_sort",
@@ -3587,7 +4316,11 @@
       "zipora_secondary": 16.0,
       "competitor_secondary": 16.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "radix_sort",
@@ -3605,7 +4338,11 @@
       "zipora_secondary": 16.0,
       "competitor_secondary": 16.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "radix_sort",
@@ -3623,7 +4360,11 @@
       "zipora_secondary": 16.0,
       "competitor_secondary": 8.0,
       "secondary_delta_pct": 100.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "radix_sort",
@@ -3641,7 +4382,11 @@
       "zipora_secondary": 32.0,
       "competitor_secondary": 32.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "radix_sort",
@@ -3659,7 +4404,11 @@
       "zipora_secondary": 32.0,
       "competitor_secondary": 32.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "radix_sort",
@@ -3677,7 +4426,11 @@
       "zipora_secondary": 32.0,
       "competitor_secondary": 16.0,
       "secondary_delta_pct": 100.0,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "suffix_array",
@@ -3695,7 +4448,11 @@
       "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
       "secondary_delta_pct": 81.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "suffix_array",
@@ -3713,7 +4470,11 @@
       "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
       "secondary_delta_pct": 81.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "suffix_array",
@@ -3731,7 +4492,11 @@
       "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
       "secondary_delta_pct": 81.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "suffix_array",
@@ -3749,7 +4514,11 @@
       "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
       "secondary_delta_pct": 81.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "suffix_array",
@@ -3767,7 +4536,11 @@
       "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
       "secondary_delta_pct": 81.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "suffix_array",
@@ -3785,7 +4558,11 @@
       "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
       "secondary_delta_pct": 81.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "suffix_array",
@@ -3803,7 +4580,11 @@
       "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
       "secondary_delta_pct": 81.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "suffix_array",
@@ -3821,7 +4602,11 @@
       "zipora_secondary": 9.0524,
       "competitor_secondary": 5.0,
       "secondary_delta_pct": 81.05,
-      "e3_verdict": "GAP"
+      "e3_verdict": "GAP",
+      "zipora_measured_at_commit": "446401d",
+      "zipora_binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "search_and_scoring",
@@ -3839,7 +4624,11 @@
       "zipora_secondary": 0.0,
       "competitor_secondary": 0.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "search_and_scoring",
@@ -3857,7 +4646,11 @@
       "zipora_secondary": 0.0,
       "competitor_secondary": 0.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "search_and_scoring",
@@ -3875,7 +4668,11 @@
       "zipora_secondary": 0.0,
       "competitor_secondary": 0.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "category": "search_and_scoring",
@@ -3893,7 +4690,11 @@
       "zipora_secondary": 0.0,
       "competitor_secondary": 0.0,
       "secondary_delta_pct": 0.0,
-      "e3_verdict": "LEADING"
+      "e3_verdict": "LEADING",
+      "zipora_measured_at_commit": "4b490ff",
+      "zipora_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c",
+      "competitor_measured_at_commit": "4b490ff",
+      "competitor_binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     }
   ],
   "benchmarks": [
@@ -3922,7 +4723,9 @@
         45.573,
         45.67,
         46.458
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/interleaved256/rank1",
@@ -3949,7 +4752,9 @@
         36.1689,
         36.23,
         36.5931
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/interleaved256/select1",
@@ -3974,7 +4779,9 @@
         164.4959,
         168.4318,
         169.9007
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/interleaved256/select0",
@@ -3999,7 +4806,9 @@
         159.5216,
         159.6194,
         160.6848
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/se256/rank1",
@@ -4026,7 +4835,9 @@
         38.988,
         38.998,
         39.012
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/se256/select1",
@@ -4051,7 +4862,9 @@
         151.1467,
         153.5998,
         154.4511
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/se256/select0",
@@ -4076,7 +4889,9 @@
         148.5792,
         148.6992,
         148.7136
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/sucds_rank9sel/rank1",
@@ -4103,7 +4918,9 @@
         44.213,
         44.36,
         44.431
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/sucds_rank9sel/select1",
@@ -4128,7 +4945,9 @@
         217.4476,
         218.7188,
         219.727
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/sucds_rank9sel/select0",
@@ -4153,7 +4972,9 @@
         199.7504,
         203.1712,
         205.6242
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/vers_vecs_rsvec/rank1",
@@ -4180,7 +5001,9 @@
         55.498,
         56.147,
         56.214
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/vers_vecs_rsvec/select1",
@@ -4205,7 +5028,9 @@
         184.9846,
         186.536,
         197.9109
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/vers_vecs_rsvec/select0",
@@ -4230,7 +5055,9 @@
         161.0752,
         169.016,
         190.2
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/bitm_rs101111/rank1",
@@ -4257,7 +5084,9 @@
         51.359,
         51.518,
         51.737
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/bitm_rs101111/select1",
@@ -4282,7 +5111,9 @@
         163.9038,
         165.4551,
         166.263
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "rank_select/bitm_rs101111/select0",
@@ -4307,7 +5138,9 @@
         154.688,
         155.1808,
         159.0992
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/ef_next_geq",
@@ -4329,7 +5162,9 @@
         22.2474,
         22.2875,
         22.3954
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/pef_next_geq",
@@ -4351,7 +5186,9 @@
         59.6687,
         60.0035,
         60.0905
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/opef_next_geq",
@@ -4373,7 +5210,9 @@
         61.7968,
         61.8874,
         62.14
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/cef_next_geq",
@@ -4395,7 +5234,9 @@
         59.1884,
         59.2988,
         59.7852
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/pef_cursor_advance_to_geq",
@@ -4417,7 +5258,9 @@
         68.7987,
         68.9387,
         68.9878
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/opef_cursor_advance_to_index",
@@ -4439,7 +5282,9 @@
         46.6744,
         46.6749,
         46.9483
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/ef_select",
@@ -4461,7 +5306,9 @@
         18.0746,
         18.1199,
         18.1537
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/cef_select",
@@ -4483,7 +5330,9 @@
         19.9377,
         19.9947,
         20.2077
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/sucds_ef_next_geq",
@@ -4505,7 +5354,9 @@
         48.2398,
         48.2591,
         48.4664
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/sucds_ef_select",
@@ -4527,7 +5378,9 @@
         15.7813,
         15.8482,
         15.9132
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/vers_ef_next_geq",
@@ -4549,7 +5402,9 @@
         56.2409,
         56.2598,
         56.7427
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/uniform/vers_ef_select",
@@ -4571,7 +5426,9 @@
         32.4802,
         32.4944,
         32.5815
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/ef_next_geq",
@@ -4593,7 +5450,9 @@
         30.2028,
         30.2805,
         30.3668
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/pef_next_geq",
@@ -4615,7 +5474,9 @@
         60.4204,
         60.5784,
         61.2914
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/opef_next_geq",
@@ -4637,7 +5498,9 @@
         26.2712,
         26.7153,
         26.9542
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/cef_next_geq",
@@ -4659,7 +5522,9 @@
         60.4977,
         60.7781,
         61.4103
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/pef_cursor_advance_to_geq",
@@ -4681,7 +5546,9 @@
         34.2244,
         34.2492,
         34.3309
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/opef_cursor_advance_to_index",
@@ -4703,7 +5570,9 @@
         45.6856,
         45.7933,
         45.8084
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/ef_select",
@@ -4725,7 +5594,9 @@
         19.6822,
         19.7436,
         19.9202
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/cef_select",
@@ -4747,7 +5618,9 @@
         19.0454,
         19.0885,
         19.1024
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/sucds_ef_next_geq",
@@ -4769,7 +5642,9 @@
         45.5463,
         45.8303,
         45.9801
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/sucds_ef_select",
@@ -4791,7 +5666,9 @@
         17.4258,
         17.5061,
         17.7122
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/vers_ef_next_geq",
@@ -4813,7 +5690,9 @@
         61.526,
         61.7247,
         62.5137
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/zipf_clustered/vers_ef_select",
@@ -4835,7 +5714,9 @@
         32.775,
         32.8126,
         32.8157
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/ef_next_geq",
@@ -4857,7 +5738,9 @@
         14.8293,
         14.8379,
         15.0456
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/pef_next_geq",
@@ -4879,7 +5762,9 @@
         50.8146,
         50.9212,
         51.086
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/opef_next_geq",
@@ -4901,7 +5786,9 @@
         52.7822,
         52.857,
         53.2013
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/cef_next_geq",
@@ -4923,7 +5810,9 @@
         12.2912,
         12.3099,
         12.3287
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/pef_cursor_advance_to_geq",
@@ -4945,7 +5834,9 @@
         51.8446,
         51.9001,
         51.9991
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/opef_cursor_advance_to_index",
@@ -4967,7 +5858,9 @@
         41.7522,
         41.8759,
         41.922
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/ef_select",
@@ -4989,7 +5882,9 @@
         14.4919,
         14.5118,
         14.5637
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/cef_select",
@@ -5011,7 +5906,9 @@
         3.4009,
         3.4012,
         3.4189
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/sucds_ef_next_geq",
@@ -5033,7 +5930,9 @@
         23.5669,
         23.6119,
         23.8104
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/sucds_ef_select",
@@ -5055,7 +5954,9 @@
         8.1044,
         8.1045,
         8.1074
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/vers_ef_next_geq",
@@ -5077,7 +5978,9 @@
         35.697,
         35.7642,
         36.0443
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "elias_fano/dense/vers_ef_select",
@@ -5099,7 +6002,9 @@
         30.7993,
         30.8064,
         30.9249
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/dat/url_paths/build_sorted",
@@ -5117,7 +6022,9 @@
         104.3521,
         105.8188,
         108.7151
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/dat/url_paths/lookup",
@@ -5146,7 +6053,9 @@
         665.2128,
         691.3903,
         696.02
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/cspp/url_paths/build",
@@ -5164,7 +6073,9 @@
         167.6246,
         168.2511,
         168.4859
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/cspp/url_paths/lookup",
@@ -5193,7 +6104,9 @@
         445.145,
         458.5025,
         465.4025
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/fst/url_paths/build_sorted",
@@ -5211,7 +6124,9 @@
         355.1825,
         355.6059,
         361.5502
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/fst/url_paths/lookup",
@@ -5240,7 +6155,9 @@
         436.5675,
         436.5678,
         436.8625
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/qp_trie/url_paths/build",
@@ -5258,7 +6175,9 @@
         132.6803,
         132.9911,
         133.3036
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/qp_trie/url_paths/lookup",
@@ -5287,7 +6206,9 @@
         546.3553,
         559.16,
         566.41
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/radix_trie/url_paths/build",
@@ -5305,7 +6226,9 @@
         247.3665,
         248.6517,
         253.0773
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/radix_trie/url_paths/lookup",
@@ -5334,7 +6257,9 @@
         946.7128,
         959.1103,
         967.665
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/dat/random_16b/build_sorted",
@@ -5352,7 +6277,9 @@
         190.5636,
         194.4174,
         197.0622
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/dat/random_16b/lookup",
@@ -5381,7 +6308,9 @@
         465.0628,
         467.2775,
         473.4028
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/cspp/random_16b/build",
@@ -5399,7 +6328,9 @@
         101.5379,
         103.8585,
         106.1385
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/cspp/random_16b/lookup",
@@ -5428,7 +6359,9 @@
         386.9675,
         390.1103,
         390.4375
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/fst/random_16b/build_sorted",
@@ -5446,7 +6379,9 @@
         1384.5051,
         1388.9474,
         1407.6046
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/fst/random_16b/lookup",
@@ -5475,7 +6410,9 @@
         634.8778,
         642.3125,
         677.385
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/qp_trie/random_16b/build",
@@ -5493,7 +6430,9 @@
         137.8317,
         137.9085,
         139.7785
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/qp_trie/random_16b/lookup",
@@ -5522,7 +6461,9 @@
         624.355,
         644.9975,
         650.9375
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/radix_trie/random_16b/build",
@@ -5540,7 +6481,9 @@
         238.3264,
         239.5833,
         246.5702
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/radix_trie/random_16b/lookup",
@@ -5569,7 +6512,9 @@
         1043.4202,
         1060.0975,
         1192.1203
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/dat/shared_prefix/build_sorted",
@@ -5587,7 +6532,9 @@
         59.3126,
         60.0867,
         61.1508
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/dat/shared_prefix/lookup",
@@ -5616,7 +6563,9 @@
         279.1925,
         296.835,
         300.7678
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/cspp/shared_prefix/build",
@@ -5634,7 +6583,9 @@
         164.4332,
         164.9315,
         178.2523
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/cspp/shared_prefix/lookup",
@@ -5663,7 +6614,9 @@
         304.01,
         304.7225,
         307.845
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/fst/shared_prefix/build_sorted",
@@ -5681,7 +6634,9 @@
         94.1379,
         94.2425,
         94.4494
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/fst/shared_prefix/lookup",
@@ -5710,7 +6665,9 @@
         270.425,
         270.52,
         275.1753
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/qp_trie/shared_prefix/build",
@@ -5728,7 +6685,9 @@
         134.2982,
         134.3739,
         144.7877
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/qp_trie/shared_prefix/lookup",
@@ -5757,7 +6716,9 @@
         575.4125,
         581.4028,
         597.0275
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/radix_trie/shared_prefix/build",
@@ -5775,7 +6736,9 @@
         207.2887,
         207.4127,
         209.317
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/radix_trie/shared_prefix/lookup",
@@ -5804,7 +6767,9 @@
         1080.5503,
         1082.35,
         1082.9428
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/zipora_trie_da/build",
@@ -5822,7 +6787,9 @@
         561.5435,
         563.2888,
         572.0474
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "tries/zipora_trie_da/lookup",
@@ -5851,7 +6818,9 @@
         678.2903,
         692.3225,
         731.8125
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/zipora_hash_map/insert_u64",
@@ -5876,7 +6845,9 @@
         53.305,
         67.685,
         75.5925
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/zipora_hash_map/get_u64",
@@ -5905,7 +6876,9 @@
         72.4575,
         85.89,
         89.815
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/zipora_hash_map/insert_str16",
@@ -5930,7 +6903,9 @@
         54.92,
         55.9775,
         56.175
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/zipora_hash_map/get_str16",
@@ -5959,7 +6934,9 @@
         108.5675,
         110.2125,
         118.7125
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/gold_hash_map/insert_u64",
@@ -5984,7 +6961,9 @@
         84.4328,
         95.15,
         99.31
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/gold_hash_map/get_u64",
@@ -6013,7 +6992,9 @@
         111.6403,
         112.4125,
         115.205
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/gold_hash_map/insert_str16",
@@ -6038,7 +7019,9 @@
         169.2803,
         175.0425,
         182.075
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/gold_hash_map/get_str16",
@@ -6067,7 +7050,9 @@
         312.0353,
         320.84,
         322.405
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/hashbrown_ahash/insert_u64",
@@ -6092,7 +7077,9 @@
         26.45,
         26.5675,
         26.5825
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/hashbrown_ahash/get_u64",
@@ -6121,7 +7108,9 @@
         55.335,
         55.46,
         56.885
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/hashbrown_ahash/insert_str16",
@@ -6146,7 +7135,9 @@
         33.6225,
         33.945,
         34.45
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/hashbrown_ahash/get_str16",
@@ -6175,7 +7166,9 @@
         222.9525,
         223.6753,
         234.8875
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/std/insert_u64",
@@ -6200,7 +7193,9 @@
         42.275,
         42.6075,
         42.9625
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/std/get_u64",
@@ -6229,7 +7224,9 @@
         115.315,
         117.1375,
         129.67
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/std/insert_str16",
@@ -6254,7 +7251,9 @@
         47.6123,
         48.375,
         50.0275
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "hash_maps/std/get_str16",
@@ -6283,7 +7282,9 @@
         116.5125,
         124.2378,
         125.4075
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "memory_pools/lockfree_pool/alloc_free_1t",
@@ -6309,7 +7310,9 @@
         9.152,
         9.161,
         10.3
-      ]
+      ],
+      "measured_at_commit": "5add98f",
+      "binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1"
     },
     {
       "name": "memory_pools/lockfree_pool/alloc_free_4t",
@@ -6335,7 +7338,9 @@
         9.227,
         9.279,
         9.328
-      ]
+      ],
+      "measured_at_commit": "5add98f",
+      "binary_sha256": "4defc64f31074b8b2003ce9f64ecfbfc87eb5e182d772c3b1da85c18b6d117f1"
     },
     {
       "name": "memory_pools/secure_pool/alloc_free_1t",
@@ -6359,7 +7364,9 @@
         117.306,
         117.361,
         117.4829
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "memory_pools/secure_pool/alloc_free_4t",
@@ -6383,7 +7390,9 @@
         119.914,
         120.084,
         120.6211
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "memory_pools/mimalloc/alloc_free_1t",
@@ -6409,7 +7418,9 @@
         6.2009,
         6.734,
         7.665
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "memory_pools/mimalloc/alloc_free_4t",
@@ -6435,7 +7446,9 @@
         6.051,
         6.063,
         6.0729
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "memory_pools/jemalloc/alloc_free_1t",
@@ -6461,7 +7474,9 @@
         5.408,
         5.4089,
         5.409
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "memory_pools/jemalloc/alloc_free_4t",
@@ -6487,7 +7502,9 @@
         5.646,
         5.651,
         5.766
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "memory_pools/system_alloc/alloc_free_1t",
@@ -6513,7 +7530,9 @@
         6.161,
         6.1611,
         6.163
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "memory_pools/system_alloc/alloc_free_4t",
@@ -6539,7 +7558,9 @@
         6.161,
         6.163,
         6.1671
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/huffman_o0/encode_64kib",
@@ -6565,7 +7586,9 @@
         2.3306,
         2.332,
         2.3322
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/huffman_o0/decode_64kib",
@@ -6591,7 +7614,9 @@
         3.5309,
         3.531,
         3.5454
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/huffman_o1/encode_x1_64kib",
@@ -6617,7 +7642,9 @@
         2.621,
         2.621,
         2.6212
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/huffman_o1/encode_x4_64kib",
@@ -6643,7 +7670,9 @@
         2.9636,
         2.9639,
         2.9648
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/huffman_o1/decode_64kib",
@@ -6669,7 +7698,9 @@
         5.3539,
         5.3571,
         5.3882
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205"
     },
     {
       "name": "entropy/huffman_o2/encode_64kib",
@@ -6695,7 +7726,9 @@
         3.1656,
         3.166,
         3.1662
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205"
     },
     {
       "name": "entropy/huffman_o2/decode_64kib",
@@ -6721,7 +7754,9 @@
         6.7349,
         6.7358,
         6.7738
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/fse/encode_64kib",
@@ -6747,7 +7782,9 @@
         3.9456,
         3.9488,
         3.9766
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/fse/decode_64kib",
@@ -6773,7 +7810,9 @@
         4.2386,
         4.2432,
         4.2622
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/rans64_x1/encode_64kib",
@@ -6799,7 +7838,9 @@
         3.8379,
         3.8406,
         3.8429
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/rans64_x1/decode_64kib",
@@ -6825,7 +7866,9 @@
         4.7116,
         4.7118,
         4.7119
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/rans64_x4/encode_64kib",
@@ -6851,7 +7894,9 @@
         3.7164,
         3.7291,
         3.7851
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/rans64_x4/decode_64kib",
@@ -6877,7 +7922,9 @@
         2.5124,
         2.5125,
         2.5156
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/huffman_compress/encode_64kib",
@@ -6899,7 +7946,9 @@
         20.3813,
         20.4321,
         20.8173
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/huffman_compress/decode_64kib",
@@ -6921,7 +7970,9 @@
         9.5555,
         9.5876,
         9.666
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/constriction_ans/encode_64kib",
@@ -6947,7 +7998,9 @@
         5.863,
         5.863,
         5.8655
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/constriction_ans/decode_64kib",
@@ -6973,7 +8026,9 @@
         6.209,
         6.2097,
         6.2376
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/zstd_huf0/encode_64kib",
@@ -6999,7 +8054,9 @@
         0.8635,
         0.8649,
         0.8681
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/zstd_huf0/decode_64kib",
@@ -7025,7 +8082,9 @@
         0.5624,
         0.5626,
         0.5627
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/zstd_fse/encode_64kib",
@@ -7051,7 +8110,9 @@
         2.0435,
         2.0453,
         2.0467
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/zstd_fse/decode_64kib",
@@ -7077,7 +8138,9 @@
         1.6803,
         1.6805,
         1.6811
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/zstd_l1/encode_64kib",
@@ -7103,7 +8166,9 @@
         3.1597,
         3.166,
         3.1671
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/zstd_l1/decode_64kib",
@@ -7129,7 +8194,9 @@
         1.1073,
         1.1075,
         1.1137
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/zstd_l3/encode_64kib",
@@ -7155,7 +8222,9 @@
         3.7175,
         3.77,
         3.9172
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "entropy/zstd_l3/decode_64kib",
@@ -7181,7 +8250,9 @@
         0.9955,
         0.9956,
         0.9961
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/stream_vbyte/encode_deltas",
@@ -7207,7 +8278,9 @@
         0.4923,
         0.4977,
         0.4981
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/stream_vbyte/decode_into",
@@ -7233,7 +8306,9 @@
         0.1885,
         0.1891,
         0.1912
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205"
     },
     {
       "name": "int_codecs/stream_vbyte/decode_deltas",
@@ -7259,7 +8334,9 @@
         0.2769,
         0.277,
         0.2775
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/group_varint/encode_deltas",
@@ -7285,7 +8362,9 @@
         0.5053,
         0.5058,
         0.5068
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/group_varint/decode_deltas",
@@ -7311,7 +8390,9 @@
         0.7989,
         0.7991,
         0.7999
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/stream_vbyte_crate/encode_deltas",
@@ -7337,7 +8418,9 @@
         2.1074,
         2.1159,
         2.1178
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/stream_vbyte_crate/decode_into",
@@ -7363,7 +8446,9 @@
         9.1316,
         9.1339,
         9.136
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/stream_vbyte_crate/decode_deltas",
@@ -7389,7 +8474,9 @@
         9.5424,
         9.546,
         9.5585
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/stream_vbyte_simd/encode_deltas",
@@ -7415,7 +8502,9 @@
         1.3428,
         1.5307,
         1.5584
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/stream_vbyte_simd/decode_into",
@@ -7441,7 +8530,9 @@
         0.255,
         0.2564,
         0.2582
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/stream_vbyte_simd/decode_deltas",
@@ -7467,7 +8558,9 @@
         0.614,
         0.6149,
         0.6186
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/bitpacking_4x/encode_deltas",
@@ -7493,7 +8586,9 @@
         0.2953,
         0.2963,
         0.2973
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/bitpacking_4x/decode_into",
@@ -7519,7 +8614,9 @@
         0.0884,
         0.089,
         0.0908
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "int_codecs/bitpacking_4x/decode_deltas",
@@ -7545,7 +8642,9 @@
         0.2694,
         0.2709,
         0.2755
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/lsd_u32",
@@ -7563,7 +8662,9 @@
         5.7019,
         5.7037,
         5.7239
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/voracious/u32",
@@ -7581,7 +8682,9 @@
         10.0986,
         10.117,
         10.1554
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/rdst/u32",
@@ -7599,7 +8702,9 @@
         6.6208,
         6.6916,
         6.7084
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/std_unstable/u32",
@@ -7617,7 +8722,9 @@
         18.081,
         18.2599,
         18.2901
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/lsd_u64",
@@ -7635,7 +8742,9 @@
         13.2343,
         13.3812,
         13.6308
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/voracious/u64",
@@ -7653,7 +8762,9 @@
         10.6803,
         10.7009,
         10.7156
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/rdst/u64",
@@ -7671,7 +8782,9 @@
         11.9314,
         12.029,
         12.0658
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/std_unstable/u64",
@@ -7689,7 +8802,9 @@
         18.6569,
         18.8464,
         18.8636
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/kv_u64_u64",
@@ -7707,7 +8822,9 @@
         18.1452,
         18.6166,
         18.7091
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/voracious/kv_u64_u64",
@@ -7725,7 +8842,9 @@
         14.8251,
         14.8577,
         15.1919
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/rdst/kv_u64_u64",
@@ -7743,7 +8862,9 @@
         17.3877,
         18.0996,
         18.2551
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "radix_sort/std_unstable/kv_u64_u64",
@@ -7761,7 +8882,9 @@
         30.7451,
         31.0754,
         31.3914
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "suffix_array/construct",
@@ -7780,7 +8903,9 @@
         79.8425,
         80.7919,
         84.1806
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "suffix_array/search_query",
@@ -7807,7 +8932,9 @@
         1606.63,
         1683.32,
         1823.71
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "7f732aac484aa4056a4a4510e60819fc98b71900fb43002fc1dbba2441e31205"
     },
     {
       "name": "suffix_array/suffix_crate/construct",
@@ -7826,7 +8953,9 @@
         121.297,
         123.9656,
         127.0705
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "suffix_array/suffix_crate/search_query",
@@ -7853,7 +8982,9 @@
         2319.951,
         2524.04,
         2796.621
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "suffix_array/divsufsort_rust/construct",
@@ -7872,7 +9003,9 @@
         65.83,
         66.4263,
         66.8309
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "suffix_array/divsufsort_rust/search_query",
@@ -7899,7 +9032,9 @@
         1675.9,
         1696.32,
         1739.47
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "suffix_array/cdivsufsort_c/construct",
@@ -7918,7 +9053,9 @@
         56.279,
         57.9032,
         60.5085
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "suffix_array/cdivsufsort_c/search_query",
@@ -7945,7 +9082,9 @@
         1507.33,
         1544.801,
         1545.521
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "suffix_array/libsais_c/construct",
@@ -7964,7 +9103,9 @@
         28.6485,
         29.6881,
         30.8222
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "suffix_array/libsais_c/search_query",
@@ -7991,7 +9132,9 @@
         1443.68,
         1449.2,
         1499.09
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "search_and_scoring/simd_strchr_64kib",
@@ -8021,7 +9164,9 @@
         648.4375,
         648.4375,
         648.4375
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "search_and_scoring/simd_strstr_64kib",
@@ -8051,7 +9196,9 @@
         653.2031,
         653.2813,
         704.5313
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "search_and_scoring/memchr_strchr_64kib",
@@ -8081,7 +9228,9 @@
         637.1094,
         637.1875,
         964.6875
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "search_and_scoring/memmem_strstr_64kib",
@@ -8111,7 +9260,9 @@
         1963.9063,
         1963.9844,
         1971.875
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "search_and_scoring/memmem_finder_strstr_64kib",
@@ -8141,7 +9292,9 @@
         1918.2031,
         1918.9844,
         1925.7813
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "search_and_scoring/aho_corasick_strstr_64kib",
@@ -8171,7 +9324,9 @@
         1944.375,
         1945.0,
         1945.7031
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "search_and_scoring/bm25_score_single",
@@ -8197,7 +9352,9 @@
         2.3307,
         2.35,
         2.3681
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "search_and_scoring/bm25_batch_score_with_prefetch",
@@ -8223,7 +9380,9 @@
         1.1032,
         1.1163,
         1.522
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "search_and_scoring/bm25_batch_score_simd",
@@ -8249,7 +9408,9 @@
         0.4793,
         0.4797,
         0.4799
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     },
     {
       "name": "search_and_scoring/fieldnorm_build_score_table",
@@ -8271,7 +9432,9 @@
         0.175,
         0.175,
         0.1768
-      ]
+      ],
+      "measured_at_commit": "4b490ff",
+      "binary_sha256": "db43f593c5525b85e52bf6d0e238c73c8a48c8092c7e8e99803cf7240dbda63c"
     }
   ]
 }

@@ -11,7 +11,14 @@
     "git_commit": "446401d",
     "timestamp_utc": "2026-10-23T01:41:35Z",
     "binary_path": "/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/release/deps/e2e_search_bench-15bd884b264e11af",
-    "binary_sha256": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2"
+    "binary_sha256": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2",
+    "row_provenance_summary": [
+      {
+        "measured_at_commit": "446401d",
+        "binary_sha256": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2",
+        "row_count": 7
+      }
+    ]
   },
   "summary": {
     "num_docs": 100000,
@@ -80,7 +87,9 @@
         51080.5059,
         51187.374,
         50905.916
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2"
     },
     {
       "category": "e2e_search",
@@ -120,7 +129,9 @@
         5866.72,
         5935.4404,
         6030.312
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2"
     },
     {
       "category": "e2e_search",
@@ -142,7 +153,9 @@
         34918.4288,
         35252.2408,
         35078.4488
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2"
     },
     {
       "category": "e2e_search",
@@ -164,7 +177,9 @@
         57723.0048,
         57336.4332,
         56968.7292
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2"
     },
     {
       "category": "e2e_search",
@@ -186,7 +201,9 @@
         103522.7896,
         103366.142,
         103101.618
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2"
     },
     {
       "category": "e2e_search",
@@ -208,7 +225,9 @@
         83372.3575,
         83343.7054,
         82126.8064
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2"
     },
     {
       "category": "e2e_search",
@@ -230,7 +249,9 @@
         119319.884,
         120675.558,
         119588.449
-      ]
+      ],
+      "measured_at_commit": "446401d",
+      "binary_sha256": "99fbcdbd5e1f398549cca776e996058bd5d552bd43167d9563289814e3cb0ae2"
     }
   ]
 }
