@@ -597,10 +597,7 @@ impl WorkStealingExecutor {
                 "cannot submit task: executor workers terminated with previous Tokio runtime and no current Tokio runtime is active",
             )
         })?;
-        let _respawn_guard = self
-            .respawn_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _respawn_guard = self.respawn_lock.lock().unwrap_or_else(|e| e.into_inner());
         while self.stats.active_workers.load(Ordering::Acquire) < self.workers.len() {
             if self.shutdown.load(Ordering::Acquire) {
                 return Err(ZiporaError::invalid_state(
@@ -714,7 +711,10 @@ impl WorkStealingExecutor {
             ));
         }
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
-            let key = (self.executor_id, crate::thread::tokio_runtime_handle_id(&rt_handle));
+            let key = (
+                self.executor_id,
+                crate::thread::tokio_runtime_handle_id(&rt_handle),
+            );
             LAST_RECORDED_FALLBACK.with(|last| {
                 if last.get() != Some(key) {
                     *self
@@ -734,8 +734,7 @@ impl WorkStealingExecutor {
         // Capacity + shutdown check and push happen under a single lock acquisition; on a
         // full local queue the task is handed back and requeued globally, so a
         // concurrent fill can never cause it to be dropped unexecuted.
-        let task = match self.queues[worker_id]
-            .try_push_local_unless_shutdown(&self.shutdown, task)
+        let task = match self.queues[worker_id].try_push_local_unless_shutdown(&self.shutdown, task)
         {
             Ok(()) => {
                 self.notify_if_parked();
@@ -823,11 +822,7 @@ impl WorkStealingExecutor {
         for q in &self.queues {
             drop(q.local_queue.lock().unwrap_or_else(|e| e.into_inner()));
         }
-        drop(
-            self.global_queue
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()),
-        );
+        drop(self.global_queue.lock().unwrap_or_else(|e| e.into_inner()));
         self.work_notify.notify_waiters();
 
         // Wait for all workers to drain remaining tasks and finish cleanly
@@ -889,9 +884,7 @@ impl WorkStealingExecutor {
             start_time: Instant::now(),
         };
 
-        if let Ok(fut) =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| task.execute()))
-        {
+        if let Ok(fut) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| task.execute())) {
             let _ = (CatchUnwindFuture { inner: fut }).await;
         }
 
@@ -968,13 +961,9 @@ impl WorkStealingExecutor {
                         stats.parked_workers.fetch_add(1, Ordering::SeqCst);
                         let parked_guard = ParkedWorkerGuard { stats: &stats };
                         let shutting_down_now = shutdown.load(Ordering::Acquire);
-                        if let Some(task) = Self::find_task(
-                            my_queue,
-                            &other_queues,
-                            &global_queue,
-                            &stats,
-                            true,
-                        ) {
+                        if let Some(task) =
+                            Self::find_task(my_queue, &other_queues, &global_queue, &stats, true)
+                        {
                             drop(parked_guard);
                             idle_count = 0;
                             let executed = Self::run_task_with_stats(task, &stats).await;
@@ -1365,9 +1354,15 @@ mod tests {
         //     whose worker futures are never polled before drop (S27-R2) must decrement
         //     active_workers, reject no-runtime submit_closure, and respawn on a new runtime.
         {
-            let rt0 = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let rt0 = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             rt0.block_on(async {
-                let cfg = crate::concurrency::ConcurrencyConfig { max_fibers: 2, queue_size: 64 };
+                let cfg = crate::concurrency::ConcurrencyConfig {
+                    max_fibers: 2,
+                    queue_size: 64,
+                };
                 WorkStealingExecutor::init(cfg).await.unwrap();
             });
         }
@@ -1380,7 +1375,9 @@ mod tests {
             "dropping a runtime whose workers were never polled must decrement active_workers to 0"
         );
         assert!(
-            global_exec.submit_closure(|| Box::pin(async { Ok(()) })).is_err(),
+            global_exec
+                .submit_closure(|| Box::pin(async { Ok(()) }))
+                .is_err(),
             "submit_closure with 0 live workers and no active Tokio runtime must return Err"
         );
 
@@ -1391,19 +1388,25 @@ mod tests {
                 .build()
                 .unwrap();
             rt1.block_on(async {
-                let h = WorkStealingExecutor::spawn(crate::concurrency::Fiber::new(async {
-                    Ok(1i32)
-                }));
+                let h =
+                    WorkStealingExecutor::spawn(crate::concurrency::Fiber::new(async { Ok(1i32) }));
                 assert_eq!(h.await.unwrap(), 1);
             });
         }
 
         let unpolled_ct_exec = {
-            let temp_ct = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let temp_ct = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             temp_ct.block_on(async { WorkStealingExecutor::new(2, 64).unwrap() })
         };
         assert_eq!(unpolled_ct_exec.stats().active_workers, 0);
-        assert!(unpolled_ct_exec.submit_closure(|| Box::pin(async { Ok(()) })).is_err());
+        assert!(
+            unpolled_ct_exec
+                .submit_closure(|| Box::pin(async { Ok(()) }))
+                .is_err()
+        );
 
         // S28-R1: Synchronous future drop inside `tokio::spawn` / `Handle::spawn` must never
         // self-deadlock on `worker.handle`:
@@ -1415,7 +1418,10 @@ mod tests {
             let (wd_tx, wd_rx) = std::sync::mpsc::channel::<()>();
             let wd_join = std::thread::spawn(move || {
                 let no_rt = std::panic::catch_unwind(|| WorkStealingExecutor::new(2, 64));
-                assert!(no_rt.is_err(), "WorkStealingExecutor::new outside runtime must panic");
+                assert!(
+                    no_rt.is_err(),
+                    "WorkStealingExecutor::new outside runtime must panic"
+                );
 
                 let closed_rt = tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(2)
@@ -1423,7 +1429,8 @@ mod tests {
                     .build()
                     .unwrap();
                 let closed_handle = closed_rt.handle().clone();
-                let dead_exec = closed_rt.block_on(async { WorkStealingExecutor::new(2, 64).unwrap() });
+                let dead_exec =
+                    closed_rt.block_on(async { WorkStealingExecutor::new(2, 64).unwrap() });
                 drop(closed_rt);
                 assert_eq!(dead_exec.stats().active_workers, 0);
                 {
@@ -1463,9 +1470,9 @@ mod tests {
                 }
                 let _ = wd_tx.send(());
             });
-            wd_rx
-                .recv_timeout(Duration::from_secs(5))
-                .expect("S28-R1 self-deadlock when Tokio synchronously drops worker future during spawn");
+            wd_rx.recv_timeout(Duration::from_secs(5)).expect(
+                "S28-R1 self-deadlock when Tokio synchronously drops worker future during spawn",
+            );
             wd_join.join().unwrap();
         }
 
@@ -1476,7 +1483,8 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
-            dropped_mt_execs.push(temp_mt.block_on(async { WorkStealingExecutor::new(2, 64).unwrap() }));
+            dropped_mt_execs
+                .push(temp_mt.block_on(async { WorkStealingExecutor::new(2, 64).unwrap() }));
         }
 
         let rt2 = tokio::runtime::Builder::new_multi_thread()
@@ -1490,7 +1498,9 @@ mod tests {
                 WorkStealingExecutor::spawn(crate::concurrency::Fiber::new(async { Ok(2i32) })),
             )
             .await
-            .expect("spawn hung after the runtime that called WorkStealingExecutor::init() was dropped");
+            .expect(
+                "spawn hung after the runtime that called WorkStealingExecutor::init() was dropped",
+            );
             assert_eq!(h.unwrap(), 2);
 
             let (done_tx, done_rx) = tokio::sync::oneshot::channel::<i32>();
@@ -1725,9 +1735,7 @@ mod tests {
                         _ => unreachable!(),
                     }
                     let deadline = std::time::Instant::now() + Duration::from_millis(500);
-                    while pre.load(Ordering::Acquire) < 1
-                        && std::time::Instant::now() < deadline
-                    {
+                    while pre.load(Ordering::Acquire) < 1 && std::time::Instant::now() < deadline {
                         std::thread::sleep(Duration::from_millis(1));
                     }
                     assert_eq!(pre.load(Ordering::Acquire), 1);
@@ -1785,6 +1793,96 @@ mod tests {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 panic!("S29-R1 watchdog timed out (>15s)");
             }
+        }
+    }
+
+    #[test]
+    fn test_s52_r3_concurrent_owner_push_pop_and_thief_steal_weak_memory() {
+        const NUM_TASKS: usize = 16;
+        let queue = WorkStealingQueue::new(0, 64);
+        let claimed: Vec<AtomicUsize> = (0..NUM_TASKS).map(|_| AtomicUsize::new(0)).collect();
+        let total_claimed = AtomicUsize::new(0);
+        let owner_done = AtomicBool::new(false);
+
+        let run_task = |task: Box<dyn Task>| {
+            let mut fut = task.execute();
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            match fut.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(Ok(())) => {}
+                other => panic!("expected immediate Ready(Ok(())), got {other:?}"),
+            }
+        };
+
+        std::thread::scope(|s| {
+            // Two thief threads concurrently calling `steal()` while owner pushes, balances, and pops.
+            for _ in 0..2 {
+                s.spawn(|| {
+                    while total_claimed.load(Ordering::Acquire) < NUM_TASKS {
+                        if let Some(task) = queue.steal() {
+                            run_task(task);
+                        } else if owner_done.load(Ordering::Acquire) && queue.is_empty() {
+                            break;
+                        } else {
+                            std::thread::yield_now();
+                        }
+                    }
+                });
+            }
+
+            // Owner thread pushes tasks, periodically balances to `steal_queue`, and pops locally.
+            for idx in 0..NUM_TASKS {
+                let slot = &claimed[idx];
+                // SAFETY: `claimed` outlives the `std::thread::scope` block, so converting `&AtomicUsize`
+                // to a `usize` address and reconstructing `&AtomicUsize` inside the scoped task is sound.
+                let slot_addr = slot as *const AtomicUsize as usize;
+                let total_addr = &total_claimed as *const AtomicUsize as usize;
+                let task = Box::new(
+                    ClosureTask::new(move || {
+                        // SAFETY: `slot_addr` and `total_addr` point to live stack `AtomicUsize` values
+                        // that outlive all threads in `std::thread::scope`.
+                        unsafe {
+                            let slot_ref = &*(slot_addr as *const AtomicUsize);
+                            let total_ref = &*(total_addr as *const AtomicUsize);
+                            slot_ref.fetch_add(1, Ordering::AcqRel);
+                            total_ref.fetch_add(1, Ordering::Release);
+                        }
+                        Box::pin(async { Ok(()) })
+                    })
+                    .with_priority((idx % 4) as u8)
+                    .with_stealable(true),
+                );
+                queue.push_local(task).expect("push_local within capacity");
+                if idx % 3 == 1 {
+                    queue.balance();
+                }
+                if idx % 4 == 3
+                    && let Some(popped) = queue.pop_local()
+                {
+                    run_task(popped);
+                }
+            }
+            queue.balance();
+            while let Some(popped) = queue.pop_local() {
+                run_task(popped);
+            }
+            owner_done.store(true, Ordering::Release);
+        });
+
+        assert!(
+            queue.is_empty(),
+            "queue must be empty after owner and thieves finish"
+        );
+        assert_eq!(
+            total_claimed.load(Ordering::SeqCst),
+            NUM_TASKS,
+            "every pushed task must be executed exactly once across owner pop_local and thief steal"
+        );
+        for (idx, c) in claimed.iter().enumerate() {
+            assert_eq!(
+                c.load(Ordering::SeqCst),
+                1,
+                "task {idx} must be claimed exactly once (no lost or duplicate steals)"
+            );
         }
     }
 
@@ -1857,5 +1955,3 @@ mod tests {
         );
     }
 }
-
-

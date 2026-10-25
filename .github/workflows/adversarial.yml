@@ -111,7 +111,7 @@ jobs:
           });
 
   weekly_aarch64:
-    name: Weekly AArch64 Cross Compile & Test (B2.2)
+    name: Weekly AArch64 Cross-Compile Gate (B2.2 — compiled only; never executed)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
@@ -125,15 +125,10 @@ jobs:
         components: clippy
         targets: aarch64-unknown-linux-gnu
 
-    - name: Clippy check on aarch64-unknown-linux-gnu
+    - name: Clippy check on aarch64-unknown-linux-gnu (compiled only; never executed on ARM hardware or QEMU)
       run: |
         RUSTFLAGS="" cargo clippy --locked --target aarch64-unknown-linux-gnu \
           --no-default-features --features simd,mmap,serde,lz4,async,ffi,avx512 --lib -- -D warnings
-
-    - name: Install cross and run aarch64 unit tests
-      run: |
-        command -v cross >/dev/null 2>&1 || cargo install cross --git https://github.com/cross-rs/cross
-        cross test --target aarch64-unknown-linux-gnu --all-features --lib
 
     - name: Open issue on scheduled failure
       if: failure() && github.event_name == 'schedule'

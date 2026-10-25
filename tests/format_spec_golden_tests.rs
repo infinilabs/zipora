@@ -515,9 +515,18 @@ fn test_b2_2_weak_memory_and_aarch64_gates() {
     let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
     assert!(
         makefile.contains("miri_weak:")
-            && makefile.contains("-Zmiri-many-seeds")
-            && makefile.contains("--target aarch64-unknown-linux-gnu"),
-        "Makefile must define miri_weak running Miri weak-memory many-seeds stress and aarch64 clippy"
+            && makefile.contains("-Zmiri-many-seeds=0..64")
+            && makefile
+                .contains("test_s52_r3_concurrent_owner_push_pop_and_thief_steal_weak_memory")
+            && makefile.contains("--target aarch64-unknown-linux-gnu")
+            && makefile.contains("compiled only; never executed"),
+        "Makefile must define miri_weak with 0..64 pool seeds, concurrent WorkStealingQueue steal test, and explicit AArch64 compiled-only note"
+    );
+
+    let ws_src = std::fs::read_to_string(root.join("src/concurrency/work_stealing.rs")).unwrap();
+    assert!(
+        ws_src.contains("fn test_s52_r3_concurrent_owner_push_pop_and_thief_steal_weak_memory"),
+        "src/concurrency/work_stealing.rs must define test_s52_r3_concurrent_owner_push_pop_and_thief_steal_weak_memory"
     );
 
     let adv_yml_path = root.join(".github/workflows/adversarial.yml");
@@ -532,13 +541,17 @@ fn test_b2_2_weak_memory_and_aarch64_gates() {
         "weekly_fuzz_soak",
         "weekly_aarch64",
         "make miri_weak",
-        "cross test --target aarch64-unknown-linux-gnu --all-features --lib",
+        "compiled only; never executed",
     ] {
         assert!(
             adv_yml.contains(item),
             ".github/workflows/adversarial.yml must include '{item}'"
         );
     }
+    assert!(
+        !adv_yml.contains("cross test --target aarch64-unknown-linux-gnu"),
+        ".github/workflows/adversarial.yml must not claim unverified cross test execution on AArch64"
+    );
 
     let cache_mod = std::fs::read_to_string(root.join("src/cache/mod.rs")).unwrap();
     assert!(

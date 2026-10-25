@@ -414,29 +414,34 @@ miri_c12:
 miri_scalar:
 	$(MAKE) --no-print-directory MIRI_SCALAR=1 miri_cspp miri_string miri_io miri_algorithms miri_c12
 
-# Weak-memory correctness and AArch64 compilation gate (plan.md B2.2):
-# - Miri weak-memory / preemption / many-seeds stress on LockFreeMemoryPool,
-#   ConcurrentCsppTrie, WorkStealingQueue/Executor, and Pipeline.
-# - AArch64 (`aarch64-unknown-linux-gnu`) clippy check with `-D warnings`.
+# Weak-memory correctness and AArch64 compilation gate (plan.md B2.2 / S52-R3):
+# - Miri weak-memory / preemption / many-seeds stress on LockFreeMemoryPool (seeds 0..64),
+#   ConcurrentCsppTrie, WorkStealingQueue concurrent owner+thief steal (seeds 0..16), and Pipeline.
+# - AArch64 (`aarch64-unknown-linux-gnu`) clippy check with `-D warnings`
+#   (compiled only; never executed on ARM hardware or QEMU).
 miri_weak:
-	@echo "=== B2.2: LockFreeMemoryPool weak-memory store-buffering & magazine steal stress ==="
-	MIRIFLAGS="-Zmiri-many-seeds=0..4" \
+	@echo "=== B2.2: LockFreeMemoryPool weak-memory store-buffering & magazine steal stress (0..64 seeds) ==="
+	MIRIFLAGS="-Zmiri-many-seeds=0..64" \
 	$(CARGO_MIRI) test --lib -- --test-threads=1 --exact \
 		memory::lockfree_pool::tests::test_s49_r2_owner_pop_vs_steal_no_duplicate_blocks \
-		memory::lockfree_pool::tests::test_s50_r1_push_vs_drain_store_buffering_no_lost_blocks \
+		memory::lockfree_pool::tests::test_s50_r1_push_vs_drain_store_buffering_no_lost_blocks
+	$(CARGO_MIRI) test --lib -- --test-threads=1 --exact \
 		memory::lockfree_pool::tests::test_s50_r1_push_does_not_overwrite_undrained_slots
 	@echo "=== B2.2: ConcurrentCsppTrie weak-memory contended CAS & split stress ==="
 	MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks -Zmiri-many-seeds=0..4" \
 	$(CARGO_MIRI) test --lib -- --test-threads=1 --exact \
 		fsa::cspp_trie_concurrent::tests::test_contended_root_fastnode_cas \
 		fsa::cspp_trie_concurrent::tests::test_concurrent_trie_multithreaded
-	@echo "=== B2.2: WorkStealingQueue & Pipeline weak-memory stress ==="
+	@echo "=== B2.2: WorkStealingQueue concurrent owner/thief steal & Pipeline weak-memory stress ==="
+	MIRIFLAGS="-Zmiri-many-seeds=0..16" \
+	$(CARGO_MIRI) test --lib -- --test-threads=1 --exact \
+		concurrency::work_stealing::tests::test_s52_r3_concurrent_owner_push_pop_and_thief_steal_weak_memory
 	MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-many-seeds=0..4" \
 	$(CARGO_MIRI) test --lib -- --test-threads=1 --exact \
 		concurrency::work_stealing::tests::test_c10_ws1_balanced_tasks_are_popped_by_owner_and_single_worker_executor \
 		concurrency::work_stealing::tests::test_c10_ws5_steal_takes_single_queued_stealable_task \
 		concurrency::pipeline::tests::test_s25_r7_multithreaded_execute_stream_payload_writes_and_concurrent_stage_stats
-	@echo "=== B2.2: AArch64 (aarch64-unknown-linux-gnu) clippy gate ==="
+	@echo "=== B2.2: AArch64 (aarch64-unknown-linux-gnu) clippy gate (compiled only; never executed) ==="
 	RUSTFLAGS="" $(CARGO) clippy --locked --target aarch64-unknown-linux-gnu \
 		--no-default-features --features simd,mmap,serde,lz4,async,ffi,avx512 --lib -- -D warnings
 
