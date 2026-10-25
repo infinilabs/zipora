@@ -451,6 +451,22 @@ fn test_b5_supply_chain_audit_and_deny_gates() {
         !cargo_lock.contains("name = \"crossbeam-epoch\"\nversion = \"0.9.18\""),
         "Cargo.lock must upgrade crossbeam-epoch past 0.9.18 (RUSTSEC-2026-0204)"
     );
+    assert!(
+        !cargo_lock.contains("name = \"tokio\"\nversion = \"1.50.0\""),
+        "S52-R4: Cargo.lock must upgrade tokio to >= 1.51.6 (e.g., 1.54.1) instead of ignoring RUSTSEC-2026-0386"
+    );
+    assert!(
+        !deny_toml.contains("RUSTSEC-2026-0386"),
+        "S52-R4: deny.toml must drop the RUSTSEC-2026-0386 ignore once tokio is >= 1.51.6"
+    );
+    assert!(
+        deny_toml.contains("ignored (no fix exists)"),
+        "S52-R4: deny.toml must describe bincode RUSTSEC-2025-0141 as \"ignored (no fix exists)\""
+    );
+    assert!(
+        deny_toml.contains("unsound = \"all\"") && deny_toml.contains("RUSTSEC-2026-0253"),
+        "S52-R4: deny.toml must set `unsound = \"all\"` so lru (RUSTSEC-2026-0253) is in cargo-deny's unsound scope"
+    );
 
     let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
     assert!(

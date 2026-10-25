@@ -5,11 +5,13 @@ all-features = true
 
 [advisories]
 version = 2
+unmaintained = "all"
+unsound = "all"
 ignore = [
-    # bincode 1.3.3 is marked unmaintained; retained for pre-stable serde/bincode wire compatibility
-    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x wire format compatibility" },
-    # tokio 1.50.0 is the latest MSRV 1.95 compatible version; Zipora does not use AsyncFd
-    { id = "RUSTSEC-2026-0386", reason = "latest MSRV 1.95 compatible tokio; AsyncFd is unused" },
+    # bincode 1.3.3 is marked unmaintained; ignored (no fix exists) — retained for bincode 1.x wire compatibility
+    { id = "RUSTSEC-2025-0141", reason = "ignored (no fix exists): bincode 1.3.3 is final 1.x release; retained for wire format compatibility" },
+    # lru 0.16.4 is a transitive dev-dependency pulled only by tantivy 0.26.2 (pinned to lru ^0.16.3 for E1.1 bench)
+    { id = "RUSTSEC-2026-0253", reason = "ignored (no fix in tantivy 0.26.2): transitive dev-dependency lru 0.16.4 via tantivy 0.26.2 (bench-only)" },
 ]
 
 [licenses]
