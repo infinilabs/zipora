@@ -38,9 +38,11 @@ impl SimdTier {
             SimdTier::Tier3Bmi2
         } else if features.has_popcnt {
             SimdTier::Tier2Popcnt
-        } else if features.has_neon {
+        } else if features.has_neon && crate::simd::isa::detect::<crate::simd::isa::Neon>().is_some()
+        {
             SimdTier::Tier1Neon
         } else {
+            let _ = crate::simd::isa::detect::<crate::simd::isa::Scalar>();
             SimdTier::Tier0Scalar
         }
     }

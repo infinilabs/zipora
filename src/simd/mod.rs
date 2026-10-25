@@ -25,13 +25,12 @@
 pub mod adaptive;
 pub mod benchmarks;
 pub mod dispatch_cache;
-pub mod isa;
+pub(crate) mod isa;
 pub mod macros;
 pub mod performance;
 
 pub use adaptive::{AdaptiveSimdSelector, SelectionKey, SimdImpl, SimdTier};
 pub use benchmarks::BenchmarkResults;
-pub use isa::{Isa, detect};
 pub use performance::PerformanceHistory;
 
 /// Operation types for SIMD selection

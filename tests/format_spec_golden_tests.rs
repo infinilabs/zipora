@@ -891,3 +891,17 @@ fn test_f4_release_prep_gate() {
         ".github/workflows/release.yml must gate releases on `make release_prep`"
     );
 }
+
+#[test]
+fn test_s52_r6_simd_isa_module_is_pub_crate() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let simd_mod = std::fs::read_to_string(root.join("src/simd/mod.rs")).unwrap();
+    assert!(
+        simd_mod.contains("pub(crate) mod isa;"),
+        "src/simd/mod.rs must keep `isa` as `pub(crate) mod isa;` rather than exposing `pub mod isa;`"
+    );
+    assert!(
+        !simd_mod.contains("pub mod isa;") && !simd_mod.contains("pub use isa::"),
+        "src/simd/mod.rs must not publicly export `simd::isa`"
+    );
+}
