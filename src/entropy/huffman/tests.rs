@@ -1602,4 +1602,47 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_s52_r7_legacy_saturated_8bit_fallback_wire_compat_and_unassigned_rejection() {
+        // Construct a 100-symbol Fibonacci-saturated frequency table whose Huffman tree depth > 64,
+        // triggering `from_frequencies_fixed_length` with 100 symbols (< 256).
+        let mut freqs = [0u32; 256];
+        freqs[0] = 1;
+        freqs[1] = 1;
+        let mut a = 1u64;
+        let mut b = 1u64;
+        for slot in freqs.iter_mut().take(100).skip(2) {
+            let next = a.saturating_add(b).min(u32::MAX as u64);
+            *slot = next as u32;
+            a = b;
+            b = next;
+        }
+
+        let tree = HuffmanTree::from_frequencies(&freqs).unwrap();
+        assert_eq!(tree.max_code_length(), 8);
+        for sym in 0u8..100 {
+            let code = tree.get_code(sym).unwrap();
+            let expected: Vec<bool> = (0..8).map(|bit| ((sym >> bit) & 1) != 0).collect();
+            assert_eq!(
+                code, &expected,
+                "legacy 8-bit fallback must assign canonical 8-bit LSB-first code to symbol {sym}"
+            );
+        }
+
+        // Serialized wire format must match pre-d0a9b52 8-bit fixed-length fallback and round-trip.
+        let wire = tree.serialize();
+        let tree_rt = HuffmanTree::deserialize(&wire).unwrap();
+        assert_eq!(tree.codes, tree_rt.codes);
+
+        let payload: Vec<u8> = (0..200).map(|i| (i % 100) as u8).collect();
+        let enc = HuffmanEncoder::from_tree(tree_rt.clone());
+        let encoded = enc.encode(&payload).unwrap();
+        let dec = HuffmanDecoder::new(tree_rt);
+        assert_eq!(dec.decode(&encoded, payload.len()).unwrap(), payload);
+
+        // Unassigned 8-bit codeword (100 >= 100 symbols) must be rejected by decoder, not decoded as 0.
+        let forged_stream = vec![100u8];
+        assert!(dec.decode(&forged_stream, 1).is_err());
+    }
 }

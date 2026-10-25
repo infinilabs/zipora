@@ -152,44 +152,27 @@ impl HuffmanTree {
             });
         }
 
-        if symbols.len() == 1 {
-            let symbol = symbols[0];
-            let mut codes = HashMap::new();
-            codes.insert(symbol, vec![false]);
-            return Ok(Self {
-                root: Some(HuffmanNode::Leaf {
-                    symbol,
-                    frequency: 1,
-                }),
-                codes,
-                max_code_length: 1,
-            });
+        // Use 8-bit fixed codes (we have at most 256 symbols)
+        let code_length = 8;
+        let mut codes = HashMap::new();
+
+        for (i, &symbol) in symbols.iter().enumerate() {
+            let mut code = Vec::with_capacity(code_length);
+            let mut val = i;
+            for _ in 0..code_length {
+                code.push((val & 1) != 0);
+                val >>= 1;
+            }
+            codes.insert(symbol, code);
         }
 
-        fn build_balanced_node(syms: &[u8]) -> HuffmanNode {
-            if syms.len() == 1 {
-                return HuffmanNode::Leaf {
-                    symbol: syms[0],
-                    frequency: 1,
-                };
-            }
-            let mid = syms.len() / 2;
-            HuffmanNode::Internal {
-                frequency: 0,
-                left: Box::new(build_balanced_node(&syms[..mid])),
-                right: Box::new(build_balanced_node(&syms[mid..])),
-            }
-        }
-
-        let root = build_balanced_node(&symbols);
-        let mut codes = HashMap::with_capacity(symbols.len());
-        let mut max_code_length = 0;
-        Self::generate_codes(&root, Vec::new(), &mut codes, &mut max_code_length);
+        // Build decoding tree from codes
+        let root = Self::build_decoding_tree_from_codes(&codes)?;
 
         Ok(Self {
-            root: Some(root),
+            root,
             codes,
-            max_code_length,
+            max_code_length: code_length,
         })
     }
 
@@ -393,13 +376,40 @@ impl HuffmanTree {
             Self::insert_code_into_tree(&mut root, symbol, code)?;
         }
 
-        if Self::has_unassigned_leaf(&root) {
+        if Self::has_unassigned_leaf(&root) && !Self::is_legacy_fixed_8bit_fallback(codes) {
             return Err(ZiporaError::invalid_data(
                 "Incomplete Huffman code set: tree has unassigned branches",
             ));
         }
 
         Ok(Some(root))
+    }
+
+    /// Check whether `codes` is the canonical 8-bit fixed-length fallback produced by
+    /// `from_frequencies_fixed_length` when a pathological frequency distribution exceeds
+    /// depth 64 (`codes.len() >= 66`, all code lengths equal to 8, and sorted symbols
+    /// assigned sequential LSB-first codes `0..codes.len()`).
+    fn is_legacy_fixed_8bit_fallback(codes: &HashMap<u8, Vec<bool>>) -> bool {
+        if codes.len() < 66 {
+            return false;
+        }
+        let mut syms: Vec<u8> = codes.keys().copied().collect();
+        syms.sort_unstable();
+        for (i, sym) in syms.into_iter().enumerate() {
+            let Some(code) = codes.get(&sym) else {
+                return false;
+            };
+            if code.len() != 8 {
+                return false;
+            }
+            for (bit_idx, &bit) in code.iter().enumerate() {
+                let expected = ((i >> bit_idx) & 1) != 0;
+                if bit != expected {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Check whether any unassigned leaf (`frequency == 0`) remains in the tree

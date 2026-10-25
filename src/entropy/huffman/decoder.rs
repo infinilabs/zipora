@@ -98,7 +98,12 @@ pub(crate) fn fill_lut_dfs<const N: usize>(
     table: &mut [FastDecEntry; N],
 ) {
     match node {
-        HuffmanNode::Leaf { symbol, .. } => {
+        HuffmanNode::Leaf {
+            symbol, frequency, ..
+        } => {
+            if *frequency == 0 {
+                return;
+            }
             let bit_len = depth.max(1);
             let step = 1usize << (depth as usize);
             let mut idx = code_bits;
@@ -248,7 +253,14 @@ impl HuffmanDecoder {
             let mut found = false;
             loop {
                 match current_node {
-                    HuffmanNode::Leaf { symbol, .. } => {
+                    HuffmanNode::Leaf {
+                        symbol, frequency, ..
+                    } => {
+                        if *frequency == 0 {
+                            return Err(ZiporaError::invalid_data(
+                                "Unassigned Huffman codeword in stream",
+                            ));
+                        }
                         result.push(*symbol);
                         found = true;
                         break;

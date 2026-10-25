@@ -1188,8 +1188,12 @@ impl ContextualHuffmanEncoder {
                     // Walk the tree following the bits in peek_value
                     for bit_pos in 0..BLOCK_BITS {
                         match current {
-                            HuffmanNode::Leaf { symbol, .. } => {
-                                tree_table[peek_value] = (code_bits, *symbol, bits_used);
+                            HuffmanNode::Leaf {
+                                symbol, frequency, ..
+                            } => {
+                                if *frequency > 0 {
+                                    tree_table[peek_value] = (code_bits, *symbol, bits_used);
+                                }
                                 break;
                             }
                             HuffmanNode::Internal { left, right, .. } => {
@@ -1206,7 +1210,10 @@ impl ContextualHuffmanEncoder {
                     }
 
                     // If we ended on a leaf after using all BLOCK_BITS, record it
-                    if let HuffmanNode::Leaf { symbol, .. } = current
+                    if let HuffmanNode::Leaf {
+                        symbol, frequency, ..
+                    } = current
+                        && *frequency > 0
                         && tree_table[peek_value].2 == 0
                     {
                         tree_table[peek_value] = (code_bits, *symbol, bits_used);
@@ -1332,7 +1339,14 @@ impl ContextualHuffmanEncoder {
 
         loop {
             match current {
-                HuffmanNode::Leaf { symbol, .. } => {
+                HuffmanNode::Leaf {
+                    symbol, frequency, ..
+                } => {
+                    if *frequency == 0 {
+                        return Err(ZiporaError::invalid_data(
+                            "Unassigned Huffman codeword in stream",
+                        ));
+                    }
                     return Ok(*symbol);
                 }
                 HuffmanNode::Internal { left, right, .. } => {
@@ -1849,7 +1863,14 @@ impl ContextualHuffmanDecoder {
 
         loop {
             match current_node {
-                HuffmanNode::Leaf { symbol, .. } => {
+                HuffmanNode::Leaf {
+                    symbol, frequency, ..
+                } => {
+                    if *frequency == 0 {
+                        return Err(ZiporaError::invalid_data(
+                            "Unassigned Huffman codeword in stream",
+                        ));
+                    }
                     return Ok(*symbol);
                 }
                 HuffmanNode::Internal { left, right, .. } => {
