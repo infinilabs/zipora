@@ -997,8 +997,11 @@ impl MemoryMappedOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "mmap")]
     use std::io::Write;
-    use tempfile::{NamedTempFile, TempDir};
+    use tempfile::NamedTempFile;
+    #[cfg(feature = "mmap")]
+    use tempfile::TempDir;
 
     #[cfg(feature = "mmap")]
     #[test]

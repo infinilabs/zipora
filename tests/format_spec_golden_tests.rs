@@ -4,18 +4,23 @@
 //! and verifies lossless round-trip decoding across all 8 persisted formats.
 
 use std::io::Cursor;
+#[cfg(any(feature = "mmap", feature = "zstd"))]
 use tempfile::tempdir;
 use zipora::blob_store::file_header::ChecksumType;
+#[cfg(feature = "mmap")]
 use zipora::blob_store::reorder_map::{ZReorderMap, ZReorderMapBuilder};
+#[cfg(feature = "zstd")]
 use zipora::blob_store::{
-    BlobStore, BlobStoreFileFooter, FileHeaderBase, SortedUintVec, SortedUintVecBuilder,
-    SortedUintVecConfig, ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder,
-    ZipOffsetBlobStoreConfig,
+    BlobStore, ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig,
+};
+use zipora::blob_store::{
+    BlobStoreFileFooter, FileHeaderBase, SortedUintVec, SortedUintVecBuilder, SortedUintVecConfig,
 };
 use zipora::containers::ZoSortedStrVec;
 use zipora::entropy::dictionary::{Dictionary, DictionaryEntry};
 use zipora::error::Result;
 use zipora::io::{SignedVarInt, VarInt};
+#[cfg(feature = "mmap")]
 use zipora::memory::{MmapVec, MmapVecConfig};
 
 #[test]
@@ -44,8 +49,7 @@ fn test_golden_1_file_header_base_and_footer_every_field() -> Result<()> {
     // 48..56: unzip_size = 8192 (u64 LE)
     assert_eq!(&bytes[48..56], &8192u64.to_le_bytes());
     // 56..64: packed_records_field = 42 | ((ChecksumType::Crc32c as u64) << 40) | (1 << 48)
-    let expected_packed_records =
-        42u64 | ((ChecksumType::Crc32c as u64) << 40) | (1u64 << 48);
+    let expected_packed_records = 42u64 | ((ChecksumType::Crc32c as u64) << 40) | (1u64 << 48);
     assert_eq!(&bytes[56..64], &expected_packed_records.to_le_bytes());
     // 64..72: packed_dict_field = 1024 (u64 LE)
     assert_eq!(&bytes[64..72], &1024u64.to_le_bytes());
@@ -132,6 +136,7 @@ fn test_golden_2_sorted_uint_vec_zsuv_every_field() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "zstd")]
 #[test]
 fn test_golden_3_zip_offset_blob_store_every_field() -> Result<()> {
     let dir = tempdir().map_err(|e| zipora::error::ZiporaError::io_error(e.to_string()))?;
@@ -288,6 +293,7 @@ fn test_golden_6_varint_leb128_and_zigzag_every_field() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "mmap")]
 #[test]
 fn test_golden_7_mmap_vec_header_v2_every_field() -> Result<()> {
     let dir = tempdir().map_err(|e| zipora::error::ZiporaError::io_error(e.to_string()))?;
@@ -328,6 +334,7 @@ fn test_golden_7_mmap_vec_header_v2_every_field() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "mmap")]
 #[test]
 fn test_golden_8_zreorder_map_every_field() -> Result<()> {
     let dir = tempdir().map_err(|e| zipora::error::ZiporaError::io_error(e.to_string()))?;
@@ -365,4 +372,56 @@ fn test_golden_8_zreorder_map_every_field() -> Result<()> {
     let collected: Vec<usize> = loaded.collect();
     assert_eq!(collected, values);
     Ok(())
+}
+
+#[cfg(not(miri))]
+#[test]
+fn test_b4_feature_matrix_and_msrv_1_95_gates() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cargo_toml = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let (_, dev_deps_section) = cargo_toml
+        .split_once("[dev-dependencies]")
+        .expect("Cargo.toml must have [dev-dependencies]");
+    let dev_deps_only = dev_deps_section
+        .split("\n[")
+        .next()
+        .expect("dev-dependencies block");
+    assert!(
+        dev_deps_only.contains("serde_json"),
+        "B4 requires serde_json in [dev-dependencies] so integration tests compile with --no-default-features"
+    );
+
+    let compressed_rs = std::fs::read_to_string(root.join("src/blob_store/compressed.rs")).unwrap();
+    assert!(
+        compressed_rs.contains("#[cfg(any(feature = \"zstd\", feature = \"lz4\"))]\n    use crate::blob_store::MemoryBlobStore;"),
+        "B4 requires MemoryBlobStore test import in src/blob_store/compressed.rs to be gated on any(feature = \"zstd\", feature = \"lz4\")"
+    );
+
+    let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
+    assert!(
+        makefile.contains("feature_matrix:"),
+        "Makefile must define the B4 feature_matrix target"
+    );
+    for feature in [
+        "simd", "mmap", "zstd", "lz4", "serde", "async", "ffi", "avx512",
+    ] {
+        assert!(
+            makefile.contains(feature),
+            "Makefile feature_matrix must include single-feature check for {feature}"
+        );
+    }
+    assert!(
+        makefile.contains("+1.95 check --locked --all-features"),
+        "Makefile feature_matrix must verify MSRV 1.95 check"
+    );
+
+    let ci_yml = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
+    assert!(
+        ci_yml.contains("feature_matrix:"),
+        ".github/workflows/ci.yml must define the B4 feature_matrix job"
+    );
+    assert!(
+        ci_yml.contains("1.95"),
+        ".github/workflows/ci.yml must verify MSRV 1.95"
+    );
 }

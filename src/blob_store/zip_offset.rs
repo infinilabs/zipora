@@ -980,6 +980,7 @@ mod tests {
     /// `performance_optimized()` compresses (level 1) with checksum_level 1.
     /// The read dispatch had no arm for that pair and fell through to the
     /// uncompressed path, so `get` handed back raw zstd frames.
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_get_decompresses_records_with_checksum_level_1() {
         use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
@@ -997,6 +998,7 @@ mod tests {
     }
 
     /// `size` is the blob's length, not the length of its compressed frame.
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_size_reports_uncompressed_length_for_compressed_records() {
         use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
@@ -1012,6 +1014,7 @@ mod tests {
 
     /// The builder pledges the record length so every frame header carries
     /// the content size; that is what lets `size` answer without decoding.
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_builder_frames_carry_content_size() {
         use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
@@ -1035,6 +1038,7 @@ mod tests {
 
     /// Frames written by the streaming encoder (pre-fix builders, or any
     /// external producer) omit the content size; `size` must still be right.
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_size_falls_back_to_decoding_when_frame_has_no_content_size() {
         use crate::blob_store::sorted_uint_vec::SortedUintVecBuilder;
@@ -1071,6 +1075,7 @@ mod tests {
         assert_eq!(store.size(0).unwrap(), Some(4096));
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_load_rejects_a_truncated_offset_section() {
         use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;

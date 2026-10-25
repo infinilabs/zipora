@@ -56,6 +56,41 @@ jobs:
     - name: Verify FFI cbindgen header sync & C smoke caller (C11 / F3)
       run: cargo test --locked --test ffi_c_smoke --features ffi
 
+  feature_matrix:
+    name: Feature Matrix & MSRV 1.95 (B4)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Install Rust stable and MSRV 1.95 toolchains
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable, 1.95.0
+        components: clippy
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config
+
+    - name: Cache cargo & target
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-b4-${{ hashFiles('Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Run B4 feature matrix and MSRV 1.95 gate
+      run: make feature_matrix
+
   # The job above builds the committed Cargo.lock. This one runs
   # `cargo update` first, so it tests the newest versions Cargo.toml allows
   # and shows drift between lock refreshes (Makefile `update` target). It does

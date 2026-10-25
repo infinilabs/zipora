@@ -4,6 +4,7 @@
 //! to ensure they work correctly together and provide the expected performance benefits.
 
 use std::io::{Cursor, Read, Write};
+#[cfg(feature = "mmap")]
 use tempfile::NamedTempFile;
 use zipora::io::*;
 

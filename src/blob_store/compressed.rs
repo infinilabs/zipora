@@ -5,12 +5,10 @@
 
 #[cfg(any(feature = "zstd", feature = "lz4"))]
 use crate::RecordId;
-#[cfg(any(feature = "zstd", feature = "lz4"))]
-use crate::blob_store::traits::{
-    BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats,
-};
 #[cfg(feature = "zstd")]
 use crate::blob_store::traits::{BatchBlobStore, IterableBlobStore};
+#[cfg(any(feature = "zstd", feature = "lz4"))]
+use crate::blob_store::traits::{BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats};
 #[cfg(any(feature = "zstd", feature = "lz4"))]
 use crate::error::{Result, ZiporaError};
 
@@ -443,6 +441,7 @@ impl CompressionAlgorithm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(feature = "zstd", feature = "lz4"))]
     use crate::blob_store::MemoryBlobStore;
 
     #[cfg(feature = "zstd")]

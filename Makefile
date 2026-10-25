@@ -15,7 +15,7 @@
 .PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_c12 miri_scalar
 .PHONY: tsan_cspp tsan_pool tsan_concurrency
 .PHONY: format clippy doc
-.PHONY: dev validate ci pre_commit release_prep sanity
+.PHONY: dev validate ci pre_commit release_prep sanity feature_matrix
 .PHONY: unsafe_audit api_honesty index_audit unwrap_audit hygiene_audit
 .PHONY: clean update outdated audit help
 
@@ -484,6 +484,26 @@ unwrap_audit:
 hygiene_audit:
 	python3 scripts/hygiene_audit.py
 
+# Feature-matrix and MSRV 1.95 gate (Rule B4):
+# - --no-default-features (clippy --lib --bins --tests + unit tests)
+# - each of simd, mmap, zstd, lz4, serde, async, ffi, avx512 alone
+# - --all-features
+# - cargo +1.95 check --locked --all-features
+FEATURE_MATRIX_SINGLE := simd mmap zstd lz4 serde async ffi avx512
+feature_matrix:
+	@echo "=== B4: --no-default-features clippy (--lib --bins --tests) ==="
+	$(CARGO) clippy --locked --lib --bins --tests --no-default-features -- -D warnings
+	@echo "=== B4: --no-default-features unit tests (--lib) ==="
+	$(CARGO) test --locked --no-default-features --lib
+	@for f in $(FEATURE_MATRIX_SINGLE); do \
+		echo "=== B4: single feature --no-default-features --features $$f ==="; \
+		$(CARGO) clippy --locked --lib --bins --tests --no-default-features --features $$f -- -D warnings || exit 1; \
+	done
+	@echo "=== B4: --all-features clippy ==="
+	$(CARGO) clippy --locked --all-targets --all-features -- -D warnings
+	@echo "=== B4: MSRV 1.95 check (--all-features) ==="
+	$(CARGO) +1.95 check --locked --all-features
+
 # Sanity check: clippy gate + audits + tests + drift guard (Rule B8)
 # Every cargo command uses --locked: the gate runs against the committed
 # Cargo.lock and fails if Cargo.toml no longer matches it, instead of
@@ -502,7 +522,7 @@ sanity:
 	@echo "=== Phase D Hygiene Audit (Rules D6 / D7 / D11) ==="
 	python3 scripts/hygiene_audit.py
 	@echo "=== No default features (guard feature-gated cfg attrs) ==="
-	$(CARGO) clippy --locked --no-default-features -- -D unused_variables -D unused_imports
+	$(CARGO) clippy --locked --lib --bins --tests --no-default-features -- -D warnings
 	@mkdir -p target/sanity
 	@echo "=== Tests: debug (--all-features --tests) ==="
 	$(CARGO) test --locked --all-features --tests 2>&1 | tee target/sanity/debug_tests.log

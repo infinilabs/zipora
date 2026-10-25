@@ -222,10 +222,7 @@ impl Config for MemoryConfig {
         }
 
         // Validate growth factor (guard NaN / Inf)
-        if !self.growth_factor.is_finite()
-            || self.growth_factor < 1.0
-            || self.growth_factor > 4.0
-        {
+        if !self.growth_factor.is_finite() || self.growth_factor < 1.0 || self.growth_factor > 4.0 {
             errors.push(
                 ValidationError::new(
                     "growth_factor",
@@ -267,7 +264,8 @@ impl Config for MemoryConfig {
         }
 
         // Validate huge page size when explicitly set
-        if self.huge_page_config.page_size != 0 && !self.huge_page_config.page_size.is_power_of_two()
+        if self.huge_page_config.page_size != 0
+            && !self.huge_page_config.page_size.is_power_of_two()
         {
             errors.push(ValidationError::new(
                 "huge_page_config.page_size",
@@ -442,7 +440,7 @@ impl Config for MemoryConfig {
         Self {
             allocation_strategy: AllocationStrategy::LockFree,
             initial_pool_size: 256 * 1024 * 1024, // 256MB
-            growth_factor: 2.0, // Fast growth
+            growth_factor: 2.0,                   // Fast growth
             cache_optimization: CacheOptimizationLevel::Maximum,
             alignment: 64, // Cache line aligned
             num_pools: 16, // High concurrency
@@ -470,15 +468,15 @@ impl Config for MemoryConfig {
         Self {
             allocation_strategy: AllocationStrategy::FixedCapacity,
             initial_pool_size: 16 * 1024 * 1024, // 16MB
-            max_pool_size: 128 * 1024 * 1024, // 128MB limit
-            growth_factor: 1.2, // Slow growth
+            max_pool_size: 128 * 1024 * 1024,    // 128MB limit
+            growth_factor: 1.2,                  // Slow growth
             cache_optimization: CacheOptimizationLevel::Basic,
-            alignment: 16, // Smaller alignment
-            num_pools: 2, // Minimal pools
+            alignment: 16,             // Smaller alignment
+            num_pools: 2,              // Minimal pools
             enable_prefetching: false, // Save memory
             enable_hot_cold_separation: false,
-            enable_compaction: true, // Reduce fragmentation
-            compaction_threshold: 0.6, // Aggressive compaction
+            enable_compaction: true,      // Reduce fragmentation
+            compaction_threshold: 0.6,    // Aggressive compaction
             max_fragmentation_ratio: 0.2, // Low fragmentation tolerance
             huge_page_config: HugePageConfig {
                 enable_huge_pages: false,
@@ -498,15 +496,15 @@ impl Config for MemoryConfig {
         Self {
             allocation_strategy: AllocationStrategy::FixedCapacity,
             initial_pool_size: 128 * 1024 * 1024, // 128MB pre-allocated
-            max_pool_size: 128 * 1024 * 1024, // Fixed size
-            growth_factor: 1.0, // No growth after initial
+            max_pool_size: 128 * 1024 * 1024,     // Fixed size
+            growth_factor: 1.0,                   // No growth after initial
             cache_optimization: CacheOptimizationLevel::Advanced,
             alignment: 64, // Cache line aligned
-            num_pools: 4, // Moderate concurrency
+            num_pools: 4,  // Moderate concurrency
             enable_prefetching: true,
-            prefetch_distance: 2, // Moderate prefetching
+            prefetch_distance: 2,              // Moderate prefetching
             enable_hot_cold_separation: false, // Avoid dynamic behavior
-            enable_compaction: false, // Avoid unpredictable latency
+            enable_compaction: false,          // Avoid unpredictable latency
             huge_page_config: HugePageConfig {
                 enable_huge_pages: true,
                 enable_transparent: false, // Explicit allocation
@@ -520,7 +518,7 @@ impl Config for MemoryConfig {
             },
             enable_memory_protection: true,
             enable_use_after_free_detection: false, // Reduce overhead
-            enable_double_free_detection: true, // Keep critical protection
+            enable_double_free_detection: true,     // Keep critical protection
             enable_debug_tracking: false,
             ..Default::default()
         }
@@ -540,9 +538,7 @@ impl Config for MemoryConfig {
             Ok(())
         }
         #[cfg(not(feature = "serde"))]
-        Err(ZiporaError::invalid_operation(
-            "Requires serde feature",
-        ))
+        Err(ZiporaError::invalid_operation("Requires serde feature"))
     }
 
     fn load_from_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
@@ -560,9 +556,7 @@ impl Config for MemoryConfig {
             Ok(config)
         }
         #[cfg(not(feature = "serde"))]
-        Err(ZiporaError::invalid_operation(
-            "Requires serde feature",
-        ))
+        Err(ZiporaError::invalid_operation("Requires serde feature"))
     }
 }
 
@@ -754,6 +748,7 @@ mod tests {
         assert!(num_pools >= 1);
     }
 
+    #[cfg(feature = "serde")]
     #[test]
     fn test_serialization() {
         let config = MemoryConfig::default();

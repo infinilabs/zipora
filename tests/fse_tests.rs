@@ -8,14 +8,14 @@
 //! - Performance benchmarks
 //! - Edge cases and error handling
 
+#[cfg(feature = "zstd")]
+use zipora::compression::dict_zip::compression_types::{FseCompressor, fse_unzip_reference};
 use zipora::compression::dict_zip::compression_types::{
-    FseCompressor, FseConfig as PaZipFseConfig, apply_fse_compression, fse_unzip_reference,
-    fse_zip_reference, remove_fse_compression,
+    FseConfig as PaZipFseConfig, apply_fse_compression, fse_zip_reference, remove_fse_compression,
 };
-use zipora::entropy::{
-    FseConfig, FseDecoder, FseEncoder, FseTable, fse_compress, fse_compress_with_config,
-    fse_decompress, fse_decompress_with_config,
-};
+use zipora::entropy::{FseConfig, FseDecoder, FseEncoder, fse_compress, fse_decompress};
+#[cfg(feature = "zstd")]
+use zipora::entropy::{FseTable, fse_compress_with_config, fse_decompress_with_config};
 
 /// Test basic FSE functionality
 #[test]
@@ -128,16 +128,16 @@ fn test_fse_compression_data_types() {
     let test_cases = [
         // Text with patterns
         b"The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.".to_vec(),
-        
+
         // Binary data with repetition
         [0x00, 0x01, 0x02, 0x03].repeat(50),
-        
+
         // Single character repetition
         vec![b'A'; 200],
-        
+
         // Mixed patterns
         b"AAABBBCCCDDDEEEFFFGGGHHHIIIJJJKKKLLLMMMNNNOOOPPPQQQRRRSSSTTTUUUVVVWWWXXXYYYZZZ".to_vec(),
-        
+
         // Random-like data (harder to compress)
         (0..=255).collect::<Vec<u8>>(),
     ];
@@ -248,11 +248,10 @@ fn test_auto_algorithm_selection() {
     // Note: Automatic algorithm selection is not yet implemented
     // This test validates different FSE configurations for different data types instead
 
-    // High repetitiveness data - test with FSE
-    let repetitive_data = b"AAAAAAAAAA".repeat(100);
-
     #[cfg(feature = "zstd")]
     {
+        // High repetitiveness data - test with FSE
+        let repetitive_data = b"AAAAAAAAAA".repeat(100);
         let mut encoder = FseEncoder::new(FseConfig::balanced()).unwrap();
         let compressed = encoder.compress(&repetitive_data).unwrap();
         assert!(!compressed.is_empty());
@@ -260,13 +259,9 @@ fn test_auto_algorithm_selection() {
         let stats = encoder.stats();
         // Repetitive data should achieve good compression
         assert!(stats.compression_ratio < 0.5); // Should achieve significant compression
-    }
 
-    // Random data - test with FSE
-    let random_data: Vec<u8> = (0..=255).collect();
-
-    #[cfg(feature = "zstd")]
-    {
+        // Random data - test with FSE
+        let random_data: Vec<u8> = (0..=255).collect();
         let mut encoder = FseEncoder::new(FseConfig::balanced()).unwrap();
         let compressed = encoder.compress(&random_data).unwrap();
         assert!(!compressed.is_empty());
@@ -301,7 +296,7 @@ fn test_universal_entropy_encoder() {
     {
         // Test that basic FSE functions work without zstd
         let compressed = fse_compress(test_data).unwrap_or_default();
-        assert!(!compressed.is_empty() || test_data.is_empty());
+        assert!(!compressed.is_empty());
     }
 }
 
@@ -316,11 +311,10 @@ fn test_pa_zip_fse_integration() {
 
     let compressed = apply_fse_compression(test_data, &config).unwrap();
     let decompressed = remove_fse_compression(&compressed, &config).unwrap();
+    assert_eq!(test_data, &decompressed[..]);
 
     #[cfg(feature = "zstd")]
     {
-        assert_eq!(test_data, &decompressed[..]);
-
         // For repetitive data, should achieve compression (allowing for 2-byte magic prefix overhead)
         if test_data.len() > 32 {
             assert!(compressed.len() <= test_data.len() + 2);
@@ -342,11 +336,7 @@ fn test_pa_zip_fse_integration() {
 
     let fast_compressed = apply_fse_compression(test_data, &fast_config).unwrap();
     let fast_decompressed = remove_fse_compression(&fast_compressed, &fast_config).unwrap();
-
-    #[cfg(feature = "zstd")]
-    {
-        assert_eq!(test_data, &fast_decompressed[..]);
-    }
+    assert_eq!(test_data, &fast_decompressed[..]);
 }
 
 /// Test reference implementation compatibility
@@ -463,13 +453,10 @@ fn test_fse_error_handling() {
 
     let result = fse_zip_reference(test_data, &mut small_buffer, &mut compressed_size);
 
-    #[cfg(feature = "zstd")]
-    {
-        // Should handle buffer size gracefully
-        if result.is_err() {
-            // Error should be about buffer size
-            assert!(format!("{:?}", result).contains("buffer"));
-        }
+    // Should handle buffer size gracefully
+    if result.is_err() {
+        // Error should be about buffer size
+        assert!(format!("{:?}", result).contains("buffer"));
     }
 }
 
@@ -990,7 +977,10 @@ fn test_fse_partial_trailing_block_is_rejected() {
     let payload_start = 8 + 5 * n;
     let payload_end = stream.len() - 8;
     let payload_len = payload_end - payload_start;
-    assert!(payload_len >= 8, "payload too small to exercise the tail path");
+    assert!(
+        payload_len >= 8,
+        "payload too small to exercise the tail path"
+    );
     assert_eq!(
         payload_len % 4,
         0,

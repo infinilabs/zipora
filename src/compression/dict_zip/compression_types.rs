@@ -2047,20 +2047,21 @@ mod tests {
 
             // Skip test cases that hit encoding issues with complex matches
             if let Ok((buffer, _)) = encode_matches(&original_matches)
-                && let Ok((decoded_matches, _)) = decode_matches(&buffer) {
-                    assert_eq!(original_matches.len(), decoded_matches.len());
-                    for (i, (original, decoded)) in original_matches
-                        .iter()
-                        .zip(decoded_matches.iter())
-                        .enumerate()
-                    {
-                        assert_eq!(
-                            original, decoded,
-                            "Mismatch at index {}: {} != {}",
-                            i, original, decoded
-                        );
-                    }
+                && let Ok((decoded_matches, _)) = decode_matches(&buffer)
+            {
+                assert_eq!(original_matches.len(), decoded_matches.len());
+                for (i, (original, decoded)) in original_matches
+                    .iter()
+                    .zip(decoded_matches.iter())
+                    .enumerate()
+                {
+                    assert_eq!(
+                        original, decoded,
+                        "Mismatch at index {}: {} != {}",
+                        i, original, decoded
+                    );
                 }
+            }
         }
     }
 }
@@ -2745,6 +2746,7 @@ mod reference_tests {
         {
             // Without zstd, fallback should work without errors
             assert!(!compressed.is_empty());
+            assert_eq!(decompressed, test_data);
         }
     }
 
@@ -2771,26 +2773,28 @@ mod reference_tests {
         // Test FSE_zip reference function
         let compress_result =
             fse_zip_reference(test_data, &mut compressed_buffer, &mut compressed_size);
+        assert!(compress_result.is_ok());
 
         #[cfg(feature = "zstd")]
         {
             // Should succeed for data > 2 bytes
             if let Ok(success) = compress_result
-                && success {
-                    assert!(compressed_size > 0);
-                    assert!(compressed_size <= test_data.len());
+                && success
+            {
+                assert!(compressed_size > 0);
+                assert!(compressed_size <= test_data.len());
 
-                    // Test FSE_unzip reference function
-                    let mut decompressed_buffer = vec![0u8; test_data.len() * 2];
-                    let decompressed_size = fse_unzip_reference(
-                        &compressed_buffer[..compressed_size],
-                        &mut decompressed_buffer,
-                    )
-                    .unwrap();
+                // Test FSE_unzip reference function
+                let mut decompressed_buffer = vec![0u8; test_data.len() * 2];
+                let decompressed_size = fse_unzip_reference(
+                    &compressed_buffer[..compressed_size],
+                    &mut decompressed_buffer,
+                )
+                .unwrap();
 
-                    assert_eq!(decompressed_size, test_data.len());
-                    assert_eq!(&decompressed_buffer[..decompressed_size], test_data);
-                }
+                assert_eq!(decompressed_size, test_data.len());
+                assert_eq!(&decompressed_buffer[..decompressed_size], test_data);
+            }
         }
 
         // Test with data <= 2 bytes (should return false)

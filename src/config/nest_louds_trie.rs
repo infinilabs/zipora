@@ -638,7 +638,7 @@ impl Config for NestLoudsTrieConfig {
 
     fn performance_preset() -> Self {
         Self {
-            nest_level: 2, // Reduced nesting for speed
+            nest_level: 2,                 // Reduced nesting for speed
             core_str_compression_level: 3, // Fast compression
             optimization_flags: OptimizationFlags::SEARCH_DELIM_FORWARD
                 | OptimizationFlags::ENABLE_FAST_SEARCH
@@ -649,10 +649,10 @@ impl Config for NestLoudsTrieConfig {
                 | OptimizationFlags::ENABLE_PARALLEL_CONSTRUCTION
                 | OptimizationFlags::USE_HUGEPAGES,
             initial_pool_size: 256 * 1024 * 1024, // 256MB
-            load_factor: 0.6, // Lower load factor for speed
+            load_factor: 0.6,                     // Lower load factor for speed
             speedup_nest_trie_build: true,
             use_mixed_core_link: true,
-            parallel_threads: 0, // Use all available cores
+            parallel_threads: 0,               // Use all available cores
             node_cache_size: 64 * 1024 * 1024, // 64MB cache
             ..Default::default()
         }
@@ -660,37 +660,37 @@ impl Config for NestLoudsTrieConfig {
 
     fn memory_preset() -> Self {
         Self {
-            nest_level: 5, // Higher nesting for compression
+            nest_level: 5,                  // Higher nesting for compression
             core_str_compression_level: 15, // High compression
             optimization_flags: OptimizationFlags::SEARCH_DELIM_FORWARD
                 | OptimizationFlags::CUT_FRAG_ON_PUNCT
                 | OptimizationFlags::USE_DAWG_STR_POOL
                 | OptimizationFlags::ENABLE_QUEUE_COMPRESSION,
             temp_level: TempLevel::SaveNestStrPool, // Use temp files aggressively
-            initial_pool_size: 16 * 1024 * 1024, // 16MB
-            load_factor: 0.9, // High load factor for memory efficiency
+            initial_pool_size: 16 * 1024 * 1024,    // 16MB
+            load_factor: 0.9,                       // High load factor for memory efficiency
             enable_queue_compression: true,
-            compression_min_length: 8, // Compress smaller strings
+            compression_min_length: 8,        // Compress smaller strings
             node_cache_size: 4 * 1024 * 1024, // 4MB cache
-            parallel_threads: 1, // Single-threaded to save memory
+            parallel_threads: 1,              // Single-threaded to save memory
             ..Default::default()
         }
     }
 
     fn realtime_preset() -> Self {
         Self {
-            nest_level: 2, // Reduced nesting for predictability
+            nest_level: 2,                 // Reduced nesting for predictability
             core_str_compression_level: 1, // Minimal compression
             optimization_flags: OptimizationFlags::ENABLE_FAST_SEARCH
                 | OptimizationFlags::ENABLE_CACHE_OPTIMIZATION
                 | OptimizationFlags::ENABLE_SIMD_ACCELERATION,
             temp_level: TempLevel::Smart, // Minimize temp file usage
             initial_pool_size: 128 * 1024 * 1024, // 128MB pre-allocated
-            load_factor: 0.7, // Balanced load factor
+            load_factor: 0.7,             // Balanced load factor
             enable_queue_compression: false, // Avoid compression overhead
             speedup_nest_trie_build: true,
-            max_bfs_depth: 100, // Limit depth for predictability
-            parallel_threads: 2, // Limited parallelism for predictability
+            max_bfs_depth: 100,                // Limit depth for predictability
+            parallel_threads: 2,               // Limited parallelism for predictability
             node_cache_size: 32 * 1024 * 1024, // 32MB cache
             ..Default::default()
         }
@@ -710,9 +710,7 @@ impl Config for NestLoudsTrieConfig {
             Ok(())
         }
         #[cfg(not(feature = "serde"))]
-        Err(ZiporaError::invalid_operation(
-            "Requires serde feature",
-        ))
+        Err(ZiporaError::invalid_operation("Requires serde feature"))
     }
 
     fn load_from_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
@@ -730,9 +728,7 @@ impl Config for NestLoudsTrieConfig {
             Ok(config)
         }
         #[cfg(not(feature = "serde"))]
-        Err(ZiporaError::invalid_operation(
-            "Requires serde feature",
-        ))
+        Err(ZiporaError::invalid_operation("Requires serde feature"))
     }
 }
 
@@ -1084,6 +1080,7 @@ mod tests {
         assert!(!config.has_optimization_flag(OptimizationFlags::USE_HUGEPAGES));
     }
 
+    #[cfg(feature = "serde")]
     #[test]
     fn test_serialization() {
         let config = NestLoudsTrieConfig::default();
@@ -1100,20 +1097,24 @@ mod tests {
     }
 
     #[test]
-    fn test_c12_6_nest_louds_trie_config_serde_preserves_compression_and_validators_reject_invalid() {
+    fn test_c12_6_nest_louds_trie_config_serde_preserves_compression_and_validators_reject_invalid()
+    {
         // 1. Serde roundtrip of NestLoudsTrieConfig must preserve `compression_algorithm`.
-        let config = NestLoudsTrieConfig::builder()
-            .compression_algorithm(CompressionAlgorithm::Lz4)
-            .build()
-            .expect("valid Lz4 config must build");
-        let json = serde_json::to_string(&config).expect("serialize must succeed");
-        let roundtripped: NestLoudsTrieConfig =
-            serde_json::from_str(&json).expect("deserialize must succeed");
-        assert_eq!(
-            roundtripped.compression_algorithm,
-            CompressionAlgorithm::Lz4,
-            "serde roundtrip dropped compression_algorithm"
-        );
+        #[cfg(feature = "serde")]
+        {
+            let config = NestLoudsTrieConfig::builder()
+                .compression_algorithm(CompressionAlgorithm::Lz4)
+                .build()
+                .expect("valid Lz4 config must build");
+            let json = serde_json::to_string(&config).expect("serialize must succeed");
+            let roundtripped: NestLoudsTrieConfig =
+                serde_json::from_str(&json).expect("deserialize must succeed");
+            assert_eq!(
+                roundtripped.compression_algorithm,
+                CompressionAlgorithm::Lz4,
+                "serde roundtrip dropped compression_algorithm"
+            );
+        }
 
         // 2. min_fragment_length = u32::MAX must not bypass max_fragment_length check via i32 wraparound.
         let overflow_frag = NestLoudsTrieConfig {
@@ -1131,7 +1132,10 @@ mod tests {
             load_factor: f64::NAN,
             ..NestLoudsTrieConfig::default()
         };
-        assert!(nan_load.validate().is_err(), "NaN load_factor must fail validation");
+        assert!(
+            nan_load.validate().is_err(),
+            "NaN load_factor must fail validation"
+        );
 
         let nan_growth = crate::config::MemoryConfig {
             growth_factor: f64::NAN,

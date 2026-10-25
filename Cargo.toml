@@ -79,6 +79,7 @@ proptest = "1.9"
 tempfile = "3.14"
 arbitrary = { version = "1.4", features = ["derive"] }
 rand = "0.9"
+serde_json = "1.0"
 tantivy = { version = "0.26", default-features = false }
 sucds = { version = "0.10", features = ["intrinsics"] }
 vers-vecs = { version = "1.10", features = ["simd"] }

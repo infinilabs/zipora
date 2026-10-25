@@ -285,9 +285,10 @@ impl ZipOffsetBlobStoreBuilder {
 
     /// Get estimated final size of the blob store
     pub fn estimated_size(&self) -> usize {
-        self.content.len() + 
-        self.offset_builder.len() * 8 + // Rough estimate for offset index
-        128 + 64 // Header + footer
+        self.content.len()
+            + self.offset_builder.len() * 8 // Rough estimate for offset index
+            + 128
+            + 64 // Header + footer
     }
 
     /// Validate that all data is consistent
@@ -430,6 +431,7 @@ mod tests {
         assert!((stats.space_saved_percent() - 40.0).abs() < 0.001);
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_zip_offset_blob_store_builder_basic() {
         let mut builder = ZipOffsetBlobStoreBuilder::new().unwrap();
@@ -459,6 +461,7 @@ mod tests {
         assert!(builder.validate().is_ok());
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_zip_offset_blob_store_builder_with_config() {
         let config = ZipOffsetBlobStoreConfig::performance_optimized();
@@ -469,6 +472,7 @@ mod tests {
         assert_eq!(builder.config().compress_level, 1);
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_zip_offset_blob_store_builder_compression() {
         let config = ZipOffsetBlobStoreConfig {
@@ -512,6 +516,7 @@ mod tests {
         assert_eq!(stats.compressed_size, "test data".len() + 4);
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_zip_offset_blob_store_builder_add_records() {
         let mut builder = ZipOffsetBlobStoreBuilder::new().unwrap();
@@ -528,6 +533,7 @@ mod tests {
         assert_eq!(builder.len(), 3);
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_zip_offset_blob_store_builder_reserve() {
         let mut builder = ZipOffsetBlobStoreBuilder::new().unwrap();
@@ -542,6 +548,7 @@ mod tests {
         builder.reserve(50).unwrap();
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_zip_offset_blob_store_builder_estimated_size() {
         let mut builder = ZipOffsetBlobStoreBuilder::new().unwrap();
@@ -560,7 +567,11 @@ mod tests {
 
         // `finish()` used to drop everything the builder had accumulated and
         // return a freshly constructed, empty store.
-        let levels: &[u8] = if cfg!(feature = "zstd") { &[0, 3] } else { &[0] };
+        let levels: &[u8] = if cfg!(feature = "zstd") {
+            &[0, 3]
+        } else {
+            &[0]
+        };
 
         for &compress_level in levels {
             let config = ZipOffsetBlobStoreConfig {
@@ -630,6 +641,7 @@ mod tests {
         assert!(!store.contains(0));
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_batch_zip_offset_blob_store_builder() {
         use crate::blob_store::BlobStore;
@@ -654,6 +666,7 @@ mod tests {
         assert_eq!(store.get(2).unwrap(), b"record3");
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_batch_builder_manual_flush() {
         let mut batch_builder = BatchZipOffsetBlobStoreBuilder::new(10).unwrap();
@@ -668,6 +681,7 @@ mod tests {
         let _store = batch_builder.finish().unwrap();
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
     fn test_builder_validation() {
         let builder = ZipOffsetBlobStoreBuilder::new().unwrap();

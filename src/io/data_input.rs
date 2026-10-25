@@ -589,7 +589,9 @@ pub fn from_file<P: AsRef<Path>>(path: P) -> Result<MmapDataInput> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+    #[cfg(feature = "mmap")]
     use std::io::Write;
+    #[cfg(feature = "mmap")]
     use tempfile::NamedTempFile;
 
     #[test]
@@ -938,10 +940,7 @@ mod tests {
             MAX_KNOWN_INPUT_PREALLOC
         );
         // 1M u64 elements (8 MiB) in a known-length slice reserve the full 1M capacity at once.
-        assert_eq!(
-            prealloc_capacity(1_000_000, 8, Some(8_000_000)),
-            1_000_000
-        );
+        assert_eq!(prealloc_capacity(1_000_000, 8, Some(8_000_000)), 1_000_000);
         // A count within the budget is kept.
         assert_eq!(prealloc_capacity(10, 8, None), 10);
         // A source that knows its length caps the count at its bytes left.
@@ -973,4 +972,3 @@ mod tests {
         assert_eq!(decoded, expected);
     }
 }
-

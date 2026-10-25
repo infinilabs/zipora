@@ -6,9 +6,12 @@
 use super::*;
 use crate::config::memory::{AllocationStrategy, CacheOptimizationLevel};
 use crate::config::nest_louds_trie::{CompressionAlgorithm, OptimizationFlags};
+#[cfg(feature = "serde")]
 use crate::error::ZiporaError;
 use std::env;
+#[cfg(feature = "serde")]
 use std::fs;
+#[cfg(feature = "serde")]
 use tempfile::tempdir;
 
 /// Test all configuration types can be created with default values
@@ -218,6 +221,7 @@ fn test_environment_boolean_parsing() {
 }
 
 /// Test file serialization and deserialization
+#[cfg(feature = "serde")]
 #[test]
 fn test_file_serialization() -> Result<()> {
     let temp_dir = tempdir().expect("Failed to create temp directory");
@@ -477,6 +481,7 @@ fn test_memory_config_effective_values() {
 }
 
 /// Test JSON serialization compatibility
+#[cfg(feature = "serde")]
 #[test]
 fn test_json_serialization_compatibility() -> Result<()> {
     // Test NestLoudsTrieConfig JSON serialization
@@ -521,34 +526,40 @@ fn test_json_serialization_compatibility() -> Result<()> {
 #[test]
 fn test_configuration_error_handling() {
     // Test invalid JSON
-    let invalid_json = r#"{"nest_level": "invalid"}"#;
-    let result = serde_json::from_str::<NestLoudsTrieConfig>(invalid_json);
-    assert!(result.is_err());
+    #[cfg(feature = "serde")]
+    {
+        let invalid_json = r#"{"nest_level": "invalid"}"#;
+        let result = serde_json::from_str::<NestLoudsTrieConfig>(invalid_json);
+        assert!(result.is_err());
+    }
 
     // Test file not found
     let result = NestLoudsTrieConfig::load_from_file("nonexistent_file.json");
     assert!(result.is_err());
 
     // Test invalid configuration after loading
-    let temp_dir = tempdir().expect("Failed to create temp directory");
-    let file_path = temp_dir.path().join("invalid_config.json");
+    #[cfg(feature = "serde")]
+    {
+        let temp_dir = tempdir().expect("Failed to create temp directory");
+        let file_path = temp_dir.path().join("invalid_config.json");
 
-    // Create invalid configuration JSON
-    let invalid_config_json = r#"{
-        "nest_level": 0,
-        "max_fragment_length": 1024,
-        "optimization_flags": 0
-    }"#;
+        // Create invalid configuration JSON
+        let invalid_config_json = r#"{
+            "nest_level": 0,
+            "max_fragment_length": 1024,
+            "optimization_flags": 0
+        }"#;
 
-    fs::write(&file_path, invalid_config_json).expect("Failed to write test file");
+        fs::write(&file_path, invalid_config_json).expect("Failed to write test file");
 
-    let result = NestLoudsTrieConfig::load_from_file(&file_path);
-    assert!(result.is_err());
+        let result = NestLoudsTrieConfig::load_from_file(&file_path);
+        assert!(result.is_err());
 
-    if let Err(ZiporaError::Configuration { message }) = result {
-        assert!(message.contains("nest level must be between 1 and 16"));
-    } else {
-        panic!("Expected configuration validation error");
+        if let Err(ZiporaError::Configuration { message }) = result {
+            assert!(message.contains("nest level must be between 1 and 16"));
+        } else {
+            panic!("Expected configuration validation error");
+        }
     }
 }
 
@@ -583,34 +594,37 @@ fn test_configuration_integration() -> Result<()> {
     assert!(simd_config.validate().is_ok());
 
     // Test serialization of all configurations
-    let temp_dir = tempdir().expect("Failed to create temp directory");
+    #[cfg(feature = "serde")]
+    {
+        let temp_dir = tempdir().expect("Failed to create temp directory");
 
-    nest_config.save_to_file(temp_dir.path().join("nest.json"))?;
-    memory_config.save_to_file(temp_dir.path().join("memory.json"))?;
-    blob_config.save_to_file(temp_dir.path().join("blob.json"))?;
-    compression_config.save_to_file(temp_dir.path().join("compression.json"))?;
-    cache_config.save_to_file(temp_dir.path().join("cache.json"))?;
-    simd_config.save_to_file(temp_dir.path().join("simd.json"))?;
+        nest_config.save_to_file(temp_dir.path().join("nest.json"))?;
+        memory_config.save_to_file(temp_dir.path().join("memory.json"))?;
+        blob_config.save_to_file(temp_dir.path().join("blob.json"))?;
+        compression_config.save_to_file(temp_dir.path().join("compression.json"))?;
+        cache_config.save_to_file(temp_dir.path().join("cache.json"))?;
+        simd_config.save_to_file(temp_dir.path().join("simd.json"))?;
 
-    // Test loading and validation
-    let loaded_nest = NestLoudsTrieConfig::load_from_file(temp_dir.path().join("nest.json"))?;
-    let loaded_memory = MemoryConfig::load_from_file(temp_dir.path().join("memory.json"))?;
-    let loaded_blob = BlobStoreConfig::load_from_file(temp_dir.path().join("blob.json"))?;
-    let loaded_compression =
-        CompressionConfig::load_from_file(temp_dir.path().join("compression.json"))?;
-    let loaded_cache = CacheConfig::load_from_file(temp_dir.path().join("cache.json"))?;
-    let loaded_simd = SIMDConfig::load_from_file(temp_dir.path().join("simd.json"))?;
+        // Test loading and validation
+        let loaded_nest = NestLoudsTrieConfig::load_from_file(temp_dir.path().join("nest.json"))?;
+        let loaded_memory = MemoryConfig::load_from_file(temp_dir.path().join("memory.json"))?;
+        let loaded_blob = BlobStoreConfig::load_from_file(temp_dir.path().join("blob.json"))?;
+        let loaded_compression =
+            CompressionConfig::load_from_file(temp_dir.path().join("compression.json"))?;
+        let loaded_cache = CacheConfig::load_from_file(temp_dir.path().join("cache.json"))?;
+        let loaded_simd = SIMDConfig::load_from_file(temp_dir.path().join("simd.json"))?;
 
-    // Verify loaded configurations match originals
-    assert_eq!(nest_config.nest_level, loaded_nest.nest_level);
-    assert_eq!(
-        memory_config.allocation_strategy,
-        loaded_memory.allocation_strategy
-    );
-    assert_eq!(blob_config.compression_level, loaded_blob.compression_level);
-    assert_eq!(compression_config.level, loaded_compression.level);
-    assert_eq!(cache_config.size, loaded_cache.size);
-    assert_eq!(simd_config.enable_simd, loaded_simd.enable_simd);
+        // Verify loaded configurations match originals
+        assert_eq!(nest_config.nest_level, loaded_nest.nest_level);
+        assert_eq!(
+            memory_config.allocation_strategy,
+            loaded_memory.allocation_strategy
+        );
+        assert_eq!(blob_config.compression_level, loaded_blob.compression_level);
+        assert_eq!(compression_config.level, loaded_compression.level);
+        assert_eq!(cache_config.size, loaded_cache.size);
+        assert_eq!(simd_config.enable_simd, loaded_simd.enable_simd);
+    }
 
     Ok(())
 }
@@ -681,6 +695,7 @@ mod benches {
     }
 
     /// Benchmark configuration serialization
+    #[cfg(feature = "serde")]
     #[test]
     fn bench_config_serialization() -> Result<()> {
         let config = NestLoudsTrieConfig::performance_preset();

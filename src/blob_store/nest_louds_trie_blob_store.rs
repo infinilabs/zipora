@@ -604,8 +604,7 @@ where
 
         // Always create a new blob record for each put operation (even for duplicate keys)
         let blob_id = self.next_record_id;
-        self.pending_blobs
-            .insert(blob_id as usize, data.to_vec());
+        self.pending_blobs.insert(blob_id as usize, data.to_vec());
 
         // Feed the builder too. Its sequential record ids track `blob_id`
         // exactly (see `sealed_id`), which is what lets `finalize` drop the
@@ -1481,7 +1480,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "zstd"))]
 mod tests {
     use super::*;
     use crate::succinct::RankSelectInterleaved256;
@@ -1697,7 +1696,10 @@ mod tests {
         );
         assert_eq!(store.get(id).unwrap(), data);
         assert_eq!(store.get_by_key(b"k").unwrap(), data);
-        assert_eq!(store.get_by_prefix(b"k").unwrap(), vec![(b"k".to_vec(), data.clone())]);
+        assert_eq!(
+            store.get_by_prefix(b"k").unwrap(),
+            vec![(b"k".to_vec(), data.clone())]
+        );
         assert_eq!(store.size(id).unwrap(), Some(data.len()));
         let compressed = store.compressed_size(id).unwrap().unwrap();
         assert!(
