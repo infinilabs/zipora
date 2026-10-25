@@ -155,7 +155,7 @@ impl SortedUintVec {
 
     /// Get number of blocks
     pub fn num_blocks(&self) -> usize {
-        (self.size + self.config.block_mask()) >> self.config.log2_block_units
+        self.size.div_ceil(self.config.block_size())
     }
 
     /// Get compression ratio compared to plain u64 array
@@ -315,12 +315,14 @@ impl SortedUintVec {
         let mut header = [0u8; Self::SERIAL_HEADER_SIZE];
         reader.read_exact(&mut header)?;
 
-        if header[0..4] != Self::SERIAL_MAGIC { // D10.1: in-bounds (fixed [u8; 32])
+        let magic = &header[0..4]; // D10.1: in-bounds (fixed [u8; 32])
+        if magic != Self::SERIAL_MAGIC {
             return Err(ZiporaError::invalid_data(
                 "invalid SortedUintVec magic signature",
             ));
         }
-        if header[4] != Self::SERIAL_VERSION { // D10.1: in-bounds
+        let version = header[4]; // D10.1: in-bounds
+        if version != Self::SERIAL_VERSION {
             return Err(ZiporaError::invalid_data(
                 "unsupported SortedUintVec format version",
             ));
@@ -362,12 +364,18 @@ impl SortedUintVec {
         // a crafted section cannot make us allocate more than it can fill. The
         // packer may leave one trailing partial byte in either buffer.
         let num_blocks = size.div_ceil(1usize << config.log2_block_units);
-        let min_index_len = (num_blocks * config.sample_width as usize).div_ceil(8);
-        let min_data_len = (size * config.offset_width as usize).div_ceil(8);
+        let min_index_len = num_blocks
+            .checked_mul(config.sample_width as usize)
+            .ok_or_else(|| ZiporaError::invalid_data("SortedUintVec index bit length overflow"))?
+            .div_ceil(8);
+        let min_data_len = size
+            .checked_mul(config.offset_width as usize)
+            .ok_or_else(|| ZiporaError::invalid_data("SortedUintVec data bit length overflow"))?
+            .div_ceil(8);
         if index_len < min_index_len
-            || index_len > min_index_len + 8
+            || index_len > min_index_len.saturating_add(8)
             || data_len < min_data_len
-            || data_len > min_data_len + 8
+            || data_len > min_data_len.saturating_add(8)
         {
             return Err(ZiporaError::invalid_data(
                 "SortedUintVec section size does not match its element count",
@@ -400,7 +408,7 @@ impl SortedUintVec {
 
     /// Get two consecutive values efficiently
     pub fn get2(&self, index: usize) -> Result<(u64, u64)> {
-        if index + 1 >= self.size {
+        if index.checked_add(1).is_none_or(|next| next >= self.size) {
             return Err(ZiporaError::invalid_data("index out of bounds"));
         }
 
@@ -420,7 +428,9 @@ impl SortedUintVec {
         // Get delta within block
         let delta = self.get_block_delta(block_idx, offset_idx)?;
 
-        Ok(block_min + delta as u64)
+        block_min
+            .checked_add(delta as u64)
+            .ok_or_else(|| ZiporaError::invalid_data("SortedUintVec value addition overflow"))
     }
 
     /// Get block minimum value
@@ -1237,7 +1247,9 @@ mod tests {
             SortedUintVecBuilder::store_bits_static(&mut data, bit_offset, value, bit_width)
                 .unwrap();
 
-            let portable = vec.extract_bits_portable(&data, bit_offset, bit_width).unwrap();
+            let portable = vec
+                .extract_bits_portable(&data, bit_offset, bit_width)
+                .unwrap();
             assert_eq!(
                 portable, value,
                 "portable: offset={bit_offset} width={bit_width}"

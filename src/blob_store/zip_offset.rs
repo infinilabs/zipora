@@ -606,11 +606,13 @@ impl ZipOffsetBlobStore {
 
         // Get record boundaries from offset index
         let (start_offset, end_offset) = self.offsets.get2(id as usize)?;
-        let mut record_len = (end_offset - start_offset) as usize;
-
-        if start_offset >= self.content.len() as u64 || end_offset > self.content.len() as u64 {
+        if end_offset < start_offset
+            || start_offset > self.content.len() as u64
+            || end_offset > self.content.len() as u64
+        {
             return Err(ZiporaError::invalid_data("offset out of bounds"));
         }
+        let mut record_len = (end_offset - start_offset) as usize;
 
         let record_data = &self.content.as_slice()[start_offset as usize..end_offset as usize];
 

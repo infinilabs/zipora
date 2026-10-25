@@ -1047,3 +1047,78 @@ fn test_s52_r9_package_exclude_single_feature_tests_ci_toolchain_and_fuzz_doc() 
         "fuzz_double_array_trie_map.rs doc comment must not claim `remove` when it only tests insert, get, and shrink_to_fit"
     );
 }
+
+#[test]
+fn test_s52_r2_fuzz_soak_checks_per_job_exit_codes_and_records_1h_summary() {
+    // 1. Regression for the SortedUintVec::read_from multiplication overflow found by
+    // fuzz_zip_offset_load during the 1-hour soak (crash-2950c6e3b040e890a337af10eedb41f09adc3ffd).
+    let crash_bytes: [u8; 316] = [
+        122, 105, 112, 111, 114, 97, 45, 98, 108, 111, 98, 45, 115, 116, 111, 114, 101, 0, 0, 0,
+        90, 105, 112, 79, 102, 102, 115, 101, 116, 66, 108, 111, 98, 83, 116, 111, 114, 101, 0, 0,
+        60, 1, 0, 0, 0, 0, 0, 0, 41, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 2, 1, 0, 80, 0, 0, 0, 0,
+        0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0, 6, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 40,
+        181, 47, 253, 32, 14, 113, 0, 0, 97, 108, 112, 104, 97, 45, 114, 101, 99, 111, 114, 100,
+        45, 48, 127, 81, 139, 120, 40, 181, 47, 253, 32, 13, 105, 0, 0, 98, 101, 116, 97, 220, 114,
+        101, 99, 111, 114, 100, 45, 49, 18, 213, 72, 77, 40, 181, 47, 253, 32, 14, 113, 0, 0, 103,
+        97, 109, 109, 97, 45, 114, 101, 99, 111, 114, 100, 45, 50, 112, 138, 59, 182, 90, 83, 85,
+        86, 1, 6, 16, 32, 4, 0, 0, 0, 0, 0, 0, 120, 40, 181, 47, 253, 32, 13, 105, 0, 0, 98, 101,
+        116, 97, 220, 114, 101, 50, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 119, 133, 209, 38, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let mut cursor = std::io::Cursor::new(&crash_bytes[..]);
+    assert!(
+        zipora::blob_store::ZipOffsetBlobStore::load_from_reader(&mut cursor).is_err(),
+        "Crafted ZipOffsetBlobStore with overflowing SortedUintVec size must return Err, not panic"
+    );
+
+    // 2. Makefile fuzz_soak must collect background PIDs and check every exit status.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
+    let soak_idx = makefile
+        .find("fuzz_soak:")
+        .expect("Makefile must define fuzz_soak target");
+    let soak_block = &makefile[soak_idx..];
+    let soak_end = soak_block.find("\nformat:").unwrap_or(soak_block.len());
+    let soak_section = &soak_block[..soak_end];
+    assert!(
+        soak_section.contains("pids=")
+            && soak_section.contains("wait $$p || fail=1")
+            && soak_section.contains("exit $$fail"),
+        "Makefile fuzz_soak must collect PIDs and fail when any background job fails (got: {soak_section})"
+    );
+
+    // 3. docs/review/fuzz_soak.md must exist and record the 1-hour soak across all 11 targets.
+    let soak_doc_path = root.join("docs/review/fuzz_soak.md");
+    assert!(
+        soak_doc_path.exists(),
+        "docs/review/fuzz_soak.md must exist and record the 1-hour fuzz soak results"
+    );
+    let soak_doc = std::fs::read_to_string(&soak_doc_path).unwrap();
+    for target in [
+        "fuzz_zip_offset_load",
+        "fuzz_simple_zip_build",
+        "fuzz_mixed_len_build",
+        "fuzz_huffman_decode",
+        "fuzz_rans_decode",
+        "fuzz_fse_decompress",
+        "fuzz_double_array_trie",
+        "fuzz_uint_vec",
+        "fuzz_hybrid_posting_list",
+        "fuzz_double_array_trie_map",
+        "fuzz_blob_store_roundtrip",
+    ] {
+        assert!(
+            soak_doc.contains(target),
+            "docs/review/fuzz_soak.md must record 1-hour soak stats for `{target}`"
+        );
+    }
+    assert!(
+        soak_doc.contains("max_total_time=3600")
+            && soak_doc.contains("rss_limit_mb=1024")
+            && soak_doc.contains("oom=0, timeout=0, crash=0")
+            && !soak_doc.contains("PENDING_1H"),
+        "docs/review/fuzz_soak.md must document max_total_time=3600, rss_limit_mb=1024, oom=0, timeout=0, crash=0, and all 11 completed 1h rows"
+    );
+}

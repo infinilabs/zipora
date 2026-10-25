@@ -476,10 +476,20 @@ fuzz_smoke: fuzz_seed
 	done
 
 # Soak: 1 hour per target, all in parallel (needs ~8 cores).
+# Uses /tmp/zipora_fuzz_soak/corpus/<target> as the writable corpus directory so
+# the committed fuzz/corpus/<target>/seed_0001.bin seeds stay clean, collects
+# every background PID, and exits non-zero if any job fails (S52-R2).
 fuzz_soak: fuzz_seed
-	@for t in $(FUZZ_TARGETS); do \
-		cargo +nightly fuzz run $$t fuzz/corpus/$$t -- -max_total_time=3600 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) -print_final_stats=1 & \
-	done; wait
+	@cargo +nightly fuzz build && rm -rf /tmp/zipora_fuzz_soak && pids="" && fail=0 && \
+	for t in $(FUZZ_TARGETS); do \
+		mkdir -p /tmp/zipora_fuzz_soak/corpus/$$t /tmp/zipora_fuzz_soak/logs; \
+		cargo +nightly fuzz run $$t /tmp/zipora_fuzz_soak/corpus/$$t fuzz/corpus/$$t \
+			-- -max_total_time=3600 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) -print_final_stats=1 \
+			> /tmp/zipora_fuzz_soak/logs/$$t.log 2>&1 & \
+		pids="$$pids $$!"; \
+	done; \
+	for p in $$pids; do wait $$p || fail=1; done; \
+	exit $$fail
 
 # =============================================================================
 # CODE QUALITY
