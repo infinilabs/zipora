@@ -71,7 +71,7 @@ impl VarInt {
         bytes_written
     }
 
-    /// Write a u64 value as a variable-length integer to a Vec<u8>
+    /// Write a u64 value as a variable-length integer to a `Vec<u8>`
     ///
     /// # Arguments
     /// * `buffer` - The buffer to write to
@@ -90,7 +90,7 @@ impl VarInt {
     /// * `value` - The value to encode
     ///
     /// # Returns
-    /// * Vec<u8> containing the encoded bytes
+    /// * `Vec<u8>` containing the encoded bytes
     pub fn encode(value: u64) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(Self::MAX_ENCODED_LEN);
         Self::push_to_vec(&mut buffer, value);
@@ -222,7 +222,7 @@ impl VarInt {
     /// * `values` - Iterator over values to encode
     ///
     /// # Returns
-    /// * Vec<u8> containing all encoded values
+    /// * `Vec<u8>` containing all encoded values
     pub fn encode_multiple<I>(values: I) -> Vec<u8>
     where
         I: IntoIterator<Item = u64>,
@@ -522,7 +522,6 @@ mod tests {
             );
         }
     }
-
 
     /// The 10th byte of a varint carries bits 63..69 of the value; only bit 63
     /// fits in a u64. An encoding that sets any higher bit represents a value

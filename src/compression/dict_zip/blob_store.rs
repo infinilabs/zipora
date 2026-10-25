@@ -737,7 +737,7 @@ impl DictZipBlobStore {
         Self::build_from_training_samples(&training_samples, config)
     }
 
-    /// Build DictZipBlobStore from Vec<u8> with configuration (matches C++ pattern)
+    /// Build DictZipBlobStore from `Vec<u8>` with configuration (matches C++ pattern)
     pub fn build_from_vec_u8(
         data: &[u8],
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,

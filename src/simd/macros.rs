@@ -9,9 +9,9 @@
 //!
 //! ## Available Macros
 //!
-//! - [`simd_dispatch!`] - Multi-tier SIMD dispatch with automatic fallback
-//! - [`simd_feature_check!`] - Single feature check with fallback
-//! - [`simd_select!`] - Feature-based expression selection
+//! - [`crate::simd_dispatch!`] - Multi-tier SIMD dispatch with automatic fallback
+//! - [`crate::simd_feature_check!`] - Single feature check with fallback
+//! - [`crate::simd_select!`] - Feature-based expression selection
 //!
 //! ## Example
 //!

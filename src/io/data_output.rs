@@ -60,7 +60,7 @@ pub trait DataOutput {
     }
 }
 
-/// DataOutput implementation for Vec<u8>
+/// DataOutput implementation for `Vec<u8>`
 pub struct VecDataOutput {
     data: Vec<u8>,
 }
@@ -96,7 +96,7 @@ impl VecDataOutput {
         &self.data
     }
 
-    /// Convert into the underlying Vec<u8>
+    /// Convert into the underlying `Vec<u8>`
     pub fn into_vec(self) -> Vec<u8> {
         self.data
     }
@@ -373,7 +373,7 @@ impl Write for FileDataOutput {
     }
 }
 
-/// Convenience function to create a DataOutput from a Vec<u8>
+/// Convenience function to create a DataOutput from a `Vec<u8>`
 pub fn to_vec() -> VecDataOutput {
     VecDataOutput::new()
 }

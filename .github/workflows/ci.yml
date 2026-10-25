@@ -44,6 +44,9 @@ jobs:
     - name: Clippy (all targets, all features, deny warnings)
       run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+    - name: Docs (all features, deny rustdoc warnings - B6)
+      run: RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
+
     - name: Test (debug, all features)
       run: cargo test --locked --all-features
 

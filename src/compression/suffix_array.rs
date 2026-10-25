@@ -7,7 +7,7 @@
 //!
 //! # Key Features
 //!
-//! - **Memory Efficiency**: Uses IntVec<usize> for space-optimized suffix array storage
+//! - **Memory Efficiency**: Uses `IntVec<usize>` for space-optimized suffix array storage
 //! - **Large Text Support**: SecureMemoryPool integration for processing large datasets
 //! - **Hardware Acceleration**: SIMD optimizations for suffix classification and bucket operations
 //! - **Safety**: Memory-safe implementation following zipora's patterns

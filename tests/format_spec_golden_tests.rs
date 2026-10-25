@@ -467,3 +467,28 @@ fn test_b5_supply_chain_audit_and_deny_gates() {
         ".github/workflows/ci.yml must define supply_chain job running cargo audit and cargo deny check"
     );
 }
+
+#[cfg(not(miri))]
+#[test]
+fn test_b6_rustdoc_warnings_gate() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
+    assert!(
+        makefile.contains(
+            "RUSTDOCFLAGS=\"-D warnings\" $(CARGO) doc --locked --no-deps --all-features"
+        ),
+        "Makefile doc and sanity targets must enforce RUSTDOCFLAGS=\"-D warnings\" cargo doc --locked --no-deps --all-features"
+    );
+
+    let ci_yml = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
+    assert!(
+        ci_yml.contains("RUSTDOCFLAGS=\"-D warnings\" cargo doc --locked --no-deps --all-features"),
+        ".github/workflows/ci.yml must enforce RUSTDOCFLAGS=\"-D warnings\" cargo doc --locked --no-deps --all-features"
+    );
+
+    let five_level = std::fs::read_to_string(root.join("src/memory/five_level_pool.rs")).unwrap();
+    assert!(
+        !five_level.contains("[`reject_zero_size`]"),
+        "src/memory/five_level_pool.rs must not link to private item [`reject_zero_size`] in public rustdoc"
+    );
+}

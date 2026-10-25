@@ -1,6 +1,6 @@
 //! Advanced bit-packed integer storage with variable bit-width
 //!
-//! IntVec<T> provides state-of-the-art integer compression with sophisticated
+//! `IntVec<T>` provides state-of-the-art integer compression with sophisticated
 //! block-based architecture, hardware acceleration, and adaptive compression
 //! strategies inspired by high-performance database storage engines.
 
@@ -80,7 +80,6 @@ mod int_vec_simd {
 
             (min_val, max_val)
         }
-
 
         /// 🚀 ADVANCED OPTIMIZED: Ultra-fast range analysis for small datasets
         ///
@@ -173,7 +172,6 @@ mod int_vec_simd {
                 let _ = addr;
             }
         }
-
     }
 }
 
@@ -259,7 +257,6 @@ impl BlockSize {
     fn units(self) -> usize {
         1 << (self as u8)
     }
-
 }
 
 /// Compression strategy for optimal space efficiency
@@ -580,7 +577,6 @@ impl<T: PackedInt> IntVec<T> {
     }
 
     // Private implementation methods
-
 
     /// 🚀 ADVANCED FAST PATH: Optimized strategy analysis for small datasets (≤10K elements)
     ///
@@ -1041,7 +1037,12 @@ impl<T: PackedInt> IntVec<T> {
 
         for &sample in &samples {
             let offset_sample = sample - sample_min;
-            self.write_bits(&mut index_data[8..], offset_sample, bit_offset, sample_width)?;
+            self.write_bits(
+                &mut index_data[8..],
+                offset_sample,
+                bit_offset,
+                sample_width,
+            )?;
             bit_offset += sample_width as usize;
         }
 
@@ -1211,7 +1212,8 @@ impl<T: PackedInt> IntVec<T> {
         }
 
         let bit_offset = (index - 1) * delta_width as usize;
-        self.read_bits(&self.data[8..], bit_offset, delta_width).ok()?;
+        self.read_bits(&self.data[8..], bit_offset, delta_width)
+            .ok()?;
 
         let sample_idx = index / Self::DELTA_SAMPLE_STRIDE;
         let (start_idx, mut current_val) = if sample_idx > 0
@@ -1220,7 +1222,10 @@ impl<T: PackedInt> IntVec<T> {
         {
             let mut buf = [0u8; 8];
             buf.copy_from_slice(sample_bytes);
-            (sample_idx * Self::DELTA_SAMPLE_STRIDE, u64::from_le_bytes(buf))
+            (
+                sample_idx * Self::DELTA_SAMPLE_STRIDE,
+                u64::from_le_bytes(buf),
+            )
         } else {
             (0, base_val)
         };
@@ -1647,4 +1652,3 @@ mod tests {
         }
     }
 }
-

@@ -10,7 +10,7 @@
 //! - **Bitmap** — dense but not contiguous, where a raw bitmap (`local_universe`
 //!   bits) is smaller than local Elias-Fano. SIMD-friendly for intersection.
 //! - **EliasFano** — sparse fallback, identical encoding to PEF (reuses the
-//!   shared [`chunk`](super::chunk) helpers).
+//!   shared `super::chunk` helpers).
 //!
 //! **Why a separate type** (not an edit to PEF/OPEF): zero regression risk to the
 //! existing encoders and a clean opt-in path via
@@ -200,11 +200,16 @@ impl ClusteredEliasFano {
             return Self::empty();
         }
         let universe = values[values.len() - 1] as u128 + 1;
-        Self::from_sorted_impl(values.len(), universe, #[inline(always)] |i| {
-            debug_assert!(i < values.len()); // PROVEN: from_sorted_impl only queries indices in 0..n where n == values.len()
-            // SAFETY: `from_sorted_impl` is called with `n = values.len()` and only indexes `0..n`.
-            unsafe { *values.get_unchecked(i) as u64 }
-        })
+        Self::from_sorted_impl(
+            values.len(),
+            universe,
+            #[inline(always)]
+            |i| {
+                debug_assert!(i < values.len()); // PROVEN: from_sorted_impl only queries indices in 0..n where n == values.len()
+                // SAFETY: `from_sorted_impl` is called with `n = values.len()` and only indexes `0..n`.
+                unsafe { *values.get_unchecked(i) as u64 }
+            },
+        )
     }
 
     /// Build from sorted u64 values.
@@ -215,11 +220,16 @@ impl ClusteredEliasFano {
         // u128 exclusive upper bound so a value of u64::MAX is representable
         // (u64::MAX + 1) and next_geq(u64::MAX) still finds it.
         let universe = values[values.len() - 1] as u128 + 1;
-        Self::from_sorted_impl(values.len(), universe, #[inline(always)] |i| {
-            debug_assert!(i < values.len()); // PROVEN: from_sorted_impl only queries indices in 0..n where n == values.len()
-            // SAFETY: `from_sorted_impl` is called with `n = values.len()` and only indexes `0..n`.
-            unsafe { *values.get_unchecked(i) }
-        })
+        Self::from_sorted_impl(
+            values.len(),
+            universe,
+            #[inline(always)]
+            |i| {
+                debug_assert!(i < values.len()); // PROVEN: from_sorted_impl only queries indices in 0..n where n == values.len()
+                // SAFETY: `from_sorted_impl` is called with `n = values.len()` and only indexes `0..n`.
+                unsafe { *values.get_unchecked(i) }
+            },
+        )
     }
 
     fn empty() -> Self {
@@ -483,7 +493,10 @@ impl ClusteredEliasFano {
             }
             ChunkKind::EliasFano => {
                 let view = self.ef_view(m);
-                Some(m.min_value.saturating_add(chunk_get_delta(&view, local_idx)))
+                Some(
+                    m.min_value
+                        .saturating_add(chunk_get_delta(&view, local_idx)),
+                )
             }
         }
     }
@@ -526,8 +539,9 @@ impl ClusteredEliasFano {
                 let target_delta = target - m.min_value;
                 let target_high = (target_delta >> view.low_bit_width) as usize;
                 let (start_idx, start_pos) = chunk_skip_to_high(&view, target_high);
-                chunk_scan_geq(&view, target_delta, start_idx, start_pos)
-                    .map(|(local, delta, _)| (global_offset + local, m.min_value.wrapping_add(delta)))
+                chunk_scan_geq(&view, target_delta, start_idx, start_pos).map(
+                    |(local, delta, _)| (global_offset + local, m.min_value.wrapping_add(delta)),
+                )
             }
         }
         // Found-in-chunk above always succeeds because the binary search
@@ -678,8 +692,7 @@ fn bitmap_select1(bits: &[u64], rank: usize) -> usize {
     for (wi, &w) in bits.iter().enumerate() {
         let ones = w.count_ones() as usize;
         if remaining < ones {
-            return wi * 64
-                + crate::algorithms::bit_ops::select_in_word(w, remaining);
+            return wi * 64 + crate::algorithms::bit_ops::select_in_word(w, remaining);
         }
         remaining -= ones;
     }
@@ -696,7 +709,10 @@ fn bitmap_next_geq(bits: &[u64], target_delta: u64) -> Option<(usize, u64)> {
         return None;
     }
     // Rank of bits strictly before start_word.
-    let mut rank: usize = bits[..start_word].iter().map(|w| w.count_ones() as usize).sum();
+    let mut rank: usize = bits[..start_word]
+        .iter()
+        .map(|w| w.count_ones() as usize)
+        .sum();
 
     let start_bit = (target_delta % 64) as u32;
     let mut w = bits[start_word] & (!0u64 << start_bit);

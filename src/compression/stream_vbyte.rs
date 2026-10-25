@@ -167,7 +167,7 @@ pub struct EncodedStream {
 
 impl StreamVByte {
     /// Encode a sorted u32 slice using delta + stream vbyte.
-    /// Delta-encodes first (val[i] - val[i-1]), then vbyte-encodes the deltas.
+    /// Delta-encodes first (`val[i] - val[i-1]`), then vbyte-encodes the deltas.
     pub fn encode_deltas(values: &[u32]) -> EncodedStream {
         if values.is_empty() {
             return EncodedStream {

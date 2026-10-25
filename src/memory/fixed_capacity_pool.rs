@@ -290,7 +290,7 @@ impl FixedCapacityMemoryPool {
     /// block layout: zero blocks, a non-power-of-two alignment, an alignment
     /// below the block header's, a `max_block_size` smaller than the block
     /// header or not a multiple of `alignment`, or a total capacity that
-    /// overflows `usize`. See [`Self::validate_config`].
+    /// overflows `usize`. See `Self::validate_config`.
     pub fn new(config: FixedCapacityPoolConfig) -> Result<Self> {
         Self::validate_config(&config)?;
 
@@ -668,10 +668,7 @@ impl FixedCapacityMemoryPool {
     /// partition that does not exist in memory. The block is handed over whole
     /// and the class it came from travels with it, so `deallocate` returns it
     /// to the same class at the same width.
-    fn allocate_from_larger_class(
-        &self,
-        size_class_index: usize,
-    ) -> Result<(NonNull<u8>, usize)> {
+    fn allocate_from_larger_class(&self, size_class_index: usize) -> Result<(NonNull<u8>, usize)> {
         for larger_class in (size_class_index + 1)..self.size_classes.len() {
             // SAFETY: UnsafeCell immutable after initialization, only atomic fields accessed
             let free_lists = unsafe { &*self.free_lists.get() };
@@ -942,8 +939,10 @@ mod tests {
             eager_allocation: true,
             secure_clear: false,
         };
-        let err =
-            expect_config_rejected(config, "max_block_size 100 with alignment 64 must be rejected");
+        let err = expect_config_rejected(
+            config,
+            "max_block_size 100 with alignment 64 must be rejected",
+        );
         assert!(err.contains("multiple of alignment"), "got: {err}");
     }
 

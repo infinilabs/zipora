@@ -405,7 +405,7 @@ where
         Ok(store)
     }
 
-    /// Build NestLoudsTrieBlobStore from Vec<u8> with configuration (matches C++ pattern)
+    /// Build NestLoudsTrieBlobStore from `Vec<u8>` with configuration (matches C++ pattern)
     pub fn build_from_vec_u8(
         data: &[u8],
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,

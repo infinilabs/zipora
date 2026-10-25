@@ -96,7 +96,7 @@ impl Default for FiveLevelPoolConfig {
             max_fast_block_size: 32 * 1024, // 32KB
             alignment: 8,
             initial_capacity: 1024 * 1024, // 1MB
-            arena_size: 2 * 1024 * 1024, // 2MB
+            arena_size: 2 * 1024 * 1024,   // 2MB
             fixed_capacity: None,
             enable_cache_alignment: true,
             cache_config: Some(CacheLayoutConfig::default()),
@@ -586,7 +586,7 @@ impl NoLockingPool {
     ///
     /// # Errors
     ///
-    /// Returns an error for a zero-byte request (see [`reject_zero_size`]) or
+    /// Returns an error for a zero-byte request (see `reject_zero_size`) or
     /// when the arena is exhausted.
     pub fn alloc(&mut self, size: usize) -> Result<MemOffset> {
         reject_zero_size(size, "allocation")?;
@@ -603,7 +603,7 @@ impl NoLockingPool {
     ///
     /// # Errors
     ///
-    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
+    /// Returns an error for a zero-byte block (see `reject_zero_size`).
     pub fn free(&mut self, offset: MemOffset, size: usize) -> Result<()> {
         reject_zero_size(size, "free")?;
         let aligned_size = self.align_up(size);
@@ -778,7 +778,7 @@ impl MutexBasedPool {
 
     /// # Errors
     ///
-    /// Returns an error for a zero-byte request (see [`reject_zero_size`]) or
+    /// Returns an error for a zero-byte request (see `reject_zero_size`) or
     /// when the arena is exhausted.
     pub fn alloc(&self, size: usize) -> Result<MemOffset> {
         reject_zero_size(size, "allocation")?;
@@ -793,7 +793,7 @@ impl MutexBasedPool {
 
     /// # Errors
     ///
-    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
+    /// Returns an error for a zero-byte block (see `reject_zero_size`).
     pub fn free(&self, offset: MemOffset, size: usize) -> Result<()> {
         reject_zero_size(size, "free")?;
         let aligned_size = self.align_up(size);
@@ -893,7 +893,10 @@ impl MutexBasedPool {
 
     pub fn stats(&self) -> PoolStats {
         let memory = self.memory.lock().unwrap_or_else(|e| e.into_inner());
-        let huge = self.huge_free_list.lock().unwrap_or_else(|e| e.into_inner());
+        let huge = self
+            .huge_free_list
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         PoolStats {
             total_capacity: memory.capacity,
@@ -1030,7 +1033,7 @@ impl LockFreePool {
 
     /// # Errors
     ///
-    /// Returns an error for a zero-byte request (see [`reject_zero_size`]) or
+    /// Returns an error for a zero-byte request (see `reject_zero_size`) or
     /// when the arena is exhausted.
     pub fn alloc(&self, size: usize) -> Result<MemOffset> {
         reject_zero_size(size, "allocation")?;
@@ -1045,7 +1048,7 @@ impl LockFreePool {
 
     /// # Errors
     ///
-    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
+    /// Returns an error for a zero-byte block (see `reject_zero_size`).
     pub fn free(&self, offset: MemOffset, size: usize) -> Result<()> {
         reject_zero_size(size, "free")?;
         let aligned_size = self.align_up(size);
@@ -1139,10 +1142,9 @@ impl LockFreePool {
         if bin_index < self.free_lists.len() {
             let head = &self.free_lists[bin_index];
             let slot_idx = offset.to_usize() / self.config.alignment;
-            let slot_link = self
-                .next_links
-                .get(slot_idx)
-                .ok_or_else(|| ZiporaError::out_of_bounds(offset.to_usize(), self.config.initial_capacity))?;
+            let slot_link = self.next_links.get(slot_idx).ok_or_else(|| {
+                ZiporaError::out_of_bounds(offset.to_usize(), self.config.initial_capacity)
+            })?;
 
             // F2 & F3: ABA-tagged AtomicU64 Treiber push using out-of-band `self.next_links` (no mutex lock!).
             loop {
@@ -1224,7 +1226,10 @@ impl LockFreePool {
     }
 
     pub fn stats(&self) -> PoolStats {
-        let huge = self.huge_free_list.lock().unwrap_or_else(|e| e.into_inner());
+        let huge = self
+            .huge_free_list
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         PoolStats {
             total_capacity: self.config.initial_capacity,
@@ -1373,10 +1378,7 @@ impl ThreadLocalPool {
     }
 
     #[inline]
-    fn with_thread_cache<R>(
-        &self,
-        f: impl FnOnce(&mut ThreadLocalCache) -> R,
-    ) -> Option<R> {
+    fn with_thread_cache<R>(&self, f: impl FnOnce(&mut ThreadLocalCache) -> R) -> Option<R> {
         THREAD_CACHE
             .try_with(|caches| {
                 let mut caches = caches.borrow_mut();
@@ -1406,7 +1408,7 @@ impl ThreadLocalPool {
 
     /// # Errors
     ///
-    /// Returns an error for a zero-byte request (see [`reject_zero_size`]) or
+    /// Returns an error for a zero-byte request (see `reject_zero_size`) or
     /// when the arena is exhausted.
     pub fn alloc(&self, size: usize) -> Result<MemOffset> {
         reject_zero_size(size, "allocation")?;
@@ -1450,7 +1452,7 @@ impl ThreadLocalPool {
 
     /// # Errors
     ///
-    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
+    /// Returns an error for a zero-byte block (see `reject_zero_size`).
     pub fn free(&self, offset: MemOffset, size: usize) -> Result<()> {
         reject_zero_size(size, "free")?;
         let aligned_size = self.align_up(size);
@@ -1543,7 +1545,7 @@ impl FixedCapacityPool {
 
     /// # Errors
     ///
-    /// Returns an error for a zero-byte request (see [`reject_zero_size`]) or
+    /// Returns an error for a zero-byte request (see `reject_zero_size`) or
     /// when the fixed capacity would be exceeded.
     pub fn alloc(&mut self, size: usize) -> Result<MemOffset> {
         reject_zero_size(size, "allocation")?;
@@ -1560,7 +1562,7 @@ impl FixedCapacityPool {
 
     /// # Errors
     ///
-    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
+    /// Returns an error for a zero-byte block (see `reject_zero_size`).
     pub fn free(&mut self, offset: MemOffset, size: usize) -> Result<()> {
         self.inner.free(offset, size)
     }
@@ -2023,9 +2025,9 @@ mod tests {
         .unwrap();
 
         for iteration in 0..100 {
-            let huge = pool.alloc(HUGE).unwrap_or_else(|e| {
-                panic!("iteration {iteration}: 64 KiB allocation failed: {e}")
-            });
+            let huge = pool
+                .alloc(HUGE)
+                .unwrap_or_else(|e| panic!("iteration {iteration}: 64 KiB allocation failed: {e}"));
             pool.free(huge, HUGE).unwrap();
         }
     }
@@ -2040,9 +2042,9 @@ mod tests {
         .unwrap();
 
         for iteration in 0..100 {
-            let huge = pool.alloc(HUGE).unwrap_or_else(|e| {
-                panic!("iteration {iteration}: 64 KiB allocation failed: {e}")
-            });
+            let huge = pool
+                .alloc(HUGE)
+                .unwrap_or_else(|e| panic!("iteration {iteration}: 64 KiB allocation failed: {e}"));
             pool.free(huge, HUGE).unwrap();
         }
     }
@@ -2548,7 +2550,8 @@ mod tests {
 
         let after = THREAD_CACHE.with(|c| c.borrow().len());
         assert_eq!(
-            after, before,
+            after,
+            before,
             "dropping {N_POOLS} ThreadLocalPools leaked {} entries in THREAD_CACHE",
             after.saturating_sub(before)
         );
@@ -2755,4 +2758,3 @@ mod tests {
         );
     }
 }
-

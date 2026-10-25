@@ -1,7 +1,7 @@
 //! Zero-Overhead Sorted String Vector
 //!
 //! A specialized container for sorted string collections that achieves 60% memory
-//! reduction compared to Vec<String> through succinct data structure integration.
+//! reduction compared to `Vec<String>` through succinct data structure integration.
 //!
 //! The ZoSortedStrVec uses BitVector and RankSelectInterleaved256 structures to efficiently
 //! store and query string collections with zero-copy access patterns.
@@ -33,7 +33,7 @@ use std::fs::File;
 ///
 /// # Performance Characteristics
 ///
-/// - **Memory**: 60% reduction vs Vec<String>
+/// - **Memory**: 60% reduction vs `Vec<String>`
 /// - **Search**: O(log n) with succinct optimizations
 /// - **Access**: O(1) with zero-copy string views
 /// - **Construction**: O(n log n) from unsorted, O(n) from sorted
@@ -78,7 +78,7 @@ impl ZoSortedStrVec {
     ///
     /// # Performance
     /// - Time: O(n) where n is total string length
-    /// - Space: ~40% of original Vec<String> size
+    /// - Space: ~40% of original `Vec<String>` size
     pub fn from_sorted_strings(strings: Vec<String>) -> Result<Self> {
         if strings.is_empty() {
             return Ok(Self::empty());
@@ -115,7 +115,7 @@ impl ZoSortedStrVec {
     ///
     /// # Performance
     /// - Time: O(n log n + m) where n is number of strings and m is total string length
-    /// - Space: ~40% of original Vec<String> size
+    /// - Space: ~40% of original `Vec<String>` size
     pub fn from_strings(mut strings: Vec<String>) -> Result<Self> {
         // Sort the strings
         strings.sort();
@@ -363,7 +363,7 @@ impl ZoSortedStrVec {
         self.memory_usage
     }
 
-    /// Calculate compression ratio compared to Vec<String>
+    /// Calculate compression ratio compared to `Vec<String>`
     pub fn compression_ratio(&self) -> f64 {
         if self.original_size == 0 {
             1.0
@@ -452,9 +452,7 @@ impl ZoSortedStrVec {
 
         let payload = bytes
             .get(Self::HEADER_SIZE..Self::HEADER_SIZE.saturating_add(payload_len))
-            .ok_or_else(|| {
-                ZiporaError::invalid_data("Truncated ZoSortedStrVec payload")
-            })?;
+            .ok_or_else(|| ZiporaError::invalid_data("Truncated ZoSortedStrVec payload"))?;
         if count > payload.len() / 4 {
             return Err(ZiporaError::invalid_data(
                 "ZoSortedStrVec count exceeds remaining payload capacity",
@@ -498,8 +496,9 @@ impl ZoSortedStrVec {
     pub fn from_mmap(mut file: File) -> Result<Self> {
         use std::io::Read;
         let mut buf = Vec::new();
-        file.read_to_end(&mut buf)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to read ZoSortedStrVec file: {}", e)))?;
+        file.read_to_end(&mut buf).map_err(|e| {
+            ZiporaError::io_error(format!("Failed to read ZoSortedStrVec file: {}", e))
+        })?;
         Self::from_bytes(&buf)
     }
 

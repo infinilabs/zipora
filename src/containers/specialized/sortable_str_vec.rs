@@ -505,7 +505,6 @@ impl SortableStrVec {
         Ok(())
     }
 
-
     /// Sort with a custom comparison function
     pub fn sort_by<F>(&mut self, compare: F) -> Result<()>
     where
@@ -779,7 +778,7 @@ impl SortableStrVec {
         )
     }
 
-    /// Calculate memory savings compared to Vec<String>
+    /// Calculate memory savings compared to `Vec<String>`
     pub fn memory_savings_vs_vec_string(&self) -> (usize, usize, f64) {
         // Vec<String> memory calculation
         let vec_string_overhead = self.entries.len() * mem::size_of::<String>();

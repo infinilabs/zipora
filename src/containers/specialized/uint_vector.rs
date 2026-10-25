@@ -1,7 +1,7 @@
 //! Compressed integer vector with specialized optimizations
 //!
 //! UintVector provides space-efficient storage for integer sequences with
-//! 60-80% memory reduction compared to Vec<u32> through min-max compression
+//! 60-80% memory reduction compared to `Vec<u32>` through min-max compression
 //! and efficient bit packing techniques.
 
 use crate::error::{Result, ZiporaError};

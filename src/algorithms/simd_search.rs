@@ -169,7 +169,7 @@ pub fn simd_gallop_to(arr: &[u32], cursor: &mut usize, target: u32) -> bool {
 }
 
 /// SIMD-accelerated block filter: compare f32 scores against a threshold.
-/// Returns (bitmask, count) where bit i is set if scores[i] > theta.
+/// Returns `(bitmask, count)` where bit `i` is set if `scores[i] > theta`.
 /// Processes up to 64 elements (bitmask is u64).
 /// Panics if scores.len() > 64 or doc_ids.len() != scores.len().
 ///
@@ -1206,6 +1206,9 @@ mod tests {
         }
 
         let ns_per_call = best.as_nanos() as f64 / iters as f64;
-        println!("simd_block_filter(64 lanes): {:.1} ns/call [sink={}]", ns_per_call, sink);
+        println!(
+            "simd_block_filter(64 lanes): {:.1} ns/call [sink={}]",
+            ns_per_call, sink
+        );
     }
 }

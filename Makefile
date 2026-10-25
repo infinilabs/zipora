@@ -453,7 +453,7 @@ clippy:
 	$(CARGO) clippy --all-targets -- -D warnings
 
 doc:
-	$(CARGO) doc --no-deps --open
+	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --locked --no-deps --all-features
 
 # =============================================================================
 # WORKFLOWS
@@ -523,6 +523,8 @@ sanity:
 	python3 scripts/hygiene_audit.py
 	@echo "=== No default features (guard feature-gated cfg attrs) ==="
 	$(CARGO) clippy --locked --lib --bins --tests --no-default-features -- -D warnings
+	@echo "=== Docs gate (Rule B6: RUSTDOCFLAGS=-D warnings) ==="
+	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --locked --no-deps --all-features
 	@mkdir -p target/sanity
 	@echo "=== Tests: debug (--all-features --tests) ==="
 	$(CARGO) test --locked --all-features --tests 2>&1 | tee target/sanity/debug_tests.log

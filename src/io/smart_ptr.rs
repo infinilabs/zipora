@@ -1,7 +1,7 @@
 //! Smart pointer serialization for reference-counted objects
 //!
 //! This module provides automatic serialization and deserialization support for
-//! Rust's smart pointer types including Box<T>, Arc<T>, Rc<T>, and custom smart pointers.
+//! Rust's smart pointer types including `Box<T>`, `Arc<T>`, `Rc<T>`, and custom smart pointers.
 //! Supports null handling, reference counting, and circular reference detection.
 
 use crate::error::{Result, ZiporaError};

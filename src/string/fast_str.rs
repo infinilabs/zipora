@@ -806,7 +806,7 @@ impl<'a> FastStr<'a> {
         String::from_utf8_lossy(self.data).into_owned()
     }
 
-    /// Convert to a Cow<str>
+    /// Convert to a `Cow<str>`
     pub fn to_cow_str(&self) -> Cow<'a, str> {
         String::from_utf8_lossy(self.data)
     }
@@ -925,7 +925,6 @@ impl<'a> Iterator for SplitIter<'a> {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1240,7 +1239,6 @@ mod tests {
         assert_eq!(from_bytes.as_bytes(), b"test");
     }
 
-
     #[test]
     fn test_simd_hash_consistency() {
         // Test that different SIMD implementations produce consistent results
@@ -1484,7 +1482,11 @@ mod tests {
             }
             let fs = FastStr::new(&buf);
             let expected_hash = fs.hash_fallback();
-            assert_eq!(fs.hash_fast(), expected_hash, "hash_fast mismatch at len={len}");
+            assert_eq!(
+                fs.hash_fast(),
+                expected_hash,
+                "hash_fast mismatch at len={len}"
+            );
             #[cfg(target_arch = "x86_64")]
             {
                 if is_x86_feature_detected!("sse2") {

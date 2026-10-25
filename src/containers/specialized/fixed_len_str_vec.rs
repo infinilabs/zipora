@@ -1,6 +1,6 @@
 //! Fixed-length string vector with arena-based storage and bit-packed indices
 //!
-//! **OPTIMIZED IMPLEMENTATION** - Provides 60%+ memory reduction compared to Vec<String>
+//! **OPTIMIZED IMPLEMENTATION** - Provides 60%+ memory reduction compared to `Vec<String>`
 //! Key optimizations (August 2025):
 //! - Arena-based string storage (eliminates per-string allocation overhead)
 //! - Bit-packed offset/length indices (saves metadata space)
@@ -166,7 +166,7 @@ impl<const N: usize> FixedLenStrVec<N> {
         self.len == 0
     }
 
-    /// Calculate memory savings compared to Vec<String>
+    /// Calculate memory savings compared to `Vec<String>`
     pub fn memory_savings_vs_vec_string(&self) -> (usize, usize, f64) {
         // Use same calculation as memory_info() for consistency
         let memory_info = self.memory_info();
@@ -325,7 +325,8 @@ impl<const N: usize> FixedLenStrVec<N> {
                     {
                         // SAFETY: offset + needle_len <= arena_len and needle_len >= 16, so reading 16 bytes at offset is in-bounds.
                         let head_eq = unsafe {
-                            let cand_head = _mm_loadu_si128(arena_ptr.add(offset) as *const __m128i);
+                            let cand_head =
+                                _mm_loadu_si128(arena_ptr.add(offset) as *const __m128i);
                             _mm_movemask_epi8(_mm_cmpeq_epi8(cand_head, needle_head)) == 0xFFFF
                         };
                         if head_eq && self.string_arena[offset + 16..end] == needle_bytes[16..] {
@@ -401,8 +402,9 @@ impl<const N: usize> FixedLenStrVec<N> {
                         && end <= arena_len
                     {
                         // SAFETY: length >= prefix_len >= 8 and offset + length <= arena_len, so reading 8 bytes at offset is in-bounds.
-                        let cand_head8 =
-                            unsafe { std::ptr::read_unaligned(arena_ptr.add(offset) as *const u64) };
+                        let cand_head8 = unsafe {
+                            std::ptr::read_unaligned(arena_ptr.add(offset) as *const u64)
+                        };
                         if cand_head8 == prefix_head8
                             && self.string_arena[offset + 8..offset + prefix_len]
                                 == prefix_bytes[8..]
@@ -635,4 +637,3 @@ mod tests {
         assert_eq!(vec.count_prefix("nonexistent_prefix"), 0);
     }
 }
-

@@ -356,7 +356,7 @@ impl CBuffer {
         }
     }
 
-    /// Create a buffer from a Vec<u8>
+    /// Create a buffer from a `Vec<u8>`
     pub fn from_vec(mut vec: Vec<u8>) -> Self {
         let data = vec.as_mut_ptr();
         let size = vec.len();
@@ -370,11 +370,11 @@ impl CBuffer {
         }
     }
 
-    /// Convert back to a Vec<u8>
+    /// Convert back to a `Vec<u8>`
     ///
     /// # Safety
     ///
-    /// The buffer must have been created from a Vec<u8> and not modified
+    /// The buffer must have been created from a `Vec<u8>` and not modified
     /// in an incompatible way.
     pub unsafe fn into_vec(self) -> Vec<u8> {
         if self.data.is_null() || self.capacity == 0 || self.capacity > isize::MAX as usize {

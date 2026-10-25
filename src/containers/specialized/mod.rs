@@ -32,14 +32,14 @@
 //! ## Performance Goals
 //!
 //! ### Phase 1 Achievements
-//! - ValVec32: 40-50% memory reduction vs Vec<T>
+//! - ValVec32: 40-50% memory reduction vs `Vec<T>`
 //! - SmallMap: 90% faster than GoldHashMap for ≤8 elements
 //! - Circular queues: 20-30% faster than VecDeque
 //!
 //! ### Phase 2 Achievements
-//! - UintVector: 60-80% space reduction vs Vec<u32> through compression
-//! - FixedLenStrVec: 60% memory reduction vs Vec<String> with SIMD acceleration
-//! - SortableStrVec: 25% faster sorting vs Vec<String> with arena allocation
+//! - UintVector: 60-80% space reduction vs `Vec<u32>` through compression
+//! - FixedLenStrVec: 60% memory reduction vs `Vec<String>` with SIMD acceleration
+//! - SortableStrVec: 25% faster sorting vs `Vec<String>` with arena allocation
 //!
 //! ### Phase 3 Achievements
 //! - ZoSortedStrVec: 60% memory reduction through succinct data structures

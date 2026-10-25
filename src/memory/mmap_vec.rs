@@ -417,7 +417,9 @@ impl MmapVecConfig {
     /// Returns [`ZiporaError::InvalidParameter`] if `growth_factor` is not
     /// finite or outside `(1.0, 1024.0]`.
     pub fn validate(&self) -> Result<()> {
-        if !self.growth_factor.is_finite() || self.growth_factor <= 1.0 || self.growth_factor > 1024.0
+        if !self.growth_factor.is_finite()
+            || self.growth_factor <= 1.0
+            || self.growth_factor > 1024.0
         {
             return Err(ZiporaError::invalid_parameter(format!(
                 "MmapVecConfig::growth_factor must be finite and in (1.0, 1024.0], got {}",
@@ -593,7 +595,7 @@ where
     /// # Errors
     /// Returns an error if `config` fails [`MmapVecConfig::validate`], if
     /// `path` does not exist, cannot be opened or mapped, has an
-    /// invalid/mismatched [`MmapVecHeader`] (magic, version, endianness or
+    /// invalid/mismatched `MmapVecHeader` (magic, version, endianness or
     /// word-size flags, `size_of::<T>()`, extended `align_of::<T>()`), or is
     /// smaller than the header-declared capacity.
     ///
@@ -1208,9 +1210,12 @@ where
                         map_len, required_len
                     )));
                 }
-                let data =
-                    NonNull::new(base.wrapping_add(Self::data_offset()).cast::<T>().cast_mut())
-                        .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?;
+                let data = NonNull::new(
+                    base.wrapping_add(Self::data_offset())
+                        .cast::<T>()
+                        .cast_mut(),
+                )
+                .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?;
                 Ok((None, data, mapped_cap))
             }
         }
@@ -1344,7 +1349,9 @@ where
         self.config.validate()?;
         let scaled = (current_capacity as f64) * self.config.growth_factor;
         if !scaled.is_finite() || scaled >= (usize::MAX as f64) {
-            return Err(ZiporaError::invalid_data("MmapVec capacity overflows usize"));
+            return Err(ZiporaError::invalid_data(
+                "MmapVec capacity overflows usize",
+            ));
         }
         Ok(scaled as usize)
     }
@@ -3742,4 +3749,3 @@ mod tests {
         }
     }
 }
-
