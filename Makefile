@@ -104,6 +104,7 @@ BENCH_RUSTFLAGS := -C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -
 else
 BENCH_RUSTFLAGS := -C target-cpu=native -C codegen-units=1 -C llvm-args=-align-loops=32
 endif
+BENCH_GIT_COMMIT = $$(c=$$(git rev-parse --short=7 HEAD 2>/dev/null || echo unknown); git diff --quiet HEAD -- src Cargo.toml Cargo.lock benches/core_bench.rs benches/competitor_bench.rs benches/e2e_search_bench.rs benches/common benches/competitors 2>/dev/null || c="$$c-dirty"; echo "$$c")
 
 bench:
 	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench
@@ -117,7 +118,7 @@ bench_all:
 #     cargo bench --locked --bench core_bench
 #   python3 scripts/bench_compare.py --suite core_bench --confirm-retries 5
 bench_core:
-	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench core_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" ZIPORA_BENCH_GIT_COMMIT="$(BENCH_GIT_COMMIT)" $(CARGO) bench --locked --bench core_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
 	python3 scripts/bench_compare.py --suite core_bench $(if $(UPDATE_BASELINE),,--confirm-retries 5)
 
 # Canonical Phase E competitor benchmark matrix (plan.md §1.6 E2 + E3 + B3).
@@ -126,12 +127,12 @@ bench_core:
 #     cargo bench --locked --bench competitor_bench
 #   python3 scripts/bench_compare.py --suite competitor_bench --confirm-retries 5
 bench_competitors:
-	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench competitor_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" ZIPORA_BENCH_GIT_COMMIT="$(BENCH_GIT_COMMIT)" $(CARGO) bench --locked --bench competitor_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
 	python3 scripts/bench_compare.py --suite competitor_bench $(if $(UPDATE_BASELINE),,--confirm-retries 5)
 
 # Fast smoke tier of the core benchmark suite (~2s, reduced dataset sizes).
 bench_smoke:
-	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench core_bench -- --smoke
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" ZIPORA_BENCH_GIT_COMMIT="$(BENCH_GIT_COMMIT)" $(CARGO) bench --locked --bench core_bench -- --smoke
 
 bench_compare:
 	python3 scripts/bench_compare.py --suite core_bench --confirm-retries 5
@@ -142,7 +143,7 @@ bench_compare:
 #     cargo bench --locked --bench e2e_search_bench
 #   python3 scripts/bench_compare.py --suite e2e_search --confirm-retries 3
 bench_e2e_search:
-	RUSTFLAGS="$(BENCH_RUSTFLAGS)" $(CARGO) bench --locked --bench e2e_search_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
+	RUSTFLAGS="$(BENCH_RUSTFLAGS)" ZIPORA_BENCH_GIT_COMMIT="$(BENCH_GIT_COMMIT)" $(CARGO) bench --locked --bench e2e_search_bench $(if $(UPDATE_BASELINE),-- --save-baseline,)
 	python3 scripts/bench_compare.py --suite e2e_search $(if $(UPDATE_BASELINE),,--confirm-retries 3)
 
 bench_avx512:

@@ -5,7 +5,6 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::hint::black_box;
-use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -158,10 +157,6 @@ pub struct BenchRecord {
     pub spread_pct: f64,
     pub max_regression_pct: f64,
     pub samples: Vec<f64>,
-    #[serde(default)]
-    pub measured_at_commit: String,
-    #[serde(default)]
-    pub binary_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,20 +217,7 @@ pub fn collect_host_metadata(pinned_core: usize) -> HostMetadata {
         "RUSTFLAGS=\"{rustflags}\" cargo bench --locked --bench core_bench && python3 scripts/bench_compare.py --suite core_bench --confirm-retries 5"
     );
 
-    let git_commit = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout).ok()
-            } else {
-                None
-            }
-        })
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
+    let git_commit = super::binary_meta::detect_git_commit();
     let (binary_path, binary_sha256) = detect_self_binary_path_and_sha256();
 
     HostMetadata {
@@ -726,14 +708,8 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
     } else {
         0.0
     };
-    let (
-        name_owned,
-        category_owned,
-        unit_owned,
-        mut rounded_samples,
-        measured_at_commit,
-        binary_sha256,
-    ) = super::datasets::take_prealloc_record_buffers(name, category, unit);
+    let (name_owned, category_owned, unit_owned, mut rounded_samples) =
+        super::datasets::take_prealloc_record_buffers(name, category, unit);
     for &s in s_slice.iter() {
         rounded_samples.push(round4(s));
     }
@@ -751,7 +727,5 @@ pub fn measure_bench_inner<T, S, F, const HAS_SETUP: bool>(
         spread_pct: round2(spread_pct),
         max_regression_pct: params.max_regression_pct,
         samples: rounded_samples,
-        measured_at_commit,
-        binary_sha256,
     });
 }

@@ -75,10 +75,6 @@ struct BenchRecord {
     spread_pct: f64,
     max_regression_pct: f64,
     samples_ns_per_op: Vec<f64>,
-    #[serde(default)]
-    measured_at_commit: String,
-    #[serde(default)]
-    binary_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,23 +168,6 @@ fn detect_governor() -> String {
         .unwrap_or_else(|| "unknown (virtualized/host-managed)".to_string())
 }
 
-fn detect_git_commit() -> String {
-    Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
 fn detect_utc_timestamp() -> String {
     Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
@@ -260,7 +239,7 @@ fn hardware_logical_cores() -> usize {
 
 #[path = "common/binary_meta.rs"]
 mod binary_meta;
-use binary_meta::detect_self_binary_path_and_sha256;
+use binary_meta::{detect_git_commit, detect_self_binary_path_and_sha256};
 
 fn collect_host_metadata(pinned_core: usize) -> HostMetadata {
     let rustflags = std::env::var("RUSTFLAGS")
@@ -391,8 +370,6 @@ fn measure_bench<F>(
 
     let (min_ns, median_ns, p95_ns, spread_pct) = compute_stats(&samples);
     let rounded_samples: Vec<f64> = samples.into_iter().map(round4).collect();
-    let measured_at_commit = detect_git_commit();
-    let (_binary_path, binary_sha256) = detect_self_binary_path_and_sha256();
     records.push(BenchRecord {
         category: "e2e_search".to_string(),
         name: name.to_string(),
@@ -406,8 +383,6 @@ fn measure_bench<F>(
         spread_pct: round2(spread_pct),
         max_regression_pct: 9.0,
         samples_ns_per_op: rounded_samples,
-        measured_at_commit,
-        binary_sha256,
     });
 }
 
@@ -2008,7 +1983,6 @@ fn main() {
     let logical_cores = hardware_logical_cores();
     let primary_core = select_primary_core(logical_cores, 150);
     pin_current_thread_to_core(primary_core);
-    let host_metadata = collect_host_metadata(primary_core);
 
     let num_docs: usize = std::env::var("ZIPORA_E2E_DOCS")
         .ok()
@@ -2022,16 +1996,6 @@ fn main() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10_000);
-
-    eprintln!(
-        "=== Zipora E1.1 Systemic E2E Search Benchmark (host={}, cpu={}, pinned_core={}, docs={}, vocab={}, queries={}) ===",
-        host_metadata.host,
-        host_metadata.cpu_model,
-        primary_core,
-        num_docs,
-        vocab_size,
-        num_queries
-    );
 
     let corpus = generate_zipf_corpus_and_queries(num_docs, vocab_size, num_queries, SEED_E2E);
     let zipora_engine = ZiporaSearchEngine::build(&corpus);
@@ -2191,6 +2155,18 @@ fn main() {
     let baseline_bytes_per_posting = round4(baseline_engine.bytes_per_posting());
     let vm_hwm_kib = read_vm_hwm_kib();
     let encoding_distribution = zipora_engine.encoding_distribution();
+    let host_metadata = collect_host_metadata(primary_core);
+
+    eprintln!(
+        "=== Zipora E1.1 Systemic E2E Search Benchmark (host={}, cpu={}, pinned_core={}, docs={}, vocab={}, queries={}, commit={}) ===",
+        host_metadata.host,
+        host_metadata.cpu_model,
+        primary_core,
+        num_docs,
+        vocab_size,
+        num_queries,
+        host_metadata.git_commit
+    );
 
     for rec in &records {
         eprintln!(

@@ -33,16 +33,6 @@ pub struct SameRunComparison {
     pub competitor_secondary: f64,
     pub secondary_delta_pct: f64,
     pub e3_verdict: String,
-    #[serde(default)]
-    pub zipora_measured_at_commit: String,
-    #[serde(default)]
-    pub zipora_binary_sha256: String,
-    #[serde(default)]
-    pub competitor_measured_at_commit: String,
-    #[serde(default)]
-    pub competitor_binary_sha256: String,
-    #[serde(default)]
-    pub cross_binary_comparison: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,8 +302,11 @@ pub fn build_competitor_configs() -> BTreeMap<String, CompetitorConfigMeta> {
     m
 }
 
-fn find_record<'a>(records: &'a [BenchRecord], name: &str) -> Option<&'a BenchRecord> {
-    records.iter().find(|r| r.name == name)
+fn find_min(records: &[BenchRecord], name: &str) -> Option<f64> {
+    records
+        .iter()
+        .find(|r| r.name == name)
+        .map(|r| r.min_ns_per_op)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -331,13 +324,12 @@ fn push_comparison(
     zipora_secondary: f64,
     competitor_secondary: f64,
 ) {
-    let (Some(z_rec), Some(c_rec)) = (
-        find_record(records, zipora_bench),
-        find_record(records, competitor_bench),
+    let (Some(z_min), Some(c_min)) = (
+        find_min(records, zipora_bench),
+        find_min(records, competitor_bench),
     ) else {
         return;
     };
-    let (z_min, c_min) = (z_rec.min_ns_per_op, c_rec.min_ns_per_op);
     let primary_speedup_ratio = if z_min > 0.0 { c_min / z_min } else { 1.0 };
     let primary_delta_pct = if c_min > 0.0 {
         (z_min - c_min) / c_min * 100.0
@@ -354,8 +346,6 @@ fn push_comparison(
     } else {
         "GAP"
     };
-    let cross_binary_comparison = z_rec.binary_sha256 != c_rec.binary_sha256
-        || z_rec.measured_at_commit != c_rec.measured_at_commit;
     out.push(SameRunComparison {
         category: category.to_string(),
         operation: operation.to_string(),
@@ -373,11 +363,6 @@ fn push_comparison(
         competitor_secondary: (competitor_secondary * 1e4).round() / 1e4,
         secondary_delta_pct: (secondary_delta_pct * 1e2).round() / 1e2,
         e3_verdict: e3_verdict.to_string(),
-        zipora_measured_at_commit: z_rec.measured_at_commit.clone(),
-        zipora_binary_sha256: z_rec.binary_sha256.clone(),
-        competitor_measured_at_commit: c_rec.measured_at_commit.clone(),
-        competitor_binary_sha256: c_rec.binary_sha256.clone(),
-        cross_binary_comparison,
     });
 }
 

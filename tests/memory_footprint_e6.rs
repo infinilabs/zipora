@@ -409,23 +409,6 @@ fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    // 1. S52-R1: BenchRecord in benches/common/harness.rs and benches/e2e_search_bench.rs
-    // must emit measured_at_commit + binary_sha256 per row so UPDATE_BASELINE=1 produces valid files.
-    let harness_src = std::fs::read_to_string(manifest_dir.join("benches/common/harness.rs"))
-        .expect("read benches/common/harness.rs");
-    assert!(
-        harness_src.contains("pub measured_at_commit: String")
-            && harness_src.contains("pub binary_sha256: String"),
-        "benches/common/harness.rs BenchRecord must emit measured_at_commit and binary_sha256"
-    );
-    let comparisons_src =
-        std::fs::read_to_string(manifest_dir.join("benches/competitors/comparisons.rs"))
-            .expect("read benches/competitors/comparisons.rs");
-    assert!(
-        comparisons_src.contains("pub cross_binary_comparison: bool"),
-        "benches/competitors/comparisons.rs SameRunComparison must emit cross_binary_comparison"
-    );
-
     for (suite, expected_total) in [
         ("core_bench", 80usize),
         ("competitor_bench", 181usize),
@@ -751,7 +734,9 @@ fn test_s51_r3_review_ledger_identifiers_and_metrics_match_code_and_baselines() 
             "1,429/1,429",
             "benches/common/datasets.rs:424-441",
             "benches/common/datasets.rs:530-545",
+            "benches/common/datasets.rs:564-579",
             "benches/common/harness.rs:726",
+            "benches/common/harness.rs:736",
         ] {
             assert!(
                 !content.contains(forbidden),
@@ -765,10 +750,58 @@ fn test_s51_r3_review_ledger_identifiers_and_metrics_match_code_and_baselines() 
         "S52-R8: docs/review/e4.md must cite benches/competitors/suffix_array.rs:122-124 and 1,427/1,427 unsafe sites"
     );
     assert!(
-        e2_e3.contains("benches/common/datasets.rs:564-579")
-            && e2_e3.contains("benches/common/harness.rs:736")
+        e2_e3.contains("benches/common/datasets.rs:533-548")
+            && e2_e3.contains("benches/common/harness.rs:712")
             && e2_e3.contains("1,427/1,427 = 100.0%")
             && e2_e3.contains("later refactored into `LockFreeMemoryPool::pop_fast_bin` and `PoolArena::push_free_fast_bin_offset`"),
         "S52-R8: docs/review/e2_e3.md must have accurate datasets.rs/harness.rs line refs, 1,427 unsafe count, and non-anachronistic E3.5 Stage 15/16 pool attribution"
+    );
+}
+
+#[test]
+fn test_s53_r3_benchmark_provenance_out_of_timed_heap_and_once_in_e2e() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let datasets = std::fs::read_to_string(manifest_dir.join("benches/common/datasets.rs"))
+        .expect("read benches/common/datasets.rs");
+    let binary_meta = std::fs::read_to_string(manifest_dir.join("benches/common/binary_meta.rs"))
+        .expect("read benches/common/binary_meta.rs");
+    let e2e = std::fs::read_to_string(manifest_dir.join("benches/e2e_search_bench.rs"))
+        .expect("read benches/e2e_search_bench.rs");
+
+    assert!(
+        !datasets.contains("Command::new(\"git\")")
+            && !datasets.contains("detect_self_binary_path_and_sha256"),
+        "S53-R3: benches/common/datasets.rs must not spawn git or read/hash the binary at init"
+    );
+    assert!(
+        binary_meta.contains("sha256_reader")
+            && !binary_meta.contains("std::fs::read(&exe)")
+            && binary_meta.contains("ZIPORA_BENCH_GIT_COMMIT"),
+        "S53-R3: benches/common/binary_meta.rs must stream-hash with a stack buffer and honor ZIPORA_BENCH_GIT_COMMIT"
+    );
+    let e2e_measure_fn = e2e
+        .split("fn measure_bench<F>")
+        .nth(1)
+        .and_then(|s| s.split("fn read_vm_hwm_kib").next())
+        .expect("locate measure_bench in e2e_search_bench.rs");
+    assert!(
+        !e2e_measure_fn.contains("detect_git_commit")
+            && !e2e_measure_fn.contains("detect_self_binary_path_and_sha256"),
+        "S53-R3: e2e_search_bench::measure_bench must not run git or self-hash inside per-benchmark measurement"
+    );
+    assert_eq!(
+        e2e.matches("collect_host_metadata(").count(),
+        2,
+        "S53-R3: e2e_search_bench.rs must define collect_host_metadata once and call it once"
+    );
+    let rss_pos = e2e
+        .find("let vm_hwm_kib = read_vm_hwm_kib();")
+        .expect("find read_vm_hwm_kib call");
+    let meta_pos = e2e
+        .find("let host_metadata = collect_host_metadata(primary_core);")
+        .expect("find collect_host_metadata call");
+    assert!(
+        meta_pos > rss_pos,
+        "S53-R3: e2e_search_bench.rs must call collect_host_metadata only once after all timed benchmarks and read_vm_hwm_kib()"
     );
 }
