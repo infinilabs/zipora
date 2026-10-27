@@ -287,12 +287,7 @@ behind the `avx512` cargo feature with runtime detection.
 
 ## Performance
 
-Verified numbers (see [PERFORMANCE.md](PERFORMANCE.md) for methodology and details):
-
-- **Rank/Select**: ~5.2 Gops/s single-query; bulk SIMD operations 10x scalar; bitwise
-  SIMD operations 41x scalar
-- **popcount_slice**: 5.2 Gwords/s (POPCNT tier), NEON supported
-- **StreamVByte decode**: 8.7x scalar (SSSE3 shuffle-table)
+See **[Verified Performance](PERFORMANCE.md)** for measured benchmark numbers across `RankSelectInterleaved256`, `RankSelectSE256`, `StreamVByte`, `GroupVarint`, `simd_strchr`, `simd_strstr`, and `Bm25BatchScorer` on `bindiego`.
 
 ## Best Practices
 

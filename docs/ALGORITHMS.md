@@ -263,7 +263,7 @@ for _ in 0..4 {
 
 let multi_rs: MultiDimRankSelect<4> = MultiDimRankSelect::new(dimensions).unwrap();
 
-// Vectorized bulk rank across all dimensions (4-8x faster with SIMD)
+// Vectorized bulk rank across all dimensions
 let positions = [100, 200, 300, 400];
 let ranks = multi_rs.bulk_rank_multidim(&positions);
 
@@ -284,7 +284,7 @@ See [SEARCH_ENGINE_GUIDE.md §11 "SIMD Cursor Primitives (Block-Max WAND)"](SEAR
 ## Performance Characteristics
 
 - **Cache Complexity**: O(1 + N/B * log_{M/B}(N/B)) optimal across all cache levels
-- **SIMD Acceleration**: 2-4x speedup with AVX2/BMI2
-- **Parallel Scaling**: Near-linear scaling up to 8-16 cores
-- **Memory Efficiency**: Minimal overhead with in-place algorithms
-- **Rank/Select**: ~5.2 Gops/s single-query (bulk SIMD 10x, bitwise SIMD 41x)
+- **SIMD Acceleration**: Runtime dispatch across AVX-512, AVX2, BMI2, SSE4.2, NEON, and scalar tiers
+- **Parallel Scaling**: Work-stealing and multi-threaded segment/sort support
+- **Memory Efficiency**: Minimal overhead with in-place and succinct algorithms
+- **Measured Benchmarks**: See **[Verified Performance](PERFORMANCE.md)** for committed baseline numbers on `bindiego`

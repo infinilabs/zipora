@@ -164,11 +164,11 @@ println!("Selected algorithm: {:?}", compressor.current_algorithm());
 | **rANS** | Data-dependent | Fast | High precision entropy coding |
 | **ZSTD** | Data-dependent | Moderate | General purpose, best ratio |
 | **LZ4** | Data-dependent | Very Fast | Speed-critical applications |
-| **StreamVByte** | 1.5-3x | **Ultra Fast (SSSE3)** | Inverted index delta lists, integer sequences |
+| **StreamVByte** | Data-dependent | **Ultra Fast (SSSE3)** | Inverted index delta lists, integer sequences |
 
 ## StreamVByte (SIMD-Accelerated Variable-Byte)
 
-StreamVByte separates control bytes (2 bits per integer indicating length 1..=4 bytes) from data bytes. Decoding uses Lemire's SSSE3 shuffle-table algorithm (`_mm_shuffle_epi8` / `pshufb`) with a 256-entry precomputed mask table, achieving **8.7x faster decoding** than scalar varint.
+StreamVByte separates control bytes (2 bits per integer indicating length 1..=4 bytes) from data bytes. Decoding uses Lemire's SSSE3 shuffle-table algorithm (`_mm_shuffle_epi8` / `pshufb`) with a 256-entry precomputed mask table.
 
 ```rust
 use zipora::compression::stream_vbyte::StreamVByte;
@@ -194,8 +194,4 @@ SIMD acceleration (histogram computation, bit manipulation, shuffle-table decodi
 
 ## Verified Performance
 
-Measured numbers (see [docs/PERFORMANCE.md](PERFORMANCE.md) for methodology):
-
-- **Huffman O1**: 173-188 µs for 65 KB
-- **rANS**: 351-426 µs for 65 KB
-- **StreamVByte decode**: 8.7x vs scalar varint
+See **[Verified Performance](PERFORMANCE.md)** for measured encode/decode latency and space metrics across `HuffmanDecoder`, `ContextualHuffmanEncoder`, `FseCompressor`, `Rans64Decoder`, `StreamVByte`, and `GroupVarint` on `bindiego`.

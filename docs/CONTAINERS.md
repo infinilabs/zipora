@@ -17,12 +17,12 @@ vec.push(42).unwrap();
 let s = FastStr::from_string("hello world");
 println!("Hash: {:x}", s.hash_fast());
 
-// 32-bit indexed vectors - 50% memory reduction with golden ratio growth strategy
+// 32-bit indexed vectors with golden ratio growth strategy
 let mut vec32 = ValVec32::<u64>::new();
 vec32.push(42).unwrap();
 assert_eq!(vec32.get(0), Some(&42));
 
-// Small maps - 3.8x faster than HashMap for <=8 elements
+// Small maps - inline storage for <=8 elements
 let mut small_map = SmallMap::<i32, String>::new();
 small_map.insert(1, "one".to_string()).unwrap();
 small_map.insert(2, "two".to_string()).unwrap();
@@ -33,12 +33,12 @@ queue.push_back(1).unwrap();
 queue.push_back(2).unwrap();
 assert_eq!(queue.pop_front(), Some(1));
 
-// Auto-growing circular queue - 1.17x faster than VecDeque
+// Auto-growing circular queue
 let mut auto_queue = AutoGrowCircularQueue::<String>::new();
 auto_queue.push_back("hello".to_string()).unwrap();
 auto_queue.push_back("world".to_string()).unwrap();
 
-// Compressed integer storage - 60-80% space reduction
+// Compressed integer storage
 let mut uint_vec = UintVector::new();
 uint_vec.push(42).unwrap();
 uint_vec.push(1000).unwrap();
@@ -48,14 +48,13 @@ println!("Compression ratio: {:.2}", uint_vec.compression_ratio());
 let values: Vec<u32> = (1000..2000).collect();
 let compressed = IntVec::<u32>::from_slice(&values).unwrap();
 println!("IntVec compression ratio: {:.3}", compressed.compression_ratio());
-assert!(compressed.compression_ratio() < 0.4); // >60% compression
+assert!(compressed.compression_ratio() < 0.4);
 
 // Generic support for all integer types
 let u64_values: Vec<u64> = (0..1000).map(|i| i * 1000).collect();
 let u64_compressed = IntVec::<u64>::from_slice(&u64_values).unwrap();
 
 // Fixed-length strings - arena-based, no per-string heap allocation
-// (FixedStr16Vec: 7.8x faster than Vec<String>)
 let mut fixed_str_vec = FixedLenStrVec::<32>::new();
 fixed_str_vec.push("hello").unwrap();
 fixed_str_vec.push("world").unwrap();
@@ -150,20 +149,20 @@ println!("Shard distribution: {:?}", shard_sizes);
 - **Shard Load Balancing**: Hash-based shard distribution for reduced lock contention and cache coherence
 - **Memory Efficient**: Intrusive linked list design minimizes overhead
 
-## Container Performance Summary
+## Container Summary
 
-| Container | Memory Reduction | Performance Gain | Use Case |
-|-----------|------------------|------------------|----------|
-| **ValVec32<T>** | **50%** | Golden ratio growth, near-parity | Large collections on 64-bit |
-| **SmallMap<K,V>** | No heap allocation | **3.8x vs HashMap** | <=8 key-value pairs |
-| **FixedCircularQueue** | Zero allocation | 20-30% faster | Lock-free ring buffers |
-| **AutoGrowCircularQueue** | Cache-aligned | **1.17x vs VecDeque** | Ultra-fast vs VecDeque |
-| **UintVector** | **68.7%** | <20% speed penalty | Compressed integers |
-| **IntVec<T>** | Variable bit-width packing | **Hardware-accelerated** | Generic bit-packed storage |
-| **FixedLenStrVec** | Arena-based, no per-string alloc | **7.8x vs Vec<String>** (FixedStr16Vec) | Arena-based fixed strings |
-| **SortableStrVec** | Arena allocation | **Intelligent selection** | String collections |
-| **LruMap<K,V>** | Intrusive linked list | **O(1) operations** | Single-threaded caching |
-| **ConcurrentLruMap<K,V>** | Sharded architecture | **Reduced contention** | Multi-threaded caching |
+| Container | Memory Design | Characteristics | Use Case |
+|-----------|---------------|-----------------|----------|
+| **ValVec32<T>** | 32-bit length/capacity | Golden ratio growth | Collections < 4B elements on 64-bit |
+| **SmallMap<K,V>** | No heap allocation | Inline linear search | <=8 key-value pairs |
+| **FixedCircularQueue** | Zero heap allocation | Power-of-two ring masking | Fixed-capacity ring buffers |
+| **AutoGrowCircularQueue** | Cache-aligned | Resizable ring buffer | Dynamic FIFO queues |
+| **UintVector** | Bit-packed integers | Variable bit-width | Compressed integers |
+| **IntVec<T>** | Variable bit-width packing | Delta checkpoints ($O(1)$ access) | Generic bit-packed storage |
+| **FixedLenStrVec** | Arena-based, no per-string alloc | Contiguous fixed-stride | Arena-based fixed strings |
+| **SortableStrVec** | Arena allocation | In-place offset sorting | String collections |
+| **LruMap<K,V>** | Intrusive linked list | O(1) operations | Single-threaded caching |
+| **ConcurrentLruMap<K,V>** | Sharded architecture | Reduced lock contention | Multi-threaded caching |
 
 Detailed, benchmarked numbers are maintained in [PERFORMANCE.md](PERFORMANCE.md).
 

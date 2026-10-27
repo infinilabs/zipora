@@ -1354,3 +1354,81 @@ fn test_s53_r2_r4_get2_inlining_steal_assertion_soak_sum_and_ledger_refs() {
         }
     }
 }
+
+#[test]
+fn test_s52_r5_generated_numeric_sections_all_mutations_and_docs_cleanup() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // 1. README.md and README_cn.md must use generated Key Features blocks from scripts/perf_table.py
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let readme_cn = std::fs::read_to_string(root.join("README_cn.md")).unwrap();
+    for (name, content) in [("README.md", &readme), ("README_cn.md", &readme_cn)] {
+        assert!(
+            content.contains("<!-- BEGIN GENERATED KEY FEATURES (scripts/perf_table.py) -->")
+                && content.contains("<!-- END GENERATED KEY FEATURES (scripts/perf_table.py) -->"),
+            "{name} must generate its Key Features numeric section via scripts/perf_table.py markers (S52-R5)"
+        );
+    }
+
+    // 2. All 30 adversarial mutations in s53/rev_infra/adv/mut.py must be caught by scripts/perf_table.py --check
+    let mut_out = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(
+            "import importlib.util, pathlib\n\
+             spec = importlib.util.spec_from_file_location('pt', 'scripts/perf_table.py')\n\
+             pt = importlib.util.module_from_spec(spec)\n\
+             spec.loader.exec_module(pt)\n\
+             assert hasattr(pt, 'run_mutation_self_test'), 'perf_table.py must define run_mutation_self_test()'\n\
+             failures = pt.run_mutation_self_test()\n\
+             assert not failures, f'uncaught mutations: {failures}'",
+        )
+        .current_dir(root)
+        .output()
+        .expect("python3 mutation check must execute");
+    assert!(
+        mut_out.status.success(),
+        "perf_table.py mutation self-test failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&mut_out.stdout),
+        String::from_utf8_lossy(&mut_out.stderr)
+    );
+
+    // 3. Unmeasured numbers must be removed from SEARCH_ENGINE_GUIDE.md, SIMD.md, ALGORITHMS.md, COMPRESSION.md, and CONTAINERS.md
+    let unmeasured_patterns = [
+        "26x",
+        "41x",
+        "8.7x",
+        "7.8x",
+        "3.8x",
+        "1.15x",
+        "1.17x",
+        "13.5x",
+        "2370x",
+        "5.2 Gops/s",
+        "5.2 Gwords/s",
+        "173-188",
+        "351-426",
+        "5.13 ms",
+        "381 µs",
+        "8 bytes per state",
+        "8 bytes/state",
+        "60-80%",
+        "68.7%",
+        "50% memory reduction",
+        "20-30% faster",
+    ];
+    for doc_rel in [
+        "docs/SEARCH_ENGINE_GUIDE.md",
+        "docs/SIMD.md",
+        "docs/ALGORITHMS.md",
+        "docs/COMPRESSION.md",
+        "docs/CONTAINERS.md",
+    ] {
+        let content = std::fs::read_to_string(root.join(doc_rel)).unwrap();
+        for pat in unmeasured_patterns {
+            assert!(
+                !content.contains(pat),
+                "{doc_rel} still contains unmeasured performance figure `{pat}` (S52-R5)"
+            );
+        }
+    }
+}

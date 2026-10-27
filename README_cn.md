@@ -10,17 +10,19 @@
 
 ## 核心特性
 
+<!-- BEGIN GENERATED KEY FEATURES (scripts/perf_table.py) -->
 - **高性能**：零拷贝操作、SIMD 优化（AVX2、AVX-512）、缓存友好的内存布局、Block-Max WAND SIMD 游标原语
-- **内存安全**：100% 生产环境 unsafe 代码块文档覆盖率，全部 1,427 个生产 unsafe 位置均附有 `// SAFETY:` 或 `# Safety` 注释（`scripts/unsafe_audit.py`）
+- **内存安全**：所有生产环境 `unsafe` 位置均附有 `// SAFETY:` 或 `# Safety` 注释（`scripts/unsafe_audit.py`）
 - **安全内存管理**：线程安全的生产级内存池（`SecureMemoryPool`、`LockFreeMemoryPool`、`FixedCapacityPool`、`AdaptiveFiveLevelPool`、`BumpArena`），支持 RAII（`tests/memory_pool_contract.rs`）
-- **Blob 存储**：9 种专用存储引擎（`MemoryBlobStore`、`PlainBlobStore`、`SimpleZipBlobStore`、`MixedLenBlobStore`、`ZipOffsetBlobStore`、`NestLoudsTrieBlobStore`、`DictZipBlobStore`、`ZstdBlobStore`、`Lz4BlobStore`），支持 Trie 索引和压缩（`tests/format_spec_golden_tests.rs`）
-- **简洁数据结构**：`Rank9`（Vigna 2008，`25.00%` 额外开销）、`RankSelectInterleaved256`（仅 rank `25.00%` / 含 select 缓存 `31.25%`）、`RankSelectSE256`、Elias-Fano / Partitioned / DP-Optimal Partitioned / Clustered Elias-Fano（支持游标 `advance_to_index`）、`HybridPostingList`（自动选择编码策略）、AMD 安全 PDEP（`has_fast_bmi2` 检测）（`tests/memory_footprint_e6.rs`）
+- **Blob 存储**：专用存储引擎（`MemoryBlobStore`、`PlainBlobStore`、`SimpleZipBlobStore`、`MixedLenBlobStore`、`ZipOffsetBlobStore`、`NestLoudsTrieBlobStore`、`DictZipBlobStore`、`ZstdBlobStore`、`Lz4BlobStore`），支持 Trie 索引和压缩（`tests/format_spec_golden_tests.rs`）
+- **简洁数据结构**：`Rank9`（Vigna 2008，`25.00%` 额外开销）、`RankSelectInterleaved256`（仅 rank `25.00%` / 含 select 缓存 `31.25%`）、`RankSelectSE256`、`EliasFano` / `PartitionedEliasFano` / `OptimalPartitionedEliasFano` / `ClusteredEliasFano`（支持游标 `advance_to_index`）、`HybridPostingList`（自动选择编码策略）、AMD 安全 PDEP（`has_fast_bmi2` 检测）（`tests/memory_footprint_e6.rs`）
 - **BM25 评分**：`FieldnormEncoder`（Lucene SmallFloat，`1.0 B/doc` 字段长度） + `Bm25BatchScorer`（AVX2/AVX-512 SIMD 批量评分、预取）（`tests/memory_footprint_e6.rs`、`benches/core_bench.rs`）
-- **专用容器**：13+ 种容器（`FastVec`、`ValVec32`、`IntVec`、`UintVecMin0`、`ZipIntVec`、`FixedLenStrVec`、`SortableStrVec`、`ZoSortedStrVec`、`VecTrbSet`/`VecTrbMap`、`MinimalSso`、`LruMap`、`ConcurrentLruMap`、`FixedCircularQueue`）
+- **专用容器**：`FastVec`、`ValVec32`、`IntVec`、`UintVecMin0`、`ZipIntVec`、`FixedLenStrVec`、`SortableStrVec`、`ZoSortedStrVec`、`VecTrbSet`/`VecTrbMap`、`MinimalSso`、`LruMap`、`ConcurrentLruMap`、`FixedCircularQueue`
 - **哈希表**：SwissTable 16 路 SSE2 组探测 `ZiporaHashMap`（`1M` `u64` 下 `35.65 B/entry`）、`GoldHashMap`（`benches/competitor_bench.rs`）
-- **高级 Trie**：双数组（`DoubleArrayTrie`，`12.0 B/state`；`DoubleArrayTrieMap<u32>`，`12.0–16.0 B/state`）、LOUDS、Critical-Bit（BMI2）、Patricia Trie、惰性前缀/模糊迭代器、`CsppTrie`（压缩稀疏并行 Patricia，10 种节点编码，共享前缀键 `9.60 B/key`）、`ConcurrentCsppTrie`（多写多读，基于 epoch 的回收）（`tests/memory_footprint_e6.rs`）
+- **高级 Trie**：双数组（`DoubleArrayTrie`，`12.0 B/state`；`DoubleArrayTrieMap<u32>`，`12.0–16.0 B/state`）、LOUDS、Critical-Bit（BMI2）、Patricia Trie、惰性前缀/模糊迭代器、`CsppTrie`（压缩稀疏并行 Patricia，共享前缀键 `9.60 B/key`）、`ConcurrentCsppTrie`（多写多读，基于 epoch 的回收）（`tests/memory_footprint_e6.rs`）
 - **压缩与整数编码**：PA-Zip、Huffman O0/O1/O2、FSE、rANS（64 位 X1/X2/X4/X8）、`StreamVByte`（SSSE3）、`GroupVarint`（SSSE3）、ZSTD 与 LZ4 集成（`benches/competitor_bench.rs`）
 - **C FFI 支持**：完整的 C11/C++17 API（`--features ffi`，`tests/ffi_c_smoke.rs`）
+<!-- END GENERATED KEY FEATURES (scripts/perf_table.py) -->
 
 ## 快速开始
 

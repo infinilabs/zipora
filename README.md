@@ -10,17 +10,19 @@ High-performance Rust data structures and compression algorithms with memory saf
 
 ## Key Features
 
+<!-- BEGIN GENERATED KEY FEATURES (scripts/perf_table.py) -->
 - **High Performance**: Zero-copy operations, SIMD optimizations (AVX2, AVX-512), cache-friendly layouts, SIMD cursor primitives for Block-Max WAND
-- **Memory Safety**: 100% production unsafe block documentation coverage, all 1,427 production unsafe sites annotated with `// SAFETY:` or `# Safety` comments (`scripts/unsafe_audit.py`)
+- **Memory Safety**: Every production `unsafe` site is annotated with a `// SAFETY:` or `# Safety` comment (`scripts/unsafe_audit.py`)
 - **Secure Memory Management**: Production-ready memory pools (`SecureMemoryPool`, `LockFreeMemoryPool`, `FixedCapacityPool`, `AdaptiveFiveLevelPool`, `BumpArena`) with thread safety and RAII (`tests/memory_pool_contract.rs`)
 - **Blob Storage**: Specialized stores (`MemoryBlobStore`, `PlainBlobStore`, `SimpleZipBlobStore`, `MixedLenBlobStore`, `ZipOffsetBlobStore`, `NestLoudsTrieBlobStore`, `DictZipBlobStore`, `ZstdBlobStore`, `Lz4BlobStore`) with trie-based indexing and compression (`tests/format_spec_golden_tests.rs`)
-- **Succinct Data Structures**: `Rank9` (Vigna 2008, `25.00%` overhead), `RankSelectInterleaved256` (`25.00%` rank-only / `31.25%` with select caches), `RankSelectSE256`, Elias-Fano / Partitioned / DP-Optimal Partitioned / Clustered Elias-Fano with cursor `advance_to_index`, `HybridPostingList` (auto-select encoding), AMD-safe PDEP with `has_fast_bmi2` (`tests/memory_footprint_e6.rs`)
+- **Succinct Data Structures**: `Rank9` (Vigna 2008, `25.00%` overhead), `RankSelectInterleaved256` (`25.00%` rank-only / `31.25%` with select caches), `RankSelectSE256`, `EliasFano` / `PartitionedEliasFano` / `OptimalPartitionedEliasFano` / `ClusteredEliasFano` with cursor `advance_to_index`, `HybridPostingList` (auto-select encoding), AMD-safe PDEP with `has_fast_bmi2` (`tests/memory_footprint_e6.rs`)
 - **BM25 Scoring**: `FieldnormEncoder` (Lucene SmallFloat, `1.0 B/doc` fieldnorms) + `Bm25BatchScorer` (AVX2/AVX-512 SIMD batch, prefetch) (`tests/memory_footprint_e6.rs`, `benches/core_bench.rs`)
-- **Specialized Containers**: 13+ containers (`FastVec`, `ValVec32`, `IntVec`, `UintVecMin0`, `ZipIntVec`, `FixedLenStrVec`, `SortableStrVec`, `ZoSortedStrVec`, `VecTrbSet`/`VecTrbMap`, `MinimalSso`, `LruMap`, `ConcurrentLruMap`, `FixedCircularQueue`)
+- **Specialized Containers**: `FastVec`, `ValVec32`, `IntVec`, `UintVecMin0`, `ZipIntVec`, `FixedLenStrVec`, `SortableStrVec`, `ZoSortedStrVec`, `VecTrbSet`/`VecTrbMap`, `MinimalSso`, `LruMap`, `ConcurrentLruMap`, `FixedCircularQueue`
 - **Hash Maps**: SwissTable 16-way SSE2 group-probing `ZiporaHashMap` (`35.65 B/entry` on `1M` `u64`), `GoldHashMap` (`benches/competitor_bench.rs`)
-- **Advanced Tries**: Double-Array (`DoubleArrayTrie`, `12.0 B/state`; `DoubleArrayTrieMap<u32>`, `12.0–16.0 B/state`), LOUDS, Critical-Bit (BMI2), Patricia tries, lazy prefix/fuzzy iterators, `CsppTrie` (Compressed Sparse Parallel Patricia, 10 node encodings, `9.60 B/key` on shared-prefix keys), `ConcurrentCsppTrie` (multi-writer/multi-reader, epoch-based reclamation) (`tests/memory_footprint_e6.rs`)
+- **Advanced Tries**: Double-Array (`DoubleArrayTrie`, `12.0 B/state`; `DoubleArrayTrieMap<u32>`, `12.0–16.0 B/state`), LOUDS, Critical-Bit (BMI2), Patricia tries, lazy prefix/fuzzy iterators, `CsppTrie` (Compressed Sparse Parallel Patricia, `9.60 B/key` on shared-prefix keys), `ConcurrentCsppTrie` (multi-writer/multi-reader, epoch-based reclamation) (`tests/memory_footprint_e6.rs`)
 - **Compression & Integer Codecs**: PA-Zip, Huffman O0/O1/O2, FSE, rANS (64-bit X1/X2/X4/X8), `StreamVByte` (SSSE3), `GroupVarint` (SSSE3), ZSTD & LZ4 integration (`benches/competitor_bench.rs`)
 - **C FFI Support**: Complete C11/C++17 API (`--features ffi`, `tests/ffi_c_smoke.rs`)
+<!-- END GENERATED KEY FEATURES (scripts/perf_table.py) -->
 
 ## Quick Start
 

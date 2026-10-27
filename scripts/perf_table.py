@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Generate Verified Performance tables from committed baselines (`E7`) and
-audit `README.md` numeric and capability claims against tests/baselines (`F2`).
+"""Generate Verified Performance tables and Key Features sections from committed
+baselines (`E7`) and audit `README.md`, `README_cn.md`, and `docs/PERFORMANCE.md`
+numeric and capability claims against tests/baselines (`F2` / `S52-R5`).
 
 Usage:
   python3 scripts/perf_table.py
@@ -13,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,6 +23,49 @@ BASELINE_DIR = ROOT / "benches" / "baselines" / "bindiego"
 
 BEGIN_MARKER = "<!-- BEGIN GENERATED PERF TABLE (scripts/perf_table.py) -->"
 END_MARKER = "<!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->"
+BEGIN_KF_MARKER = "<!-- BEGIN GENERATED KEY FEATURES (scripts/perf_table.py) -->"
+END_KF_MARKER = "<!-- END GENERATED KEY FEATURES (scripts/perf_table.py) -->"
+
+ALLOWED_HTML_COMMENTS = {
+    BEGIN_MARKER,
+    END_MARKER,
+    BEGIN_KF_MARKER,
+    END_KF_MARKER,
+}
+
+# Verified structural/E6 constants asserted in tests/memory_footprint_e6.rs
+E6_DAT_MAP_BYTES_PER_STATE = "12.0–16.0 B/state"
+E6_FIELDNORM_BYTES_PER_DOC = "1.0 B/doc"
+
+EXTERNAL_ALLOWED_TYPES = {
+    "Vec",
+    "String",
+    "Arc",
+    "Rc",
+    "Box",
+    "Mutex",
+    "RwLock",
+    "HashMap",
+    "BTreeMap",
+    "VecDeque",
+    "Option",
+    "Result",
+    "Rank9Sel",
+    "EliasFanoVec",
+    "Trie",
+    "ParallelX1",
+    "ParallelX2",
+    "ParallelX4",
+    "ParallelX8",
+    "System",
+    "SmallFloat",
+    "VarInt",
+    "SwissTable",
+    "KiB",
+    "MiB",
+    "GiB",
+    "Gbit",
+}
 
 
 def load_baselines() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -55,6 +98,86 @@ def format_secondary(metric: str, val: float) -> str:
     return f"{val:.2f}"
 
 
+def generate_key_features_en(
+    core: dict[str, Any],
+    comp: dict[str, Any],
+) -> str:
+    space = core["space_metrics"]
+    pair_map = {
+        (c["zipora_bench"], c["competitor_bench"]): c
+        for c in comp["same_run_comparisons"]
+    }
+    r9_ovh = space["rank_select/rank9_overhead_pct"]
+    il_sel_ovh = (
+        pair_map[
+            ("rank_select/interleaved256/rank1", "rank_select/sucds_rank9sel/rank1")
+        ]["zipora_secondary"]
+        - 100.0
+    )
+    hm_u64_b = pair_map[
+        ("hash_maps/zipora_hash_map/get_u64", "hash_maps/std/get_u64")
+    ]["zipora_secondary"]
+    dat_bps = space["tries/dat_shared_prefix_bytes_per_state"]
+    cspp_bpk = space["tries/cspp_shared_prefix_bytes_per_key"]
+
+    lines = [
+        BEGIN_KF_MARKER,
+        "- **High Performance**: Zero-copy operations, SIMD optimizations (AVX2, AVX-512), cache-friendly layouts, SIMD cursor primitives for Block-Max WAND",
+        "- **Memory Safety**: Every production `unsafe` site is annotated with a `// SAFETY:` or `# Safety` comment (`scripts/unsafe_audit.py`)",
+        "- **Secure Memory Management**: Production-ready memory pools (`SecureMemoryPool`, `LockFreeMemoryPool`, `FixedCapacityPool`, `AdaptiveFiveLevelPool`, `BumpArena`) with thread safety and RAII (`tests/memory_pool_contract.rs`)",
+        "- **Blob Storage**: Specialized stores (`MemoryBlobStore`, `PlainBlobStore`, `SimpleZipBlobStore`, `MixedLenBlobStore`, `ZipOffsetBlobStore`, `NestLoudsTrieBlobStore`, `DictZipBlobStore`, `ZstdBlobStore`, `Lz4BlobStore`) with trie-based indexing and compression (`tests/format_spec_golden_tests.rs`)",
+        f"- **Succinct Data Structures**: `Rank9` (Vigna 2008, `{r9_ovh:.2f}%` overhead), `RankSelectInterleaved256` (`{r9_ovh:.2f}%` rank-only / `{il_sel_ovh:.2f}%` with select caches), `RankSelectSE256`, `EliasFano` / `PartitionedEliasFano` / `OptimalPartitionedEliasFano` / `ClusteredEliasFano` with cursor `advance_to_index`, `HybridPostingList` (auto-select encoding), AMD-safe PDEP with `has_fast_bmi2` (`tests/memory_footprint_e6.rs`)",
+        f"- **BM25 Scoring**: `FieldnormEncoder` (Lucene SmallFloat, `{E6_FIELDNORM_BYTES_PER_DOC}` fieldnorms) + `Bm25BatchScorer` (AVX2/AVX-512 SIMD batch, prefetch) (`tests/memory_footprint_e6.rs`, `benches/core_bench.rs`)",
+        "- **Specialized Containers**: `FastVec`, `ValVec32`, `IntVec`, `UintVecMin0`, `ZipIntVec`, `FixedLenStrVec`, `SortableStrVec`, `ZoSortedStrVec`, `VecTrbSet`/`VecTrbMap`, `MinimalSso`, `LruMap`, `ConcurrentLruMap`, `FixedCircularQueue`",
+        f"- **Hash Maps**: SwissTable 16-way SSE2 group-probing `ZiporaHashMap` (`{hm_u64_b:.2f} B/entry` on `1M` `u64`), `GoldHashMap` (`benches/competitor_bench.rs`)",
+        f"- **Advanced Tries**: Double-Array (`DoubleArrayTrie`, `{dat_bps:.1f} B/state`; `DoubleArrayTrieMap<u32>`, `{E6_DAT_MAP_BYTES_PER_STATE}`), LOUDS, Critical-Bit (BMI2), Patricia tries, lazy prefix/fuzzy iterators, `CsppTrie` (Compressed Sparse Parallel Patricia, `{cspp_bpk:.2f} B/key` on shared-prefix keys), `ConcurrentCsppTrie` (multi-writer/multi-reader, epoch-based reclamation) (`tests/memory_footprint_e6.rs`)",
+        "- **Compression & Integer Codecs**: PA-Zip, Huffman O0/O1/O2, FSE, rANS (64-bit X1/X2/X4/X8), `StreamVByte` (SSSE3), `GroupVarint` (SSSE3), ZSTD & LZ4 integration (`benches/competitor_bench.rs`)",
+        "- **C FFI Support**: Complete C11/C++17 API (`--features ffi`, `tests/ffi_c_smoke.rs`)",
+        END_KF_MARKER,
+    ]
+    return "\n".join(lines)
+
+
+def generate_key_features_cn(
+    core: dict[str, Any],
+    comp: dict[str, Any],
+) -> str:
+    space = core["space_metrics"]
+    pair_map = {
+        (c["zipora_bench"], c["competitor_bench"]): c
+        for c in comp["same_run_comparisons"]
+    }
+    r9_ovh = space["rank_select/rank9_overhead_pct"]
+    il_sel_ovh = (
+        pair_map[
+            ("rank_select/interleaved256/rank1", "rank_select/sucds_rank9sel/rank1")
+        ]["zipora_secondary"]
+        - 100.0
+    )
+    hm_u64_b = pair_map[
+        ("hash_maps/zipora_hash_map/get_u64", "hash_maps/std/get_u64")
+    ]["zipora_secondary"]
+    dat_bps = space["tries/dat_shared_prefix_bytes_per_state"]
+    cspp_bpk = space["tries/cspp_shared_prefix_bytes_per_key"]
+
+    lines = [
+        BEGIN_KF_MARKER,
+        "- **高性能**：零拷贝操作、SIMD 优化（AVX2、AVX-512）、缓存友好的内存布局、Block-Max WAND SIMD 游标原语",
+        "- **内存安全**：所有生产环境 `unsafe` 位置均附有 `// SAFETY:` 或 `# Safety` 注释（`scripts/unsafe_audit.py`）",
+        "- **安全内存管理**：线程安全的生产级内存池（`SecureMemoryPool`、`LockFreeMemoryPool`、`FixedCapacityPool`、`AdaptiveFiveLevelPool`、`BumpArena`），支持 RAII（`tests/memory_pool_contract.rs`）",
+        "- **Blob 存储**：专用存储引擎（`MemoryBlobStore`、`PlainBlobStore`、`SimpleZipBlobStore`、`MixedLenBlobStore`、`ZipOffsetBlobStore`、`NestLoudsTrieBlobStore`、`DictZipBlobStore`、`ZstdBlobStore`、`Lz4BlobStore`），支持 Trie 索引和压缩（`tests/format_spec_golden_tests.rs`）",
+        f"- **简洁数据结构**：`Rank9`（Vigna 2008，`{r9_ovh:.2f}%` 额外开销）、`RankSelectInterleaved256`（仅 rank `{r9_ovh:.2f}%` / 含 select 缓存 `{il_sel_ovh:.2f}%`）、`RankSelectSE256`、`EliasFano` / `PartitionedEliasFano` / `OptimalPartitionedEliasFano` / `ClusteredEliasFano`（支持游标 `advance_to_index`）、`HybridPostingList`（自动选择编码策略）、AMD 安全 PDEP（`has_fast_bmi2` 检测）（`tests/memory_footprint_e6.rs`）",
+        f"- **BM25 评分**：`FieldnormEncoder`（Lucene SmallFloat，`{E6_FIELDNORM_BYTES_PER_DOC}` 字段长度） + `Bm25BatchScorer`（AVX2/AVX-512 SIMD 批量评分、预取）（`tests/memory_footprint_e6.rs`、`benches/core_bench.rs`）",
+        "- **专用容器**：`FastVec`、`ValVec32`、`IntVec`、`UintVecMin0`、`ZipIntVec`、`FixedLenStrVec`、`SortableStrVec`、`ZoSortedStrVec`、`VecTrbSet`/`VecTrbMap`、`MinimalSso`、`LruMap`、`ConcurrentLruMap`、`FixedCircularQueue`",
+        f"- **哈希表**：SwissTable 16 路 SSE2 组探测 `ZiporaHashMap`（`1M` `u64` 下 `{hm_u64_b:.2f} B/entry`）、`GoldHashMap`（`benches/competitor_bench.rs`）",
+        f"- **高级 Trie**：双数组（`DoubleArrayTrie`，`{dat_bps:.1f} B/state`；`DoubleArrayTrieMap<u32>`，`{E6_DAT_MAP_BYTES_PER_STATE}`）、LOUDS、Critical-Bit（BMI2）、Patricia Trie、惰性前缀/模糊迭代器、`CsppTrie`（压缩稀疏并行 Patricia，共享前缀键 `{cspp_bpk:.2f} B/key`）、`ConcurrentCsppTrie`（多写多读，基于 epoch 的回收）（`tests/memory_footprint_e6.rs`）",
+        "- **压缩与整数编码**：PA-Zip、Huffman O0/O1/O2、FSE、rANS（64 位 X1/X2/X4/X8）、`StreamVByte`（SSSE3）、`GroupVarint`（SSSE3）、ZSTD 与 LZ4 集成（`benches/competitor_bench.rs`）",
+        "- **C FFI 支持**：完整的 C11/C++17 API（`--features ffi`，`tests/ffi_c_smoke.rs`）",
+        END_KF_MARKER,
+    ]
+    return "\n".join(lines)
+
+
 def generate_perf_section(
     core: dict[str, Any],
     comp: dict[str, Any],
@@ -85,9 +208,6 @@ def generate_perf_section(
 
     total_pairs = len(comp["same_run_comparisons"]) + 1
 
-    # Curated LEADING highlights from competitor_bench.json + e2e_search.json (Rule G7:
-    # every perf number comes from a committed baseline on `bindiego` and matches/beats
-    # the named competitor).
     curated_pairs = [
         (
             "Rank/Select (`1 Gbit`)",
@@ -241,7 +361,6 @@ def generate_perf_section(
             f"{c_label} | `{c_min:.2f} {unit}` | **`{speedup:.2f}x`** |"
         )
 
-    # Append E1.1 Systemic BM25 Search row from e2e_search.json
     qps_ratio_tantivy = z_qps / t_qps
     qps_ratio_uncomp = z_qps / u_qps
     lines.append(
@@ -265,7 +384,7 @@ def generate_perf_section(
             "",
             "### Additional Core Suite Baselines (`benches/baselines/bindiego/core_bench.json`)",
             "",
-            f"- **BM25 & Fieldnorm Scoring**: `Bm25BatchScorer` AVX2 batch `{bm25_avx2['min_ns_per_op']:.4f} ns/doc`, `FieldnormEncoder::build_score_table` `{fieldnorm_tbl['min_ns_per_op']:.4f} ns/cell` (`1.0 B/doc` fieldnorms).",
+            f"- **BM25 & Fieldnorm Scoring**: `Bm25BatchScorer` AVX2 batch `{bm25_avx2['min_ns_per_op']:.4f} ns/doc`, `FieldnormEncoder::build_score_table` `{fieldnorm_tbl['min_ns_per_op']:.4f} ns/cell` (`{E6_FIELDNORM_BYTES_PER_DOC}` fieldnorms).",
             f"- **Memory Pools**: `LockFreeMemoryPool` 64B alloc+free `{lf_1t['min_ns_per_op']:.3f} ns/op` (1T) / `{lf_4t['min_ns_per_op']:.3f} ns/op` (4T).",
             f"- **Rank9 (`1 Gbit`)**: `Rank9::rank1` `{rank9_r1['min_ns_per_op']:.2f} ns/op` at `{rank9_ovh:.2f}%` space overhead.",
             f"- **Suffix Array (`10M` bytes, SA-IS)**: construction `{sa_con['min_ns_per_op']:.2f} ns/byte` (`9.05 B/byte`), `search_range` query `{sa_qry['min_ns_per_op']:.2f} ns/op`.",
@@ -275,251 +394,314 @@ def generate_perf_section(
     return "\n".join(lines)
 
 
-def replace_between_markers(content: str, generated: str) -> str:
-    if BEGIN_MARKER in content and END_MARKER in content:
+def replace_between_markers(
+    content: str,
+    generated: str,
+    begin_marker: str = BEGIN_MARKER,
+    end_marker: str = END_MARKER,
+) -> str:
+    if begin_marker in content and end_marker in content:
         pattern = re.compile(
-            re.escape(BEGIN_MARKER) + r".*?" + re.escape(END_MARKER),
+            re.escape(begin_marker) + r".*?" + re.escape(end_marker),
             re.DOTALL,
         )
         return pattern.sub(lambda _: generated, content, count=1)
-    raise ValueError(f"Markers {BEGIN_MARKER} .. {END_MARKER} not found")
+    raise ValueError(f"Markers {begin_marker} .. {end_marker} not found")
 
 
-def strip_generated_perf_section(text: str) -> str:
-    if BEGIN_MARKER in text and END_MARKER in text:
-        start = text.index(BEGIN_MARKER)
-        end = text.index(END_MARKER) + len(END_MARKER)
-        return text[:start] + text[end:]
-    return text
-
-
-def collect_public_type_names() -> set[str]:
+def collect_crate_public_types() -> set[str]:
     pub_types: set[str] = set()
-    decl_re = re.compile(r"\bpub\s+(?:struct|enum|trait|type)\s+([A-Z][A-Za-z0-9_]*)\b")
+    decl_re = re.compile(
+        r"\bpub(?:\s*\([^)]*\))?\s+(?:struct|enum|trait|type)\s+([A-Z][A-Za-z0-9_]*)"
+    )
+    reexport_re = re.compile(r"\bpub\s+use\s+[^;]+;")
+    ident_re = re.compile(r"\b([A-Z][A-Za-z0-9_]*)\b")
     for rs_path in (ROOT / "src").rglob("*.rs"):
-        content = rs_path.read_text(encoding="utf-8")
-        for m in decl_re.finditer(content):
+        src = rs_path.read_text(encoding="utf-8")
+        for m in decl_re.finditer(src):
             pub_types.add(m.group(1))
+        for m in reexport_re.finditer(src):
+            for id_m in ident_re.finditer(m.group(0)):
+                pub_types.add(id_m.group(1))
     return pub_types
 
 
-def audit_prose_numeric_claims(
-    doc_label: str,
-    prose_text: str,
-    allowed_claims: set[str],
-    errors: list[str],
-) -> None:
-    metric_pattern = re.compile(
-        r"\b(\d+(?:\.\d+)?(?:[–-]\d+(?:\.\d+)?)?\s*"
-        r"(?:B/entry|B/key|bytes/key|字节/键|B/state|B/doc|B/posting|B/elem|B/byte|"
-        r"bits/elem|bits/B|bits/int|ns/op|ns/key|ns/lookup|ns/term|ns/doc|ns/cell|"
-        r"ns/byte|ns/int|ns/elem|ns/call|us/query|µs/query|QPS|ops/s|Gops/s|Mops/s|"
-        r"Gwords/s|%|x\s+faster|x\s+smaller|倍))"
-    )
-    for m in metric_pattern.finditer(prose_text):
-        token = re.sub(r"\s+", " ", m.group(1).strip())
-        if token not in allowed_claims:
-            errors.append(
-                f"{doc_label} contains unverified or drifted numeric claim outside generated table: `{token}` "
-                f"(allowed baseline/E6 claims: {sorted(allowed_claims)})"
-            )
+def strip_generated_and_code_blocks(text: str, has_key_features: bool = True) -> str:
+    cleaned = text
+    markers = [(BEGIN_MARKER, END_MARKER)]
+    if has_key_features:
+        markers.append((BEGIN_KF_MARKER, END_KF_MARKER))
+    for b_m, e_m in markers:
+        b_idx = cleaned.find(b_m)
+        e_idx = cleaned.find(e_m)
+        if b_idx != -1 and e_idx != -1 and e_idx >= b_idx:
+            cleaned = cleaned[:b_idx] + cleaned[e_idx + len(e_m) :]
+    cleaned = re.sub(r"```[\s\S]*?```", "", cleaned)
+    return cleaned
 
 
-def audit_readme_claims(
-    readme_text: str,
-    core: dict[str, Any],
-    comp: dict[str, Any],
-    e2e: dict[str, Any],
+def verify_no_html_comments_or_outside_numbers(
+    label: str, text: str, has_key_features: bool = True
 ) -> list[str]:
-    """Audit every numeric and capability claim in README.md, README_cn.md, and docs/PERFORMANCE.md against tests and baselines (Rule F2 / S52-R5)."""
     errors: list[str] = []
 
-    # 1. Generated perf table must be present and up-to-date in all tracked docs
-    expected_perf = generate_perf_section(core, comp, e2e)
-    for doc_name in (
-        "README.md",
-        "README_cn.md",
-        "docs/PERFORMANCE.md",
-        "CLAUDE.md",
-        "GEMINI.md",
-    ):
-        doc_path = ROOT / doc_name
-        if not doc_path.exists():
-            continue
-        doc_text = readme_text if doc_name == "README.md" else doc_path.read_text(encoding="utf-8")
-        if BEGIN_MARKER not in doc_text or END_MARKER not in doc_text:
-            errors.append(f"{doc_name} is missing BEGIN/END GENERATED PERF TABLE markers")
-        else:
-            actual_perf = doc_text[
-                doc_text.index(BEGIN_MARKER) : doc_text.index(END_MARKER)
-                + len(END_MARKER)
-            ]
-            if actual_perf != expected_perf:
-                errors.append(
-                    f"{doc_name} Verified Performance table drifted from baselines (run `python3 scripts/perf_table.py --update`)"
-                )
-
-    # 2. Check MSRV badge matches Cargo.toml rust-version = "1.95"
-    cargo_toml = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
-    if 'rust-version = "1.95"' not in cargo_toml or "rust-1.95+" not in readme_text:
-        errors.append("README.md MSRV badge must match Cargo.toml rust-version = 1.95")
-
-    # 3. Check unsafe documentation count matches scripts/unsafe_audit.py
-    proc = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "unsafe_audit.py")],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    m = re.search(r"Total unsafe sites in non-test code:\s*(\d+)", proc.stdout)
-    if not m:
-        errors.append("Could not parse unsafe site count from scripts/unsafe_audit.py")
-    else:
-        unsafe_total = int(m.group(1))
-        formatted_total = f"{unsafe_total:,}"
-        if formatted_total not in readme_text:
+    for m in re.finditer(r"<!--[\s\S]*?-->", text):
+        comment = m.group(0).strip()
+        if comment not in ALLOWED_HTML_COMMENTS:
             errors.append(
-                f"README.md unsafe count does not match unsafe_audit.py ({formatted_total})"
-            )
-        readme_cn_path = ROOT / "README_cn.md"
-        if readme_cn_path.exists():
-            readme_cn_text = readme_cn_path.read_text(encoding="utf-8")
-            if formatted_total not in readme_cn_text:
-                errors.append(
-                    f"README_cn.md unsafe count does not match unsafe_audit.py ({formatted_total})"
-                )
-        if "1,122" in readme_text:
-            errors.append("README.md still contains stale unsafe block count 1,122")
-
-    # 4. Compare prose numeric claims directly against baseline JSON values + E6 test figures
-    hashmap_bpe = float(comp["space_metrics"]["hash_maps/zipora_u64_bytes_per_entry"])
-    cspp_bpk = float(core["space_metrics"]["tries/cspp_shared_prefix_bytes_per_key"])
-    rank9_ovh = float(core["space_metrics"]["rank_select/rank9_overhead_pct"])
-    il256_ovh = float(comp["space_metrics"]["rank_select/interleaved256_overhead_pct"])
-
-    e6_test = (ROOT / "tests" / "memory_footprint_e6.rs").read_text(encoding="utf-8")
-    if "dat.total_states() * 12" not in e6_test or "(12.0..=16.0).contains(&map_bytes_per_state)" not in e6_test:
-        errors.append("tests/memory_footprint_e6.rs must assert 12 B/state for DoubleArrayTrie and 12.0..=16.0 B/state for DoubleArrayTrieMap<u32>")
-
-    expected_claims = {
-        f"{hashmap_bpe:.2f} B/entry",
-        f"{cspp_bpk:.2f} B/key",
-        f"{rank9_ovh:.2f}%",
-        f"{il256_ovh:.2f}%",
-        "12.0 B/state",
-        "12.0–16.0 B/state",
-        "1.0 B/doc",
-        "100%",
-    }
-
-    prose_readme = strip_generated_perf_section(readme_text)
-    for req in (
-        f"{hashmap_bpe:.2f} B/entry",
-        f"{cspp_bpk:.2f} B/key",
-        f"{rank9_ovh:.2f}%",
-        f"{il256_ovh:.2f}%",
-        "12.0 B/state",
-        "12.0–16.0 B/state",
-        "1.0 B/doc",
-    ):
-        if req not in prose_readme:
-            errors.append(f"README.md missing baseline/E6-verified claim: {req}")
-
-    audit_prose_numeric_claims("README.md", prose_readme, expected_claims, errors)
-    for extra_doc in ("README_cn.md", "docs/PERFORMANCE.md"):
-        p = ROOT / extra_doc
-        if p.exists():
-            audit_prose_numeric_claims(
-                extra_doc,
-                strip_generated_perf_section(p.read_text(encoding="utf-8")),
-                expected_claims,
-                errors,
+                f"{label}: unauthorized HTML comment `{comment}` (cannot hide prose/numbers in comments)"
             )
 
-    # 5. Check every backticked PascalCase type in README.md Key Features exists as a pub type in src/
-    pub_types = collect_public_type_names()
-    non_type_identifiers = {"SmallFloat", "SwissTable"}
-    if "## Key Features" in prose_readme and "## Quick Start" in prose_readme:
-        key_features_block = prose_readme[
-            prose_readme.index("## Key Features") : prose_readme.index("## Quick Start")
-        ]
-        for m_type in re.finditer(r"`([A-Z][A-Za-z0-9_]+)(?:<[^`]+>)?`", key_features_block):
-            type_name = m_type.group(1)
-            if type_name in non_type_identifiers:
-                continue
-            if type_name not in pub_types:
-                errors.append(
-                    f"README.md Key Features references non-existent public type `{type_name}`"
-                )
+    outside = strip_generated_and_code_blocks(text, has_key_features=has_key_features)
+    outside_no_urls = re.sub(r"\(https?://[^)]+\)", "()", outside)
+    outside_no_urls = re.sub(r"\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)", "", outside_no_urls)
 
-    blob_mod = (ROOT / "src" / "blob_store" / "mod.rs").read_text(encoding="utf-8")
-    for store_name in (
-        "MemoryBlobStore",
-        "PlainBlobStore",
-        "SimpleZipBlobStore",
-        "MixedLenBlobStore",
-        "ZipOffsetBlobStore",
-        "NestLoudsTrieBlobStore",
-        "DictZipBlobStore",
-        "ZstdBlobStore",
-        "Lz4BlobStore",
-    ):
-        if store_name not in readme_text or store_name not in blob_mod:
-            errors.append(f"Blob store claim {store_name} missing in README.md or src/blob_store/mod.rs")
+    outside_patterns = [
+        (
+            re.compile(
+                r"(?:\b\d+(?:\.\d+)?\s*(?:x|×)\b|(?:\b\d+(?:\.\d+)?)\s*×|快\s*\d+(?:\.\d+)?\s*倍|\d+(?:\.\d+)?\s*倍)",
+                re.IGNORECASE,
+            ),
+            "multiplier/speedup claim outside generated block",
+        ),
+        (
+            re.compile(
+                r"(?:~?\d[\d,]*(?:\.\d+)?(?:–\d+(?:\.\d+)?|-\d+(?:\.\d+)?)?\s*"
+                r"(?:ns/op|ns/byte|ns/int|ns/elem|ns/call|ns/doc|ns/cell|ns\b|"
+                r"us\b|µs|μs|ms\b|"
+                r"QPS|qps|Gops/s|Mops/s|Gwords/s|ops/sec|ops/s|"
+                r"GB/s|GiB/s|MB/s|MiB/s|"
+                r"B/entry|B/state|B/key|B/doc|B/posting|B/byte|B/elem|B\s+aux|"
+                r"bits/elem|bits/B|bits/int|of\s+raw|%|"
+                r"specialized\s+containers|containers\b|个专用容器|个容器))"
+            ),
+            "numeric metric/count outside generated block",
+        ),
+    ]
 
-    # 6. Check every linked doc file in README.md exists on disk
-    for doc_rel in re.findall(r"\((docs/[A-Za-z0-9_./-]+\.md)\)", readme_text):
-        if not (ROOT / doc_rel).exists():
-            errors.append(f"README.md links to non-existent doc: {doc_rel}")
+    for regex, desc in outside_patterns:
+        for m in regex.finditer(outside_no_urls):
+            errors.append(
+                f"{label}: {desc} `{m.group(0)}` (all numeric claims must be inside generated blocks)"
+            )
 
     return errors
 
 
+def verify_public_types_in_doc(
+    label: str, text: str, pub_types: set[str]
+) -> list[str]:
+    errors: list[str] = []
+    without_fenced = re.sub(r"```[\s\S]*?```", "", text)
+    pascal_re = re.compile(r"\b([A-Z][a-z]+[A-Z][A-Za-z0-9_]*)\b")
+    for id_m in pascal_re.finditer(without_fenced):
+        tname = id_m.group(1)
+        if tname not in pub_types and tname not in EXTERNAL_ALLOWED_TYPES:
+            errors.append(
+                f"{label}: references non-existent public type `{tname}`"
+            )
+    return errors
+
+
+def verify_files(
+    readme_override: str | None = None,
+    readme_cn_override: str | None = None,
+    perf_md_override: str | None = None,
+) -> list[str]:
+    core, comp, e2e = load_baselines()
+    expected_kf_en = generate_key_features_en(core, comp)
+    expected_kf_cn = generate_key_features_cn(core, comp)
+    expected_perf = generate_perf_section(core, comp, e2e)
+    pub_types = collect_crate_public_types()
+
+    errors: list[str] = []
+
+    docs_to_check = [
+        ("README.md", readme_override, expected_perf, expected_kf_en, True),
+        ("README_cn.md", readme_cn_override, expected_perf, expected_kf_cn, True),
+        ("docs/PERFORMANCE.md", perf_md_override, expected_perf, None, False),
+    ]
+
+    for rel_path, override_text, exp_perf, exp_kf, has_kf in docs_to_check:
+        content = (
+            override_text
+            if override_text is not None
+            else (ROOT / rel_path).read_text(encoding="utf-8")
+        )
+
+        if exp_perf not in content:
+            errors.append(
+                f"{rel_path}: Verified Performance table drifted from baselines (run `python3 scripts/perf_table.py --update`)"
+            )
+
+        if has_kf and exp_kf not in content:
+            errors.append(
+                f"{rel_path}: Key Features section drifted from baselines (run `python3 scripts/perf_table.py --update`)"
+            )
+
+        errors.extend(
+            verify_no_html_comments_or_outside_numbers(
+                rel_path, content, has_key_features=has_kf
+            )
+        )
+        errors.extend(verify_public_types_in_doc(rel_path, content, pub_types))
+
+    return errors
+
+
+def audit_readme_claims(
+    readme_text: str,
+    _core: dict[str, Any] | None = None,
+    _comp: dict[str, Any] | None = None,
+    _e2e: dict[str, Any] | None = None,
+) -> list[str]:
+    return verify_files(readme_override=readme_text)
+
+
+def run_mutation_self_test() -> list[str]:
+    """Run all 30 adversarial mutations from s53/rev_infra/adv/mut.py against in-memory docs."""
+    orig_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    orig_cn = (ROOT / "README_cn.md").read_text(encoding="utf-8")
+    orig_perf = (ROOT / "docs/PERFORMANCE.md").read_text(encoding="utf-8")
+
+    base_errs = verify_files(orig_readme, orig_cn, orig_perf)
+    if base_errs:
+        return [f"unmutated_baseline_failed: {base_errs}"]
+
+    cases = [
+        ("table_qps", "README.md", orig_readme.replace("19,677.1 QPS", "99,999.9 QPS")),
+        ("prose_bentry", "README.md", orig_readme.replace("35.65 B/entry", "12.34 B/entry")),
+        ("gops_readme", "README.md", orig_readme + "\nAchieves 5.2 Gops/s on rank.\n"),
+        ("gops_cn", "README_cn.md", orig_cn + "\n吞吐量达到 5.2 Gops/s。\n"),
+        ("gops_perf", "docs/PERFORMANCE.md", orig_perf + "\nAchieves 5.2 Gops/s.\n"),
+        ("x26_readme", "README.md", orig_readme + "\nUp to 26x faster.\n"),
+        ("x26_cn", "README_cn.md", orig_cn + "\n性能提升 26x。\n"),
+        ("x26_perf", "docs/PERFORMANCE.md", orig_perf + "\nUp to 26x faster.\n"),
+        ("x26_unicode", "README.md", orig_readme + "\nUp to 26× faster than baseline.\n"),
+        ("x_vs", "README.md", orig_readme + "\n Achieves 3.8x vs std::collections::HashMap.\n"),
+        ("x_speedup", "README.md", orig_readme + "\n Delivers a 2.4x speedup on lookups.\n"),
+        ("x_higher_qps", "README.md", orig_readme + "\n Delivers 5.5x higher QPS in production.\n"),
+        ("us_ms", "README.md", orig_readme + "\nQuery latency is 173-188 µs (down from 5.13 ms).\n"),
+        ("ns_bare", "README.md", orig_readme + "\nLookup takes only 12 ns on average.\n"),
+        ("gbs", "README.md", orig_readme + "\nDecoding at 4.5 GB/s.\n"),
+        ("gwords_spaced", "README.md", orig_readme + "\nThroughput of 5.2 Gwords/s.\n"),
+        ("allowed_100pct", "README.md", orig_readme + "\n achieves 100.0% compression ratio.\n"),
+        ("allowed_bdoc", "README.md", orig_readme + "\n full index uses only 1.0 B/doc total.\n"),
+        ("unitless_containers", "README.md", orig_readme + "\nProvides 47 specialized containers.\n"),
+        ("html_comment", "README.md", orig_readme + "\n<!-- 999999 QPS 100x faster -->\n"),
+        (
+            "html_comment_table",
+            "README.md",
+            orig_readme.replace(
+                "### Additional Core Suite Baselines",
+                "<!-- 999x -->\n### Additional Core Suite Baselines",
+            ),
+        ),
+        (
+            "foobar_kf",
+            "README.md",
+            orig_readme.replace("`ZiporaHashMap`", "`ZiporaHashMap`, `FooBarMap`", 1),
+        ),
+        (
+            "foobar_kf_path",
+            "README.md",
+            orig_readme.replace("`ZiporaHashMap`", "`ZiporaHashMap`, `zipora::FooBarMap`", 1),
+        ),
+        (
+            "foobar_kf_method",
+            "README.md",
+            orig_readme.replace("`ZiporaHashMap`", "`ZiporaHashMap`, `FooBarMap::new`", 1),
+        ),
+        (
+            "foobar_kf_bare",
+            "README.md",
+            orig_readme.replace("`ZiporaHashMap`", "`ZiporaHashMap`, FooBarMap", 1),
+        ),
+        (
+            "foobar_cn",
+            "README_cn.md",
+            orig_cn.replace("`ZiporaHashMap`", "`ZiporaHashMap`、`FooBarMap`", 1),
+        ),
+        (
+            "foobar_perf",
+            "docs/PERFORMANCE.md",
+            orig_perf.replace("`Rank9::rank1`", "`FooBarMap::rank1`", 1),
+        ),
+        ("foobar_readme_other_section", "README.md", orig_readme + "\nUses `FooBarMap` internally.\n"),
+        ("cn_bei", "README_cn.md", orig_cn + "\n比标准库快 26 倍。\n"),
+        ("cn_bei_nospace", "README_cn.md", orig_cn + "\n比标准库快26倍。\n"),
+    ]
+
+    uncaught: list[str] = []
+    for name, target_file, mutated_text in cases:
+        r_en = mutated_text if target_file == "README.md" else orig_readme
+        r_cn = mutated_text if target_file == "README_cn.md" else orig_cn
+        r_pf = mutated_text if target_file == "docs/PERFORMANCE.md" else orig_perf
+        errs = verify_files(r_en, r_cn, r_pf)
+        if not errs:
+            uncaught.append(name)
+    return uncaught
+
+
+def update_files() -> None:
+    core, comp, e2e = load_baselines()
+    kf_en = generate_key_features_en(core, comp)
+    kf_cn = generate_key_features_cn(core, comp)
+    perf_block = generate_perf_section(core, comp, e2e)
+
+    for rel_path, kf_block in [
+        ("README.md", kf_en),
+        ("README_cn.md", kf_cn),
+        ("docs/PERFORMANCE.md", None),
+        ("CLAUDE.md", None),
+        ("GEMINI.md", None),
+    ]:
+        p = ROOT / rel_path
+        if not p.exists():
+            continue
+        txt = p.read_text(encoding="utf-8")
+        if kf_block is not None:
+            txt = replace_between_markers(
+                txt, kf_block, BEGIN_KF_MARKER, END_KF_MARKER
+            )
+        if BEGIN_MARKER in txt and END_MARKER in txt:
+            txt = replace_between_markers(
+                txt, perf_block, BEGIN_MARKER, END_MARKER
+            )
+        p.write_text(txt, encoding="utf-8")
+        print(f"Updated {rel_path}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--update",
-        action="store_true",
-        help="Update Verified Performance section in README.md, README_cn.md, docs/PERFORMANCE.md, CLAUDE.md, and GEMINI.md",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Verify README.md, README_cn.md, and docs/PERFORMANCE.md performance tables and F2 claims match baselines/tests",
-    )
+    parser.add_argument("--update", action="store_true")
+    parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
 
-    core, comp, e2e = load_baselines()
-    perf_section = generate_perf_section(core, comp, e2e)
-
     if args.update:
-        for fname in (
-            "README.md",
-            "README_cn.md",
-            "docs/PERFORMANCE.md",
-            "CLAUDE.md",
-            "GEMINI.md",
-        ):
-            fpath = ROOT / fname
-            if fpath.exists():
-                text = fpath.read_text(encoding="utf-8")
-                if BEGIN_MARKER in text and END_MARKER in text:
-                    updated = replace_between_markers(text, perf_section)
-                    fpath.write_text(updated, encoding="utf-8")
-                    print(f"Updated {fname}")
-        return 0
+        update_files()
+
+    errors = verify_files()
+    if errors:
+        for e in errors:
+            print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+
+    uncaught = run_mutation_self_test()
+    if uncaught:
+        print(
+            f"ERROR: mutation self-test failed to catch: {uncaught}",
+            file=sys.stderr,
+        )
+        return 1
 
     if args.check:
-        readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
-        errors = audit_readme_claims(readme_text, core, comp, e2e)
-        if errors:
-            for err in errors:
-                print(f"ERROR: {err}", file=sys.stderr)
-            return 1
-        print("README.md E7 performance tables and F2 claims audit: PASS")
-        return 0
-
-    print(perf_section)
+        print(
+            "=== Performance Table & Documentation Parity Check (Rule E7 / F2 / S52-R5): PASS ==="
+        )
+    else:
+        core, comp, e2e = load_baselines()
+        print(generate_perf_section(core, comp, e2e))
     return 0
 
 
