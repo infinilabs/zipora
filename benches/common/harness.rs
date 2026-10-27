@@ -138,6 +138,8 @@ pub struct HostMetadata {
     pub runner_command: String,
     pub git_commit: String,
     #[serde(default)]
+    pub cargo_lock_sha256: String,
+    #[serde(default)]
     pub binary_path: String,
     #[serde(default)]
     pub binary_sha256: String,
@@ -218,6 +220,7 @@ pub fn collect_host_metadata(pinned_core: usize) -> HostMetadata {
     );
 
     let git_commit = super::binary_meta::detect_git_commit();
+    let cargo_lock_sha256 = super::binary_meta::detect_cargo_lock_sha256();
     let (binary_path, binary_sha256) = detect_self_binary_path_and_sha256();
 
     HostMetadata {
@@ -232,6 +235,7 @@ pub fn collect_host_metadata(pinned_core: usize) -> HostMetadata {
         rustflags,
         runner_command,
         git_commit,
+        cargo_lock_sha256,
         binary_path,
         binary_sha256,
     }

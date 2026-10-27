@@ -188,20 +188,18 @@ pub fn detect_git_commit() -> String {
     }
 }
 
-/// Resolves the canonical path and SHA-256 digest of the running benchmark binary (`current_exe`),
-/// honoring `ZIPORA_BENCH_BINARY_PATH` and `ZIPORA_BENCH_BINARY_SHA256` when pre-computed by the
-/// outer runner so no binary read occurs inside the timed benchmark process (`S53-R3`).
+/// Computes the lower-case 64-character hex SHA-256 digest of `Cargo.lock` in the workspace root (`S54-R1`).
+pub fn detect_cargo_lock_sha256() -> String {
+    let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
+    File::open(&lock_path)
+        .or_else(|_| File::open("Cargo.lock"))
+        .and_then(sha256_reader)
+        .unwrap_or_default()
+}
+
+/// Resolves the canonical path and SHA-256 digest of the running benchmark binary (`current_exe`)
+/// post-benchmark via an 8 KiB stack buffer (`S53-R3` + `S54-R1`).
 pub fn detect_self_binary_path_and_sha256() -> (String, String) {
-    if let (Ok(p), Ok(s)) = (
-        std::env::var("ZIPORA_BENCH_BINARY_PATH"),
-        std::env::var("ZIPORA_BENCH_BINARY_SHA256"),
-    ) {
-        let p_trim = p.trim();
-        let s_trim = s.trim();
-        if !p_trim.is_empty() && s_trim.len() == 64 {
-            return (p_trim.to_string(), s_trim.to_ascii_lowercase());
-        }
-    }
     let Ok(exe) = std::env::current_exe() else {
         return (String::new(), String::new());
     };

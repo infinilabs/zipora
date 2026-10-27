@@ -54,6 +54,8 @@ struct HostMetadata {
     governor: String,
     rustflags: String,
     git_commit: String,
+    #[serde(default)]
+    cargo_lock_sha256: String,
     timestamp_utc: String,
     #[serde(default)]
     binary_path: String,
@@ -239,7 +241,9 @@ fn hardware_logical_cores() -> usize {
 
 #[path = "common/binary_meta.rs"]
 mod binary_meta;
-use binary_meta::{detect_git_commit, detect_self_binary_path_and_sha256};
+use binary_meta::{
+    detect_cargo_lock_sha256, detect_git_commit, detect_self_binary_path_and_sha256,
+};
 
 fn collect_host_metadata(pinned_core: usize) -> HostMetadata {
     let rustflags = std::env::var("RUSTFLAGS")
@@ -259,6 +263,7 @@ fn collect_host_metadata(pinned_core: usize) -> HostMetadata {
         governor: detect_governor(),
         rustflags,
         git_commit: detect_git_commit(),
+        cargo_lock_sha256: detect_cargo_lock_sha256(),
         timestamp_utc: detect_utc_timestamp(),
         binary_path,
         binary_sha256,

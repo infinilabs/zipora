@@ -435,12 +435,13 @@ fn test_s51_r2_baseline_per_row_provenance_and_unrestamped_headers() {
         }
     }
 
-    // 2. Header-only provenance in bench_compare.py: rebuilds core_bench and compares SHA-256.
+    // 2. Header-only provenance in bench_compare.py: verifies commit, rustflags, and cargo_lock_sha256.
     let bench_compare = std::fs::read_to_string(manifest_dir.join("scripts/bench_compare.py"))
         .expect("read scripts/bench_compare.py");
     assert!(
-        bench_compare.contains("rebuild_and_hash_bench_binary"),
-        "scripts/bench_compare.py must verify header provenance by rebuilding core_bench and comparing SHA-256"
+        bench_compare.contains("compute_cargo_lock_sha256")
+            && bench_compare.contains("cargo_lock_sha256"),
+        "scripts/bench_compare.py must verify header provenance via commit, rustflags, and cargo_lock_sha256"
     );
 
     // 3. Verify all 3 committed baselines have header-only provenance and zero per-row provenance.
@@ -786,5 +787,207 @@ fn test_s53_r3_benchmark_provenance_out_of_timed_heap_and_once_in_e2e() {
     assert!(
         meta_pos > rss_pos,
         "S53-R3: e2e_search_bench.rs must call collect_host_metadata only once after all timed benchmarks and read_vm_hwm_kib()"
+    );
+}
+
+#[test]
+fn test_s54_r1_provenance_across_checkouts_dirty_trees_and_retries_not_disabled() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+    use std::process::Command;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let binary_meta = std::fs::read_to_string(manifest_dir.join("benches/common/binary_meta.rs"))
+        .expect("read benches/common/binary_meta.rs");
+    let bench_compare = std::fs::read_to_string(manifest_dir.join("scripts/bench_compare.py"))
+        .expect("read scripts/bench_compare.py");
+
+    // 1. binary_meta.rs must not accept ZIPORA_BENCH_BINARY_SHA256 from env and must compute cargo_lock_sha256.
+    assert!(
+        !binary_meta.contains("ZIPORA_BENCH_BINARY_SHA256")
+            && !binary_meta.contains("ZIPORA_BENCH_BINARY_PATH")
+            && binary_meta.contains("pub fn detect_cargo_lock_sha256()"),
+        "S54-R1: benches/common/binary_meta.rs must not accept env binary_sha256 overrides and must define detect_cargo_lock_sha256()"
+    );
+
+    // 2. bench_compare.py must verify provenance via commit + rustflags + cargo_lock_sha256
+    // rather than rebuilding binaries (which fails for competitor_bench across checkouts).
+    assert!(
+        !bench_compare.contains("rebuild_and_hash_bench_binary")
+            && !bench_compare.contains("ZIPORA_BENCH_BINARY_SHA256")
+            && bench_compare.contains("cargo_lock_sha256"),
+        "S54-R1: scripts/bench_compare.py must verify provenance via commit + rustflags + cargo_lock_sha256"
+    );
+
+    // 3. All 3 committed baselines must carry a 64-hex host_metadata.cargo_lock_sha256.
+    for suite in ["core_bench", "competitor_bench", "e2e_search"] {
+        let path = manifest_dir
+            .join("benches/baselines/bindiego")
+            .join(format!("{suite}.json"));
+        let raw = std::fs::read_to_string(&path).expect("read baseline");
+        let doc: serde_json::Value = serde_json::from_str(&raw).expect("parse baseline");
+        let lock_sha = doc["host_metadata"]["cargo_lock_sha256"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            lock_sha.len() == 64 && lock_sha.chars().all(|c| c.is_ascii_hexdigit()),
+            "S54-R1: {suite}.json missing valid 64-hex host_metadata.cargo_lock_sha256"
+        );
+    }
+
+    // 4. Simulate a `competitor_bench` run from a different checkout directory where jemalloc
+    // embeds a different build path (giving the binary a different SHA-256), while commit,
+    // rustflags, and cargo_lock_sha256 match.
+    let comp_base_path = manifest_dir.join("benches/baselines/bindiego/competitor_bench.json");
+    let comp_raw = std::fs::read_to_string(&comp_base_path).expect("read competitor_bench.json");
+    let comp_doc: serde_json::Value =
+        serde_json::from_str(&comp_raw).expect("parse competitor_bench.json");
+
+    let pid = std::process::id();
+    let fake_dir =
+        std::env::temp_dir().join(format!("zipora_s54_r1_clone_{pid}/target/release/deps"));
+    std::fs::create_dir_all(&fake_dir).expect("create fake deps dir");
+    let fake_comp_bin = fake_dir.join("competitor_bench-0123456789abcdef");
+    let fake_comp_script = b"#!/bin/sh\nexit 0\n";
+    std::fs::write(&fake_comp_bin, fake_comp_script).expect("write fake_comp_bin");
+    std::fs::set_permissions(&fake_comp_bin, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod fake_comp_bin");
+
+    let sha_out = Command::new("python3")
+        .args([
+            "-c",
+            &format!(
+                "import hashlib, pathlib; print(hashlib.sha256(pathlib.Path(r'{}').read_bytes()).hexdigest())",
+                fake_comp_bin.display()
+            ),
+        ])
+        .output()
+        .expect("hash fake_comp_bin");
+    let fake_comp_sha = String::from_utf8(sha_out.stdout)
+        .expect("utf8 sha")
+        .trim()
+        .to_string();
+
+    let mut cross_checkout_curr = comp_doc.clone();
+    cross_checkout_curr["host_metadata"]["binary_path"] =
+        serde_json::Value::String(fake_comp_bin.to_string_lossy().into_owned());
+    cross_checkout_curr["host_metadata"]["binary_sha256"] =
+        serde_json::Value::String(fake_comp_sha.clone());
+
+    let tmp_curr = std::env::temp_dir().join(format!("zipora_s54_r1_curr_{pid}.json"));
+    std::fs::write(
+        &tmp_curr,
+        serde_json::to_string(&cross_checkout_curr).unwrap(),
+    )
+    .unwrap();
+
+    let ok_out = Command::new("python3")
+        .arg(manifest_dir.join("scripts/bench_compare.py"))
+        .args(["--suite", "competitor_bench", "--baseline"])
+        .arg(&comp_base_path)
+        .arg("--current")
+        .arg(&tmp_curr)
+        .current_dir(manifest_dir)
+        .output()
+        .expect("run bench_compare.py on cross-checkout competitor_bench");
+    assert!(
+        ok_out.status.success(),
+        "S54-R1: competitor_bench from another checkout directory must pass provenance gate:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&ok_out.stdout),
+        String::from_utf8_lossy(&ok_out.stderr),
+    );
+
+    // Tampered cargo_lock_sha256 must fail closed.
+    let mut bad_lock_curr = cross_checkout_curr.clone();
+    bad_lock_curr["host_metadata"]["cargo_lock_sha256"] = serde_json::Value::String("b".repeat(64));
+    std::fs::write(&tmp_curr, serde_json::to_string(&bad_lock_curr).unwrap()).unwrap();
+    let bad_lock_out = Command::new("python3")
+        .arg(manifest_dir.join("scripts/bench_compare.py"))
+        .args(["--suite", "competitor_bench", "--baseline"])
+        .arg(&comp_base_path)
+        .arg("--current")
+        .arg(&tmp_curr)
+        .current_dir(manifest_dir)
+        .output()
+        .expect("run bench_compare.py on tampered cargo_lock_sha256");
+    assert!(
+        !bad_lock_out.status.success(),
+        "S54-R1: tampered cargo_lock_sha256 must be rejected"
+    );
+
+    // 5. Provenance failure must never disable --confirm-retries for timing rows.
+    let core_base_path = manifest_dir.join("benches/baselines/bindiego/core_bench.json");
+    let core_raw = std::fs::read_to_string(&core_base_path).expect("read core_bench.json");
+    let core_doc: serde_json::Value =
+        serde_json::from_str(&core_raw).expect("parse core_bench.json");
+
+    let fake_core_bin = fake_dir.join("core_bench-0123456789abcdef");
+    let retry_script = format!(
+        "#!/usr/bin/env python3\nimport shutil, sys\nout = sys.argv[sys.argv.index('--output') + 1]\nshutil.copyfile(r'{}', out)\n",
+        core_base_path.display()
+    );
+    std::fs::write(&fake_core_bin, retry_script.as_bytes()).expect("write fake_core_bin");
+    std::fs::set_permissions(&fake_core_bin, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod fake_core_bin");
+
+    let sha_core_out = Command::new("python3")
+        .args([
+            "-c",
+            &format!(
+                "import hashlib, pathlib; print(hashlib.sha256(pathlib.Path(r'{}').read_bytes()).hexdigest())",
+                fake_core_bin.display()
+            ),
+        ])
+        .output()
+        .expect("hash fake_core_bin");
+    let fake_core_sha = String::from_utf8(sha_core_out.stdout)
+        .expect("utf8 sha")
+        .trim()
+        .to_string();
+
+    let mut bad_prov_base = core_doc.clone();
+    bad_prov_base["host_metadata"]["git_commit"] = serde_json::Value::String("deadbee".to_string());
+
+    let mut regressed_curr = core_doc.clone();
+    regressed_curr["host_metadata"]["binary_path"] =
+        serde_json::Value::String(fake_core_bin.to_string_lossy().into_owned());
+    regressed_curr["host_metadata"]["binary_sha256"] = serde_json::Value::String(fake_core_sha);
+    let old_min = regressed_curr["benchmarks"][0]["min_ns_per_op"]
+        .as_f64()
+        .unwrap();
+    regressed_curr["benchmarks"][0]["min_ns_per_op"] = serde_json::json!(old_min * 1.50);
+
+    let tmp_bad_base = std::env::temp_dir().join(format!("zipora_s54_r1_bad_base_{pid}.json"));
+    std::fs::write(
+        &tmp_bad_base,
+        serde_json::to_string(&bad_prov_base).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(&tmp_curr, serde_json::to_string(&regressed_curr).unwrap()).unwrap();
+
+    let retry_out = Command::new("python3")
+        .arg(manifest_dir.join("scripts/bench_compare.py"))
+        .args(["--suite", "core_bench", "--baseline"])
+        .arg(&tmp_bad_base)
+        .arg("--current")
+        .arg(&tmp_curr)
+        .args(["--confirm-retries", "1"])
+        .current_dir(manifest_dir)
+        .output()
+        .expect("run bench_compare.py with provenance error and timing regression");
+
+    let _ = std::fs::remove_file(&tmp_bad_base);
+    let _ = std::fs::remove_file(&tmp_curr);
+    let _ =
+        std::fs::remove_dir_all(std::env::temp_dir().join(format!("zipora_s54_r1_clone_{pid}")));
+
+    let retry_stdout = String::from_utf8_lossy(&retry_out.stdout);
+    assert!(
+        retry_stdout.contains("[confirm-retry 1/1]"),
+        "S54-R1: provenance failure must not disable --confirm-retries for timing rows:\nstdout: {retry_stdout}"
+    );
+    assert!(
+        !retry_out.status.success(),
+        "S54-R1: bench_compare.py must still fail after retries when provenance is invalid"
     );
 }

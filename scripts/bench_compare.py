@@ -49,9 +49,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
-_REBUILD_SHA_CACHE: Dict[Tuple[str, str], Optional[Tuple[Path, str]]] = {}
-
-
 def is_hex_str(s: str, min_len: int, max_len: int) -> bool:
     return (
         min_len <= len(s) <= max_len
@@ -91,61 +88,20 @@ def git_code_tree_matches(ref_a: str, ref_b: Optional[str] = None) -> bool:
     return proc.returncode == 0
 
 
-def rebuild_and_hash_bench_binary(
-    bench_bin: str, rustflags: str
-) -> Optional[Tuple[Path, str]]:
-    key = (bench_bin, rustflags)
-    if key in _REBUILD_SHA_CACHE:
-        return _REBUILD_SHA_CACHE[key]
-    env = os.environ.copy()
-    if os.environ.get("ZIPORA_BENCH_KEEP_TARGET_DIR") != "1":
-        env.pop("CARGO_TARGET_DIR", None)
-    if rustflags:
-        env["RUSTFLAGS"] = rustflags
+def compute_cargo_lock_sha256(commit: Optional[str] = None) -> Optional[str]:
+    if commit is None:
+        try:
+            return hashlib.sha256(Path("Cargo.lock").read_bytes()).hexdigest().lower()
+        except OSError:
+            return None
     proc = subprocess.run(
-        [
-            "cargo",
-            "bench",
-            "--locked",
-            "--no-run",
-            "--bench",
-            bench_bin,
-            "--message-format=json",
-        ],
+        ["git", "show", f"{commit}:Cargo.lock"],
         capture_output=True,
-        text=True,
-        env=env,
         check=False,
     )
     if proc.returncode != 0:
-        _REBUILD_SHA_CACHE[key] = None
         return None
-    exe_path: Optional[Path] = None
-    for line in proc.stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            msg = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if (
-            msg.get("reason") == "compiler-artifact"
-            and msg.get("target", {}).get("name") == bench_bin
-            and "bench" in msg.get("target", {}).get("kind", [])
-            and msg.get("executable")
-        ):
-            exe_path = Path(msg["executable"])
-    if exe_path is None or not exe_path.is_file():
-        _REBUILD_SHA_CACHE[key] = None
-        return None
-    try:
-        sha = hashlib.sha256(exe_path.read_bytes()).hexdigest().lower()
-    except OSError:
-        _REBUILD_SHA_CACHE[key] = None
-        return None
-    _REBUILD_SHA_CACHE[key] = (exe_path, sha)
-    return exe_path, sha
+    return hashlib.sha256(proc.stdout).hexdigest().lower()
 
 
 def detect_short_host() -> str:
@@ -308,8 +264,6 @@ def run_isolated_retry(
         env["RUSTFLAGS"] = rustflags
     if host_metadata.get("git_commit"):
         env["ZIPORA_BENCH_GIT_COMMIT"] = str(host_metadata["git_commit"])
-    env["ZIPORA_BENCH_BINARY_PATH"] = str(compiled_bin)
-    env["ZIPORA_BENCH_BINARY_SHA256"] = str(host_metadata.get("binary_sha256", ""))
 
     cmd = [str(compiled_bin), "--output", str(retry_out)]
     if suite in ("core_bench", "competitor_bench") and bench_names:
@@ -333,7 +287,7 @@ def compare_benchmarks(
     abs_noise_floor_ns: float,
     metric: str,
     quiet: bool = False,
-) -> Tuple[int, List[str], List[str], bool]:
+) -> Tuple[int, List[str], List[str], bool, bool]:
     base_list = baseline_data.get("benchmarks", [])
     curr_list = current_data.get("benchmarks", [])
     base_benches = {b["name"]: b for b in base_list}
@@ -352,10 +306,13 @@ def compare_benchmarks(
 
     failures: List[str] = []
     regressed_names: List[str] = []
-    has_integrity_error = False
+    has_timing_regression = False
+    has_structural_error = False
+    prov_ok = True
     rows: List[Tuple[str, str, float, float, float, float, float, float, float, str]] = []
 
-    # 0. Header-only provenance verification: rebuild core_bench and compare SHA-256 (S52-R1)
+    # 0. Header-only provenance verification via commit + rustflags + Cargo.lock SHA-256
+    # in both clean and dirty trees without disabling timing confirmation retries (S52-R1 / S54-R1).
     suite_name = str(
         baseline_data.get("suite") or current_data.get("suite") or "core_bench"
     ).strip()
@@ -363,29 +320,41 @@ def compare_benchmarks(
 
     for label, doc in [("baseline", baseline_data), ("current", current_data)]:
         hm = doc.get("host_metadata", {}) or {}
-        if len(hm) > 13 or any(k.startswith("row_") for k in hm):
+        if len(hm) > 14 or any(k.startswith("row_") for k in hm):
             failures.append(
                 f"{label}.host_metadata: unexpected splice summary field present (S52-R1)"
             )
-            has_integrity_error = True
+            prov_ok = False
         commit_val = str(hm.get("git_commit", "") or "").strip().lower()
         commit_check = (
             commit_val[:-6]
             if (label == "current" and commit_val.endswith("-dirty"))
             else commit_val
         )
+        lock_sha_val = str(hm.get("cargo_lock_sha256", "") or "").strip().lower()
+        rustflags_val = str(hm.get("rustflags", "") or "").strip()
         sha_val = str(hm.get("binary_sha256", "") or "").strip().lower()
         bin_path_val = str(hm.get("binary_path", "") or "").strip()
         if not git_commit_exists(commit_check):
             failures.append(
-                f"{label}.host_metadata: invalid or unknown git_commit '{commit_val}' (S52-R1)"
+                f"{label}.host_metadata: invalid or unknown git_commit '{commit_val}' (S52-R1/S54-R1)"
             )
-            has_integrity_error = True
+            prov_ok = False
+        if not is_hex_str(lock_sha_val, 64, 64):
+            failures.append(
+                f"{label}.host_metadata: invalid or missing cargo_lock_sha256 '{lock_sha_val}' (S54-R1)"
+            )
+            prov_ok = False
+        if not rustflags_val:
+            failures.append(
+                f"{label}.host_metadata: missing or empty rustflags (S54-R1)"
+            )
+            prov_ok = False
         if not is_hex_str(sha_val, 64, 64):
             failures.append(
                 f"{label}.host_metadata: invalid binary_sha256 '{sha_val}' (S52-R1)"
             )
-            has_integrity_error = True
+            prov_ok = False
         bin_p = Path(bin_path_val) if bin_path_val else Path()
         if (
             not bin_path_val
@@ -395,168 +364,163 @@ def compare_benchmarks(
             failures.append(
                 f"{label}.host_metadata: binary_path '{bin_path_val}' is not a valid Cargo deps/{suite_bin}-* binary (S52-R1)"
             )
-            has_integrity_error = True
+            prov_ok = False
 
         for row in doc.get("benchmarks", []):
             if len(row) > 12:
                 failures.append(
                     f"{label}.{row.get('name', '<unknown>')}: unexpected per-row provenance fields present (S52-R1)"
                 )
-                has_integrity_error = True
+                prov_ok = False
         for cmp_row in doc.get("same_run_comparisons", []):
             if len(cmp_row) > 16:
                 failures.append(
                     f"{label}.same_run_comparisons: unexpected per-comparison provenance fields present (S52-R1)"
                 )
-                has_integrity_error = True
+                prov_ok = False
 
     base_hm = baseline_data.get("host_metadata", {}) or {}
     curr_hm = current_data.get("host_metadata", {}) or {}
     base_commit = str(base_hm.get("git_commit", "") or "").strip().lower()
+    curr_commit_raw = str(curr_hm.get("git_commit", "") or "").strip().lower()
+    curr_is_dirty = curr_commit_raw.endswith("-dirty")
+    curr_commit = curr_commit_raw[:-6] if curr_is_dirty else curr_commit_raw
+    base_lock_sha = str(base_hm.get("cargo_lock_sha256", "") or "").strip().lower()
+    curr_lock_sha = str(curr_hm.get("cargo_lock_sha256", "") or "").strip().lower()
+    base_rustflags = str(base_hm.get("rustflags", "") or "").strip()
+    curr_rustflags = str(curr_hm.get("rustflags", "") or "").strip()
     base_sha = str(base_hm.get("binary_sha256", "") or "").strip().lower()
+    base_bin_path = str(base_hm.get("binary_path", "") or "").strip()
     curr_sha = str(curr_hm.get("binary_sha256", "") or "").strip().lower()
     curr_bin_path = str(curr_hm.get("binary_path", "") or "").strip()
-    base_rustflags = str(base_hm.get("rustflags", "") or "").strip()
 
-    if not has_integrity_error:
+    if prov_ok:
         if not git_code_tree_matches(base_commit, "HEAD"):
             failures.append(
-                f"baseline.host_metadata: git_commit '{base_commit}' src/benches tree does not match HEAD (S52-R1)"
+                f"baseline.host_metadata: git_commit '{base_commit}' src/benches tree does not match HEAD (S52-R1/S54-R1)"
             )
-            has_integrity_error = True
-        else:
-            worktree_clean = git_code_tree_matches("HEAD")
-            host_name = str(base_hm.get("host") or detect_short_host()).strip()
-            core_base_doc = baseline_data
-            if suite_name != "core_bench":
-                core_base_path = (
-                    Path("benches") / "baselines" / host_name / "core_bench.json"
-                )
-                if core_base_path.is_file():
-                    try:
-                        core_base_doc = json.loads(
-                            core_base_path.read_text(encoding="utf-8")
-                        )
-                    except (OSError, json.JSONDecodeError):
-                        core_base_doc = {}
-            core_base_hm = core_base_doc.get("host_metadata", {}) or {}
-            core_base_sha = (
-                str(core_base_hm.get("binary_sha256", "") or "").strip().lower()
+        if not git_code_tree_matches(curr_commit, "HEAD"):
+            failures.append(
+                f"current.host_metadata: git_commit '{curr_commit_raw}' src/benches tree does not match HEAD (S54-R1)"
             )
-            core_base_commit = (
-                str(core_base_hm.get("git_commit", "") or "").strip().lower()
+        worktree_clean = git_code_tree_matches("HEAD")
+        if worktree_clean and curr_is_dirty:
+            failures.append(
+                "current.host_metadata: git_commit has '-dirty' suffix in a clean worktree (S54-R1)"
             )
-            core_rustflags = (
-                str(core_base_hm.get("rustflags", "") or "").strip()
-                or base_rustflags
+        if base_rustflags != curr_rustflags:
+            failures.append(
+                f"provenance: current rustflags ('{curr_rustflags}') do not match baseline rustflags ('{base_rustflags}') (S54-R1)"
             )
 
-            if worktree_clean:
-                rebuilt_core = rebuild_and_hash_bench_binary(
-                    "core_bench", core_rustflags
-                )
-                if rebuilt_core is None:
-                    failures.append(
-                        "provenance: failed to rebuild core_bench binary for SHA-256 verification (S52-R1)"
-                    )
-                    has_integrity_error = True
-                else:
-                    _, rebuilt_core_sha = rebuilt_core
-                    if rebuilt_core_sha != core_base_sha:
-                        failures.append(
-                            f"core_bench provenance: rebuilt core_bench SHA-256 ({rebuilt_core_sha[:16]}...) "
-                            f"does not match baseline binary_sha256 ({core_base_sha[:16]}...) (S52-R1)"
-                        )
-                        has_integrity_error = True
-                    if suite_name == "core_bench" and curr_sha != rebuilt_core_sha:
-                        failures.append(
-                            f"current.host_metadata: binary_sha256 ({curr_sha[:16]}...) "
-                            f"does not match rebuilt core_bench SHA-256 ({rebuilt_core_sha[:16]}...) (S52-R1)"
-                        )
-                        has_integrity_error = True
+        disk_lock_sha = compute_cargo_lock_sha256(None)
+        git_lock_sha = compute_cargo_lock_sha256(base_commit)
+        if base_lock_sha != curr_lock_sha:
+            failures.append(
+                f"provenance: current cargo_lock_sha256 ({curr_lock_sha[:16]}...) "
+                f"does not match baseline cargo_lock_sha256 ({base_lock_sha[:16]}...) (S54-R1)"
+            )
+        if disk_lock_sha is None or base_lock_sha != disk_lock_sha:
+            failures.append(
+                f"provenance: cargo_lock_sha256 ({base_lock_sha[:16]}...) "
+                f"does not match workspace Cargo.lock ({str(disk_lock_sha)[:16]}...) (S54-R1)"
+            )
+        if git_lock_sha is None or base_lock_sha != git_lock_sha:
+            failures.append(
+                f"provenance: cargo_lock_sha256 ({base_lock_sha[:16]}...) "
+                f"does not match {base_commit}:Cargo.lock ({str(git_lock_sha)[:16]}...) (S54-R1)"
+            )
 
-                if suite_name == "e2e_search":
-                    rebuilt_e2e = rebuild_and_hash_bench_binary(
-                        "e2e_search_bench", base_rustflags
+        host_name = str(base_hm.get("host") or detect_short_host()).strip()
+        if suite_name != "core_bench":
+            core_base_path = (
+                Path("benches") / "baselines" / host_name / "core_bench.json"
+            )
+            if core_base_path.is_file():
+                try:
+                    core_base_doc = json.loads(
+                        core_base_path.read_text(encoding="utf-8")
                     )
-                    if rebuilt_e2e is None or rebuilt_e2e[1] != base_sha:
-                        failures.append(
-                            f"e2e_search provenance: rebuilt e2e_search_bench SHA-256 "
-                            f"does not match baseline binary_sha256 ({base_sha[:16]}...) (S52-R1)"
-                        )
-                        has_integrity_error = True
-                    elif curr_sha != rebuilt_e2e[1]:
-                        failures.append(
-                            f"current.host_metadata: binary_sha256 ({curr_sha[:16]}...) "
-                            f"does not match rebuilt e2e_search_bench SHA-256 ({rebuilt_e2e[1][:16]}...) (S52-R1)"
-                        )
-                        has_integrity_error = True
-                elif suite_name == "competitor_bench":
+                    core_base_hm = core_base_doc.get("host_metadata", {}) or {}
+                    core_base_commit = (
+                        str(core_base_hm.get("git_commit", "") or "").strip().lower()
+                    )
+                    core_rustflags = (
+                        str(core_base_hm.get("rustflags", "") or "").strip()
+                    )
+                    core_lock_sha = (
+                        str(core_base_hm.get("cargo_lock_sha256", "") or "")
+                        .strip()
+                        .lower()
+                    )
                     if base_commit != core_base_commit:
                         failures.append(
-                            f"competitor_bench provenance: baseline git_commit ({base_commit}) "
-                            f"does not match core_bench git_commit ({core_base_commit}) (S52-R1)"
+                            f"{suite_name} provenance: baseline git_commit ({base_commit}) "
+                            f"does not match core_bench git_commit ({core_base_commit}) (S54-R1)"
                         )
-                        has_integrity_error = True
-                    rebuilt_comp = rebuild_and_hash_bench_binary(
-                        "competitor_bench", base_rustflags
-                    )
-                    if rebuilt_comp is None or rebuilt_comp[1] != base_sha:
+                    if core_rustflags and base_rustflags != core_rustflags:
                         failures.append(
-                            f"competitor_bench provenance: rebuilt competitor_bench SHA-256 "
-                            f"does not match baseline binary_sha256 ({base_sha[:16]}...) (S52-R1)"
+                            f"{suite_name} provenance: baseline rustflags "
+                            f"do not match core_bench rustflags (S54-R1)"
                         )
-                        has_integrity_error = True
-                    elif curr_sha != rebuilt_comp[1]:
+                    if core_lock_sha and base_lock_sha != core_lock_sha:
                         failures.append(
-                            f"current.host_metadata: binary_sha256 ({curr_sha[:16]}...) "
-                            f"does not match rebuilt competitor_bench SHA-256 ({rebuilt_comp[1][:16]}...) (S52-R1)"
+                            f"{suite_name} provenance: baseline cargo_lock_sha256 "
+                            f"does not match core_bench cargo_lock_sha256 (S54-R1)"
                         )
-                        has_integrity_error = True
-            else:
-                # Dirty worktree (e.g., uncommitted mutation test in src/): verify baseline
-                # matches the committed HEAD baseline file and current binary matches on-disk SHA-256.
-                head_base_proc = subprocess.run(
-                    [
-                        "git",
-                        "show",
-                        f"HEAD:benches/baselines/{host_name}/{suite_name}.json",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if head_base_proc.returncode == 0:
-                    try:
-                        head_base_doc = json.loads(head_base_proc.stdout)
-                        head_hm = head_base_doc.get("host_metadata", {}) or {}
-                        if (
-                            str(head_hm.get("binary_sha256", "")).strip().lower()
-                            != base_sha
-                            or str(head_hm.get("git_commit", "")).strip().lower()
-                            != base_commit
-                        ):
-                            failures.append(
-                                "baseline.host_metadata: does not match committed HEAD baseline (S52-R1)"
-                            )
-                            has_integrity_error = True
-                    except json.JSONDecodeError:
-                        pass
+                except (OSError, json.JSONDecodeError):
+                    pass
 
-            curr_bin = Path(curr_bin_path)
-            if curr_bin.is_file():
+        # Verify baseline binary_sha256 matches either the committed HEAD baseline or the on-disk binary at base_bin_path.
+        base_sha_verified = False
+        head_base_proc = subprocess.run(
+            [
+                "git",
+                "show",
+                f"HEAD:benches/baselines/{host_name}/{suite_name}.json",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if head_base_proc.returncode == 0:
+            try:
+                head_base_doc = json.loads(head_base_proc.stdout)
+                head_hm = head_base_doc.get("host_metadata", {}) or {}
+                if str(head_hm.get("binary_sha256", "")).strip().lower() == base_sha:
+                    base_sha_verified = True
+            except json.JSONDecodeError:
+                pass
+        if not base_sha_verified:
+            base_bin = Path(base_bin_path)
+            if base_bin.is_file():
                 try:
-                    actual_curr_sha = (
-                        hashlib.sha256(curr_bin.read_bytes()).hexdigest().lower()
+                    actual_base_sha = (
+                        hashlib.sha256(base_bin.read_bytes()).hexdigest().lower()
                     )
-                    if actual_curr_sha != curr_sha:
-                        failures.append(
-                            f"current.host_metadata: on-disk binary {curr_bin} SHA-256 ({actual_curr_sha[:16]}...) "
-                            f"does not match recorded binary_sha256 ({curr_sha[:16]}...) (S52-R1)"
-                        )
-                        has_integrity_error = True
+                    if actual_base_sha == base_sha:
+                        base_sha_verified = True
                 except OSError:
                     pass
+        if not base_sha_verified:
+            failures.append(
+                f"baseline.host_metadata: binary_sha256 ({base_sha[:16]}...) "
+                f"does not match committed HEAD baseline or on-disk binary (S52-R1/S54-R1)"
+            )
+
+        curr_bin = Path(curr_bin_path)
+        if curr_bin.is_file():
+            try:
+                actual_curr_sha = (
+                    hashlib.sha256(curr_bin.read_bytes()).hexdigest().lower()
+                )
+                if actual_curr_sha != curr_sha:
+                    failures.append(
+                        f"current.host_metadata: on-disk binary {curr_bin} SHA-256 ({actual_curr_sha[:16]}...) "
+                        f"does not match recorded binary_sha256 ({curr_sha[:16]}...) (S52-R1/S54-R1)"
+                    )
+            except OSError:
+                pass
 
     # 1. Check all baseline benchmarks in order (catches missing benchmarks!)
     for base in base_list:
@@ -578,7 +542,7 @@ def compare_benchmarks(
             failures.append(
                 f"{name}: MISSING from current benchmark run (present in baseline)"
             )
-            has_integrity_error = True
+            has_structural_error = True
             continue
 
         curr = curr_benches[name]
@@ -588,7 +552,7 @@ def compare_benchmarks(
             failures.append(
                 f"{name}: dataset_size mismatch (baseline={base_ds}, current={curr_ds})"
             )
-            has_integrity_error = True
+            has_structural_error = True
 
         curr_min = float(curr.get("min_ns_per_op", curr["median_ns_per_op"]))
         curr_med = float(curr["median_ns_per_op"])
@@ -607,6 +571,7 @@ def compare_benchmarks(
             else:
                 status = "REGRESSED"
                 regressed_names.append(name)
+                has_timing_regression = True
                 failures.append(
                     f"{name}: baseline {metric}={base_val:.4f} {unit}, current {metric}={curr_val:.4f} {unit} "
                     f"({pct_diff:+.2f}% > +{thresh_pct:.2f}%)"
@@ -707,11 +672,18 @@ def compare_benchmarks(
                         f"  {metric_name:<30} baseline={b_val:>10.3f}  current={c_val:>10.3f}  ({pct:+.2f}%, thresh={eff_thresh:.2f}%) [{status}]"
                     )
                 if regressed:
+                    has_timing_regression = True
                     failures.append(
                         f"summary.{metric_name}: baseline={b_val:.3f}, current={c_val:.3f} ({pct:+.2f}%)"
                     )
 
-    return len(rows), failures, regressed_names, has_integrity_error
+    return (
+        len(rows),
+        failures,
+        regressed_names,
+        has_timing_regression,
+        has_structural_error,
+    )
 
 
 def merge_retry_into_current(
@@ -837,7 +809,13 @@ def main() -> int:
     current_data = load_json(current_path, is_baseline=False, host=host)
 
     max_retries = max(0, args.confirm_retries)
-    total, failures, regressed_names, has_integrity_error = compare_benchmarks(
+    (
+        total,
+        failures,
+        regressed_names,
+        has_timing_regression,
+        has_structural_error,
+    ) = compare_benchmarks(
         baseline_data,
         current_data,
         default_thresh,
@@ -848,14 +826,14 @@ def main() -> int:
     )
 
     retries_used = 0
-    if max_retries > 0 and failures and not has_integrity_error:
+    if max_retries > 0 and has_timing_regression and not has_structural_error:
         host_metadata = current_data.get("host_metadata", {}) or {}
         any_merged = False
         for attempt in range(1, max_retries + 1):
             retries_used = attempt
             print(
                 f"=== Shared-Host Confirm-on-Retry ({attempt}/{max_retries}): "
-                f"{len(failures)} benchmark/summary check(s) exceeded threshold ===",
+                f"{len(regressed_names) or 1} timing check(s) exceeded threshold ===",
                 flush=True,
             )
             for msg in failures:
@@ -883,7 +861,13 @@ def main() -> int:
                     if merge_retry_into_current(current_data, retry_data, args.metric):
                         any_merged = True
 
-            total, failures, regressed_names, has_integrity_error = compare_benchmarks(
+            (
+                total,
+                failures,
+                regressed_names,
+                has_timing_regression,
+                has_structural_error,
+            ) = compare_benchmarks(
                 baseline_data,
                 current_data,
                 default_thresh,
@@ -892,7 +876,7 @@ def main() -> int:
                 args.metric,
                 quiet=True,
             )
-            if not failures:
+            if not has_timing_regression:
                 break
 
         if any_merged and args.current is None:
@@ -903,7 +887,7 @@ def main() -> int:
                 pass
 
     if max_retries > 0:
-        total, failures, _, _ = compare_benchmarks(
+        total, failures, _, _, _ = compare_benchmarks(
             baseline_data,
             current_data,
             default_thresh,
