@@ -560,6 +560,8 @@ def audit_readme_claims(
 
 def run_mutation_self_test() -> list[str]:
     """Run all 30 adversarial mutations from s53/rev_infra/adv/mut.py against in-memory docs."""
+    _, _, e2e = load_baselines()
+    qps_str = f"{e2e['summary']['zipora_qps_top10']:,.1f} QPS"
     orig_readme = (ROOT / "README.md").read_text(encoding="utf-8")
     orig_cn = (ROOT / "README_cn.md").read_text(encoding="utf-8")
     orig_perf = (ROOT / "docs/PERFORMANCE.md").read_text(encoding="utf-8")
@@ -569,7 +571,7 @@ def run_mutation_self_test() -> list[str]:
         return [f"unmutated_baseline_failed: {base_errs}"]
 
     cases = [
-        ("table_qps", "README.md", orig_readme.replace("19,677.1 QPS", "99,999.9 QPS")),
+        ("table_qps", "README.md", orig_readme.replace(qps_str, "99,999.9 QPS")),
         ("prose_bentry", "README.md", orig_readme.replace("35.65 B/entry", "12.34 B/entry")),
         ("gops_readme", "README.md", orig_readme + "\nAchieves 5.2 Gops/s on rank.\n"),
         ("gops_cn", "README_cn.md", orig_cn + "\n吞吐量达到 5.2 Gops/s。\n"),
