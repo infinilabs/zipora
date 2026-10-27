@@ -10,7 +10,9 @@ use crate::blob_store::traits::{BlobStore, BlobStoreStats, CompressedBlobStore, 
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
-use crate::memory::simd_ops::{fast_compare, fast_copy, fast_fill};
+#[cfg(test)]
+use crate::memory::simd_ops::fast_copy;
+use crate::memory::simd_ops::{fast_compare, fast_fill};
 
 use std::io::{Read, Write};
 use std::path::Path;
@@ -413,17 +415,34 @@ impl ZipOffsetBlobStore {
 
     /// Load ZipOffsetBlobStore from file
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut file = std::fs::File::open(path)?;
-        Self::load_from_reader(&mut file)
+        let file = std::fs::File::open(path)?;
+        let actual_file_size = file.metadata()?.len();
+        let mut bounded = file.take(actual_file_size);
+        Self::load_from_reader_bounded(&mut bounded, Some(actual_file_size))
     }
 
     /// Load ZipOffsetBlobStore from reader
     pub fn load_from_reader<R: Read>(reader: &mut R) -> Result<Self> {
+        Self::load_from_reader_bounded(reader, None)
+    }
+
+    fn load_from_reader_bounded<R: Read>(
+        reader: &mut R,
+        known_input_len: Option<u64>,
+    ) -> Result<Self> {
         // Read and validate header
         let mut header_bytes = [0u8; HEADER_SIZE];
         reader.read_exact(&mut header_bytes)?;
         let header = FileHeader::from_bytes(&header_bytes);
         header.validate()?;
+
+        if let Some(actual_len) = known_input_len
+            && header.file_size > actual_len
+        {
+            return Err(ZiporaError::invalid_data(
+                "header file_size exceeds actual input length",
+            ));
+        }
 
         // Create configuration from header
         let config = ZipOffsetBlobStoreConfig {
@@ -439,48 +458,40 @@ impl ZipOffsetBlobStore {
 
         let mut store = Self::with_config(config)?;
 
-        // Read content data with bounded streaming to avoid huge preallocations on truncated streams
+        // Stream content data in 8 KiB stack chunks directly into `store.content`
+        // so that a forged `header.content_bytes` on a short input never allocates
+        // more than the bytes actually remaining in `reader`.
         let content_len = header.content_bytes as usize;
-        let mut content_bytes = Vec::new();
-        let initial_reserve = content_len.min(64 * 1024 * 1024);
-        content_bytes.reserve(initial_reserve);
+        SortedUintVec::read_bounded_into_fast_vec(
+            &mut store.content,
+            reader,
+            content_len,
+            "Unexpected EOF reading content bytes",
+        )?;
 
-        let mut take_content = reader.by_ref().take(header.content_bytes);
-        take_content.read_to_end(&mut content_bytes)?;
-        if content_bytes.len() != content_len {
-            return Err(ZiporaError::invalid_data(
-                "Unexpected EOF reading content bytes",
-            ));
-        }
-
-        // Use SIMD-optimized extend for large content
-        if store.should_use_simd(content_bytes.len()) {
-            // Pre-allocate and use SIMD copy
-            let current_len = store.content.len();
-            store.content.resize(current_len + content_bytes.len(), 0)?;
-            let copy_ok = {
-                let content_slice = &mut store.content.as_mut_slice()[current_len..];
-                fast_copy(&content_bytes, content_slice).is_ok()
-            };
-            if !copy_ok {
-                store.content.resize(current_len, 0)?;
-                store.content.extend(content_bytes)?;
-            }
-        } else {
-            store.content.extend(content_bytes)?;
-        }
-
-        // Skip padding to 16-byte alignment
+        // Skip padding to 16-byte alignment using a stack buffer
         let content_padding = (16 - (header.content_bytes % 16)) % 16;
         if content_padding > 0 {
-            let mut padding = vec![0u8; content_padding as usize];
-            reader.read_exact(&mut padding)?;
+            let mut padding = [0u8; 16];
+            let pad_buf = padding
+                .get_mut(..content_padding as usize)
+                .ok_or_else(|| ZiporaError::invalid_data("invalid content padding length"))?;
+            reader.read_exact(pad_buf)?;
+        }
+
+        if header.records() > 0 && header.offsets_bytes == 0 {
+            return Err(ZiporaError::invalid_data(
+                "non-zero record count with empty offset index section",
+            ));
         }
 
         // Read offset index section if non-empty
         if header.offsets_bytes > 0 {
             let mut take_offsets = reader.by_ref().take(header.offsets_bytes);
-            let offsets = SortedUintVec::read_from(&mut take_offsets)?;
+            let offsets = SortedUintVec::read_from_bounded(
+                &mut take_offsets,
+                Some(header.offsets_bytes as usize),
+            )?;
             if take_offsets.limit() != 0 {
                 return Err(ZiporaError::invalid_data(
                     "trailing bytes in offset index section",

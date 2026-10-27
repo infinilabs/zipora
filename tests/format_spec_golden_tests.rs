@@ -1122,3 +1122,95 @@ fn test_s52_r2_fuzz_soak_checks_per_job_exit_codes_and_records_1h_summary() {
         "docs/review/fuzz_soak.md must document max_total_time=3600, rss_limit_mb=1024, oom=0, timeout=0, crash=0, and all 11 completed 1h rows"
     );
 }
+
+#[test]
+fn test_s53_r1_sorted_uint_vec_and_zip_offset_bound_allocations_by_remaining_input() {
+    use zipora::blob_store::{SortedUintVec, ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder};
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // 1. Exact s53/rev_code/blob `revblob huge 8796093022208` reproducer:
+    // ~300-byte ZipOffsetBlobStore with internally consistent SortedUintVec
+    // size = 2^43 (8,796,093,022,208), index_len = 512 GiB, data_len = 16 TiB.
+    let mut builder = ZipOffsetBlobStoreBuilder::new().unwrap();
+    builder.add_record(b"a").unwrap();
+    builder.add_record(b"bb").unwrap();
+    let built = builder.finish().unwrap();
+    let mut base = Vec::new();
+    built.save_to_writer(&mut base).unwrap();
+
+    let z = base
+        .windows(4)
+        .position(|w| w == b"ZSUV")
+        .expect("ZSUV header must be present");
+    let l2 = base[z + 5] as u64;
+    let ow = base[z + 6] as u64;
+    let sw = base[z + 7] as u64;
+    let size: u64 = 8_796_093_022_208; // 1u64 << 43
+    let nb = size.div_ceil(1u64 << l2);
+    let il = (nb * sw).div_ceil(8);
+    let dl = (size * ow).div_ceil(8);
+    assert_eq!(il, 549_755_813_888); // 512 GiB
+
+    let mut crafted_inner = base.clone();
+    crafted_inner[z + 8..z + 16].copy_from_slice(&size.to_le_bytes());
+    crafted_inner[z + 16..z + 24].copy_from_slice(&il.to_le_bytes());
+    crafted_inner[z + 24..z + 32].copy_from_slice(&dl.to_le_bytes());
+
+    assert!(
+        ZipOffsetBlobStore::load_from_reader(&mut std::io::Cursor::new(&crafted_inner)).is_err(),
+        "Crafted ~300B ZipOffsetBlobStore with 512 GiB ZSUV header must return Err without allocating 512 GiB"
+    );
+
+    // 2. Direct SortedUintVec::read_from on the short slice must also return Err without allocating 512 GiB.
+    assert!(
+        SortedUintVec::read_from(&mut std::io::Cursor::new(&crafted_inner[z..])).is_err(),
+        "Direct SortedUintVec::read_from on truncated 512 GiB header must return Err without allocating 512 GiB"
+    );
+
+    // 3. Outer FileHeader also forged to match huge offsets_bytes / content_bytes on a ~300B input.
+    let mut crafted_outer = crafted_inner.clone();
+    let huge_offsets_bytes = 32u64 + il + dl;
+    let content_bytes = u64::from_le_bytes(crafted_outer[64..72].try_into().unwrap());
+    let content_pad = (16 - (content_bytes % 16)) % 16;
+    let huge_file_size = 128u64 + content_bytes + content_pad + huge_offsets_bytes + 64u64;
+    crafted_outer[40..48].copy_from_slice(&huge_file_size.to_le_bytes());
+    crafted_outer[72..80].copy_from_slice(&huge_offsets_bytes.to_le_bytes());
+    assert!(
+        ZipOffsetBlobStore::load_from_reader(&mut std::io::Cursor::new(&crafted_outer)).is_err(),
+        "Crafted ~300B ZipOffsetBlobStore with huge outer offsets_bytes + file_size must return Err without large allocation"
+    );
+
+    let mut crafted_content = base.clone();
+    let huge_content: u64 = 1u64 << 40; // 1 TiB
+    let huge_total = 128u64 + huge_content + 64u64 + 64u64;
+    crafted_content[40..48].copy_from_slice(&huge_total.to_le_bytes());
+    crafted_content[64..72].copy_from_slice(&huge_content.to_le_bytes());
+    assert!(
+        ZipOffsetBlobStore::load_from_reader(&mut std::io::Cursor::new(&crafted_content)).is_err(),
+        "Crafted ~300B ZipOffsetBlobStore with 1 TiB content_bytes must return Err without pre-allocating"
+    );
+
+    // 4. False comment must be removed from src/blob_store/sorted_uint_vec.rs.
+    let suv_src = std::fs::read_to_string(root.join("src/blob_store/sorted_uint_vec.rs")).unwrap();
+    assert!(
+        !suv_src.contains("a crafted section cannot make us allocate more than it can fill"),
+        "src/blob_store/sorted_uint_vec.rs must not contain the false allocation claim comment"
+    );
+
+    // 5. Makefile fuzz_smoke and fuzz_soak must pass -malloc_limit_mb alongside -rss_limit_mb.
+    let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
+    let smoke_idx = makefile.find("fuzz_smoke:").expect("fuzz_smoke target");
+    let soak_idx = makefile.find("fuzz_soak:").expect("fuzz_soak target");
+    let fmt_idx = makefile.find("\nformat:").unwrap_or(makefile.len());
+    let smoke_sec = &makefile[smoke_idx..soak_idx];
+    let soak_sec = &makefile[soak_idx..fmt_idx];
+    assert!(
+        smoke_sec.contains("-malloc_limit_mb=$(FUZZ_RSS_LIMIT_MB)"),
+        "Makefile fuzz_smoke must pass -malloc_limit_mb=$(FUZZ_RSS_LIMIT_MB)"
+    );
+    assert!(
+        soak_sec.contains("-malloc_limit_mb=$(FUZZ_RSS_LIMIT_MB)"),
+        "Makefile fuzz_soak must pass -malloc_limit_mb=$(FUZZ_RSS_LIMIT_MB)"
+    );
+}

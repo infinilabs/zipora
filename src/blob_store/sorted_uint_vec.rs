@@ -281,7 +281,7 @@ impl SortedUintVec {
     const SERIAL_VERSION: u8 = 1;
 
     /// Size of the fixed part of the serialized form
-    const SERIAL_HEADER_SIZE: usize = 32;
+    pub(crate) const SERIAL_HEADER_SIZE: usize = 32;
 
     /// Number of bytes `write_to` will produce
     pub fn serialized_size(&self) -> usize {
@@ -312,6 +312,24 @@ impl SortedUintVec {
 
     /// Read a compressed representation written by [`Self::write_to`]
     pub fn read_from<R: Read>(reader: &mut R) -> Result<Self> {
+        Self::read_from_bounded(reader, None)
+    }
+
+    /// Read a compressed representation written by [`Self::write_to`], optionally
+    /// checking that the declared section lengths match an outer container's
+    /// known section byte length before reading payload bytes.
+    pub(crate) fn read_from_bounded<R: Read>(
+        reader: &mut R,
+        max_section_bytes: Option<usize>,
+    ) -> Result<Self> {
+        if let Some(max_bytes) = max_section_bytes
+            && max_bytes < Self::SERIAL_HEADER_SIZE
+        {
+            return Err(ZiporaError::invalid_data(
+                "SortedUintVec section shorter than header",
+            ));
+        }
+
         let mut header = [0u8; Self::SERIAL_HEADER_SIZE];
         reader.read_exact(&mut header)?;
 
@@ -360,9 +378,11 @@ impl SortedUintVec {
         }
         let (size, index_len, data_len) = (size as usize, index_len as usize, data_len as usize);
 
-        // Reject declared payload sizes that cannot describe `size` elements, so
-        // a crafted section cannot make us allocate more than it can fill. The
-        // packer may leave one trailing partial byte in either buffer.
+        // Verify that the declared `index_len` and `data_len` match the packed bit
+        // widths for `size` elements (the packer may leave up to 8 bytes of trailing
+        // slack). Allocation is bounded separately by the bytes actually remaining in
+        // `reader` via `read_bounded_into_fast_vec` (and by `max_section_bytes` when
+        // known from an outer container header).
         let num_blocks = size.div_ceil(1usize << config.log2_block_units);
         let min_index_len = num_blocks
             .checked_mul(config.sample_width as usize)
@@ -382,18 +402,72 @@ impl SortedUintVec {
             ));
         }
 
+        let total_section_bytes = Self::SERIAL_HEADER_SIZE
+            .checked_add(index_len)
+            .and_then(|s| s.checked_add(data_len))
+            .ok_or_else(|| {
+                ZiporaError::invalid_data("SortedUintVec total section size overflow")
+            })?;
+        if let Some(max_bytes) = max_section_bytes
+            && total_section_bytes != max_bytes
+        {
+            return Err(ZiporaError::invalid_data(
+                "SortedUintVec header lengths disagree with outer section size",
+            ));
+        }
+
         let mut result = Self::with_config(config)?;
         result.size = size;
 
-        let mut buf = vec![0u8; index_len];
-        reader.read_exact(&mut buf)?;
-        result.index.extend(buf.iter().copied())?;
-
-        let mut buf = vec![0u8; data_len];
-        reader.read_exact(&mut buf)?;
-        result.data.extend(buf.iter().copied())?;
+        Self::read_bounded_into_fast_vec(
+            &mut result.index,
+            reader,
+            index_len,
+            "unexpected EOF reading SortedUintVec index",
+        )?;
+        Self::read_bounded_into_fast_vec(
+            &mut result.data,
+            reader,
+            data_len,
+            "unexpected EOF reading SortedUintVec data",
+        )?;
 
         Ok(result)
+    }
+
+    /// Stream `expected_len` bytes from `reader` into `dst` in 8 KiB stack chunks
+    /// so that a crafted header declaring a huge length on a short input never
+    /// allocates more than the bytes actually remaining in `reader`.
+    pub(crate) fn read_bounded_into_fast_vec<R: Read>(
+        dst: &mut FastVec<u8>,
+        reader: &mut R,
+        expected_len: usize,
+        eof_msg: &'static str,
+    ) -> Result<()> {
+        let mut chunk = [0u8; 8192];
+        let mut remaining = expected_len;
+        while remaining > 0 {
+            let want = remaining.min(chunk.len());
+            let buf = chunk
+                .get_mut(..want)
+                .ok_or_else(|| ZiporaError::invalid_data("chunk slice out of bounds"))?;
+            let n = match reader.read(buf) {
+                Ok(0) => {
+                    return Err(
+                        std::io::Error::new(std::io::ErrorKind::UnexpectedEof, eof_msg).into(),
+                    );
+                }
+                Ok(n) => n,
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            };
+            let read_slice = chunk
+                .get(..n)
+                .ok_or_else(|| ZiporaError::invalid_data("read count exceeds chunk"))?;
+            dst.extend(read_slice.iter().copied())?;
+            remaining -= n;
+        }
+        Ok(())
     }
 
     /// Get value at index with bounds checking

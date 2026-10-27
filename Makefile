@@ -472,7 +472,7 @@ fuzz_seed:
 fuzz_smoke: fuzz_seed
 	@for t in $(FUZZ_TARGETS); do \
 		echo "=== $$t (60s) ==="; \
-		cargo +nightly fuzz run $$t fuzz/corpus/$$t -- -max_total_time=60 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) -print_final_stats=1 || exit 1; \
+		cargo +nightly fuzz run $$t fuzz/corpus/$$t -- -max_total_time=60 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) -malloc_limit_mb=$(FUZZ_RSS_LIMIT_MB) -print_final_stats=1 || exit 1; \
 	done
 
 # Soak: 1 hour per target, all in parallel (needs ~8 cores).
@@ -484,7 +484,7 @@ fuzz_soak: fuzz_seed
 	for t in $(FUZZ_TARGETS); do \
 		mkdir -p /tmp/zipora_fuzz_soak/corpus/$$t /tmp/zipora_fuzz_soak/logs; \
 		cargo +nightly fuzz run $$t /tmp/zipora_fuzz_soak/corpus/$$t fuzz/corpus/$$t \
-			-- -max_total_time=3600 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) -print_final_stats=1 \
+			-- -max_total_time=3600 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) -malloc_limit_mb=$(FUZZ_RSS_LIMIT_MB) -print_final_stats=1 \
 			> /tmp/zipora_fuzz_soak/logs/$$t.log 2>&1 & \
 		pids="$$pids $$!"; \
 	done; \
