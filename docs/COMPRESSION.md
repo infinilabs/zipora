@@ -168,7 +168,7 @@ println!("Selected algorithm: {:?}", compressor.current_algorithm());
 
 ## StreamVByte (SIMD-Accelerated Variable-Byte)
 
-StreamVByte separates control bytes (2 bits per integer indicating length 1..=4 bytes) from data bytes. Decoding uses Lemire's SSSE3 shuffle-table algorithm (`_mm_shuffle_epi8` / `pshufb`) with a 256-entry precomputed mask table.
+StreamVByte separates control bytes (a 2-bit length tag per integer indicating 1..=4 bytes) from data bytes. Decoding uses Lemire's SSSE3 shuffle-table algorithm (`_mm_shuffle_epi8` / `pshufb`) with a 256-entry precomputed mask table.
 
 ```rust
 use zipora::compression::stream_vbyte::StreamVByte;

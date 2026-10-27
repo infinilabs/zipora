@@ -3653,6 +3653,31 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
     fn test_s22_r5_read_only_open_does_not_fault_into_rss_anon() {
+        // S54-R3: `/proc/self/status` `RssAnon` is process-wide, so concurrent test
+        // threads in the parent test runner can allocate anonymous heap pages during
+        // `MmapVec::open` and inflate `RssAnon`. Run the measurement in an isolated
+        // `--test-threads=1` child process when not already inside that subprocess.
+        if std::env::var_os("ZIPORA_S22_R5_SUBPROCESS").is_none() {
+            let exe = std::env::current_exe().expect("current test executable path");
+            let output = std::process::Command::new(exe)
+                .env("ZIPORA_S22_R5_SUBPROCESS", "1")
+                .args([
+                    "--exact",
+                    "memory::mmap_vec::tests::test_s22_r5_read_only_open_does_not_fault_into_rss_anon",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .output()
+                .expect("spawn subprocess for isolated RssAnon measurement");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "subprocess RssAnon test failed:\nstdout: {stdout}\nstderr: {stderr}"
+            );
+            return;
+        }
+
         fn rss_anon_kib() -> Option<u64> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             for line in status.lines() {
@@ -3685,6 +3710,44 @@ mod tests {
                 delta_kib < 4096,
                 "opening 32 MiB read-only MmapVec with populate_pages inflated RssAnon by {delta_kib} KiB (before={b} KiB, after={a} KiB)"
             );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore = "real file mapping: Miri cannot execute mmap")]
+    fn test_s54_r3_rss_anon_measurement_isolated_from_parent_threads() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_bg = Arc::clone(&stop);
+        let bg = std::thread::spawn(move || {
+            let mut chunks = Vec::new();
+            while !stop_bg.load(Ordering::Relaxed) {
+                if chunks.len() >= 16 {
+                    chunks.clear();
+                }
+                if let Ok(mut anon) = MmapMut::map_anon(8 * 1024 * 1024) {
+                    for page in anon.chunks_mut(4096) {
+                        page[0] = 1;
+                    }
+                    chunks.push(anon);
+                }
+                std::thread::sleep(std::time::Duration::from_micros(200));
+            }
+            chunks.len()
+        });
+
+        let res = std::panic::catch_unwind(|| {
+            for _ in 0..3 {
+                test_s22_r5_read_only_open_does_not_fault_into_rss_anon();
+            }
+        });
+        stop.store(true, Ordering::Relaxed);
+        let _ = bg.join();
+        if let Err(payload) = res {
+            std::panic::resume_unwind(payload);
         }
     }
 

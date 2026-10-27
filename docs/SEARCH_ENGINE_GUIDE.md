@@ -31,7 +31,7 @@ Zipora provides the core building blocks for high-performance search engines: su
 
 ## 1. Term Dictionary (Trie-based)
 
-Use `DoubleArrayTrie` (double-array trie with XOR transitions) for high-throughput lookups — 12 bytes per state (`base` + `check` + `tail`) with O(1) transitions per byte. Supports arbitrary binary keys including `\x00` bytes. See [PERFORMANCE.md](PERFORMANCE.md) for measured memory footprint and lookup latency against `fst`, `qp-trie`, and `radix_trie`.
+Use `DoubleArrayTrie` (double-array trie with XOR transitions) for high-throughput lookups — compact per-state `base` + `check` + `tail` arrays with O(1) transitions per byte. Supports arbitrary binary keys including `\x00` bytes. See [PERFORMANCE.md](PERFORMANCE.md) for measured memory footprint and lookup latency against `fst`, `qp-trie`, and `radix_trie`.
 
 ```rust
 use zipora::DoubleArrayTrie;
@@ -57,7 +57,7 @@ for (term_id, term) in terms.iter().enumerate() {
 let id = term_ids.get(b"search");
 ```
 
-`DoubleArrayTrieMap<V>` uses the `MapValue` trait with a compile-time sentinel constant instead of `Option<V>`, halving the values array memory footprint for primitive types (e.g., 4 bytes vs 8 bytes per slot for `i32`). The sentinel is monomorphized to a single `cmp` instruction — zero runtime cost.
+`DoubleArrayTrieMap<V>` uses the `MapValue` trait with a compile-time sentinel constant instead of `Option<V>`, avoiding `Option<V>` discriminant padding in the value array for primitive types. The sentinel is monomorphized to a single `cmp` instruction — zero runtime cost.
 
 ### Lazy Prefix & Fuzzy Iterators
 
@@ -95,7 +95,7 @@ trie.for_each_fuzzy(b"serch", 1, |key, term_id| {
 });
 ```
 
-For alternative trie strategies (LOUDS, Patricia, CritBit), use `ZiporaTrie` with explicit config. For compressed term storage with prefix sharing, use `NestLoudsTrieBlobStore`.
+For alternative trie strategies (LOUDS, Patricia, Critical-Bit), use `ZiporaTrie` with explicit config. For compressed term storage with prefix sharing, use `NestLoudsTrieBlobStore`.
 
 ## 2. Inverted Index (Posting Lists)
 
@@ -304,7 +304,7 @@ stop_words.insert("and", true);
 
 ## 10. BM25 Scoring (Document Length Normalization)
 
-Compact doc-length storage with pre-computed BM25 scoring (`1.0 B/doc` fieldnorms; see [PERFORMANCE.md](PERFORMANCE.md) for measured `Bm25BatchScorer`, `FieldnormEncoder::build_score_table`, and end-to-end 100k-doc Block-Max WAND search throughput on `bindiego`).
+Compact single-byte doc-length storage with pre-computed BM25 scoring (see [PERFORMANCE.md](PERFORMANCE.md) for measured `Bm25BatchScorer`, `FieldnormEncoder::build_score_table`, and end-to-end 100k-doc Block-Max WAND search throughput on `bindiego`).
 
 `FieldnormEncoder` uses Lucene-compatible SmallFloat encoding to compress document lengths into a single byte (3-bit mantissa + 5-bit exponent, same as Lucene/Tantivy). A 256-entry `[f32; 256]` norm table eliminates per-posting float division entirely. `Bm25BatchScorer` processes 8 postings per iteration with AVX2 SIMD.
 
@@ -400,13 +400,13 @@ assert_eq!(cursor.current(), Some(20));
 
 | Search Engine Component | Zipora Type | When to Use |
 |------------------------|-------------|-------------|
-| Term dictionary | `DoubleArrayTrie` | Default choice, 12.0 B/state, XOR transitions |
-| Term dictionary (alternatives) | `ZiporaTrie` | LOUDS/Patricia/CritBit via config |
+| Term dictionary | `DoubleArrayTrie` | Default choice, compact `base`/`check`/`tail` states, XOR transitions |
+| Term dictionary (alternatives) | `ZiporaTrie` | LOUDS/Patricia/Critical-Bit via config |
 | Short posting lists | `UintVecMin0` | Variable-width, <1M doc IDs |
 | Long posting lists | `SortedUintVec` | Delta-compressed sorted IDs |
 | Compressed posting lists | `HybridPostingList` | Auto-selects: Dense/EF/Partitioned/Optimal/Clustered by size and density |
-| Dense/run-heavy posting lists | `ClusteredEliasFano` | Per-chunk Run/Bitmap/EF containers; auto-selected by `HybridPostingList` when value-span ≤ 2×len; O(1) block `intersect_count` |
-| Rank/Select (large bitvecs) | `Rank9` | O(1) rank, O(log n) select, 25% overhead, hardware-independent |
+| Dense/run-heavy posting lists | `ClusteredEliasFano` | Per-chunk Run/Bitmap/EF containers; auto-selected by `HybridPostingList` on dense spans; O(1) block `intersect_count` |
+| Rank/Select (large bitvecs) | `Rank9` | O(1) rank, O(log n) select, hardware-independent |
 | Boolean posting lists | `BitVector` + `AdaptiveRankSelect` | High-frequency terms, bitwise ops |
 | AND/OR/NOT queries | `set_ops::multiset_*` | Sorted posting list intersection |
 | BMW cursor advance | `simd_gallop_to` | SIMD exponential search, AVX2/SSE2, replaces scalar galloping |
@@ -418,7 +418,7 @@ assert_eq!(cursor.current(), Some(20));
 | Zero-copy fuzzy visitor | `DoubleArrayTrieMap::for_each_fuzzy` | Borrowed `&[u8]` keys, zero per-result allocation |
 | Integer delta encoding | `StreamVByte` | SIMD SSSE3 shuffle decoding, delta compression |
 | Bulk bitwise queries | SIMD rank/select | Vectorized bulk rank/select and bitwise operations |
-| Doc-length storage | `FieldnormEncoder` | 1-byte fieldnorms (`1.0 B/doc`), replaces `UintVecMin0` |
+| Doc-length storage | `FieldnormEncoder` | 1-byte Lucene SmallFloat fieldnorms, replaces `UintVecMin0` |
 | BM25 scoring | `Bm25BatchScorer` | AVX2 batch API + prefetch |
 | BM25 score table | `FieldnormEncoder::build_score_table` | Full 2D precomputed scores, zero query-time math |
 | Document storage | `DictZipBlobStore` | Dictionary compression for similar docs |

@@ -1432,3 +1432,90 @@ fn test_s52_r5_generated_numeric_sections_all_mutations_and_docs_cleanup() {
         }
     }
 }
+
+#[test]
+fn test_s54_r3_and_s52_r5_subprocess_rss_and_doc_audit_holes() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // 1. S54-R3: test_s22_r5_read_only_open_does_not_fault_into_rss_anon must run its
+    // RssAnon check in an isolated single-threaded subprocess so parallel test threads
+    // in the parent test runner cannot inflate process-wide `/proc/self/status` RssAnon.
+    let mmap_src = std::fs::read_to_string(root.join("src/memory/mmap_vec.rs")).unwrap();
+    let fn_pos = mmap_src
+        .find("fn test_s22_r5_read_only_open_does_not_fault_into_rss_anon()")
+        .expect("test_s22_r5_read_only_open_does_not_fault_into_rss_anon must exist");
+    let fn_body = &mmap_src[fn_pos..];
+    assert!(
+        fn_body.contains("ZIPORA_S22_R5_SUBPROCESS") && fn_body.contains("--test-threads=1"),
+        "test_s22_r5_read_only_open_does_not_fault_into_rss_anon must isolate RssAnon in a --test-threads=1 subprocess (S54-R3)"
+    );
+
+    // 2. S52-R5 wording holes: "26 times faster", "2.6-fold", "246 microseconds",
+    // "x3.8", "12 bytes per key", plus scanning CONCURRENCY.md, MEMORY_MANAGEMENT.md,
+    // and PORTING_STATUS.md.
+    let adv_out = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(
+            r#"import importlib.util, pathlib
+spec = importlib.util.spec_from_file_location('pt', 'scripts/perf_table.py')
+pt = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pt)
+orig_readme = pathlib.Path('README.md').read_text(encoding='utf-8')
+for label, snippet in [
+    ('times_faster', 'Achieves 26 times faster lookups.'),
+    ('fold', 'Delivers a 2.6-fold improvement.'),
+    ('microseconds', 'Latency is 246 microseconds.'),
+    ('prefix_x', 'Speedup of x3.8 over baseline.'),
+    ('bytes_per_key', 'Uses only 12 bytes per key.'),
+]:
+    errs = pt.verify_files(readme_override=orig_readme + '\n' + snippet + '\n')
+    assert errs, f'perf_table.py failed to catch {label}: {snippet}'
+"#,
+        )
+        .current_dir(root)
+        .output()
+        .expect("python3 wording hole check must execute");
+    assert!(
+        adv_out.status.success(),
+        "S52-R5 wording hole check failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&adv_out.stdout),
+        String::from_utf8_lossy(&adv_out.stderr)
+    );
+
+    for (doc_rel, forbidden) in [
+        (
+            "docs/CONCURRENCY.md",
+            &[
+                "6.9M single-thread insert/sec",
+                "8.0M lookup/sec",
+                "10+ M keys/sec",
+                "< 5%",
+                "90%+",
+                "80%+",
+                "< 10%",
+            ][..],
+        ),
+        (
+            "docs/MEMORY_MANAGEMENT.md",
+            &["10-100K+ allocations/sec"][..],
+        ),
+        (
+            "docs/PORTING_STATUS.md",
+            &[
+                "NestTrieDawg",
+                "2,734 debug",
+                "2,749 release",
+                "8 cargo-fuzz targets",
+                "12 rank/select variants",
+            ][..],
+        ),
+    ] {
+        let content = std::fs::read_to_string(root.join(doc_rel)).unwrap();
+        for pat in forbidden {
+            assert!(
+                !content.contains(pat),
+                "{doc_rel} still contains stale/unmeasured claim `{pat}` (S52-R5)"
+            );
+        }
+    }
+}

@@ -45,6 +45,7 @@ EXTERNAL_ALLOWED_TYPES = {
     "Box",
     "Mutex",
     "RwLock",
+    "OnceLock",
     "HashMap",
     "BTreeMap",
     "VecDeque",
@@ -61,11 +62,31 @@ EXTERNAL_ALLOWED_TYPES = {
     "SmallFloat",
     "VarInt",
     "SwissTable",
+    "DictZip",
+    "ThreadSanitizer",
     "KiB",
     "MiB",
     "GiB",
     "Gbit",
 }
+
+ADDITIONAL_GUIDE_DOCS = [
+    "docs/ALGORITHMS.md",
+    "docs/BLOB_STORAGE.md",
+    "docs/COMPRESSION.md",
+    "docs/CONCURRENCY.md",
+    "docs/CONFIGURATION.md",
+    "docs/CONTAINERS.md",
+    "docs/ERROR_HANDLING.md",
+    "docs/FFI.md",
+    "docs/HASH_MAPS.md",
+    "docs/IO_SERIALIZATION.md",
+    "docs/MEMORY_MANAGEMENT.md",
+    "docs/PORTING_STATUS.md",
+    "docs/SEARCH_ENGINE_GUIDE.md",
+    "docs/SIMD.md",
+    "docs/STRING_PROCESSING.md",
+]
 
 
 def load_baselines() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -414,12 +435,31 @@ def collect_crate_public_types() -> set[str]:
     decl_re = re.compile(
         r"\bpub(?:\s*\([^)]*\))?\s+(?:struct|enum|trait|type)\s+([A-Z][A-Za-z0-9_]*)"
     )
+    enum_head_re = re.compile(
+        r"\bpub(?:\s*\([^)]*\))?\s+enum\s+[A-Z][A-Za-z0-9_]*[^{]*\{"
+    )
+    variant_re = re.compile(r"^\s*([A-Z][A-Za-z0-9_]*)\b", re.MULTILINE)
     reexport_re = re.compile(r"\bpub\s+use\s+[^;]+;")
     ident_re = re.compile(r"\b([A-Z][A-Za-z0-9_]*)\b")
     for rs_path in (ROOT / "src").rglob("*.rs"):
         src = rs_path.read_text(encoding="utf-8")
         for m in decl_re.finditer(src):
             pub_types.add(m.group(1))
+        for em in enum_head_re.finditer(src):
+            depth = 1
+            idx = em.end()
+            top_level_chars: list[str] = []
+            while idx < len(src) and depth > 0:
+                ch = src[idx]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                elif depth == 1:
+                    top_level_chars.append(ch)
+                idx += 1
+            for vm in variant_re.finditer("".join(top_level_chars)):
+                pub_types.add(vm.group(1))
         for m in reexport_re.finditer(src):
             for id_m in ident_re.finditer(m.group(0)):
                 pub_types.add(id_m.group(1))
@@ -459,21 +499,35 @@ def verify_no_html_comments_or_outside_numbers(
     outside_patterns = [
         (
             re.compile(
-                r"(?:\b\d+(?:\.\d+)?\s*(?:x|×)\b|(?:\b\d+(?:\.\d+)?)\s*×|快\s*\d+(?:\.\d+)?\s*倍|\d+(?:\.\d+)?\s*倍)",
+                r"(?:\b\d+(?:\.\d+)?\s*(?:x|×)\b|"
+                r"(?:\b\d+(?:\.\d+)?)\s*×|"
+                r"(?:^|(?<=[\s(\[`\"']))[x×]\s*\d+(?:\.\d+)?\b|"
+                r"\b(?:\d+(?:\.\d+)?|two|three|four|five|ten|twenty|hundred)\s+times\b|"
+                r"\b(?:\d+(?:\.\d+)?(?:-|\s+)?|two|three|four|five|ten)fold\b|"
+                r"快\s*\d+(?:\.\d+)?\s*倍|\d+(?:\.\d+)?\s*倍)",
                 re.IGNORECASE,
             ),
             "multiplier/speedup claim outside generated block",
         ),
         (
             re.compile(
-                r"(?:~?\d[\d,]*(?:\.\d+)?(?:–\d+(?:\.\d+)?|-\d+(?:\.\d+)?)?\s*"
+                r"(?:~?\d[\d,]*(?:\.\d+)?(?:–\d+(?:\.\d+)?|-\d+(?:\.\d+)?)?[KkMmGg]?\+?\s*"
                 r"(?:ns/op|ns/byte|ns/int|ns/elem|ns/call|ns/doc|ns/cell|ns\b|"
                 r"us\b|µs|μs|ms\b|"
+                r"nanoseconds?\b|microseconds?\b|milliseconds?\b|seconds?\b|"
+                r"nsec\b|usec\b|msec\b|secs?\b|"
+                r"微秒|纳秒|毫秒|"
                 r"QPS|qps|Gops/s|Mops/s|Gwords/s|ops/sec|ops/s|"
-                r"GB/s|GiB/s|MB/s|MiB/s|"
+                r"[A-Za-z_-]+(?:\s+[A-Za-z_-]+){0,2}/(?:sec|s)\b|"
+                r"GB/s|GiB/s|MB/s|MiB/s|KB/s|KiB/s|"
                 r"B/entry|B/state|B/key|B/doc|B/posting|B/byte|B/elem|B\s+aux|"
-                r"bits/elem|bits/B|bits/int|of\s+raw|%|"
-                r"specialized\s+containers|containers\b|个专用容器|个容器))"
+                r"bits/elem|bits/B|bits/int|"
+                r"(?:bytes?|bits?|kilobytes?|megabytes?|gigabytes?|KiB|MiB|GiB|KB|MB|GB)\s*(?:per|/)\s*"
+                r"(?:key|state|entry|elem|element|doc|document|posting|int|integer|op|operation|byte|call|query|slot|node|record|block|thread|val|value|item|char|symbol|word)\b|"
+                r"of\s+raw|%|"
+                r"specialized\s+containers|containers\b|个专用容器|个容器|"
+                r"(?:debug\s*/\s*\d[\d,]*\s*release\s*)?tests\b|"
+                r"(?:cargo-)?fuzz\s+targets\b|rank/select\s+variants\b))"
             ),
             "numeric metric/count outside generated block",
         ),
@@ -545,6 +599,18 @@ def verify_files(
             )
         )
         errors.extend(verify_public_types_in_doc(rel_path, content, pub_types))
+
+    for rel_path in ADDITIONAL_GUIDE_DOCS:
+        doc_path = ROOT / rel_path
+        if not doc_path.exists():
+            continue
+        doc_content = doc_path.read_text(encoding="utf-8")
+        errors.extend(
+            verify_no_html_comments_or_outside_numbers(
+                rel_path, doc_content, has_key_features=False
+            )
+        )
+        errors.extend(verify_public_types_in_doc(rel_path, doc_content, pub_types))
 
     return errors
 
@@ -632,6 +698,11 @@ def run_mutation_self_test() -> list[str]:
         ("foobar_readme_other_section", "README.md", orig_readme + "\nUses `FooBarMap` internally.\n"),
         ("cn_bei", "README_cn.md", orig_cn + "\n比标准库快 26 倍。\n"),
         ("cn_bei_nospace", "README_cn.md", orig_cn + "\n比标准库快26倍。\n"),
+        ("times_faster", "README.md", orig_readme + "\nAchieves 26 times faster lookups.\n"),
+        ("fold", "README.md", orig_readme + "\nDelivers a 2.6-fold improvement.\n"),
+        ("microseconds", "README.md", orig_readme + "\nLatency is 246 microseconds.\n"),
+        ("prefix_x", "README.md", orig_readme + "\nSpeedup of x3.8 over baseline.\n"),
+        ("bytes_per_key", "README.md", orig_readme + "\nUses only 12 bytes per key.\n"),
     ]
 
     uncaught: list[str] = []

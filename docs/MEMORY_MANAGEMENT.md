@@ -240,7 +240,7 @@ println!("hot: {}, cold: {}", stats.hot_items, stats.cold_items);
 ## Performance Characteristics
 
 - **SecureMemoryPool**: RAII safety, automatic cleanup, vulnerability prevention
-- **LockFreeMemoryPool**: 10-100K+ allocations/sec per thread
+- **LockFreeMemoryPool**: Lock-free multi-threaded allocation with per-thread magazines (see **[Verified Performance](PERFORMANCE.md)** for measured 1T/4T latency on `bindiego`)
 - **ThreadLocalMemoryPool**: Near-zero overhead for thread-local allocations
 - **FixedCapacityMemoryPool**: Deterministic allocation time for real-time
 - **MmapVec**: Persistence with memory-mapped I/O performance

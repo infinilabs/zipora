@@ -148,16 +148,13 @@ std::thread::spawn(move || {
 assert!(trie.contains(b"key_000000"));
 ```
 
-**Performance**: 6.9M single-thread insert/sec, 8.0M lookup/sec, 10+ M keys/sec at 16 threads with batched guards.
-
 ### Performance Characteristics
 
-- **Single-threaded overhead**: < 5% compared to no synchronization
-- **Multi-reader scaling**: Linear up to 8+ cores
-- **Writer throughput**: 90%+ of single-threaded for OneWriteMultiRead
-- **ConcurrentCsppTrie**: 10+ M keys/sec multi-writer (16 threads, batched guards)
-- **Token cache hit rate**: 80%+ for repeated operations
-- **Memory overhead**: < 10% additional memory usage
+- **Single-threaded overhead**: Zero atomic synchronization when configured with `NoWriteReadOnly` or `SingleThreadStrict`
+- **Multi-reader scaling**: Optimistic lock-free reader validation across CPU cores
+- **Writer throughput**: Per-node optimistic locking in `ConcurrentCsppTrie` with epoch-based reclamation (`crossbeam-epoch`)
+- **Token caching**: Thread-local token reuse to avoid per-operation allocation
+- **Measured Benchmarks**: See **[Verified Performance](PERFORMANCE.md)** for committed baseline numbers on `bindiego`
 
 ## Low-Level Synchronization Primitives
 
