@@ -735,7 +735,7 @@ fn test_s51_r3_review_ledger_identifiers_and_metrics_match_code_and_baselines() 
     );
     assert!(
         e2_e3.contains("benches/common/datasets.rs:533-548")
-            && e2_e3.contains("benches/common/harness.rs:712")
+            && e2_e3.contains("benches/common/harness.rs:716")
             && e2_e3.contains("1,427/1,427 = 100.0%")
             && e2_e3.contains("later refactored into `LockFreeMemoryPool::pop_fast_bin` and `PoolArena::push_free_fast_bin_offset`"),
         "S52-R8: docs/review/e2_e3.md must have accurate datasets.rs/harness.rs line refs, 1,427 unsafe count, and non-anachronistic E3.5 Stage 15/16 pool attribution"
@@ -989,5 +989,94 @@ fn test_s54_r1_provenance_across_checkouts_dirty_trees_and_retries_not_disabled(
     assert!(
         !retry_out.status.success(),
         "S54-R1: bench_compare.py must still fail after retries when provenance is invalid"
+    );
+}
+
+#[test]
+fn test_s54_r2_quiet_min_of_3_baselines_match_88e68ad_within_5pct() {
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::process::Command;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    for suite in ["core_bench", "competitor_bench", "e2e_search"] {
+        let old_out = Command::new("git")
+            .args([
+                "show",
+                &format!("88e68ad:benches/baselines/bindiego/{suite}.json"),
+            ])
+            .current_dir(manifest_dir)
+            .output()
+            .expect("git show 88e68ad baseline");
+        assert!(
+            old_out.status.success(),
+            "failed to read 88e68ad baseline for {suite}"
+        );
+        let old_doc: serde_json::Value =
+            serde_json::from_slice(&old_out.stdout).expect("parse 88e68ad baseline");
+        let curr_raw = std::fs::read_to_string(
+            manifest_dir
+                .join("benches/baselines/bindiego")
+                .join(format!("{suite}.json")),
+        )
+        .expect("read current baseline");
+        let curr_doc: serde_json::Value =
+            serde_json::from_str(&curr_raw).expect("parse current baseline");
+
+        let old_map: HashMap<String, f64> = old_doc["benchmarks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| {
+                (
+                    b["name"].as_str().unwrap().to_string(),
+                    b["min_ns_per_op"].as_f64().unwrap(),
+                )
+            })
+            .collect();
+
+        let ab_disclosed = [
+            "competitor_bench:hash_maps/zipora_hash_map/get_str16",
+            "competitor_bench:memory_pools/jemalloc/alloc_free_1t",
+            "competitor_bench:entropy/huffman_o1/decode_64kib",
+        ];
+        let mut loosened_over_5pct = Vec::new();
+        for b in curr_doc["benchmarks"].as_array().unwrap() {
+            let name = b["name"].as_str().unwrap();
+            let curr_min = b["min_ns_per_op"].as_f64().unwrap();
+            if let Some(&old_min) = old_map.get(name)
+                && old_min > 0.005
+            {
+                let pct = (curr_min - old_min) / old_min * 100.0;
+                let key = format!("{suite}:{name}");
+                let limit = if ab_disclosed.contains(&key.as_str()) {
+                    6.0
+                } else {
+                    5.0
+                };
+                if pct > limit {
+                    loosened_over_5pct.push(format!(
+                        "{key} ({old_min:.4} -> {curr_min:.4}, {pct:+.2}% > +{limit:.1}%)"
+                    ));
+                }
+            }
+        }
+        assert!(
+            loosened_over_5pct.is_empty(),
+            "S54-R2: {suite} baseline has rows loosened beyond 88e68ad limit:\n  {}",
+            loosened_over_5pct.join("\n  ")
+        );
+    }
+
+    let e4 = std::fs::read_to_string(manifest_dir.join("docs/review/e4.md"))
+        .expect("read docs/review/e4.md");
+    assert!(
+        !e4.contains("all on DRAM/DTLB-bound or code-layout-sensitive lookups"),
+        "S54-R2: docs/review/e4.md §2.4 must not attribute the noisy 5cee46a single-run regressions to DRAM/layout"
+    );
+    assert!(
+        e4.contains("S54-R2") && e4.contains("min over 3 quiet runs"),
+        "S54-R2: docs/review/e4.md §2.4 must document the S54-R2 per-row minimum over 3 quiet runs re-baseline"
     );
 }
