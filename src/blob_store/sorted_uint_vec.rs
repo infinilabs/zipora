@@ -73,11 +73,13 @@ impl SortedUintVecConfig {
     }
 
     /// Get block size in units
+    #[inline]
     pub fn block_size(&self) -> usize {
         1 << self.log2_block_units
     }
 
     /// Get block mask for fast modulo operations
+    #[inline]
     pub fn block_mask(&self) -> usize {
         self.block_size() - 1
     }
@@ -154,6 +156,7 @@ impl SortedUintVec {
     }
 
     /// Get number of blocks
+    #[inline]
     pub fn num_blocks(&self) -> usize {
         self.size.div_ceil(self.config.block_size())
     }
@@ -481,8 +484,9 @@ impl SortedUintVec {
     }
 
     /// Get two consecutive values efficiently
+    #[inline]
     pub fn get2(&self, index: usize) -> Result<(u64, u64)> {
-        if index.checked_add(1).is_none_or(|next| next >= self.size) {
+        if index.saturating_add(1) >= self.size {
             return Err(ZiporaError::invalid_data("index out of bounds"));
         }
 
@@ -491,7 +495,14 @@ impl SortedUintVec {
         Ok((val1, val2))
     }
 
+    #[cold]
+    #[inline(never)]
+    fn value_overflow_err() -> ZiporaError {
+        ZiporaError::invalid_data("SortedUintVec value addition overflow")
+    }
+
     /// Get value at index without bounds checking (unsafe but fast)
+    #[inline(always)]
     fn get_unchecked(&self, index: usize) -> Result<u64> {
         let block_idx = index >> self.config.log2_block_units;
         let offset_idx = index & self.config.block_mask();
@@ -502,12 +513,14 @@ impl SortedUintVec {
         // Get delta within block
         let delta = self.get_block_delta(block_idx, offset_idx)?;
 
-        block_min
-            .checked_add(delta as u64)
-            .ok_or_else(|| ZiporaError::invalid_data("SortedUintVec value addition overflow"))
+        match block_min.checked_add(delta as u64) {
+            Some(val) => Ok(val),
+            None => Err(Self::value_overflow_err()),
+        }
     }
 
     /// Get block minimum value
+    #[inline]
     fn get_block_min_val(&self, block_idx: usize) -> Result<u64> {
         if block_idx >= self.num_blocks() {
             return Err(ZiporaError::invalid_data("block index out of bounds"));
@@ -530,6 +543,7 @@ impl SortedUintVec {
     }
 
     /// Get delta value within block
+    #[inline]
     fn get_block_delta(&self, block_idx: usize, offset_idx: usize) -> Result<u32> {
         let block_data_offset =
             block_idx * self.config.block_size() * (self.config.offset_width as usize);

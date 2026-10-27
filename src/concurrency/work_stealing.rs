@@ -1800,8 +1800,10 @@ mod tests {
     fn test_s52_r3_concurrent_owner_push_pop_and_thief_steal_weak_memory() {
         const NUM_TASKS: usize = 16;
         let queue = WorkStealingQueue::new(0, 64);
-        let claimed: Vec<AtomicUsize> = (0..NUM_TASKS).map(|_| AtomicUsize::new(0)).collect();
-        let total_claimed = AtomicUsize::new(0);
+        let claimed: Arc<Vec<AtomicUsize>> =
+            Arc::new((0..NUM_TASKS).map(|_| AtomicUsize::new(0)).collect());
+        let total_claimed = Arc::new(AtomicUsize::new(0));
+        let stolen_count = AtomicUsize::new(0);
         let owner_done = AtomicBool::new(false);
 
         let run_task = |task: Box<dyn Task>| {
@@ -1819,6 +1821,7 @@ mod tests {
                 s.spawn(|| {
                     while total_claimed.load(Ordering::Acquire) < NUM_TASKS {
                         if let Some(task) = queue.steal() {
+                            stolen_count.fetch_add(1, Ordering::AcqRel);
                             run_task(task);
                         } else if owner_done.load(Ordering::Acquire) && queue.is_empty() {
                             break;
@@ -1831,21 +1834,12 @@ mod tests {
 
             // Owner thread pushes tasks, periodically balances to `steal_queue`, and pops locally.
             for idx in 0..NUM_TASKS {
-                let slot = &claimed[idx];
-                // SAFETY: `claimed` outlives the `std::thread::scope` block, so converting `&AtomicUsize`
-                // to a `usize` address and reconstructing `&AtomicUsize` inside the scoped task is sound.
-                let slot_addr = slot as *const AtomicUsize as usize;
-                let total_addr = &total_claimed as *const AtomicUsize as usize;
+                let claimed_task = Arc::clone(&claimed);
+                let total_task = Arc::clone(&total_claimed);
                 let task = Box::new(
                     ClosureTask::new(move || {
-                        // SAFETY: `slot_addr` and `total_addr` point to live stack `AtomicUsize` values
-                        // that outlive all threads in `std::thread::scope`.
-                        unsafe {
-                            let slot_ref = &*(slot_addr as *const AtomicUsize);
-                            let total_ref = &*(total_addr as *const AtomicUsize);
-                            slot_ref.fetch_add(1, Ordering::AcqRel);
-                            total_ref.fetch_add(1, Ordering::Release);
-                        }
+                        claimed_task[idx].fetch_add(1, Ordering::AcqRel);
+                        total_task.fetch_add(1, Ordering::Release);
                         Box::pin(async { Ok(()) })
                     })
                     .with_priority((idx % 4) as u8)
@@ -1862,12 +1856,19 @@ mod tests {
                 }
             }
             queue.balance();
+            while stolen_count.load(Ordering::Acquire) == 0 && !queue.is_empty() {
+                std::thread::yield_now();
+            }
             while let Some(popped) = queue.pop_local() {
                 run_task(popped);
             }
             owner_done.store(true, Ordering::Release);
         });
 
+        assert!(
+            stolen_count.load(Ordering::SeqCst) > 0,
+            "thief threads must steal at least one task during the concurrent owner/thief stress run"
+        );
         assert!(
             queue.is_empty(),
             "queue must be empty after owner and thieves finish"

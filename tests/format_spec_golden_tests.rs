@@ -1214,3 +1214,143 @@ fn test_s53_r1_sorted_uint_vec_and_zip_offset_bound_allocations_by_remaining_inp
         "Makefile fuzz_soak must pass -malloc_limit_mb=$(FUZZ_RSS_LIMIT_MB)"
     );
 }
+
+#[test]
+fn test_s53_r2_r4_get2_inlining_steal_assertion_soak_sum_and_ledger_refs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // 1. S53-R2: SortedUintVec::get2 and get_unchecked must carry #[inline] / #[inline(always)].
+    let suv_src = std::fs::read_to_string(root.join("src/blob_store/sorted_uint_vec.rs")).unwrap();
+    assert!(
+        suv_src.contains("#[inline]\n    pub fn get2("),
+        "SortedUintVec::get2 must be marked #[inline] (S53-R2)"
+    );
+    assert!(
+        suv_src.contains("#[inline(always)]\n    fn get_unchecked("),
+        "SortedUintVec::get_unchecked must be marked #[inline(always)] (S53-R2)"
+    );
+
+    // 2. S52-R3: test_s52_r3_concurrent_owner_push_pop_and_thief_steal_weak_memory must assert steal_count > 0.
+    let ws_src = std::fs::read_to_string(root.join("src/concurrency/work_stealing.rs")).unwrap();
+    let fn_idx = ws_src
+        .find("fn test_s52_r3_concurrent_owner_push_pop_and_thief_steal_weak_memory")
+        .expect("work_stealing.rs must define test_s52_r3_concurrent_owner_push_pop_and_thief_steal_weak_memory");
+    let fn_body = &ws_src[fn_idx..];
+    assert!(
+        fn_body.contains("stolen_count")
+            && fn_body.contains("stolen_count.fetch_add(1")
+            && fn_body.contains("assert!(\n            stolen_count.load("),
+        "test_s52_r3_concurrent_owner_push_pop_and_thief_steal_weak_memory must count steals and assert stolen_count > 0 (S52-R3)"
+    );
+
+    // 3. S52-R2: docs/review/fuzz_soak.md must have exact arithmetic sums (including pre-fix 229,033,298 / 360,359,994)
+    // and post-fix 1-hour re-soak table with -malloc_limit_mb=1024.
+    let soak_md = std::fs::read_to_string(root.join("docs/review/fuzz_soak.md")).unwrap();
+    assert!(
+        !soak_md.contains("229,033,300") && !soak_md.contains("360,359,996"),
+        "docs/review/fuzz_soak.md must not contain the off-by-2 sums 229,033,300 or 360,359,996"
+    );
+    assert!(
+        soak_md.contains("229,033,298") && soak_md.contains("360,359,994"),
+        "docs/review/fuzz_soak.md must record the exact pre-fix sums 229,033,298 and 360,359,994"
+    );
+    assert!(
+        soak_md.contains("-malloc_limit_mb=1024"),
+        "docs/review/fuzz_soak.md must document -malloc_limit_mb=1024"
+    );
+
+    // Verify table row sum matches the section header in docs/review/fuzz_soak.md
+    let mut row_count = 0usize;
+    let mut total_execs = 0u64;
+    for line in soak_md.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("| `fuzz_") && trimmed.contains("| `DONE` |") {
+            let cols: Vec<&str> = trimmed.split('|').map(|s| s.trim()).collect();
+            assert!(
+                cols.len() >= 5,
+                "Unexpected table row format in fuzz_soak.md: {trimmed}"
+            );
+            let dur_str = cols[3].trim_matches('`').replace(',', "");
+            let exec_str = cols[4].trim_matches('`').replace(',', "");
+            let dur: u64 = dur_str.parse().expect("valid duration integer");
+            let execs: u64 = exec_str.parse().expect("valid executions integer");
+            assert!(dur >= 3600, "Soak duration must be >= 3600s, got {dur}");
+            row_count += 1;
+            total_execs += execs;
+        }
+    }
+    assert_eq!(row_count, 11, "fuzz_soak.md must have 11 DONE table rows");
+    let formatted_sum = {
+        let s = total_execs.to_string();
+        let mut out = String::new();
+        for (i, ch) in s.chars().rev().enumerate() {
+            if i > 0 && i % 3 == 0 {
+                out.push(',');
+            }
+            out.push(ch);
+        }
+        out.chars().rev().collect::<String>()
+    };
+    assert!(
+        soak_md.contains(&format!("`{formatted_sum}` Total Executions")),
+        "fuzz_soak.md header must match exact row sum `{formatted_sum}` Total Executions"
+    );
+
+    // 4. S53-R4: All file:line references and test names in docs/review/{e4,e2_e3,e1,fuzz_soak}.md must be valid.
+    let e4_md = std::fs::read_to_string(root.join("docs/review/e4.md")).unwrap();
+    assert!(
+        !e4_md.contains("src/entropy/huffman/tree.rs:284-489"),
+        "docs/review/e4.md must not contain stale tree.rs:284-489 reference"
+    );
+    assert!(
+        e4_md.contains("src/entropy/huffman/tree.rs:267-550"),
+        "docs/review/e4.md must reference src/entropy/huffman/tree.rs:267-550"
+    );
+    let e1_md = std::fs::read_to_string(root.join("docs/review/e1.md")).unwrap();
+    assert!(
+        !e1_md.contains("test_c9_f8_create_temp_in_cleans_up_backing_file_when_mmap_mut_fails"),
+        "docs/review/e1.md must not reference nonexistent test name"
+    );
+    assert!(
+        e1_md.contains("test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error"),
+        "docs/review/e1.md must reference real test name test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error"
+    );
+
+    for doc_rel in [
+        "docs/review/e4.md",
+        "docs/review/e2_e3.md",
+        "docs/review/e1.md",
+        "docs/review/fuzz_soak.md",
+    ] {
+        let txt = std::fs::read_to_string(root.join(doc_rel)).unwrap();
+        for seg in txt.split('`').skip(1).step_by(2) {
+            if let Some((path_part, line_part)) = seg.rsplit_once(':') {
+                let is_tracked_file = path_part == "Makefile"
+                    || path_part.ends_with(".rs")
+                    || path_part.ends_with(".py")
+                    || path_part.ends_with(".yml")
+                    || path_part.ends_with(".toml")
+                    || path_part.ends_with(".md");
+                if !is_tracked_file || path_part.contains(' ') {
+                    continue;
+                }
+                let (l1_str, l2_str) = line_part.split_once('-').unwrap_or((line_part, line_part));
+                if let (Ok(l1), Ok(l2)) = (l1_str.parse::<usize>(), l2_str.parse::<usize>()) {
+                    let target_path = root.join(path_part);
+                    assert!(
+                        target_path.is_file(),
+                        "{doc_rel}: referenced file `{path_part}` does not exist (`{seg}`)"
+                    );
+                    let nlines = std::fs::read_to_string(&target_path)
+                        .unwrap()
+                        .lines()
+                        .count();
+                    assert!(
+                        l1 >= 1 && l1 <= l2 && l2 <= nlines,
+                        "{doc_rel}: out-of-range reference `{seg}` (file `{path_part}` has {nlines} lines)"
+                    );
+                }
+            }
+        }
+    }
+}
