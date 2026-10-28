@@ -1080,3 +1080,179 @@ fn test_s54_r2_quiet_min_of_3_baselines_match_88e68ad_within_5pct() {
         "S54-R2: docs/review/e4.md §2.4 must document the S54-R2 per-row minimum over 3 quiet runs re-baseline"
     );
 }
+
+#[test]
+fn test_s55_r1_bench_compare_allows_src_changes_in_temp_clone_outside_tmp() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    struct RemoveDirGuard(PathBuf);
+    impl Drop for RemoveDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let pid = std::process::id();
+    let clone_dir = manifest_dir
+        .join("target")
+        .join(format!("s55_r1_clone_{pid}"));
+    assert!(
+        !clone_dir.starts_with("/tmp"),
+        "S55-R1: temp clone must be outside /tmp, got {}",
+        clone_dir.display()
+    );
+    let _current_guard = RemoveDirGuard(clone_dir.clone());
+    if clone_dir.exists() {
+        std::fs::remove_dir_all(&clone_dir).expect("clean existing clone_dir");
+    }
+
+    let clone_status = Command::new("git")
+        .args(["clone", "--quiet", "--no-hardlinks"])
+        .arg(manifest_dir)
+        .arg(&clone_dir)
+        .status()
+        .expect("git clone into temp dir outside /tmp");
+    assert!(clone_status.success(), "git clone failed");
+
+    std::fs::copy(
+        manifest_dir.join("scripts/bench_compare.py"),
+        clone_dir.join("scripts/bench_compare.py"),
+    )
+    .expect("sync working-tree scripts/bench_compare.py into clone_dir");
+
+    for (k, v) in [("user.name", "S55 Test"), ("user.email", "s55@example.com")] {
+        let st = Command::new("git")
+            .args(["config", k, v])
+            .current_dir(&clone_dir)
+            .status()
+            .expect("git config");
+        assert!(st.success());
+    }
+
+    // Commit a trivial src/ change in the temp clone.
+    let lib_rs = clone_dir.join("src/lib.rs");
+    let mut lib_text = std::fs::read_to_string(&lib_rs).expect("read src/lib.rs");
+    lib_text.push_str("\n// S55-R1 trivial src/ change for regression gate verification\n");
+    std::fs::write(&lib_rs, &lib_text).expect("write src/lib.rs");
+
+    let add_st = Command::new("git")
+        .args(["add", "src/lib.rs"])
+        .current_dir(&clone_dir)
+        .status()
+        .expect("git add src/lib.rs");
+    assert!(add_st.success());
+
+    let commit_st = Command::new("git")
+        .args(["commit", "-q", "-m", "test: trivial src change"])
+        .current_dir(&clone_dir)
+        .status()
+        .expect("git commit trivial src change");
+    assert!(commit_st.success());
+
+    let rev_out = Command::new("git")
+        .args(["rev-parse", "--short=7", "HEAD"])
+        .current_dir(&clone_dir)
+        .output()
+        .expect("git rev-parse HEAD");
+    assert!(rev_out.status.success());
+    let new_commit = String::from_utf8(rev_out.stdout)
+        .expect("utf8 rev")
+        .trim()
+        .to_string();
+
+    // Create a mock deps/core_bench-* binary in the clone and prepare current.json at new_commit.
+    let deps_dir = clone_dir.join("target/release/deps");
+    std::fs::create_dir_all(&deps_dir).expect("create deps_dir");
+    let fake_bin = deps_dir.join("core_bench-0123456789abcdef");
+    std::fs::write(&fake_bin, b"#!/bin/sh\nexit 0\n").expect("write fake_bin");
+    std::fs::set_permissions(&fake_bin, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod fake_bin");
+
+    let sha_out = Command::new("python3")
+        .args([
+            "-c",
+            &format!(
+                "import hashlib, pathlib; print(hashlib.sha256(pathlib.Path(r'{}').read_bytes()).hexdigest())",
+                fake_bin.display()
+            ),
+        ])
+        .output()
+        .expect("hash fake_bin");
+    let fake_sha = String::from_utf8(sha_out.stdout)
+        .expect("utf8 sha")
+        .trim()
+        .to_string();
+
+    let base_path = clone_dir.join("benches/baselines/bindiego/core_bench.json");
+    let base_raw = std::fs::read_to_string(&base_path).expect("read core_bench.json");
+    let mut curr_doc: serde_json::Value =
+        serde_json::from_str(&base_raw).expect("parse core_bench.json");
+    curr_doc["host_metadata"]["git_commit"] = serde_json::Value::String(new_commit);
+    curr_doc["host_metadata"]["binary_path"] =
+        serde_json::Value::String(fake_bin.to_string_lossy().into_owned());
+    curr_doc["host_metadata"]["binary_sha256"] = serde_json::Value::String(fake_sha);
+
+    let curr_path = clone_dir.join("target/bench_curr.json");
+    std::fs::write(&curr_path, serde_json::to_string(&curr_doc).unwrap()).expect("write curr_path");
+
+    // 1. Passing timing rows must pass bench_compare.py with zero provenance failures.
+    let pass_out = Command::new("python3")
+        .arg(clone_dir.join("scripts/bench_compare.py"))
+        .args(["--suite", "core_bench", "--baseline"])
+        .arg(&base_path)
+        .arg("--current")
+        .arg(&curr_path)
+        .current_dir(&clone_dir)
+        .output()
+        .expect("run bench_compare.py in clone after src/ commit");
+    let pass_stdout = String::from_utf8_lossy(&pass_out.stdout);
+    let pass_stderr = String::from_utf8_lossy(&pass_out.stderr);
+    assert!(
+        pass_out.status.success(),
+        "S55-R1: bench_compare.py must not fail provenance when src/ changes in a new commit:\nstdout: {pass_stdout}\nstderr: {pass_stderr}"
+    );
+    assert!(
+        pass_stdout.contains("PASS: all 80 benchmark(s) present and within regression thresholds"),
+        "S55-R1: timing rows must be judged normally:\nstdout: {pass_stdout}"
+    );
+
+    // 2. A regressed timing row must fail on timing only, with zero provenance failures.
+    let mut reg_doc = curr_doc.clone();
+    let old_min = reg_doc["benchmarks"][0]["min_ns_per_op"].as_f64().unwrap();
+    reg_doc["benchmarks"][0]["min_ns_per_op"] = serde_json::json!(old_min * 1.50);
+    std::fs::write(&curr_path, serde_json::to_string(&reg_doc).unwrap())
+        .expect("write regressed curr_path");
+
+    let reg_out = Command::new("python3")
+        .arg(clone_dir.join("scripts/bench_compare.py"))
+        .args(["--suite", "core_bench", "--baseline"])
+        .arg(&base_path)
+        .arg("--current")
+        .arg(&curr_path)
+        .args(["--confirm-retries", "0"])
+        .current_dir(&clone_dir)
+        .output()
+        .expect("run bench_compare.py on regressed row in clone");
+    let reg_stdout = String::from_utf8_lossy(&reg_out.stdout);
+    let reg_stderr = String::from_utf8_lossy(&reg_out.stderr);
+    let bench_compare = std::fs::read_to_string(manifest_dir.join("scripts/bench_compare.py"))
+        .expect("read scripts/bench_compare.py");
+    assert!(
+        !bench_compare.contains("git_code_tree_matches"),
+        "S55-R1: scripts/bench_compare.py must not reject commits via git_code_tree_matches"
+    );
+
+    assert!(
+        !reg_out.status.success()
+            && reg_stdout.contains("REGRESSED")
+            && reg_stdout.contains("+50.00% > +9.00%")
+            && !reg_stdout.contains("host_metadata")
+            && !reg_stdout.contains("provenance")
+            && !reg_stderr.contains("host_metadata")
+            && !reg_stderr.contains("provenance"),
+        "S55-R1: regressed timing row must fail on timing only with no provenance failure:\nstdout: {reg_stdout}\nstderr: {reg_stderr}"
+    );
+}

@@ -67,27 +67,6 @@ def git_commit_exists(commit: str) -> bool:
     return proc.returncode == 0
 
 
-def git_code_tree_matches(ref_a: str, ref_b: Optional[str] = None) -> bool:
-    cmd = ["git", "diff", "--quiet", ref_a]
-    if ref_b is not None:
-        cmd.append(ref_b)
-    cmd.extend(
-        [
-            "--",
-            "src",
-            "Cargo.toml",
-            "Cargo.lock",
-            "benches/core_bench.rs",
-            "benches/competitor_bench.rs",
-            "benches/e2e_search_bench.rs",
-            "benches/common",
-            "benches/competitors",
-        ]
-    )
-    proc = subprocess.run(cmd, capture_output=True, check=False)
-    return proc.returncode == 0
-
-
 def compute_cargo_lock_sha256(commit: Optional[str] = None) -> Optional[str]:
     if commit is None:
         try:
@@ -382,9 +361,6 @@ def compare_benchmarks(
     base_hm = baseline_data.get("host_metadata", {}) or {}
     curr_hm = current_data.get("host_metadata", {}) or {}
     base_commit = str(base_hm.get("git_commit", "") or "").strip().lower()
-    curr_commit_raw = str(curr_hm.get("git_commit", "") or "").strip().lower()
-    curr_is_dirty = curr_commit_raw.endswith("-dirty")
-    curr_commit = curr_commit_raw[:-6] if curr_is_dirty else curr_commit_raw
     base_lock_sha = str(base_hm.get("cargo_lock_sha256", "") or "").strip().lower()
     curr_lock_sha = str(curr_hm.get("cargo_lock_sha256", "") or "").strip().lower()
     base_rustflags = str(base_hm.get("rustflags", "") or "").strip()
@@ -395,19 +371,6 @@ def compare_benchmarks(
     curr_bin_path = str(curr_hm.get("binary_path", "") or "").strip()
 
     if prov_ok:
-        if not git_code_tree_matches(base_commit, "HEAD"):
-            failures.append(
-                f"baseline.host_metadata: git_commit '{base_commit}' src/benches tree does not match HEAD (S52-R1/S54-R1)"
-            )
-        if not git_code_tree_matches(curr_commit, "HEAD"):
-            failures.append(
-                f"current.host_metadata: git_commit '{curr_commit_raw}' src/benches tree does not match HEAD (S54-R1)"
-            )
-        worktree_clean = git_code_tree_matches("HEAD")
-        if worktree_clean and curr_is_dirty:
-            failures.append(
-                "current.host_metadata: git_commit has '-dirty' suffix in a clean worktree (S54-R1)"
-            )
         if base_rustflags != curr_rustflags:
             failures.append(
                 f"provenance: current rustflags ('{curr_rustflags}') do not match baseline rustflags ('{base_rustflags}') (S54-R1)"
