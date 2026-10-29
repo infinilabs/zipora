@@ -73,6 +73,7 @@ sortable.sort_lexicographic().unwrap();
 ### Single-Threaded LRU Map
 
 ```rust
+use std::sync::atomic::Ordering;
 use zipora::containers::{LruMap, LruMapConfig, EvictionCallback};
 
 // Basic LRU map with default configuration
@@ -169,11 +170,11 @@ Detailed, benchmarked numbers are maintained in [PERFORMANCE.md](PERFORMANCE.md)
 ## Unified Tries
 
 ```rust
-use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, Trie, TrieStrategy, TrieCompressionStrategy};
+use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig};
 use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
 
-// Default Patricia trie behavior
-let mut trie = ZiporaTrie::new();
+// Default Double-Array trie behavior
+let mut trie: ZiporaTrie = ZiporaTrie::new();
 trie.insert(b"cat").unwrap();
 trie.insert(b"car").unwrap();
 trie.insert(b"card").unwrap();
@@ -182,33 +183,35 @@ trie.insert(b"card").unwrap();
 assert!(trie.contains(b"cat"));
 assert!(trie.contains(b"car"));
 assert!(trie.contains(b"card"));
-assert!(!trie.contains(b"ca")); // Path compression active
+assert!(!trie.contains(b"ca"));
 
 // Prefix iteration for hierarchical data
 for key in trie.iter_prefix(b"car") {
     println!("Found key with 'car' prefix: {:?}", String::from_utf8_lossy(&key));
 }
 
-// String-specialized configuration (formerly CritBitTrie)
-let mut string_trie = ZiporaTrie::with_config(ZiporaTrieConfig::string_specialized());
-string_trie.insert(b"efficient").unwrap();
-string_trie.insert(b"effective").unwrap();
+// Cache-optimized configuration
+let mut cache_trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::cache_optimized());
+cache_trie.insert(b"efficient").unwrap();
+cache_trie.insert(b"effective").unwrap();
 
 // Structural and memory statistics
-let stats = string_trie.stats();
+let stats = cache_trie.stats();
 println!("States: {}, keys: {}, transitions: {}",
     stats.num_states, stats.num_keys, stats.num_transitions);
 println!("Max depth: {}, avg depth: {:.2}", stats.max_depth, stats.avg_depth);
 println!("Memory usage: {} bytes, {:.2} bits per key", stats.memory_usage, stats.bits_per_key);
 
-// Space-optimized trie (formerly LOUDS/NestedLouds)
-let mut compact_trie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized());
-compact_trie.insert(b"efficient").unwrap();
+// Sparse-optimized trie (CSPP backend)
+let mut sparse_trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());
+sparse_trie.insert(b"efficient").unwrap();
+assert!(sparse_trie.contains(b"efficient"));
 
-// High-performance concurrent trie (formerly DoubleArrayTrie)
-let pool = SecureMemoryPool::new(SecurePoolConfig::default()).unwrap(); // already returns Arc<SecureMemoryPool>
-let mut concurrent_trie = ZiporaTrie::with_config(
+// High-performance concurrent trie configuration
+let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure()).unwrap();
+let mut concurrent_trie: ZiporaTrie = ZiporaTrie::with_config(
     ZiporaTrieConfig::concurrent_high_performance(pool)
 );
 concurrent_trie.insert(b"concurrent").unwrap();
+assert!(concurrent_trie.contains(b"concurrent"));
 ```

@@ -68,8 +68,15 @@ assert_eq!(err.category(), "memory"); // static str for logging/metrics
 `src/error.rs` also provides `Result`-returning bounds checks:
 
 ```rust
+use zipora::Result;
 use zipora::error::{check_bounds, check_range};
 
-check_bounds(index, size)?;       // Err(OutOfBounds) if index >= size
-check_range(start, end, size)?;   // validates start <= end && end <= size
+fn validate_slice(index: usize, start: usize, end: usize, size: usize) -> Result<()> {
+    check_bounds(index, size)?;     // Err(OutOfBounds) if index >= size
+    check_range(start, end, size)?; // validates start <= end && end <= size
+    Ok(())
+}
+
+validate_slice(2, 1, 4, 10).unwrap();
+assert!(validate_slice(10, 1, 4, 10).is_err());
 ```

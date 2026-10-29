@@ -4,50 +4,41 @@ Zipora provides **two production-grade hash map implementations** with different
 
 ## ZiporaHashMap - Strategy-Based Unified Implementation
 
-**Unified hash map** with strategy-based configuration for advanced features including cache locality optimizations, sophisticated collision resolution algorithms, and memory-efficient string arena management.
+**Unified hash map** with SwissTable 16-way SSE2 group probing by default and inline small-map storage (`small_inline`) for small collections.
 
 ```rust
 use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig, HashStrategy, HashStorageStrategy};
 
-// Default high-performance hash map - constructors return Result
-let mut map = ZiporaHashMap::new().unwrap();
+// Default high-performance hash map (SwissTable 16-way SSE2 group probing)
+let mut map: ZiporaHashMap<&str, &str> = ZiporaHashMap::new().unwrap();
 map.insert("key", "value").unwrap();
-// Features: Optimized for general-purpose use, excellent lookup performance
+assert_eq!(map.get(&"key"), Some(&"value"));
 
-// String-optimized configuration - memory efficient for string keys
-let mut string_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized()).unwrap();
-string_map.insert("interned", 42).unwrap();
-// Features: String interning, prefix caching, SIMD acceleration, arena management
-// Best for: Applications with many duplicate string keys
+// Pre-allocated capacity
+let mut sized_map: ZiporaHashMap<&str, i32> = ZiporaHashMap::with_capacity(64).unwrap();
+sized_map.insert("sized", 42).unwrap();
 
-// Small inline configuration - zero allocations for small collections
-let mut small_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4)).unwrap();
+// Small inline configuration - inline storage for <=N elements before spilling to StandardTable
+let mut small_map: ZiporaHashMap<&str, i32> =
+    ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4)).unwrap();
 small_map.insert("inline", 1).unwrap();
-// Features: Inline storage for <=N elements, automatic heap fallback
-// Best for: Small collections, zero-allocation scenarios
+assert_eq!(small_map.get(&"inline"), Some(&1));
 
-// Cache-optimized configuration - NUMA awareness and prefetching
-let mut cache_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized()).unwrap();
-cache_map.insert("cache", "optimized").unwrap();
-// Features: Cache-line alignment, NUMA awareness, hot/cold separation
-// Best for: High-performance applications with cache-sensitive workloads
-
-// Custom advanced configuration - full control over strategies
+// Custom configuration with Standard storage and custom load factor
 let config = ZiporaHashMapConfig {
     hash_strategy: HashStrategy::RobinHood {
         max_probe_distance: 64,
         variance_reduction: true,
         backward_shift: true,
     },
-    storage_strategy: HashStorageStrategy::CacheOptimized {
-        cache_line_size: 64,
-        numa_aware: true,
-        huge_pages: false,
+    storage_strategy: HashStorageStrategy::Standard {
+        initial_capacity: 64,
+        growth_factor: 2.0,
     },
     load_factor: 0.75,
     ..ZiporaHashMapConfig::default()
 };
-let mut advanced_map = ZiporaHashMap::with_config(config).unwrap();
+let mut advanced_map: ZiporaHashMap<&str, &str> = ZiporaHashMap::with_config(config).unwrap();
 advanced_map.insert("advanced", "unified configuration").unwrap();
 ```
 
@@ -131,40 +122,41 @@ println!("Load factor: {:.2}", custom_map.load_factor());
 
 | Implementation / Configuration | Optimization Focus | Best Use Case |
 |--------------------------------|--------------------|---------------|
-| **ZiporaHashMap** (default) | Robin Hood probing, general purpose | Standard workloads |
-| **ZiporaHashMap** + `string_optimized()` | String interning, arena storage, SIMD string ops | String key deduplication |
+| **ZiporaHashMap** (default) | SwissTable 16-way SSE2 group probing | Standard workloads |
 | **ZiporaHashMap** + `small_inline(n)` | Inline storage for <=n elements | Small collections, zero allocation |
-| **ZiporaHashMap** + `cache_optimized()` | Cache-line alignment, NUMA awareness, prefetching | Cache-sensitive workloads |
 | **GoldHashMap** | Link-based collision resolution, hash caching | Lookup-heavy workloads |
 
 Measured, up-to-date benchmark numbers are maintained in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Key Performance Insights
 
+- **`ZiporaHashMap` (default) uses SwissTable 16-way SSE2 group probing**: 1-byte H2 control tags (`ctrl: FastVec<u8>`) + unboxed `(K, V)` slots match `hashbrown`/`std` memory footprint while supporting pluggable strategies
 - **GoldHashMap targets lookup-heavy workloads**: link-based collision resolution provides good cache locality and predictable probe behavior
 - **Configurable link types** (u32/u64) allow memory vs capacity tradeoff
 - **Hash caching** reduces recomputation overhead for small to medium maps
 - **Freelist management** enables efficient slot reuse in high-churn workloads
 - **Auto GC** prevents memory fragmentation in long-running applications
-- **`ZiporaHashMapConfig::string_optimized()` reduces memory usage** through string interning and arena management, at the cost of insertion speed
-- **`ZiporaHashMapConfig::small_inline(n)` eliminates allocations** for small collections
-- **`ZiporaHashMapConfig::cache_optimized()` delivers cache-aware performance** with prefetching, NUMA awareness, and hot/cold data separation
-- **Custom `HashStrategy`/`HashStorageStrategy` combinations** (e.g. Robin Hood with backward shift) give full control over collision handling
+- **`ZiporaHashMapConfig::small_inline(n)` eliminates heap allocations** for small collections before spilling to the standard table
+- **Custom `HashStrategy`/`HashStorageStrategy` combinations** allow tuning initial capacity and load factor
 
-## String Arena and Deduplication
+## Runtime Statistics and Cache Metrics
 
 ```rust
-// Advanced string arena with offset-based addressing (integrated into ZiporaHashMap)
-let mut string_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized()).unwrap();
-string_map.insert("shared string", "value1").unwrap();
-string_map.insert("shared string", "value2").unwrap(); // Automatic deduplication
-let stats = string_map.stats();
+use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig};
+
+// Track insertions, lookups, and collisions
+let mut map: ZiporaHashMap<&str, &str> = ZiporaHashMap::new().unwrap();
+map.insert("shared string", "value1").unwrap();
+map.insert("shared string", "value2").unwrap(); // Overwrites existing key
+assert_eq!(map.get(&"shared string"), Some(&"value2"));
+let stats = map.stats();
 println!("Insertions: {}, lookups: {}, collisions: {}",
     stats.insertions, stats.lookups, stats.collisions);
 
-// Cache metrics for cache-optimized maps
-let mut cache_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized()).unwrap();
-cache_map.insert("cache", "optimized").unwrap();
-let metrics = cache_map.cache_metrics();
+// Cache metrics tracking on inline/standard maps
+let mut small_map: ZiporaHashMap<&str, &str> =
+    ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(8)).unwrap();
+small_map.insert("cache", "tracked").unwrap();
+let metrics = small_map.cache_metrics();
 println!("Cache hit ratio: {:.2}%", metrics.hit_ratio() * 100.0);
 ```

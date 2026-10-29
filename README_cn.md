@@ -59,14 +59,14 @@ let rank = adaptive_rs.rank1(500);
 // 统一 Trie —— 基于策略模式的配置
 use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, Trie};
 
-let mut trie = ZiporaTrie::new();
+let mut trie: ZiporaTrie = ZiporaTrie::new();
 trie.insert(b"hello").unwrap();
 assert!(trie.contains(b"hello"));
 
 // 统一哈希表 —— 基于策略模式的配置
 use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig};
 
-let mut map = ZiporaHashMap::new().unwrap();
+let mut map: ZiporaHashMap<&str, &str> = ZiporaHashMap::new().unwrap();
 map.insert("key", "value").unwrap();
 
 // 带压缩的 Blob 存储
@@ -102,7 +102,7 @@ assert_eq!(joined, "hello, world");
 
 ### 系统架构
 - **[并发](docs/CONCURRENCY.md)** - 流水线处理、工作窃取、并行 Trie 构建
-- **[错误处理](docs/ERROR_HANDLING.md)** - ZiporaError/Result 模式、校验宏
+- **[错误处理](docs/ERROR_HANDLING.md)** - ZiporaError/Result 模式、错误分类、边界检查
 - **[配置](docs/CONFIGURATION.md)** - 丰富的配置 API、预设、校验
 - **[SIMD 框架](docs/SIMD.md)** - 6 级 SIMD，支持 AVX2/BMI2/POPCNT
 
@@ -115,6 +115,7 @@ assert_eq!(joined, "hello, world");
 - **[性能基准测试](docs/PERFORMANCE.md)** - 所有组件的验证基准测试结果
 
 ### 参考
+- **[二进制格式规范](docs/format_spec.md)** - 持久化容器与 Blob 存储的字节布局规范
 - **[移植状态](docs/PORTING_STATUS.md)** - 功能实现状态
 
 ## 功能特性

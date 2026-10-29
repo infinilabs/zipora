@@ -32,19 +32,19 @@ use zipora::memory::{
 
 // Automatic adaptive selection (recommended)
 let config = FiveLevelPoolConfig::performance_optimized();
-let mut pool = AdaptiveFiveLevelPool::new(config).unwrap();
-let offset = pool.alloc(1024).unwrap();
+let mut pool = AdaptiveFiveLevelPool::new(config.clone()).unwrap();
+let _offset = pool.alloc(1024).unwrap();
 println!("Selected level: {:?}", pool.current_level());
 
 // Explicit level selection for specific requirements
-let pool = AdaptiveFiveLevelPool::with_level(config, ConcurrencyLevel::ThreadLocal).unwrap();
+let _pool = AdaptiveFiveLevelPool::with_level(config.clone(), ConcurrencyLevel::ThreadLocal).unwrap();
 
 // Direct use of specific levels
-let mut single_thread_pool = NoLockingPool::new(config.clone()).unwrap();
-let mutex_pool = MutexBasedPool::new(config.clone()).unwrap();
-let lockfree_pool = LockFreePool::new(config.clone()).unwrap();
-let threadlocal_pool = ThreadLocalPool::new(config.clone()).unwrap();
-let mut fixed_pool = FixedCapacityPool::new(config).unwrap();
+let mut _single_thread_pool = NoLockingPool::new(config.clone()).unwrap();
+let _mutex_pool = MutexBasedPool::new(config.clone()).unwrap();
+let _lockfree_pool = LockFreePool::new(config.clone()).unwrap();
+let _threadlocal_pool = ThreadLocalPool::new(config.clone()).unwrap();
+let mut _fixed_pool = FixedCapacityPool::new(config).unwrap();
 
 // Configuration presets for different use cases
 let performance_config = FiveLevelPoolConfig::performance_optimized(); // High throughput
@@ -129,20 +129,19 @@ The `ConcurrentCsppTrie` provides true multi-writer/multi-reader concurrent acce
 
 ```rust
 use zipora::fsa::cspp_trie_concurrent::ConcurrentCsppTrie;
-use crossbeam_epoch as epoch;
 use std::sync::Arc;
 
-let trie = Arc::new(ConcurrentCsppTrie::with_capacity(0, 10_000_000));
+let trie = Arc::new(ConcurrentCsppTrie::with_capacity(0, 100_000));
 
-// Multi-threaded insert (each thread gets its own epoch guard for batching)
+// Multi-threaded insert (insert() pins the epoch internally)
 let trie_clone = Arc::clone(&trie);
-std::thread::spawn(move || {
-    let guard = epoch::pin();
-    for i in 0..10_000 {
+let handle = std::thread::spawn(move || {
+    for i in 0..100 {
         let key = format!("key_{:06}", i);
-        trie_clone.insert_with_guard(key.as_bytes(), &guard);
+        trie_clone.insert(key.as_bytes());
     }
 });
+handle.join().unwrap();
 
 // Concurrent reads are lock-free
 assert!(trie.contains(b"key_000000"));
@@ -165,18 +164,26 @@ Low-level primitives live in the `zipora::thread` module.
 `FutexMutex`, `FutexCondvar`, and `FutexRwLock` are built directly on the `futex(2)` syscall via the `LinuxFutex` backend (`PlatformSync` trait, with a portable fallback on non-Linux targets).
 
 ```rust
+use std::sync::atomic::{AtomicBool, Ordering};
 use zipora::thread::{FutexMutex, FutexCondvar, FutexRwLock};
 
 let mutex = FutexMutex::new();
-{
-    let _guard = mutex.lock().unwrap();
-    // critical section; released on drop
-}
-
 let condvar = FutexCondvar::new();
-let guard = mutex.lock().unwrap();
-let _guard = condvar.wait(guard).unwrap(); // returns the re-acquired guard
-condvar.notify_one().unwrap();
+let ready = AtomicBool::new(false);
+
+// Hold the lock before spawning so the waiter enters condvar.wait(guard) first
+std::thread::scope(|s| {
+    let mut guard = mutex.lock().unwrap();
+    s.spawn(|| {
+        let _notify_guard = mutex.lock().unwrap();
+        ready.store(true, Ordering::Release);
+        condvar.notify_one().unwrap();
+    });
+    while !ready.load(Ordering::Acquire) {
+        guard = condvar.wait(guard).unwrap();
+    }
+});
+assert!(ready.load(Ordering::Acquire));
 
 let rwlock = FutexRwLock::new();
 let r = rwlock.read().unwrap();

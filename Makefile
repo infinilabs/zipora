@@ -504,6 +504,7 @@ clippy:
 
 doc:
 	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --locked --no-deps --all-features
+	python3 scripts/doc_tests.py
 
 # =============================================================================
 # WORKFLOWS
@@ -597,6 +598,8 @@ sanity:
 	$(CARGO) test --locked --release --lib --all-features 2>&1 | tee target/sanity/release_lib.log
 	@echo "=== Tests: doctests (--doc) ==="
 	$(CARGO) test --locked --doc 2>&1 | tee target/sanity/doctests.log
+	@echo "=== Tests: markdown doctests (README & docs/*.md) ==="
+	python3 scripts/doc_tests.py
 	@echo "=== Test counts and drift guard (B8) ==="
 	python3 scripts/check_gate_drift.py target/sanity
 	@echo "=== Sanity: PASS ==="

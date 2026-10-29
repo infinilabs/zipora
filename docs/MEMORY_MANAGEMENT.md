@@ -30,11 +30,11 @@ let ptr = bump.alloc::<u64>().unwrap();
 let mut pooled_vec = PooledVec::<i32>::new().unwrap();
 pooled_vec.push(42).unwrap();
 
-// Linux hugepage support for large datasets
+// Linux hugepage support for large datasets (succeeds when OS hugepages are reserved)
 #[cfg(target_os = "linux")]
 {
     use zipora::HugePage;
-    let hugepage = HugePage::new_2mb(2 * 1024 * 1024).unwrap();
+    let _hugepage = HugePage::new_2mb(2 * 1024 * 1024);
 }
 ```
 
@@ -145,11 +145,13 @@ if let Some(stats) = pool.stats() {
 `MmapVec` is gated behind the `mmap` feature (enabled by default).
 
 ```rust
-use zipora::memory::{MmapVec, MmapVecConfig, MmapVecStats};
+use zipora::memory::{MmapVec, MmapVecConfig};
+
+let path = std::env::temp_dir().join("zipora_doc_data.mmap");
 
 // Persistent vector backed by memory-mapped file
 let config = MmapVecConfig::large_dataset();
-let mut vec = MmapVec::<u64>::create("data.mmap", config).unwrap();
+let mut vec = MmapVec::<u64>::create(&path, config).unwrap();
 
 // Standard vector operations with persistence
 vec.push(42).unwrap();
@@ -158,8 +160,8 @@ assert_eq!(vec.len(), 2);
 assert_eq!(vec.get(0), Some(&42));
 
 // Automatic growth and persistence
-vec.reserve(1_000_000).unwrap(); // Reserve for 1M elements
-for i in 0..1000 {
+vec.reserve(1_000).unwrap();
+for i in 0..100 {
     vec.push(i).unwrap();
 }
 
@@ -167,12 +169,12 @@ for i in 0..1000 {
 vec.sync().unwrap(); // Force sync to disk
 
 // Configuration presets for different use cases
-let performance_config = MmapVecConfig::performance_optimized(); // Golden ratio growth
-let memory_config = MmapVecConfig::memory_optimized();           // Conservative growth
-let realtime_config = MmapVecConfig::realtime();                 // Predictable performance
+let _performance_config = MmapVecConfig::performance_optimized(); // Golden ratio growth
+let _memory_config = MmapVecConfig::memory_optimized();           // Conservative growth
+let _realtime_config = MmapVecConfig::realtime();                 // Predictable performance
 
 // Builder pattern for custom configurations
-let config = MmapVecConfig::builder()
+let _config = MmapVecConfig::builder()
     .with_initial_capacity(8192)
     .with_growth_factor(1.618)  // Golden ratio growth
     .with_populate_pages(true)  // Pre-load for performance
@@ -180,9 +182,9 @@ let config = MmapVecConfig::builder()
     .build();
 
 // Advanced operations
-vec.extend(&[1, 2, 3, 4, 5]).unwrap();
-vec.truncate(100).unwrap();
-vec.resize(200, 0).unwrap();
+vec.extend([1u64, 2, 3, 4, 5]).unwrap();
+vec.truncate(50).unwrap();
+vec.resize(60, 0).unwrap();
 vec.shrink_to_fit().unwrap();
 
 // Memory usage statistics
@@ -193,8 +195,11 @@ println!("File path: {}", vec.path().display());
 
 // Iterator support
 for &value in &vec {
-    println!("Value: {}", value);
+    let _ = value;
 }
+
+drop(vec);
+let _ = std::fs::remove_file(&path);
 ```
 
 ## Memory Pool Comparison
@@ -222,15 +227,18 @@ config.prefetch_distance = 128;
 let allocator = CacheOptimizedAllocator::new(config.clone());
 
 // Cache-aligned allocation: (size, alignment, is_hot) -> Result<NonNull<u8>>
-let ptr = allocator.allocate_aligned(1024, 64, true)?;
+let ptr = allocator.allocate_aligned(1024, 64, true).unwrap();
+unsafe {
+    allocator.deallocate_aligned(ptr, 1024, 64);
+}
 
 // Hot/cold data separation
 let mut separator: HotColdSeparator<u64> = HotColdSeparator::new(config);
 separator.insert(42, 2000); // access_count >= hot_threshold => hot
 separator.insert(7, 3);     // infrequently accessed => cold
 
-let hot = separator.hot_slice();
-let cold = separator.cold_slice();
+let _hot = separator.hot_slice();
+let _cold = separator.cold_slice();
 
 separator.reorganize(); // rebalance items based on recorded access counts
 let stats = separator.separation_stats();

@@ -44,6 +44,9 @@ assert!(blob_config.validate().is_ok());
 ### Using Configuration Presets
 
 ```rust
+use zipora::config::*;
+use zipora::config::memory::CacheOptimizationLevel;
+
 // Choose preset based on your requirements
 let perf_config = NestLoudsTrieConfig::performance_preset();  // Maximum performance
 let mem_config = NestLoudsTrieConfig::memory_preset();        // Minimize memory usage
@@ -60,6 +63,7 @@ let secure_memory = MemoryConfig::performance_preset()
 ### Builder Pattern Configuration
 
 ```rust
+use zipora::config::{Config, NestLoudsTrieConfig};
 use zipora::config::nest_louds_trie::{CompressionAlgorithm, OptimizationFlags};
 
 // Use fluent builder pattern for complex configurations
@@ -80,10 +84,11 @@ let custom_config = NestLoudsTrieConfig::builder()
         OptimizationFlags::ENABLE_SIMD_ACCELERATION |
         OptimizationFlags::USE_HUGEPAGES
     )
-    .build()?;
+    .build()
+    .unwrap();
 
 // Verify the configuration
-custom_config.validate()?;
+custom_config.validate().unwrap();
 ```
 
 ### Memory Configuration with Advanced Features
@@ -101,7 +106,8 @@ let mut memory_config = MemoryConfig::builder()
     .alignment(64)                                          // 64-byte cache line alignment
     .num_pools(16)                                          // 16 separate pools
     .enable_protection(true)                                // Memory protection features
-    .build()?;
+    .build()
+    .unwrap();
 
 // NUMA and huge-page details are plain public fields — set them after build
 memory_config.numa_config.preferred_node = -1;                          // Auto-select node
@@ -112,19 +118,22 @@ memory_config.huge_page_config.min_allocation_size = 2 * 1024 * 1024;  // Huge p
 
 ```rust
 use std::env;
+use zipora::config::*;
 
 // Set configuration through environment variables
-env::set_var("ZIPORA_TRIE_NEST_LEVEL", "5");
-env::set_var("ZIPORA_TRIE_COMPRESSION_LEVEL", "12");
-env::set_var("ZIPORA_TRIE_ENABLE_STATISTICS", "true");
-env::set_var("ZIPORA_MEMORY_INITIAL_POOL_SIZE", "134217728"); // 128MB
+unsafe {
+    env::set_var("ZIPORA_TRIE_NEST_LEVEL", "5");
+    env::set_var("ZIPORA_TRIE_COMPRESSION_LEVEL", "12");
+    env::set_var("ZIPORA_TRIE_ENABLE_STATISTICS", "true");
+    env::set_var("ZIPORA_MEMORY_INITIAL_POOL_SIZE", "134217728"); // 128MB
+}
 
 // Load configuration from environment
-let trie_config = NestLoudsTrieConfig::from_env()?;
-let memory_config = MemoryConfig::from_env()?;
+let trie_config = NestLoudsTrieConfig::from_env().unwrap();
+let memory_config = MemoryConfig::from_env().unwrap();
 
 // Use custom prefix for environment variables
-let custom_config = NestLoudsTrieConfig::from_env_with_prefix("CUSTOM_")?;
+let custom_config = NestLoudsTrieConfig::from_env_with_prefix("CUSTOM_").unwrap();
 
 // Environment variables override defaults
 assert_eq!(trie_config.nest_level, 5);
@@ -135,19 +144,23 @@ assert!(trie_config.enable_statistics);
 ### Configuration Persistence
 
 ```rust
-use tempfile::tempdir;
+use zipora::config::*;
+
+let path = std::env::temp_dir().join("zipora_trie_performance.json");
 
 // Save configuration to JSON file
 let config = NestLoudsTrieConfig::performance_preset();
-config.save_to_file("config/trie_performance.json")?;
+config.save_to_file(&path).unwrap();
 
 // Load configuration from JSON file
-let loaded_config = NestLoudsTrieConfig::load_from_file("config/trie_performance.json")?;
+let loaded_config = NestLoudsTrieConfig::load_from_file(&path).unwrap();
 assert_eq!(config.nest_level, loaded_config.nest_level);
 
 // Configuration validation happens automatically during loading
-let invalid_config_result = NestLoudsTrieConfig::load_from_file("invalid_config.json");
-assert!(invalid_config_result.is_err()); // Validation catches issues
+let invalid_config_result = NestLoudsTrieConfig::load_from_file("nonexistent_invalid_config.json");
+assert!(invalid_config_result.is_err()); // Validation/IO catches issues
+
+let _ = std::fs::remove_file(&path);
 ```
 
 > Note: JSON persistence (`save_to_file`/`load_from_file`) requires the `serde` feature (enabled by default).
@@ -157,6 +170,8 @@ assert!(invalid_config_result.is_err()); // Validation catches issues
 The configuration system provides comprehensive validation with detailed error messages:
 
 ```rust
+use zipora::config::*;
+
 // Create invalid configuration
 let mut config = NestLoudsTrieConfig::default();
 config.nest_level = 0;  // Invalid: must be 1-16

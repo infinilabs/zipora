@@ -39,7 +39,7 @@ let config = CacheObliviousConfig {
     small_threshold: 512,
     ..Default::default()
 };
-let mut custom_sorter = CacheObliviousSort::with_config(config);
+let mut custom_sorter = CacheObliviousSort::with_config(config.clone());
 
 // Adaptive algorithm selector for strategic decision making
 let selector = AdaptiveAlgorithmSelector::new(&config);
@@ -86,7 +86,8 @@ sorter.sort_u32(&mut small_data).unwrap();
 ## Multi-Way Merge Algorithms
 
 ```rust
-use zipora::{EnhancedLoserTree, LoserTreeConfig, MultiWayMerge, SetOperations};
+use zipora::{EnhancedLoserTree, LoserTreeConfig, MultiWayMerge};
+use zipora::algorithms::multiway_merge::VectorSource;
 
 // Enhanced Tournament Tree with O(log k) Complexity
 let config = LoserTreeConfig {
@@ -119,6 +120,7 @@ let sources = vec![
 ];
 let mut merger = MultiWayMerge::new();
 let result = merger.merge(sources).unwrap();
+assert_eq!(result, vec![1, 2, 4, 5, 7, 8]);
 ```
 
 ## Set Operations
@@ -177,64 +179,52 @@ assert_eq!(data, vec![1, 2, 3, 4, 5]);
 | `multiset_difference` | O(n + m) | Set subtraction |
 | `set_unique` | O(n) | In-place deduplication |
 
-## Suffix Array Construction
+## Suffix Array Construction (SA-IS)
 
-Zipora provides 5 sophisticated suffix array algorithms with adaptive selection.
+Zipora implements linear-time $O(n)$ SA-IS suffix array construction with packed word-level type bitvectors, 2-byte prefix bucket tables for fast `search_range` substring queries on texts $\ge 4096$ bytes, plus Kasai LCP array and BWT construction via `EnhancedSuffixArray`.
+
+> **Note**: `SuffixArrayAlgorithm` also defines `DivSufSort`, `DC3`, `LarssonSadakane`, and `Adaptive` variants for API compatibility; all variants dispatch to the linear-time SA-IS implementation during construction.
 
 ```rust
-use zipora::{SuffixArray, SuffixArrayConfig, SuffixArrayAlgorithm, EnhancedSuffixArray};
+use zipora::SuffixArray;
+use zipora::algorithms::suffix_array::{
+    EnhancedSuffixArray, SuffixArrayAlgorithm, SuffixArrayConfig,
+};
 
 let text = b"banana";
 
-// Adaptive algorithm selection (recommended)
+// Default linear-time SA-IS construction and binary search
 let sa = SuffixArray::new(text).unwrap();
-let (start, count) = sa.search(text, b"an");
-println!("Found 'an' at {} occurrences", count);
+let (_start, count) = sa.search(text, b"an");
+assert_eq!(count, 2);
 
-// Manual algorithm selection
+// Explicit configuration
 let config = SuffixArrayConfig {
-    algorithm: SuffixArrayAlgorithm::SAIS,     // SA-IS: Linear-time
-    use_parallel: true,
-    parallel_threshold: 100_000,
-    compute_lcp: false,
+    algorithm: SuffixArrayAlgorithm::SAIS,
     ..Default::default()
 };
-let sa_sais = SuffixArray::with_config(text, &config).unwrap();
+let _sa_sais = SuffixArray::with_config(text, &config).unwrap();
 
-// Enhanced suffix array with LCP computation
+// Enhanced suffix array with LCP array and BWT
 let enhanced_sa = EnhancedSuffixArray::with_lcp(text).unwrap();
 let lcp = enhanced_sa.lcp_array().unwrap();
-println!("LCP at position 0: {:?}", lcp.lcp_at(0));
+assert!(lcp.lcp_at(0).is_some());
 
-// Suffix array with BWT
 let enhanced_sa_bwt = EnhancedSuffixArray::with_bwt(text).unwrap();
-if let Some(bwt) = enhanced_sa_bwt.bwt() {
-    println!("BWT: {:?}", String::from_utf8_lossy(bwt));
-}
+assert!(enhanced_sa_bwt.bwt().is_some());
 
-// Data characteristics analysis
+// Input text characteristics analysis
 let characteristics = SuffixArray::analyze_text_characteristics(text);
-println!("Text length: {}, Alphabet size: {}",
-         characteristics.text_length, characteristics.alphabet_size);
+assert_eq!(characteristics.text_length, 6);
 ```
-
-### Suffix Array Algorithm Selection Guide
-
-| Algorithm | Time | Best Use Case | Memory |
-|-----------|------|---------------|--------|
-| **Adaptive** | Varies | **General use (recommended)** | Optimal |
-| **SA-IS** | O(n) | Small alphabets | ~8n bytes |
-| **DC3** | O(n) | Small inputs, cache locality | ~12n bytes |
-| **DivSufSort** | O(n log n) | Large inputs | ~8n bytes |
-| **Larsson-Sadakane** | O(n log n) | Highly repetitive data | ~12n bytes |
 
 ## Rank/Select Operations
 
 ```rust
+use zipora::RankSelectOps;
 use zipora::succinct::BitVector;
 use zipora::succinct::rank_select::{
     RankSelectInterleaved256, AdaptiveRankSelect, MultiDimRankSelect,
-    RankSelectMixedIL256, RankSelectMixedSE512, RankSelectMixedXL256,
 };
 
 // Standard rank/select
@@ -244,8 +234,8 @@ for i in 0..1000 {
 }
 
 let rs = RankSelectInterleaved256::new(bv.clone()).unwrap();
-let rank = rs.rank1(500);
-let selected = rs.select1(10).unwrap();
+let _rank = rs.rank1(500);
+let _selected = rs.select1(10).unwrap();
 
 // Adaptive rank/select - automatic optimization
 let adaptive_rs = AdaptiveRankSelect::new(bv).unwrap();

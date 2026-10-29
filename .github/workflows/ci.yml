@@ -56,6 +56,9 @@ jobs:
     - name: Test (doctests)
       run: cargo test --locked --doc
 
+    - name: Test (markdown doctests across README & docs/*.md)
+      run: python3 scripts/doc_tests.py
+
     - name: Verify FFI cbindgen header sync & C smoke caller (C11 / F3)
       run: cargo test --locked --test ffi_c_smoke --features ffi
 

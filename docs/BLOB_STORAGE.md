@@ -11,7 +11,7 @@ use zipora::blob_store::{NestLoudsTrieBlobStore, TrieBlobStoreConfig, BlobStore,
 
 // High-performance trie-based blob storage with string key indexing
 let config = TrieBlobStoreConfig::performance_optimized();
-let mut store = NestLoudsTrieBlobStore::<RankSelectInterleaved256>::new(config).unwrap();
+let mut store = NestLoudsTrieBlobStore::<RankSelectInterleaved256>::new(config.clone()).unwrap();
 
 // Store data with string keys - automatic prefix compression
 let id1 = store.put_with_key(b"user/john/profile", b"John's profile data").unwrap();
@@ -72,7 +72,7 @@ println!("Trie compression ratio: {:.2}%", trie_stats.trie_space_saved_percent()
 ## Offset-Based Compressed Storage (ZipOffsetBlobStore)
 
 ```rust
-use zipora::blob_store::{ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig,
+use zipora::blob_store::{BlobStore, ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig,
                          SortedUintVec, SortedUintVecBuilder};
 
 // High-performance offset-based compressed blob storage
@@ -84,12 +84,19 @@ builder.add_record(b"First record data").unwrap();
 builder.add_record(b"Second record data").unwrap();
 builder.add_record(b"Third record data").unwrap();
 
+// Statistics and compression analysis before finishing the builder
+let stats = builder.stats();
+println!("Compression ratio: {:.2}", stats.compression_ratio());
+println!("Space saved: {:.1}%", stats.space_saved_percent());
+
 // Build the final store with optimized layout
 let store = builder.finish().unwrap();
 
 // Record retrieval
 let record = store.get(0).unwrap(); // O(1) access to any record
+assert_eq!(record, b"First record data");
 let size = store.size(1).unwrap().unwrap(); // Compressed size information
+assert!(size > 0);
 
 // Block-based delta compression for sorted integer sequences
 let mut uint_builder = SortedUintVecBuilder::new();
@@ -99,22 +106,21 @@ uint_builder.push(1025).unwrap();
 
 let compressed_uints = uint_builder.finish().unwrap();
 let value = compressed_uints.get(1).unwrap(); // BMI2-accelerated bit extraction
+assert_eq!(value, 1010);
 
 // File I/O with 128-byte aligned headers
-store.save_to_file("compressed.zob").unwrap();
-let loaded_store = ZipOffsetBlobStore::load_from_file("compressed.zob").unwrap();
-
-// Statistics and compression analysis
-let stats = builder.stats();
-println!("Compression ratio: {:.2}", stats.compression_ratio());
-println!("Space saved: {:.1}%", stats.space_saved_percent());
+let tmp_path = std::env::temp_dir().join("zipora_doc_compressed.zob");
+store.save_to_file(&tmp_path).unwrap();
+let loaded_store = ZipOffsetBlobStore::load_from_file(&tmp_path).unwrap();
+assert_eq!(loaded_store.get(0).unwrap(), b"First record data");
+let _ = std::fs::remove_file(&tmp_path);
 ```
 
 ## LRU Page Cache
 
 ```rust
 use zipora::cache::{LruPageCache, PageCacheConfig, CacheBuffer};
-use zipora::blob_store::{CachedBlobStore, MemoryBlobStore};
+use zipora::blob_store::{BlobStore, CachedBlobStore, MemoryBlobStore};
 
 // High-performance page cache with optimal configuration
 let config = PageCacheConfig::performance_optimized()
@@ -240,37 +246,33 @@ println!("Records: {}, average size: {:.1} bytes",
 
 ```rust
 use zipora::blob_store::{ZReorderMap, ZReorderMapBuilder};
-use tempfile::NamedTempFile;
 
 // Build a reorder map with ascending sequences (sign = 1)
-let temp_file = NamedTempFile::new().unwrap();
-let path = temp_file.path();
+let path = std::env::temp_dir().join("zipora_doc_reorder.map");
 
 {
-    let mut builder = ZReorderMapBuilder::new(path, 1_000_000, 1).unwrap();
-    // Push reordering values - consecutive sequences are automatically compressed
-    for i in 0..500_000 {
-        builder.push(i).unwrap();          // Sequence 1: 0..500_000
+    let mut builder = ZReorderMapBuilder::new(&path, 1_000, 1).unwrap();
+    // Push reordering values - consecutive sequences are automatically RLE-compressed
+    for i in 0..500 {
+        builder.push(i).unwrap();          // Sequence 1: 0..500
     }
-    for i in 1_000_000..1_500_000 {
-        builder.push(i).unwrap();          // Sequence 2: 1_000_000..1_500_000
+    for i in 1_000..1_500 {
+        builder.push(i).unwrap();          // Sequence 2: 1_000..1_500
     }
     builder.finish().unwrap();
 }
 
 // Read back the mapping
-let map = ZReorderMap::open(path).unwrap();
-println!("Total elements: {}", map.size());
+let map = ZReorderMap::open(&path).unwrap();
+assert_eq!(map.size(), 1_000);
 
 // Iterate through reordering values
 for (idx, value) in map.enumerate() {
     if idx < 10 {
-        println!("Index {} -> Value {}", idx, value);
+        assert_eq!(value, idx);
     }
 }
-
-// Compression efficiency: 1M elements compressed from 8MB to ~100 bytes
-// Perfect for optimizing blob store access patterns
+let _ = std::fs::remove_file(&path);
 ```
 
 ## Blob Storage Performance Summary

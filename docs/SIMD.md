@@ -32,6 +32,14 @@ Located in `src/simd/macros.rs`, exported at the crate root via `#[macro_export]
 ```rust
 use zipora::{simd_dispatch, simd_select, simd_feature_check, simd_available};
 
+unsafe fn hash_avx2(data: &[u8]) -> u64 { data.len() as u64 }
+unsafe fn hash_sse2(data: &[u8]) -> u64 { data.len() as u64 }
+fn hash_scalar(data: &[u8]) -> u64 { data.len() as u64 }
+fn compute_avx2(data: &[u8]) -> u64 { data.len() as u64 }
+fn compute_scalar(data: &[u8]) -> u64 { data.len() as u64 }
+unsafe fn popcount_hw(data: &[u64]) -> u64 { data.iter().map(|x| x.count_ones() as u64).sum() }
+fn popcount_scalar(data: &[u64]) -> u64 { data.iter().map(|x| x.count_ones() as u64).sum() }
+
 // Multi-tier dispatch with automatic fallback
 fn hash_bytes(data: &[u8]) -> u64 {
     simd_dispatch!(
@@ -41,16 +49,21 @@ fn hash_bytes(data: &[u8]) -> u64 {
     )
 }
 
+// Single feature check
+fn fast_popcount(data: &[u64]) -> u64 {
+    simd_feature_check!("popcnt", unsafe { popcount_hw(data) }, popcount_scalar(data))
+}
+
+let data = b"hello simd";
+assert_eq!(hash_bytes(data), 10);
+assert_eq!(fast_popcount(&[0b1011u64]), 3);
+
 // Expression selection (evaluates in place, no return)
 let result = simd_select!(
     avx2 => compute_avx2(data),
     _ => compute_scalar(data)
 );
-
-// Single feature check
-fn fast_popcount(data: &[u64]) -> u64 {
-    simd_feature_check!("popcnt", unsafe { popcount_hw(data) }, popcount_scalar(data))
-}
+assert_eq!(result, 10);
 
 // Check feature availability
 if simd_available!("avx2") {
@@ -103,6 +116,8 @@ based on hardware tier, data size, and optional density, with cached decisions:
 ```rust
 use zipora::simd::{AdaptiveSimdSelector, Operation, SimdImpl};
 
+let data = [0u64; 1024];
+
 // Global singleton (cached, runs startup benchmarks once by default)
 let selector = AdaptiveSimdSelector::global();
 
@@ -138,23 +153,36 @@ require the `avx512` feature.
 ```rust
 use zipora::memory::{SimdMemOps, PrefetchHint};
 
+#[repr(align(64))]
+struct Aligned64([u8; 64]);
+
+let src = Aligned64([1u8; 64]);
+let mut dst = Aligned64([0u8; 64]);
+let a = [1u8, 2, 3, 4];
+let b = [1u8, 2, 3, 5];
+let haystack = b"hello x world";
+let mut buf = [0u8; 32];
+let data = [0u8; 128];
+
 let ops = SimdMemOps::new(); // or SimdMemOps::with_cache_config(config)
 
 // Core operations
-ops.copy_nonoverlapping(&src, &mut dst)?;   // rejects overlap and size mismatch
-ops.copy_aligned(&src, &mut dst)?;          // requires 64-byte-aligned src/dst
-let ord: i32 = ops.compare(&a, &b);         // memcmp-style ordering
-let pos: Option<usize> = ops.find_byte(&haystack, b'x');
+ops.copy_nonoverlapping(&src.0, &mut dst.0).unwrap(); // rejects overlap and size mismatch
+ops.copy_aligned(&src.0, &mut dst.0).unwrap();        // requires 64-byte-aligned src/dst
+let ord: i32 = ops.compare(&a, &b);                   // memcmp-style ordering
+assert!(ord < 0);
+let pos: Option<usize> = ops.find_byte(haystack, b'x');
+assert_eq!(pos, Some(6));
 ops.fill(&mut buf, 0xFF);
 
 // Cache-optimized operations
-ops.prefetch(addr, PrefetchHint::T0);       // addr: *const u8; T0/T1/T2/NTA
-ops.prefetch_range(&data);                  // data: &[u8], strided by cache line
-ops.copy_cache_optimized(&src, &mut dst)?;  // prefetches ahead on large copies
-let ord = ops.compare_cache_optimized(&a, &b);
+ops.prefetch(data.as_ptr(), PrefetchHint::T0);        // addr: *const u8; T0/T1/T2/NTA
+ops.prefetch_range(&data);                            // data: &[u8], strided by cache line
+ops.copy_cache_optimized(&src.0, &mut dst.0).unwrap();// prefetches ahead on large copies
+let _ord = ops.compare_cache_optimized(&a, &b);
 
 // Introspection
-let tier = ops.tier();                      // SimdTier::{Avx512, Avx2, Sse2, Scalar}
+let _tier = ops.tier();                               // SimdTier::{Avx512, Avx2, Sse2, Scalar}
 ```
 
 ### Global convenience functions
@@ -162,17 +190,27 @@ let tier = ops.tier();                      // SimdTier::{Avx512, Avx2, Sse2, Sc
 ```rust
 use zipora::memory::{
     fast_copy, fast_compare, fast_find_byte, fast_fill,
-    fast_copy_cache_optimized, fast_compare_cache_optimized,
     fast_prefetch, fast_prefetch_range, PrefetchHint,
 };
 
-fast_copy(&src, &mut dst)?;                  // uses get_global_simd_ops() internally
+let src = [1u8, 2, 3, 4];
+let mut dst = [0u8; 4];
+let a = [10u8, 20];
+let b = [10u8, 20];
+let haystack = b"SIMD search";
+let mut buf = [1u8; 16];
+let some_value = 42u64;
+let data = [0u8; 64];
+
+fast_copy(&src, &mut dst).unwrap();                  // uses get_global_simd_ops() internally
 let ord = fast_compare(&a, &b);
-let pos = fast_find_byte(&haystack, b'S');
+assert_eq!(ord, 0);
+let pos = fast_find_byte(haystack, b'S');
+assert_eq!(pos, Some(0));
 fast_fill(&mut buf, 0);
 
-fast_prefetch(&some_value, PrefetchHint::T0); // fast_prefetch<T: ?Sized>(data: &T, hint)
-fast_prefetch_range(&data);                   // data: &[u8]
+fast_prefetch(&some_value, PrefetchHint::T0);        // fast_prefetch<T: ?Sized>(data: &T, hint)
+fast_prefetch_range(&data);                          // data: &[u8]
 ```
 
 `get_global_simd_ops()` returns the cached `&'static SimdMemOps` these wrappers use.
@@ -195,25 +233,25 @@ let mut dimensions = vec![];
 for _ in 0..4 {
     let mut bv = BitVector::new();
     for i in 0..1000 {
-        bv.push(i % 3 == 0)?;
+        bv.push(i % 3 == 0).unwrap();
     }
     dimensions.push(bv);
 }
-let multi_rs: MultiDimRankSelect<4> = MultiDimRankSelect::new(dimensions)?;
+let multi_rs: MultiDimRankSelect<4> = MultiDimRankSelect::new(dimensions).unwrap();
 
 // Vectorized bulk rank: ranks[d] = rank1(positions[d]) in dimension d
 let positions = [100, 200, 300, 400];
-let ranks: [usize; 4] = multi_rs.bulk_rank_multidim(&positions);
+let _ranks: [usize; 4] = multi_rs.bulk_rank_multidim(&positions);
 
 // Vectorized bulk select: positions[d] = select1(ranks[d]) in dimension d
 let ranks = [5, 10, 15, 20];
-let positions = multi_rs.bulk_select_multidim(&ranks)?;
+let _positions = multi_rs.bulk_select_multidim(&ranks).unwrap();
 
 // Cross-dimensional intersection (bitwise AND) — returns a new BitVector
-let intersection = multi_rs.intersect_dimensions(0, 1)?;
+let _intersection = multi_rs.intersect_dimensions(0, 1).unwrap();
 
 // Cross-dimensional union (bitwise OR) over any set of dimensions
-let union = multi_rs.union_dimensions(&[0, 1, 2])?;
+let _union = multi_rs.union_dimensions(&[0, 1, 2]).unwrap();
 
 assert_eq!(multi_rs.num_dimensions(), 4);
 ```
@@ -230,11 +268,22 @@ Constraints and errors:
 Results compose with the standard rank/select types:
 
 ```rust
-use zipora::succinct::rank_select::RankSelectInterleaved256;
+use zipora::succinct::rank_select::{MultiDimRankSelect, RankSelectInterleaved256};
+use zipora::{BitVector, RankSelectOps};
 
-let intersection = multi_rs.intersect_dimensions(0, 1)?;
-let rs = RankSelectInterleaved256::new(intersection)?;
+let mut dimensions = vec![];
+for _ in 0..2 {
+    let mut bv = BitVector::new();
+    for i in 0..256 {
+        bv.push(i % 2 == 0).unwrap();
+    }
+    dimensions.push(bv);
+}
+let multi_rs: MultiDimRankSelect<2> = MultiDimRankSelect::new(dimensions).unwrap();
+let intersection = multi_rs.intersect_dimensions(0, 1).unwrap();
+let rs = RankSelectInterleaved256::new(intersection).unwrap();
 let rank = rs.rank1(100);
+assert_eq!(rank, 50);
 ```
 
 ## BMI2 Acceleration
@@ -253,18 +302,21 @@ println!("BMI1: {}, BMI2: {}", caps.has_bmi1, caps.has_bmi2);
 
 // PDEP-based select within a u64 (returns None if k >= popcount)
 let word = 0b1010101010101010u64;
-let pos: Option<u32> = Bmi2SelectOps::select1_u64(word, 3);
-let pos = Bmi2SelectOps::select1_u64_enhanced(word, 3);
+let _pos: Option<u32> = Bmi2SelectOps::select1_u64(word, 3);
+let _pos = Bmi2SelectOps::select1_u64_enhanced(word, 3);
 
 // Parallel bit deposit/extract (PDEP/PEXT with scalar fallback)
+let source = 0b1101u64;
+let mask = 0x0F0F_0F0Fu64;
 let deposited = Bmi2BitOps::deposit_bits(source, mask);
-let extracted = Bmi2BitOps::extract_bits(source, mask);
+let extracted = Bmi2BitOps::extract_bits(deposited, mask);
+assert_eq!(extracted, source);
 
 // Bulk operations over &[u64] blocks
 let words = vec![0xAAAAAAAAAAAAAAAAu64; 1000];
 let positions: Vec<usize> = (0..100).map(|i| i * 10).collect();
-let ranks: Vec<usize> = Bmi2BlockOps::rank_bulk(&words, &positions);
-let selected = Bmi2BlockOps::select_bulk(&words, &[5, 50, 500])?;
+let _ranks: Vec<usize> = Bmi2BlockOps::rank_bulk(&words, &positions);
+let _selected = Bmi2BlockOps::select_bulk(&words, &[5, 50, 500]).unwrap();
 ```
 
 ### AMD PDEP hazard and `select_in_word`

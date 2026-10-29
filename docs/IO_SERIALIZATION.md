@@ -50,17 +50,26 @@ let complex_data = (
 
 let serializer = ComplexTypeSerializer::default();
 let bytes = serializer.serialize_to_bytes(&complex_data).unwrap();
-let deserialized = serializer.deserialize_from_bytes(&bytes).unwrap();
+let deserialized: (Vec<u32>, Option<String>, HashMap<String, u32>) =
+    serializer.deserialize_from_bytes(&bytes).unwrap();
+assert_eq!(complex_data, deserialized);
 
 // Batch operations for efficiency
-let tuples = vec![(1u32, "first"), (2u32, "second"), (3u32, "third")];
+let tuples = vec![
+    (1u32, "first".to_string()),
+    (2u32, "second".to_string()),
+    (3u32, "third".to_string()),
+];
 let batch_bytes = serializer.serialize_batch(&tuples).unwrap();
 let batch_result = serializer.deserialize_batch(&batch_bytes).unwrap();
+assert_eq!(tuples, batch_result);
 ```
 
 ## Endian Handling
 
 ```rust
+use zipora::io::{EndianIO, EndianConfig};
+
 // Comprehensive Endian Handling - Cross-platform compatibility
 let io = EndianIO::<u32>::little_endian();
 let value = 0x12345678u32;
@@ -69,6 +78,7 @@ let value = 0x12345678u32;
 let mut buffer = [0u8; 4];
 io.write_to_bytes(value, &mut buffer).unwrap();
 let read_value = io.read_from_bytes(&buffer).unwrap();
+assert_eq!(read_value, value);
 
 // SIMD-accelerated bulk conversions
 #[cfg(target_arch = "x86_64")]
@@ -86,11 +96,14 @@ let optimized = EndianConfig::performance_optimized(); // Native + SIMD accelera
 ## Variable Integer Encoding
 
 ```rust
+use zipora::io::{VarIntEncoder, choose_optimal_strategy};
+
 // Variable Integer Encoding - Multiple strategies
 let encoder = VarIntEncoder::zigzag(); // For signed integers
 let signed_values = vec![-100i64, -1, 0, 1, 100];
 let encoded = encoder.encode_i64_sequence(&signed_values).unwrap();
 let decoded = encoder.decode_i64_sequence(&encoded).unwrap();
+assert_eq!(signed_values, decoded);
 
 // Delta encoding for sorted sequences
 let delta_encoder = VarIntEncoder::delta();
@@ -103,32 +116,32 @@ let bulk_values = vec![1u64, 256, 65536, 16777216];
 let group_encoded = group_encoder.encode_u64_sequence(&bulk_values).unwrap();
 
 // Automatic strategy selection based on data characteristics
-let optimal_strategy = choose_optimal_strategy(&values);
-let auto_encoder = VarIntEncoder::new(optimal_strategy);
+let optimal_strategy = choose_optimal_strategy(&sorted_values);
+let _auto_encoder = VarIntEncoder::new(optimal_strategy);
 ```
 
 ## Stream Processing
 
 ```rust
-use zipora::io::{
-    StreamBufferedReader, StreamBufferedWriter, StreamBufferConfig,
-    RangeReader, RangeWriter, MultiRangeReader,
-    ZeroCopyReader, ZeroCopyWriter, ZeroCopyBuffer, VectoredIO
-};
+use std::io::{Cursor, Write};
+use zipora::io::{StreamBufferedReader, StreamBufferedWriter, StreamBufferConfig};
 
 // Advanced Stream Buffering - Configurable strategies
+let cursor = Cursor::new(vec![42u8; 1024]);
 let config = StreamBufferConfig::performance_optimized();
-let mut reader = StreamBufferedReader::with_config(cursor, config).unwrap();
+let mut reader = StreamBufferedReader::with_config(cursor, config.clone()).unwrap();
 
 // Fast byte reading with hot path optimization
 let byte = reader.read_byte_fast().unwrap();
+assert_eq!(byte, 42);
 
 // Bulk read optimization for large data transfers
-let mut large_buffer = vec![0u8; 1024 * 1024];
+let mut large_buffer = vec![0u8; 512];
 let bytes_read = reader.read_bulk(&mut large_buffer).unwrap();
+assert_eq!(bytes_read, 512);
 
 // Stream buffered writer (implements std::io::Write)
-let mut writer = StreamBufferedWriter::with_config(file, config).unwrap();
+let mut writer = StreamBufferedWriter::with_config(Vec::<u8>::new(), config).unwrap();
 writer.write_all(b"High-performance writing").unwrap();
 writer.flush().unwrap();
 ```
@@ -136,22 +149,28 @@ writer.flush().unwrap();
 ## Range-Based I/O
 
 ```rust
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
+use zipora::io::{RangeReader, RangeWriter, MultiRangeReader};
 
 // Range-based reading for random access patterns:
 // construct with (inner, start, length), then use std::io::Read.
 // `new_and_seek` also seeks the underlying reader to `start`.
+let file = Cursor::new(vec![b'a'; 4000]);
 let mut range_reader = RangeReader::new_and_seek(file, 1000, 2000).unwrap();
 let mut data = Vec::new();
 range_reader.read_to_end(&mut data).unwrap(); // reads bytes 1000..3000
+assert_eq!(data.len(), 2000);
 
 // Multi-range reading for scattered access: (start, end) byte ranges
+let file = Cursor::new(vec![b'b'; 2000]);
 let ranges = vec![(0, 100), (500, 600), (1000, 1100)];
 let mut multi_reader = MultiRangeReader::new(file, ranges);
 let mut chunks = Vec::new();
 multi_reader.read_to_end(&mut chunks).unwrap(); // concatenates all ranges
+assert_eq!(chunks.len(), 300);
 
 // Range-based writing: construct with (inner, start, length), then use std::io::Write
+let file = Cursor::new(vec![0u8; 2000]);
 let mut range_writer = RangeWriter::new_and_seek(file, 1000, 15).unwrap();
 range_writer.write_all(b"positioned data").unwrap();
 range_writer.flush().unwrap();
@@ -160,27 +179,25 @@ range_writer.flush().unwrap();
 ## Zero-Copy I/O
 
 ```rust
-use std::io::IoSlice;
+use std::io::{Cursor, IoSlice};
 use zipora::io::{ZeroCopyBuffer, ZeroCopyReader, ZeroCopyWriter,
                  ZeroCopyRead, ZeroCopyWrite, VectoredIO};
 
 // Zero-copy buffer management
-let mut buffer = ZeroCopyBuffer::new(4096).unwrap();
-let readable = buffer.readable_slice();   // direct view of buffered data, no copy
+let buffer = ZeroCopyBuffer::new(4096).unwrap();
+let _readable = buffer.readable_slice(); // direct view of buffered data, no copy
 
 // Zero-copy reader: wraps any std::io::Read, borrows bytes from its internal buffer
-let mut reader = ZeroCopyReader::new(file).unwrap(); // or with_capacity(file, 256 * 1024)
+let input = Cursor::new(vec![b'x'; 2048]);
+let mut reader = ZeroCopyReader::new(input).unwrap();
 let consumed = match reader.zc_read(1024).unwrap() {
-    Some(bytes) => {
-        // process `bytes` without copying
-        bytes.len()
-    }
+    Some(bytes) => bytes.len(),
     None => 0, // not enough buffered data for zero-copy access
 };
 reader.zc_advance(consumed).unwrap();
 
 // Zero-copy writer: wraps any std::io::Write, exposes its buffer for direct writes
-let mut writer = ZeroCopyWriter::new(file).unwrap();
+let mut writer = ZeroCopyWriter::new(Vec::<u8>::new()).unwrap();
 if let Some(buf) = writer.zc_write(5).unwrap() {
     buf.copy_from_slice(b"hello");
 }
@@ -190,9 +207,14 @@ writer.zc_commit(5).unwrap();
 #[cfg(feature = "mmap")]
 {
     use zipora::io::MmapZeroCopyReader;
-    let file = std::fs::File::open("data.bin").unwrap();
+    let path = std::env::temp_dir().join("zipora_zc_mmap.bin");
+    std::fs::write(&path, b"zero-copy mmap content").unwrap();
+    let file = std::fs::File::open(&path).unwrap();
     let mmap_reader = MmapZeroCopyReader::new(file).unwrap();
     let all_bytes = mmap_reader.as_slice(); // entire file as one zero-copy slice
+    assert_eq!(all_bytes, b"zero-copy mmap content");
+    drop(mmap_reader);
+    let _ = std::fs::remove_file(&path);
 }
 
 // Vectored I/O for scatter-gather operations
@@ -204,6 +226,7 @@ let buffers = [
 ];
 let mut output: Vec<u8> = Vec::new();
 let written = VectoredIO::write_vectored(&mut output, &buffers).unwrap();
+assert_eq!(written, 16);
 ```
 
 ## Version Management

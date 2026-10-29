@@ -59,14 +59,14 @@ let rank = adaptive_rs.rank1(500);
 // Unified Trie - Strategy-based configuration
 use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, Trie};
 
-let mut trie = ZiporaTrie::new();
+let mut trie: ZiporaTrie = ZiporaTrie::new();
 trie.insert(b"hello").unwrap();
 assert!(trie.contains(b"hello"));
 
 // Unified Hash Map - Strategy-based configuration
 use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig};
 
-let mut map = ZiporaHashMap::new().unwrap();
+let mut map: ZiporaHashMap<&str, &str> = ZiporaHashMap::new().unwrap();
 map.insert("key", "value").unwrap();
 
 // Blob storage with compression
@@ -102,7 +102,7 @@ assert_eq!(joined, "hello, world");
 
 ### System Architecture
 - **[Concurrency](docs/CONCURRENCY.md)** - Pipeline processing, work-stealing, parallel trie building
-- **[Error Handling](docs/ERROR_HANDLING.md)** - ZiporaError/Result patterns, verification macros
+- **[Error Handling](docs/ERROR_HANDLING.md)** - ZiporaError/Result patterns, error classification, bounds checking
 - **[Configuration](docs/CONFIGURATION.md)** - Rich configuration APIs, presets, validation
 - **[SIMD Framework](docs/SIMD.md)** - 6-tier SIMD with AVX2/BMI2/POPCNT support
 
@@ -115,6 +115,7 @@ assert_eq!(joined, "hello, world");
 - **[Performance Benchmarks](docs/PERFORMANCE.md)** - Verified benchmarks across all components
 
 ### Reference
+- **[Binary Format Spec](docs/format_spec.md)** - Wire layouts for persisted containers and blob stores
 - **[Porting Status](docs/PORTING_STATUS.md)** - Feature implementation status
 
 ## Features

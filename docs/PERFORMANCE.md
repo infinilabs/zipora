@@ -2,7 +2,7 @@
 
 Every performance and space figure in this document is generated directly from the committed benchmark baselines under [`benches/baselines/bindiego/`](../benches/baselines/bindiego/) by [`scripts/perf_table.py`](../scripts/perf_table.py) and verified in CI / `make sanity` (`python3 scripts/perf_table.py --check`).
 
-For full per-benchmark methodology, dataset specifications, hardware pinning, THP sensitivity analysis, and row-level provenance (`measured_at_commit` and `binary_sha256`), see:
+For full per-benchmark methodology, dataset specifications, hardware pinning, THP sensitivity analysis, and header-level provenance (`git_commit`, `rustflags`, `cargo_lock_sha256`, and `binary_sha256`), see:
 - **[Stage 14 Core Benchmarks & E1.1 Systemic BM25 Search](review/e1.md)** (`benches/core_bench.rs`, `benches/e2e_search_bench.rs`)
 - **[Stage 15 Competitor Benchmark Matrix & E3 Standing Table](review/e2_e3.md)** (`benches/competitor_bench.rs`)
 - **[Stage 16 Optimization Ledger](review/e4.md)**

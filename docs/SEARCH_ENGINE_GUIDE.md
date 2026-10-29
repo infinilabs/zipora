@@ -4,7 +4,7 @@ Zipora provides the core building blocks for high-performance search engines: su
 
 ## Architecture Overview
 
-```
+```text
  Documents                    Query
      |                          |
      v                          v
@@ -34,11 +34,12 @@ Zipora provides the core building blocks for high-performance search engines: su
 Use `DoubleArrayTrie` (double-array trie with XOR transitions) for high-throughput lookups — compact per-state `base` + `check` + `tail` arrays with O(1) transitions per byte. Supports arbitrary binary keys including `\x00` bytes. See [PERFORMANCE.md](PERFORMANCE.md) for measured memory footprint and lookup latency against `fst`, `qp-trie`, and `radix_trie`.
 
 ```rust
-use zipora::DoubleArrayTrie;
+use zipora::{DoubleArrayTrie, DoubleArrayTrieMap};
+
+let terms = ["engine", "index", "rust", "search"];
 
 // Build term dictionary during indexing
 let mut dict = DoubleArrayTrie::new();
-
 for term in terms.iter() {
     dict.insert(term.as_bytes()).unwrap();
 }
@@ -49,12 +50,11 @@ assert!(dict.contains(b"search"));
 // For key-value storage (term → term_id)
 // DoubleArrayTrieMap<V> requires V: MapValue (configurable sentinel for zero-cost Option<V> elimination)
 // Built-in impls: i32 (MIN), u32 (MAX), i64 (MIN), u64 (MAX), usize (MAX)
-use zipora::DoubleArrayTrieMap;
 let mut term_ids: DoubleArrayTrieMap<u32> = DoubleArrayTrieMap::new();
 for (term_id, term) in terms.iter().enumerate() {
     term_ids.insert(term.as_bytes(), term_id as u32).unwrap();
 }
-let id = term_ids.get(b"search");
+assert_eq!(term_ids.get(b"search"), Some(3));
 ```
 
 `DoubleArrayTrieMap<V>` uses the `MapValue` trait with a compile-time sentinel constant instead of `Option<V>`, avoiding `Option<V>` discriminant padding in the value array for primitive types. The sentinel is monomorphized to a single `cmp` instruction — zero runtime cost.
@@ -67,7 +67,8 @@ let id = term_ids.get(b"search");
 use zipora::DoubleArrayTrieMap;
 
 let mut trie: DoubleArrayTrieMap<u32> = DoubleArrayTrieMap::new();
-// ... insert terms ...
+trie.insert(b"search", 1).unwrap();
+trie.insert(b"searching", 2).unwrap();
 
 // Lazy prefix iteration — DFS with explicit stack, no Vec allocation
 // Yields all key-value pairs whose key starts with the given prefix
@@ -77,6 +78,7 @@ for (key, term_id) in trie.iter_prefix(b"search") {
 
 // Early termination — only materializes what you consume
 let top5: Vec<_> = trie.iter_prefix(b"s").take(5).collect();
+assert_eq!(top5.len(), 2);
 
 // Lazy fuzzy iteration — incremental Levenshtein with subtree pruning
 // Yields all keys within edit distance `max_dist` of the query
@@ -102,17 +104,19 @@ For alternative trie strategies (LOUDS, Patricia, Critical-Bit), use `ZiporaTrie
 Choose the right container based on posting list characteristics:
 
 ```rust
-use zipora::containers::{UintVecMin0, ZipIntVec};
-use zipora::blob_store::SortedUintVec;
+use zipora::containers::UintVecMin0;
 use zipora::BitVector;
+
+let matching_docs = [1usize, 5, 10, 42];
+let num_docs = 64usize;
 
 // Option A: UintVecMin0 — variable-width packed integers (0-58 bits per value)
 // Best for: medium-length posting lists with bounded doc IDs
-let mut postings = UintVecMin0::new();
-for doc_id in matching_docs {
-    postings.push(doc_id);
+let mut postings = UintVecMin0::new(matching_docs.len(), 42);
+for (i, &doc_id) in matching_docs.iter().enumerate() {
+    postings.set(i, doc_id);
 }
-// Access: postings.get(i) — O(1), cache-friendly sequential layout
+assert_eq!(postings.get(2), 10);
 
 // Option B: SortedUintVec — delta + block compression for sorted doc IDs
 // Best for: long posting lists with monotonic offsets
@@ -121,8 +125,9 @@ for doc_id in matching_docs {
 // Best for: high-frequency terms (>10% of docs), boolean queries
 let mut bitmap = BitVector::new();
 for i in 0..num_docs {
-    bitmap.push(doc_ids.contains(&i)).unwrap();
+    bitmap.push(matching_docs.contains(&i)).unwrap();
 }
+assert_eq!(bitmap.len(), num_docs);
 ```
 
 ## 3. Boolean Query Processing (Set Operations)
@@ -132,23 +137,33 @@ Scalar merge-based multiset operations on sorted posting lists, with a caller-su
 ```rust
 use zipora::algorithms::set_ops::{
     multiset_intersection,   // AND queries
-    multiset_union,          // OR queries
-    multiset_difference,     // NOT queries
     multiset_fast_intersection, // adaptive: picks best algo by size ratio
 };
+use zipora::{AdaptiveRankSelect, BitVector, RankSelectOps};
+
+let postings_rust = [1u32, 3, 5, 10];
+let postings_search = [3u32, 5, 8, 10];
 
 // AND query: "rust" AND "search"
 let result = multiset_intersection(&postings_rust, &postings_search, |a, b| a.cmp(b));
+assert_eq!(result, vec![3, 5, 10]);
 
 // For skewed sizes (one term rare, one common), use adaptive intersection.
 // Switches from linear merge to binary search when |A| * threshold < |B|
+let rare_term = [5u32];
+let common_term: Vec<u32> = (0..100).collect();
 let result = multiset_fast_intersection(&rare_term, &common_term, |a, b| a.cmp(b), 32);
+assert_eq!(result, vec![5]);
 
 // Rank/select on bitvectors
-use zipora::AdaptiveRankSelect;
+let mut bitmap = BitVector::new();
+for i in 0..64 {
+    bitmap.push(i % 2 == 0).unwrap();
+}
 let rs = AdaptiveRankSelect::new(bitmap).unwrap();
-let rank = rs.rank1(doc_id);   // count docs before this ID — O(1)
-let pos = rs.select1(rank);    // find N-th matching doc — O(log n)
+let rank = rs.rank1(10);              // count docs before this ID — O(1)
+let pos = rs.select1(rank).unwrap();  // find N-th matching doc — O(log n)
+assert_eq!(pos, 10);
 ```
 
 ## 4. Document Storage (Compressed Blob Stores)
@@ -157,21 +172,28 @@ Store and retrieve documents with dictionary compression (PA-Zip):
 
 ```rust
 use zipora::compression::dict_zip::DictZipBlobStoreBuilder;
-use zipora::blob_store::{MixedLenBlobStore, PlainBlobStore, BlobStore};
+use zipora::blob_store::BlobStore;
+
+let documents: [&[u8]; 3] = [
+    b"zipora search engine posting list compression",
+    b"zipora search engine succinct data structures",
+    b"zipora search engine double array trie lookup",
+];
 
 // DictZipBlobStore: best compression for similar documents (web pages, logs)
 // Learns a shared dictionary from training samples, then compresses each record
-let mut builder = DictZipBlobStoreBuilder::new().unwrap(); // or with_config(DictZipConfig { .. })
+let mut builder = DictZipBlobStoreBuilder::new().unwrap();
 for doc in &documents {
     builder.add_training_sample(doc).unwrap();
 }
 let mut store = builder.finish().unwrap();
 
 // Store: each record is compressed against the trained dictionary
-let doc_id = store.put(&documents[0]).unwrap();
+let doc_id = store.put(documents[0]).unwrap();
 
 // Retrieve
 let doc = store.get(doc_id).unwrap();
+assert_eq!(doc.as_slice(), documents[0]);
 
 // MixedLenBlobStore: optimal for mixed fixed/variable-length records
 // Automatically selects storage strategy based on record size distribution
@@ -186,58 +208,74 @@ Compress posting list deltas with Huffman or rANS:
 ```rust
 use zipora::HuffmanEncoder;
 use zipora::Rans64Encoder;
+use zipora::entropy::ParallelX1;
+
+let training_data = b"aaaaabbbbcccdde";
+let delta_encoded_postings = b"aaabbc";
 
 // Huffman O0: simple, fast encoding
-let encoder = HuffmanEncoder::new(&training_data).unwrap();
-let compressed = encoder.encode(&delta_encoded_postings).unwrap();
+let encoder = HuffmanEncoder::new(training_data).unwrap();
+let compressed = encoder.encode(delta_encoded_postings).unwrap();
+assert!(!compressed.is_empty());
 
 // Huffman O1: context-aware, better compression for structured data
 // Particularly effective for posting list deltas with skewed distributions
 
 // rANS: high compression ratio with 4-way/8-way interleaved decoding
 // Rans64Encoder is built from a 256-entry byte-frequency table
-use zipora::entropy::ParallelX1;
 let mut frequencies = [0u32; 256];
 for &byte in training_data.iter() {
     frequencies[byte as usize] += 1;
 }
 let rans = Rans64Encoder::<ParallelX1>::new(&frequencies).unwrap();
-let compressed = rans.encode(&data).unwrap();
+let compressed = rans.encode(delta_encoded_postings).unwrap();
+assert!(!compressed.is_empty());
 ```
 
 ## 6. Multi-threaded Indexing
 
-Parallelize index building with rayon and zipora's pipeline processing:
+Parallelize index building across threads and merge sorted posting lists with `MultiWayMerge` or `EnhancedLoserTree`:
 
 ```rust
-use rayon::prelude::*;
-use zipora::algorithms::MultiWayMerge;
+use std::thread;
+use zipora::algorithms::tournament_tree::{EnhancedLoserTree, LoserTreeConfig};
 
-// Parallel document processing: each thread builds a segment
-let segments: Vec<_> = document_batches
-    .par_iter()
-    .map(|batch| {
-        let mut segment_index = SegmentIndex::new();
-        for doc in batch {
-            let terms = tokenize(doc);
-            for term in terms {
-                segment_index.add(term, doc.id);
-            }
-        }
-        segment_index
-    })
-    .collect();
+let document_batches: Vec<Vec<(u32, &'static str)>> = vec![
+    vec![(1, "rust search"), (2, "succinct trie")],
+    vec![(3, "rust index"), (4, "simd search")],
+];
+
+// Parallel document processing: each thread builds a sorted segment of doc IDs
+let segments: Vec<Vec<u32>> = thread::scope(|s| {
+    let handles: Vec<_> = document_batches
+        .iter()
+        .map(|batch| {
+            s.spawn(move || {
+                batch
+                    .iter()
+                    .filter(|(_, text)| text.contains("rust"))
+                    .map(|(doc_id, _)| *doc_id)
+                    .collect::<Vec<u32>>()
+            })
+        })
+        .collect();
+    handles.into_iter().map(|h| h.join().unwrap()).collect()
+});
 
 // Merge segments using k-way merge (loser tree)
-use zipora::EnhancedLoserTree;
-// EnhancedLoserTree provides O(log k) per element for k-way merge
-// Ideal for merging sorted posting lists from parallel index segments
+let mut tree = EnhancedLoserTree::new(LoserTreeConfig::default());
+for seg in segments {
+    tree.add_way(seg.into_iter()).unwrap();
+}
+tree.initialize().unwrap();
+assert_eq!(tree.peek(), Some(&1));
 ```
 
 For async pipeline processing (requires `async` feature):
 
 ```rust
 use zipora::Pipeline;
+let _ = std::any::type_name::<Pipeline>();
 // Pipeline stages: parse → tokenize → index → compress → flush
 // Each stage runs concurrently with work-stealing load balancing
 ```
@@ -249,17 +287,26 @@ Serve large indices directly from disk without loading into RAM:
 ```rust
 use zipora::memory::{MmapVec, MmapVecConfig};
 
+let path = std::env::temp_dir().join("zipora_postings.idx");
+{
+    let mut writer = MmapVec::<u32>::create(&path, MmapVecConfig::default()).unwrap();
+    writer.extend([10u32, 20, 30, 40]).unwrap();
+    writer.sync().unwrap();
+}
+
 // Memory-map an index file — OS manages paging
-let index: MmapVec<u32> = MmapVec::open("postings.idx", MmapVecConfig::read_only()).unwrap();
+let index: MmapVec<u32> = MmapVec::open(&path, MmapVecConfig::read_only()).unwrap();
 
 // Random access is backed by the page cache
-let doc_id = *index.get(position).unwrap();
+let doc_id = *index.get(2).unwrap();
+assert_eq!(doc_id, 30);
 
 // Bulk access via slice
 let postings: &[u32] = index.as_slice();
+assert_eq!(postings, &[10, 20, 30, 40]);
 
-// For blob stores, use mmap-backed storage
-// DictZipBlobStore and NestLoudsTrieBlobStore support mmap natively
+drop(index);
+let _ = std::fs::remove_file(&path);
 ```
 
 ## 8. Query Result Caching
@@ -269,8 +316,9 @@ LRU cache for frequently accessed posting lists:
 ```rust
 use zipora::containers::specialized::LruMap;
 
-// Cache hot posting lists
-let mut cache: LruMap<String, Vec<u32>> = LruMap::new(1024).unwrap();
+fn load_from_disk(_term: &str) -> Vec<u32> {
+    vec![1, 5, 10]
+}
 
 fn get_postings(term: &str, cache: &mut LruMap<String, Vec<u32>>) -> Vec<u32> {
     if let Some(cached) = cache.get(&term.to_string()) {
@@ -280,13 +328,20 @@ fn get_postings(term: &str, cache: &mut LruMap<String, Vec<u32>>) -> Vec<u32> {
     cache.put(term.to_string(), postings.clone()).unwrap();
     postings
 }
+
+// Cache hot posting lists
+let mut cache: LruMap<String, Vec<u32>> = LruMap::new(1024).unwrap();
+assert_eq!(get_postings("rust", &mut cache), vec![1, 5, 10]);
+assert_eq!(get_postings("rust", &mut cache), vec![1, 5, 10]);
 ```
 
 ## 9. String Processing for Tokenization
 
 ```rust
 use zipora::SortableStrVec;
-use zipora::string::{decimal_strcmp, words};
+use zipora::SmallMap;
+
+let document = "the quick brown fox jumps over the lazy dog";
 
 // Arena-based string storage
 let mut terms = SortableStrVec::new();
@@ -296,10 +351,10 @@ for token in document.split_whitespace() {
 terms.sort().unwrap(); // In-place offset sort
 
 // For small lookup tables (field names, stop words)
-use zipora::SmallMap;
 let mut stop_words = SmallMap::new();
-stop_words.insert("the", true);
-stop_words.insert("and", true);
+stop_words.insert("the", true).unwrap();
+stop_words.insert("and", true).unwrap();
+assert_eq!(stop_words.get(&"the"), Some(&true));
 ```
 
 ## 10. BM25 Scoring (Document Length Normalization)
@@ -329,11 +384,13 @@ let mut scores = vec![0.0f32; tfs.len()];
 scorer.batch_score(&fieldnorm_bytes, &tfs, &mut scores);
 
 // Phrase queries: single-doc scoring with next-doc prefetch
-let score = scorer.score_with_prefetch(&fieldnorm_bytes, /*doc_id=*/42, /*tf=*/3, Some(100));
+let score = scorer.score_with_prefetch(&fieldnorm_bytes, /*doc_id=*/2, /*tf=*/3, Some(4));
+assert!(score > 0.0);
 
 // Full 2D score table for quantized TF values (eliminates ALL query-time math)
 let score_table = FieldnormEncoder::build_score_table(avg_dl, 1.2, 0.75, idf, /*max_tf=*/255);
 let precomputed = score_table[3][fieldnorm_bytes[0] as usize]; // score(tf=3, doc=0)
+assert!(precomputed > 0.0);
 ```
 
 See [PERFORMANCE.md](PERFORMANCE.md) and [docs/review/e1.md](review/e1.md) for measured `FieldnormEncoder`, `Bm25BatchScorer`, and systemic `e2e_search_bench` benchmarks on `bindiego`.
