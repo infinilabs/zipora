@@ -1,6 +1,6 @@
 # Porting Status: C++ topling-zip → Rust Zipora
 
-**The port is complete.** As of v4.x, Zipora has feature parity with the
+**The port is complete.** As of v5.x, Zipora has feature parity with the
 reference C++ topling-zip library (succinct data structures, blob stores,
 FSA/tries, entropy coding) plus Rust-native additions that have no C++
 counterpart (memory-safe concurrent tries, SIMD search-engine primitives,
@@ -21,7 +21,7 @@ BM25 scoring, fuzzing/Miri/TSan validation infrastructure).
 | Scoring | `FieldnormEncoder` (Lucene SmallFloat), `Bm25BatchScorer` (AVX2) | [SEARCH_ENGINE_GUIDE.md](SEARCH_ENGINE_GUIDE.md) |
 | FFI | Optional C API behind the `ffi` feature, panic-safe entry points | [FFI.md](FFI.md) |
 
-## Current state (v4.2.0)
+## Current state (v5.0.0)
 
 - Build, test suite, doctests, and `clippy` (`-D warnings`) pass cleanly (`make sanity`).
 - Every production `unsafe` block carries a `// SAFETY:` or `# Safety` comment (`scripts/unsafe_audit.py`).

@@ -242,7 +242,7 @@ note: instantiated into assembly here
 - **`C10.B`, `C10.D`, `C10.E`, `C10.F1`, `C10.F2` runtime-RED on `39814be`** (tests spliced onto `39814be:src/thread/instance_tls.rs` at line `820` and `39814be:src/thread/linux_futex.rs` at line `554`; in `05d4245:src/thread/linux_futex.rs`, the production changes above `mod tests` add 38 lines, shifting `570` -> `608` and `587` -> `636`):
 ```text
 ---- thread::atomic_ext::tests::test_c10_b_atomic_maximize_minimize_update_if_accept_release_and_acqrel stdout ----
-thread 'thread::atomic_ext::tests::test_c10_b_atomic_maximize_minimize_update_if_accept_release_and_acqrel' (2621510) panicked at /usr/local/google/home/binwu/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/sync/atomic.rs:3907:24:
+thread 'thread::atomic_ext::tests::test_c10_b_atomic_maximize_minimize_update_if_accept_release_and_acqrel' (2621510) panicked at $HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/sync/atomic.rs:3907:24:
 there is no such thing as a release load
 
 ---- thread::instance_tls::tests::test_c10_f1_drop_clears_current_thread_and_reentrant_set_does_not_panic stdout ----

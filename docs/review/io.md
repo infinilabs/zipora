@@ -314,7 +314,7 @@ Evidence:
 
 ```text
         error: Undefined Behavior: trying to retag from <807851> for SharedReadWrite permission at alloc205684[0x8], but that tag does not exist in the borrow stack for this location
-           --> /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/internal.rs:549:9
+           --> $HOME/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/internal.rs:549:9
         [... 6 lines elided ...]
         help: <807851> was created by a SharedReadWrite retag at offsets [0x0..0x8]
            --> src/memory/secure_pool.rs:759:21
@@ -560,7 +560,7 @@ GREEN:
 
 Clippy:
   CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
-      Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+      Checking zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.96s
   ## exit=0
   CARGO_BUILD_JOBS=16 cargo clippy --no-default-features -- -D unused_variables -D unused_imports
@@ -753,7 +753,7 @@ Fix (in this commit), all in src/memory/mmap_vec.rs:
   and after (this commit's tree):
 
 ```text
-  python3 /usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/per_file_audit.py /usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/parent_8b32e90 src/memory/mmap_vec.rs
+  python3 $HOME/.cache/agent/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/per_file_audit.py $HOME/.cache/agent/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/parent_8b32e90 src/memory/mmap_vec.rs
   == src/memory/mmap_vec.rs
   unsafe sites (non-test): 33; documented: 33; undocumented: 0; precondition violations: 0
   honesty markers (non-test): 0
@@ -761,7 +761,7 @@ Fix (in this commit), all in src/memory/mmap_vec.rs:
     expect: L571: let data_ptr = self.data_ptr().expect("mmap data pointer valid").as_ptr();
     expect: L590: let data_ptr = self.data_ptr().expect("mmap data pointer valid").as_ptr();
   ## exit=0
-  python3 /usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/per_file_audit.py . src/memory/mmap_vec.rs
+  python3 $HOME/.cache/agent/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/per_file_audit.py . src/memory/mmap_vec.rs
   == src/memory/mmap_vec.rs
   unsafe sites (non-test): 5; documented: 5; undocumented: 0; precondition violations: 0
   honesty markers (non-test): 0
@@ -786,8 +786,8 @@ Not reproducible as RED here: F5 needs a 32-bit target (the conversion is covere
 RED: this commit's test block, minus the two GREEN-only tests, spliced onto `git archive 1321311` in a scratch tree (debug test profile). Line numbers are those of the spliced file: the parent's code, and the test block from line 2387 (`9a3fe31:src/memory/mmap_vec.rs:2456` in this commit, so test lines are `+69` here). F2: `"len 500 / capacity 500"` and `"capacity 100001 over a 4-element mapping"`; F3: the file now at the path received bytes `17, 39` at offset 24, i.e. capacity `10001`; F6 and F9: `"attempt to add with overflow"` at `1321311:src/memory/mmap_vec.rs:618`, `1321311:src/memory/mmap_vec.rs:1009` and `1321311:src/memory/mmap_vec.rs:1108`; C9.1: `InvalidData` instead of `Misaligned`, then the `.expect` panic at `1321311:src/memory/mmap_vec.rs:571`.
 
 ```text
-  CARGO_BUILD_JOBS=16 CARGO_TARGET_DIR=target cargo test --manifest-path /usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/red_c4/Cargo.toml --lib --all-features memory::mmap_vec::tests::test_c9_
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/red_c4)
+  CARGO_BUILD_JOBS=16 CARGO_TARGET_DIR=target cargo test --manifest-path $HOME/.cache/agent/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/red_c4/Cargo.toml --lib --all-features memory::mmap_vec::tests::test_c9_
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/red_c4)
       Finished `test` profile [optimized + debuginfo] target(s) in 53.17s
        Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -881,7 +881,7 @@ RED: this commit's test block, minus the two GREEN-only tests, spliced onto `git
 GREEN-only tests on the parent: the same scratch tree with this commit's complete test block does not compile (E0599: no associated function `mapped_capacity_for` / `counts_from_header`):
 
 ```text
-  CARGO_BUILD_JOBS=16 CARGO_TARGET_DIR=target/red-parent cargo test --manifest-path /usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/red_c4/Cargo.toml --lib --all-features --no-run
+  CARGO_BUILD_JOBS=16 CARGO_TARGET_DIR=target/red-parent cargo test --manifest-path $HOME/.cache/agent/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/red_c4/Cargo.toml --lib --all-features --no-run
   [... 119 lines elided ...]
   error[E0599]: no associated function or constant named `mapped_capacity_for` found for struct `mmap_vec::MmapVec<T>` in the current scope
       --> src/memory/mmap_vec.rs:2740:29
@@ -920,7 +920,7 @@ GREEN (this commit):
 
   ## exit=0
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 51.84s
        Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -936,7 +936,7 @@ Integration tests that exercise `MmapVec`:
 
 ```text
   CARGO_BUILD_JOBS=16 cargo test --all-features --test mmap_soundness_test --test format_spec_golden_tests
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 21.09s
        Running tests/format_spec_golden_tests.rs (target/debug/deps/format_spec_golden_tests-824cd756fd373cbf)
 
@@ -969,11 +969,11 @@ Clippy:
 
 ```text
   CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 34.76s
   ## exit=0
   CARGO_BUILD_JOBS=16 cargo clippy --no-default-features -- -D unused_variables -D unused_imports
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.21s
   ## exit=0
 ```
@@ -1072,7 +1072,7 @@ Test added (src/memory/mmap_vec.rs in this commit):
 RED (test spliced onto 9a3fe31; the `len = 7` cases pass as guards while
 all three `len = 8` cases fail):
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec::tests::test_c9_f7_compare_range_simd_respects_partial_eq
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 32.15s
        Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -1102,7 +1102,7 @@ all three `len = 8` cases fail):
 
 GREEN:
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec::tests::test_c9_f7_compare_range_simd_respects_partial_eq
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 18.99s
        Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -1125,7 +1125,7 @@ GREEN:
 
 Clippy:
   CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
-      Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+      Checking zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 27.12s
   ## exit=0
   CARGO_BUILD_JOBS=16 cargo clippy --no-default-features -- -D unused_variables -D unused_imports
@@ -1181,7 +1181,7 @@ RED (`test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error` spl
 
 ```text
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec::tests::test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 23.82s
        Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -1207,7 +1207,7 @@ RED (`test_c9_f8_with_capacity_simd_refuses_symlinks_and_cleans_up_on_error` spl
 
 GREEN:
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec::tests::test_c9_f8
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 19.63s
        Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -1231,7 +1231,7 @@ GREEN:
 
 Clippy:
   CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
-      Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+      Checking zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.87s
   ## exit=0
   CARGO_BUILD_JOBS=16 cargo clippy --no-default-features -- -D unused_variables -D unused_imports
@@ -1313,7 +1313,7 @@ RED (`test_c9_f9_create_rejects_read_only_config` and `test_c9_f9_open_rejects_a
 
 ```text
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec::tests::test_c9_f9_
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 15.96s
        Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -1351,7 +1351,7 @@ GREEN:
 
 ```text
   CARGO_BUILD_JOBS=16 cargo test --lib --all-features memory::mmap_vec::tests::test_c9_f9_
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 22.11s
        Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -1385,7 +1385,7 @@ GREEN:
 
   ## exit=0
   CARGO_BUILD_JOBS=16 cargo test --test format_spec_golden_tests --test mmap_soundness_test --all-features
-     Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+     Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `test` profile [optimized + debuginfo] target(s) in 6.84s
        Running tests/format_spec_golden_tests.rs (target/debug/deps/format_spec_golden_tests-824cd756fd373cbf)
 
@@ -1418,7 +1418,7 @@ Clippy:
 
 ```text
   CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
-      Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
+      Checking zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-MmapVec-C9-1-Fixer-self-7ac2011c)
       Finished `dev` profile [unoptimized + debuginfo] target(s) in 25.39s
   ## exit=0
   CARGO_BUILD_JOBS=16 cargo clippy --no-default-features -- -D unused_variables -D unused_imports
@@ -1588,7 +1588,7 @@ Miri (SIMD + scalar) and AddressSanitizer:
 Per-file audit:
 
 ```text
-  python3 /usr/local/google/home/binwu/.gemini/jetski/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/per_file_audit.py . src/memory/mmap_vec.rs src/error.rs
+  python3 $HOME/.cache/agent/brain/db16264c-e756-4696-863a-e4f9ce816171/scratch/per_file_audit.py . src/memory/mmap_vec.rs src/error.rs
   == src/memory/mmap_vec.rs
   unsafe sites (non-test): 5; documented: 5; undocumented: 0; precondition violations: 0
   honesty markers (non-test): 0
@@ -1636,7 +1636,7 @@ $ CARGO_BUILD_JOBS=16 cargo test --lib -- io::zero_copy::tests::test_c9_z1
 == spliced src/io/zero_copy.rs = d611d4b:src/io/zero_copy.rs code + working-tree test module 
 == diff of the spliced file against d611d4b:src/io/zero_copy.rs (must touch only the test module):
 1301a1302,1372
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
     Finished `test` profile [optimized + debuginfo] target(s) in 15.95s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -1772,7 +1772,7 @@ $ CARGO_BUILD_JOBS=16 cargo test --lib -- io::zero_copy::tests::test_c9_z2
 == spliced src/io/zero_copy.rs = e1b61bc:src/io/zero_copy.rs code + working-tree test module
 == diff of the spliced file against e1b61bc:src/io/zero_copy.rs (must touch only the test module):
 1382a1383,1615
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
     Finished `test` profile [optimized + debuginfo] target(s) in 21.96s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -1916,7 +1916,7 @@ $ CARGO_BUILD_JOBS=16 cargo test --lib -- io::zero_copy::tests::test_c9_z4
 == spliced src/io/zero_copy.rs = 25a10f3:src/io/zero_copy.rs code + working-tree test module 
 == diff of the spliced file against 25a10f3:src/io/zero_copy.rs (must touch only the test module):
 1649a1650,1732
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
     Finished `test` profile [optimized + debuginfo] target(s) in 22.82s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -2038,7 +2038,7 @@ $ CARGO_BUILD_JOBS=16 cargo test --lib -- io::zero_copy::tests::test_c9_z3
 == diff of the spliced file against 97a716b:src/io/zero_copy.rs (must touch only the test module):
 1463a1464
 1737a1739,1794
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
     Finished `test` profile [optimized + debuginfo] target(s) in 7.58s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -2104,7 +2104,7 @@ $ CARGO_BUILD_JOBS=16 cargo test --lib -- io::zero_copy::tests::test_c9_z5
 1259,1260c1259,1261
 1277a1279
 1300a1303,2027
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
     Finished `test` profile [optimized + debuginfo] target(s) in 21.75s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -2174,7 +2174,7 @@ $ CARGO_BUILD_JOBS=16 cargo test --lib -- io::mmap::tests::test_c9_i
 1036a1039
 1062a1066
 1092a1097
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-ZeroCopy-Mmap-IO-Fixer-2-self-caec12fa)
     Finished `test` profile [optimized + debuginfo] target(s) in 6.89s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -2319,7 +2319,7 @@ help: alloc247203 was allocated here:
 [... 4 lines elided ...]
      = note: stack backtrace:
              0: std::arch::x86_64::_mm_loadu_si128
-                 at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/../../stdarch/crates/core_arch/src/x86/sse2.rs:1341:5: 1345:6
+                 at $HOME/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/../../stdarch/crates/core_arch/src/x86/sse2.rs:1341:5: 1345:6
              1: io::simd_memory::search::sse42_strstr_short
                  at src/io/simd_memory/search.rs:393:30: 393:94
              2: io::simd_memory::search::sse42_strstr_impl
@@ -2347,7 +2347,7 @@ help: alloc257838 was allocated here:
 [... 4 lines elided ...]
      = note: stack backtrace:
              0: std::arch::x86_64::_mm_loadu_si128
-                 at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/../../stdarch/crates/core_arch/src/x86/sse2.rs:1341:5: 1345:6
+                 at $HOME/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/../../stdarch/crates/core_arch/src/x86/sse2.rs:1341:5: 1345:6
              1: io::simd_memory::search::sse42_strstr_short
                  at src/io/simd_memory/search.rs:393:30: 393:94
              2: io::simd_memory::search::sse42_strstr_impl
@@ -2374,7 +2374,7 @@ test io::simd_memory::search::tests::test_sse42_implementation ... error: Undefi
 [... 12 lines elided ...]
      = note: stack backtrace:
              0: std::arch::x86_64::_mm_loadu_si128
-                 at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/../../stdarch/crates/core_arch/src/x86/sse2.rs:1341:5: 1345:6
+                 at $HOME/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/../../stdarch/crates/core_arch/src/x86/sse2.rs:1341:5: 1345:6
              1: io::simd_memory::search::sse42_strstr_short
                  at src/io/simd_memory/search.rs:393:30: 393:94
              2: io::simd_memory::search::sse42_strstr_impl
@@ -2409,7 +2409,7 @@ test result: ok. 48 passed; 0 failed; 1 ignored; 0 measured; 2986 filtered out; 
 ## exit=0
 
 CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
-    Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-SIMD-IO-Fixer-self-b1f2a6ef)
+    Checking zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-SIMD-IO-Fixer-self-b1f2a6ef)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.83s
 ## exit=0
 
@@ -2524,7 +2524,7 @@ test result: ok. 50 passed; 0 failed; 1 ignored; 0 measured; 2986 filtered out; 
 ## exit=0
 
 CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
-    Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-SIMD-IO-Fixer-self-b1f2a6ef)
+    Checking zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-SIMD-IO-Fixer-self-b1f2a6ef)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.11s
 ## exit=0
 
@@ -2609,7 +2609,7 @@ test result: ok. 52 passed; 0 failed; 1 ignored; 0 measured; 2986 filtered out; 
 ## exit=0
 
 CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
-    Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-SIMD-IO-Fixer-self-b1f2a6ef)
+    Checking zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-SIMD-IO-Fixer-self-b1f2a6ef)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.19s
 ## exit=0
 
@@ -2797,7 +2797,7 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 231 filtered out; fi
 ## exit=0
 
 CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
-    Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-SIMD-IO-Fixer-self-b1f2a6ef)
+    Checking zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-SIMD-IO-Fixer-self-b1f2a6ef)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.20s
 ## exit=0
 
@@ -3071,7 +3071,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; fini
 3. **Clippy (`cargo clippy --all-targets --all-features -- -D warnings`)**:
 ```
 CARGO_BUILD_JOBS=16 cargo clippy --all-targets --all-features -- -D warnings
-    Checking zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-SIMD-IO-Fixer-self-b1f2a6ef)
+    Checking zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-SIMD-IO-Fixer-self-b1f2a6ef)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 26.11s
 ## exit=0
 ```
@@ -3769,7 +3769,7 @@ RED output (tests spliced onto parent `48f8ab3`):
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr::tests::test_c9_sp
 # tree: 48f8ab3:src/io/smart_ptr.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr::tests::test_c9_sp'
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 30.52s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -3823,7 +3823,7 @@ error: test failed, to rerun pass `--lib`
 GREEN output:
 ```text
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::smart_ptr
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 26.35s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -3878,7 +3878,7 @@ RED output (tests spliced onto parent `3a9ca6f`):
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- test_c9_ct5_
 # tree: 3a9ca6f:src/io/complex_types.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- test_c9_ct5_'
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 30.60s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -3913,7 +3913,7 @@ error: test failed, to rerun pass `--lib`
 GREEN output:
 ```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- test_c9_ct5_
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 22.18s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -4000,7 +4000,7 @@ RED output (tests spliced onto parent `0a63ab5`):
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::versioning::tests::test_c9_vs
 # tree: 0a63ab5:src/io/versioning.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::versioning::tests::test_c9_vs'
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 28.81s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -4062,7 +4062,7 @@ error: test failed, to rerun pass `--lib`
 GREEN output:
 ```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::versioning
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 24.09s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -4112,7 +4112,7 @@ RED (tests spliced onto parent 4f08691):
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::range_stream::tests::test_c9_rs
 # tree: 4f08691:src/io/range_stream.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::range_stream::tests::test_c9_rs'
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 23.91s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -4147,7 +4147,7 @@ SeekFrom::Current(i64::MIN) must return Err(InvalidInput) without panicking: Err
 
 ---- io::range_stream::tests::test_c9_rs5_multi_range_total_length_saturates_on_overflow stdout ----
 
-thread 'io::range_stream::tests::test_c9_rs5_multi_range_total_length_saturates_on_overflow' (833363) panicked at /usr/local/google/home/binwu/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/traits/accum.rs:206:1:
+thread 'io::range_stream::tests::test_c9_rs5_multi_range_total_length_saturates_on_overflow' (833363) panicked at $HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/traits/accum.rs:206:1:
 attempt to add with overflow
 
 thread 'io::range_stream::tests::test_c9_rs5_multi_range_total_length_saturates_on_overflow' (833363) panicked at src/io/range_stream.rs:817:24:
@@ -4169,7 +4169,7 @@ error: test failed, to rerun pass `--lib`
 GREEN:
 ```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::range_stream::
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 19.49s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -4255,7 +4255,7 @@ RED (tests spliced onto parent 1423bc3):
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::var_int_variants::tests::test_c9_vv
 # tree: 1423bc3:src/io/var_int_variants.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::var_int_variants::tests::test_c9_vv'
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 22.32s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -4298,7 +4298,7 @@ u64 LEB128 with 10th byte 0x02 must fail
 
 ---- io::var_int_variants::tests::test_c9_vv5_choose_optimal_strategy_signed_handles_i64_min stdout ----
 
-thread 'io::var_int_variants::tests::test_c9_vv5_choose_optimal_strategy_signed_handles_i64_min' (861404) panicked at /usr/local/google/home/binwu/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/mod.rs:450:5:
+thread 'io::var_int_variants::tests::test_c9_vv5_choose_optimal_strategy_signed_handles_i64_min' (861404) panicked at $HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/mod.rs:450:5:
 attempt to negate with overflow
 
 thread 'io::var_int_variants::tests::test_c9_vv5_choose_optimal_strategy_signed_handles_i64_min' (861404) panicked at src/io/var_int_variants.rs:1244:17:
@@ -4321,7 +4321,7 @@ error: test failed, to rerun pass `--lib`
 GREEN:
 ```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::var_int
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 15.60s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -4431,7 +4431,7 @@ RED (tests spliced onto parent 6c8fab3):
 $ CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::stream_buffer::tests::test_c9_sb
 # tree: 6c8fab3:src/io/stream_buffer.rs + items spliced verbatim from the working tree
 # running: bash -c 'CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::stream_buffer::tests::test_c9_sb'
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 22.04s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -4516,7 +4516,7 @@ error: test failed, to rerun pass `--lib`
 GREEN:
 ```text
 $ env CARGO_BUILD_JOBS=16 cargo test --lib --all-features -- io::stream_buffer::
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/.gemini/jetski/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
+   Compiling zipora v4.2.0 ($HOME/.cache/agent/worktrees/e5811537-d486-4645-be78-1470cb00ab93/subagent-C9-Readers-Serialization-Fixer-self-4bce156a)
     Finished `test` profile [optimized + debuginfo] target(s) in 17.27s
      Running unittests src/lib.rs (target/debug/deps/zipora-93f2126ee8da6be8)
 
@@ -4734,7 +4734,7 @@ CARGO_BUILD_JOBS=16 CARGO_TARGET_DIR=target/asan RUSTFLAGS="-Zsanitizer=address"
 ```
 Output:
 ```text
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+   Compiling zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
 warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
    --> src/memory/cache.rs:384:14
     |
@@ -4821,7 +4821,7 @@ CARGO_BUILD_JOBS=16 RUSTFLAGS="-C target-cpu=haswell -C target-feature=+bmi2,+av
 ```
 Output:
 ```text
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+   Compiling zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
 warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
    --> src/memory/cache.rs:384:14
     |
@@ -4951,7 +4951,7 @@ CARGO_BUILD_JOBS=16 RUSTFLAGS="" CARGO_TARGET_DIR=target/miri-scalar cargo +nigh
 ```
 Output:
 ```text
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+   Compiling zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
 warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
    --> src/memory/cache.rs:384:14
     |
@@ -5180,7 +5180,7 @@ test count drift check: PASS
 RED output (`test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack` spliced onto parent `73a25d0:src/io/smart_ptr.rs` at line `1485`):
 ```text
 $ cargo test --locked --lib io::smart_ptr::tests::test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+   Compiling zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
     Finished `test` profile [optimized + debuginfo] target(s) in 38.31s
      Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
 
@@ -5189,7 +5189,7 @@ fatal runtime error: stack overflow, aborting
 error: test failed, to rerun pass `--lib`
 
 Caused by:
-  process didn't exit successfully: `/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/debug/deps/zipora-265d62c92a32b81e 'io::smart_ptr::tests::test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack'` (signal: 6, SIGABRT: process abort signal)
+  process didn't exit successfully: `$HOME/go/src/infini.sh/zipora/target/debug/deps/zipora-265d62c92a32b81e 'io::smart_ptr::tests::test_s22_r1_hostile_deep_chains_rejected_on_2mib_stack'` (signal: 6, SIGABRT: process abort signal)
 
 running 1 test
 ## exit=101
@@ -5223,7 +5223,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3122 filtered ou
 ```
 ```text
 $ cargo test --locked --release --lib io::complex_types::tests::test_s22_r1_nested_containers_rejected_on_2mib_stack
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+   Compiling zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
     Finished `release` profile [optimized] target(s) in 42.58s
      Running unittests src/lib.rs (target/release/deps/zipora-4e23e75520bbaae2)
 error: test failed, to rerun pass `--lib`
@@ -5486,7 +5486,7 @@ Output:
 ```text
 === Clippy (all targets, all features, deny warnings) ===
 cargo clippy --locked --all-targets --all-features -- -D warnings
-    Checking zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Checking zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 29.46s
 === Unsafe Code Audit (B7) ===
 python3 scripts/unsafe_audit.py
@@ -5520,7 +5520,7 @@ Total .expect() found: 95 (ratchet ceiling: 95)
 Audit status: PASS
 === No default features (guard feature-gated cfg attrs) ===
 cargo clippy --locked --no-default-features -- -D unused_variables -D unused_imports
-    Checking zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Checking zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.74s
 [... 7198 lines elided ...]
 === Test counts and drift guard (B8) ===
@@ -5563,7 +5563,7 @@ Test count drift check: PASS
 RED output (`test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack` spliced onto parent `5d35a51:src/io/smart_ptr.rs` at line `1627`, run at `opt-level=0`):
 ```text
 $ CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test --locked --lib io::smart_ptr::tests::test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+   Compiling zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 24.80s
      Running unittests src/lib.rs (target/debug/deps/zipora-94eaf9373034a341)
 
@@ -5572,7 +5572,7 @@ fatal runtime error: stack overflow, aborting
 error: test failed, to rerun pass `--lib`
 
 Caused by:
-  process didn't exit successfully: `/usr/local/google/home/binwu/go/src/infini.sh/zipora/target/debug/deps/zipora-94eaf9373034a341 'io::smart_ptr::tests::test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack'` (signal: 6, SIGABRT: process abort signal)
+  process didn't exit successfully: `$HOME/go/src/infini.sh/zipora/target/debug/deps/zipora-94eaf9373034a341 'io::smart_ptr::tests::test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack'` (signal: 6, SIGABRT: process abort signal)
 
 running 1 test
 ## exit=101
@@ -5581,7 +5581,7 @@ running 1 test
 GREEN output (`cfefd93`, run at `opt-level=0`):
 ```text
 $ CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test --locked --lib io::smart_ptr::tests::test_s23_r1_nested_and_vec_deserialize_and_big_chain_2mib_stack
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+   Compiling zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 24.52s
      Running unittests src/lib.rs (target/debug/deps/zipora-94eaf9373034a341)
 
@@ -5607,7 +5607,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3127 filtered out; f
 RED output (`test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor` spliced onto parent `5d35a51:src/memory/mmap_vec.rs` at line `3620`):
 ```text
 $ cargo test --locked --lib memory::mmap_vec::tests::test_s23_r3_mmap_vec_config_rejects_invalid_growth_factor
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+   Compiling zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
     Finished `test` profile [optimized + debuginfo] target(s) in 38.08s
      Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
 error: test failed, to rerun pass `--lib`
@@ -5662,7 +5662,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3127 filtered ou
 GREEN output (`S20`/`S22`/`S23` regression tests at `cfefd93`):
 ```text
 $ cargo test --locked --lib test_s2
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+   Compiling zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
     Finished `test` profile [optimized + debuginfo] target(s) in 35.85s
      Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
 
@@ -5806,7 +5806,7 @@ Output:
 ```text
 === Clippy (all targets, all features, deny warnings) ===
 cargo clippy --locked --all-targets --all-features -- -D warnings
-    Checking zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Checking zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.73s
 === Unsafe Code Audit (B7) ===
 python3 scripts/unsafe_audit.py
@@ -5840,7 +5840,7 @@ Total .expect() found: 95 (ratchet ceiling: 95)
 Audit status: PASS
 === No default features (guard feature-gated cfg attrs) ===
 cargo clippy --locked --no-default-features -- -D unused_variables -D unused_imports
-    Checking zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+    Checking zipora v4.2.0 ($HOME/go/src/infini.sh/zipora)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.73s
 [... 7210 lines elided ...]
 === Test counts and drift guard (B8) ===
@@ -5871,7 +5871,7 @@ Test count drift check: PASS
 RED output (`test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory` spliced onto parent `a8d8b39:src/io/smart_ptr.rs` at line `2017`):
 ```text
 $ cargo test --locked --lib io::smart_ptr::tests::test_s24_r1_stride_65_object_ids_do_not_amplify_dense_table_memory
-   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/workspace/infini/zipora)
+   Compiling zipora v4.2.0 ($HOME/workspace/infini/zipora)
     Finished `test` profile [optimized + debuginfo] target(s) in 33.76s
      Running unittests src/lib.rs (target/debug/deps/zipora-265d62c92a32b81e)
 

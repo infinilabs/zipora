@@ -1,6 +1,6 @@
 [package]
 name = "zipora"
-version = "4.2.0"
+version = "5.0.0"
 edition = "2024"
 rust-version = "1.95"
 authors = ["InfiniLabs"]
@@ -11,9 +11,18 @@ keywords = ["compression", "data-structures", "trie", "succinct", "concurrency"]
 categories = ["compression", "data-structures", "algorithms", "concurrency", "memory-management"]
 exclude = [
     "plan.md",
+    "release_blocker.md",
     "cpp_benchmark/**",
     "fuzz/**",
     "benches/baselines/**",
+    "docs/review/**",
+    "scripts/**",
+    ".github/**",
+    ".mirirc",
+    "tsan.supp",
+    "deny.toml",
+    "run_benchmarks.sh",
+    "run_miri_tests.sh",
 ]
 
 [lib]
@@ -58,7 +67,7 @@ thread_local = "1.1"
 fastrand = "2.1"
 
 # Compression (optional)
-zstd = { version = "0.13.3", optional = true }
+zstd = { version = "0.14.3", optional = true }
 lz4_flex = { version = "0.14", optional = true }
 
 # Serialization (optional)

@@ -341,7 +341,7 @@ RED on `cf7f4cf`, release (no overflow checks; this host has no AVX-512, §2):
 test algorithms::simd_merge::tests::test_c8_7_simd_comparator_forced_config_and_overflow_prefetch ... error: test failed, to rerun pass `--lib`
 
 Caused by:
-  process didn't exit successfully: `/usr/local/google/home/binwu/go/src/infini.sh/zipora/.claude/worktrees/head/target/release/deps/zipora-c69415bbefcab954 'algorithms::simd_merge::tests::test_c8_7_simd_comparator_forced_config_and_overflow_prefetch' --exact --test-threads=1` (signal: 4, SIGILL: illegal instruction)
+  process didn't exit successfully: `$HOME/go/src/infini.sh/zipora/.claude/worktrees/head/target/release/deps/zipora-c69415bbefcab954 'algorithms::simd_merge::tests::test_c8_7_simd_comparator_forced_config_and_overflow_prefetch' --exact --test-threads=1` (signal: 4, SIGILL: illegal instruction)
 ```
 
 The `f88c3ad` ledger did not mention the SIGILL. The AVX-512 bodies, old and new, have not run on any host used here.
@@ -395,7 +395,7 @@ fatal runtime error: stack overflow, aborting
 error: test failed, to rerun pass `--lib`
 
 Caused by:
-  process didn't exit successfully: `/usr/local/google/home/binwu/go/src/infini.sh/zipora/.claude/worktrees/base/target/debug/deps/zipora-64ffc2a400edeecc 'algorithms::cache_oblivious::tests::probe_r8_funnel_default_config_n_1100000' --exact --test-threads=1` (signal: 6, SIGABRT: process abort signal)
+  process didn't exit successfully: `$HOME/go/src/infini.sh/zipora/.claude/worktrees/base/target/debug/deps/zipora-64ffc2a400edeecc 'algorithms::cache_oblivious::tests::probe_r8_funnel_default_config_n_1100000' --exact --test-threads=1` (signal: 6, SIGABRT: process abort signal)
 ```
 
 `c48128f`: both sizes `ok`; debug 0.18 s and 0.21 s, release 0.10 s and 0.14 s.
