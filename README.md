@@ -159,36 +159,36 @@ See **[Stage 14 Core Benchmarks](docs/review/e1.md)**, **[Stage 15 Competitor Ma
 
 <!-- BEGIN GENERATED PERF TABLE (scripts/perf_table.py) -->
 Measured on reference host `bindiego` (AMD EPYC 7B13, 64 logical cores, pinned core 23, `THP-off` via `PR_SET_THP_DISABLE`, `-C target-cpu=haswell -C target-feature=+bmi2,+avx2,+popcnt -C codegen-units=1 -C llvm-args=-align-loops=32`).
-Across all **197** head-to-head comparisons in [`docs/review/e2_e3.md`](docs/review/e2_e3.md) and [`docs/review/e4.md`](docs/review/e4.md), Zipora is **`LEADING` on 67/197** (primary within `-3.0%` and secondary space `<= +10.0%`) and **faster or tied on primary on 104/197 (52.8%)**.
+Across all **197** head-to-head comparisons in [`docs/review/e2_e3.md`](docs/review/e2_e3.md) and [`docs/review/e4.md`](docs/review/e4.md), Zipora is **`LEADING` on 68/197** (primary within `-3.0%` and secondary space `<= +10.0%`) and **faster or tied on primary on 107/197 (54.3%)**.
 
 ### Head-to-Head Competitor Highlights (`benches/baselines/bindiego/competitor_bench.json` & `e2e_search.json`)
 
 | Family | Zipora Operation | Zipora (`min`) | Space / Secondary | Competitor | Competitor (`min`) | Speedup |
 |---|---|---:|---:|---|---:|---:|
-| Rank/Select (`1 Gbit`) | `RankSelectInterleaved256::rank1` | `35.78 ns/op` | `131.25% of raw` | `sucds::Rank9Sel` | `44.23 ns/op` | **`1.24x`** |
-| Rank/Select (`1 Gbit`) | `RankSelectSE256::select1` | `152.65 ns/op` | `137.50% of raw` | `sucds::Rank9Sel` | `202.01 ns/op` | **`1.32x`** |
-| Elias-Fano (`100k`) | `EliasFano::next_geq` (uniform) | `22.23 ns/op` | `8.62 bits/elem` | `sucds::EliasFano` | `47.90 ns/op` | **`2.15x`** |
-| Elias-Fano (`100k`) | `OptimalPartitionedEliasFano::next_geq` | `26.56 ns/op` | `5.42 bits/elem` | `vers-vecs::EliasFanoVec` | `61.17 ns/op` | **`2.30x`** |
-| Elias-Fano (`100k`) | `ClusteredEliasFano::get` (dense) | `3.39 ns/op` | `2.51 bits/elem` | `sucds::EliasFano` | `8.02 ns/op` | **`2.37x`** |
-| Tries (`1M` keys) | `DoubleArrayTrie::contains` (shared prefix) | `248.06 ns/op` | `25.60 B/key` | `qp-trie::Trie` | `515.23 ns/op` | **`2.08x`** |
-| Tries (`1M` keys) | `CsppTrie::contains` (shared prefix) | `222.16 ns/op` | `9.60 B/key` | `radix_trie::Trie` | `1020.09 ns/op` | **`4.59x`** |
-| Hash Maps (`1M` keys) | `ZiporaHashMap<[u8; 16], u64>::get` | `94.83 ns/op` | `52.43 B/entry` | `hashbrown::HashMap` (`ahash`) | `195.39 ns/op` | **`2.06x`** |
-| Hash Maps (`1M` keys) | `ZiporaHashMap<u64, u64>::get` | `66.02 ns/op` | `35.65 B/entry` | `std::collections::HashMap` | `91.81 ns/op` | **`1.39x`** |
-| Entropy (`64 KiB`) | `HuffmanDecoder::decode` (O0) | `3.50 ns/byte` | `4.01 bits/B` | `huffman-compress` | `9.41 ns/byte` | **`2.69x`** |
-| Entropy (`64 KiB`) | `Rans64Decoder<ParallelX4>::decode` | `2.50 ns/byte` | `4.05 bits/B` | `constriction` ANS | `6.14 ns/byte` | **`2.46x`** |
-| Integer Codecs (`100k`) | `StreamVByte::encode_deltas` (SSSE3) | `0.48 ns/int` | `10.00 bits/int` | `stream-vbyte` SIMD | `1.29 ns/int` | **`2.71x`** |
-| Integer Codecs (`100k`) | `StreamVByte::decode_into` (SSSE3) | `0.19 ns/int` | `10.00 bits/int` | `stream-vbyte` SIMD | `0.25 ns/int` | **`1.35x`** |
-| Radix Sort (`10M`) | `RadixSort::sort_u32` (hybrid MSB+LSD) | `5.72 ns/elem` | `8.00 B/elem` | `voracious_radix_sort` | `10.17 ns/elem` | **`1.78x`** |
-| String Search (`64 KiB`) | `simd_strchr` (128B AVX2) | `644.76 ns/call` | `0 B aux` | `memchr::memchr` | `635.94 ns/call` | **`0.99x`** |
-| String Search (`64 KiB`) | `simd_strstr` (128B AVX2) | `648.98 ns/call` | `0 B aux` | `memchr::memmem` | `1957.12 ns/call` | **`3.02x`** |
-| Systemic Search (`100k` docs) | `Zipora BMW` top-10 (`p50 = 21.74 us`) | `19,572.4 QPS` | `1.219 B/posting` (postings) | `tantivy` v0.26.2 (`p50 = 54.81 us`) | `11,987.4 QPS` | **`1.63x`** (`2.31x` vs uncompressed) |
+| Rank/Select (`1 Gbit`) | `RankSelectInterleaved256::rank1` | `35.23 ns/op` | `131.25% of raw` | `sucds::Rank9Sel` | `42.92 ns/op` | **`1.22x`** |
+| Rank/Select (`1 Gbit`) | `RankSelectSE256::select1` | `149.64 ns/op` | `137.50% of raw` | `sucds::Rank9Sel` | `203.58 ns/op` | **`1.36x`** |
+| Elias-Fano (`100k`) | `EliasFano::next_geq` (uniform) | `22.17 ns/op` | `8.62 bits/elem` | `sucds::EliasFano` | `47.69 ns/op` | **`2.15x`** |
+| Elias-Fano (`100k`) | `OptimalPartitionedEliasFano::next_geq` | `26.55 ns/op` | `5.42 bits/elem` | `vers-vecs::EliasFanoVec` | `61.44 ns/op` | **`2.31x`** |
+| Elias-Fano (`100k`) | `ClusteredEliasFano::get` (dense) | `3.39 ns/op` | `2.51 bits/elem` | `sucds::EliasFano` | `8.03 ns/op` | **`2.37x`** |
+| Tries (`1M` keys) | `DoubleArrayTrie::contains` (shared prefix) | `247.11 ns/op` | `25.60 B/key` | `qp-trie::Trie` | `521.72 ns/op` | **`2.11x`** |
+| Tries (`1M` keys) | `CsppTrie::contains` (shared prefix) | `210.57 ns/op` | `9.60 B/key` | `radix_trie::Trie` | `1027.99 ns/op` | **`4.88x`** |
+| Hash Maps (`1M` keys) | `ZiporaHashMap<[u8; 16], u64>::get` | `83.74 ns/op` | `52.43 B/entry` | `hashbrown::HashMap` (`ahash`) | `191.06 ns/op` | **`2.28x`** |
+| Hash Maps (`1M` keys) | `ZiporaHashMap<u64, u64>::get` | `66.96 ns/op` | `35.65 B/entry` | `std::collections::HashMap` | `85.55 ns/op` | **`1.28x`** |
+| Entropy (`64 KiB`) | `HuffmanDecoder::decode` (O0) | `3.50 ns/byte` | `4.01 bits/B` | `huffman-compress` | `9.43 ns/byte` | **`2.69x`** |
+| Entropy (`64 KiB`) | `Rans64Decoder<ParallelX4>::decode` | `2.50 ns/byte` | `4.05 bits/B` | `constriction` ANS | `6.15 ns/byte` | **`2.47x`** |
+| Integer Codecs (`100k`) | `StreamVByte::encode_deltas` (SSSE3) | `0.48 ns/int` | `10.00 bits/int` | `stream-vbyte` SIMD | `1.29 ns/int` | **`2.68x`** |
+| Integer Codecs (`100k`) | `StreamVByte::decode_into` (SSSE3) | `0.19 ns/int` | `10.00 bits/int` | `stream-vbyte` SIMD | `0.25 ns/int` | **`1.36x`** |
+| Radix Sort (`10M`) | `RadixSort::sort_u32` (hybrid MSB+LSD) | `5.68 ns/elem` | `8.00 B/elem` | `voracious_radix_sort` | `10.11 ns/elem` | **`1.78x`** |
+| String Search (`64 KiB`) | `simd_strchr` (128B AVX2) | `644.84 ns/call` | `0 B aux` | `memchr::memchr` | `636.33 ns/call` | **`0.99x`** |
+| String Search (`64 KiB`) | `simd_strstr` (128B AVX2) | `649.14 ns/call` | `0 B aux` | `memchr::memmem` | `1921.17 ns/call` | **`2.96x`** |
+| Systemic Search (`100k` docs) | `Zipora BMW` top-10 (`p50 = 21.14 us`) | `19,917.6 QPS` | `1.219 B/posting` (postings) | `tantivy` v0.26.2 (`p50 = 55.04 us`) | `12,036.3 QPS` | **`1.65x`** (`2.34x` vs uncompressed) |
 
 ### Additional Core Suite Baselines (`benches/baselines/bindiego/core_bench.json`)
 
-- **BM25 & Fieldnorm Scoring**: `Bm25BatchScorer` AVX2 batch `0.4743 ns/doc`, `FieldnormEncoder::build_score_table` `0.1706 ns/cell` (`1.0 B/doc` fieldnorms).
-- **Memory Pools**: `LockFreeMemoryPool` 64B alloc+free `9.107 ns/op` (1T) / `9.120 ns/op` (4T).
-- **Rank9 (`1 Gbit`)**: `Rank9::rank1` `43.98 ns/op` at `25.00%` space overhead.
-- **Suffix Array (`10M` bytes, SA-IS)**: construction `80.37 ns/byte` (`9.05 B/byte`), `search_range` query `1542.87 ns/op`.
+- **BM25 & Fieldnorm Scoring**: `Bm25BatchScorer` AVX2 batch `0.4784 ns/doc`, `FieldnormEncoder::build_score_table` `0.1699 ns/cell` (`1.0 B/doc` fieldnorms).
+- **Memory Pools**: `LockFreeMemoryPool` 64B alloc+free `9.106 ns/op` (1T) / `9.110 ns/op` (4T).
+- **Rank9 (`1 Gbit`)**: `Rank9::rank1` `43.23 ns/op` at `25.00%` space overhead.
+- **Suffix Array (`10M` bytes, SA-IS)**: construction `75.28 ns/byte` (`9.05 B/byte`), `search_range` query `1330.43 ns/op`.
 <!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->
 
 ## Dependencies
