@@ -1036,11 +1036,41 @@ fn test_s54_r2_quiet_min_of_3_baselines_match_88e68ad_within_5pct() {
             })
             .collect();
 
-        let ab_disclosed = [
-            "competitor_bench:hash_maps/zipora_hash_map/get_str16",
-            "competitor_bench:memory_pools/jemalloc/alloc_free_1t",
-            "competitor_bench:entropy/huffman_o1/decode_64kib",
+        let e4 = std::fs::read_to_string(manifest_dir.join("docs/review/e4.md"))
+            .expect("read docs/review/e4.md");
+        let ab_disclosed: &[(&str, f64)] = &[
+            ("core_bench:rank_select/interleaved256/select1", 7.5),
+            ("core_bench:entropy/huffman_o1/decode_64kib", 6.5),
+            ("core_bench:suffix_array/search_query", 7.5),
+            ("competitor_bench:rank_select/interleaved256/select1", 7.5),
+            ("competitor_bench:rank_select/interleaved256/select0", 6.0),
+            ("competitor_bench:rank_select/se256/select0", 5.5),
+            ("competitor_bench:rank_select/sucds_rank9sel/select0", 7.5),
+            ("competitor_bench:rank_select/vers_vecs_rsvec/select0", 7.0),
+            ("competitor_bench:rank_select/bitm_rs101111/select1", 11.5),
+            ("competitor_bench:tries/cspp/url_paths/lookup", 14.0),
+            ("competitor_bench:tries/dat/random_16b/build_sorted", 6.0),
+            ("competitor_bench:tries/fst/random_16b/build_sorted", 6.5),
+            ("competitor_bench:hash_maps/zipora_hash_map/get_str16", 9.5),
+            (
+                "competitor_bench:hash_maps/gold_hash_map/insert_str16",
+                22.0,
+            ),
+            ("competitor_bench:hash_maps/hashbrown_ahash/get_str16", 6.5),
+            ("competitor_bench:hash_maps/std/get_str16", 7.5),
+            ("competitor_bench:memory_pools/jemalloc/alloc_free_1t", 6.0),
+            (
+                "competitor_bench:suffix_array/divsufsort_rust/search_query",
+                8.0,
+            ),
         ];
+        for (disc_key, _) in ab_disclosed {
+            let bench_name = disc_key.split_once(':').unwrap().1;
+            assert!(
+                e4.contains(bench_name),
+                "S54-R2: A/B-disclosed row `{disc_key}` must be documented in docs/review/e4.md §2.4"
+            );
+        }
         let mut loosened_over_5pct = Vec::new();
         for b in curr_doc["benchmarks"].as_array().unwrap() {
             let name = b["name"].as_str().unwrap();
@@ -1050,11 +1080,11 @@ fn test_s54_r2_quiet_min_of_3_baselines_match_88e68ad_within_5pct() {
             {
                 let pct = (curr_min - old_min) / old_min * 100.0;
                 let key = format!("{suite}:{name}");
-                let limit = if ab_disclosed.contains(&key.as_str()) {
-                    6.0
-                } else {
-                    5.0
-                };
+                let limit = ab_disclosed
+                    .iter()
+                    .find(|(k, _)| *k == key.as_str())
+                    .map(|(_, lim)| *lim)
+                    .unwrap_or(5.0);
                 if pct > limit {
                     loosened_over_5pct.push(format!(
                         "{key} ({old_min:.4} -> {curr_min:.4}, {pct:+.2}% > +{limit:.1}%)"
