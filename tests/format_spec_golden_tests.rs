@@ -1005,13 +1005,14 @@ fn test_s52_r6_simd_isa_module_is_pub_crate() {
 fn test_s52_r9_package_exclude_single_feature_tests_ci_toolchain_and_fuzz_doc() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    // 1. Cargo.toml [package] must specify `exclude` covering plan.md and cpp_benchmark/wrapper_test
+    // 1. Cargo.toml [package] must specify `exclude` covering non-shipping dirs (and plan.md if present)
     let cargo_toml = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
     assert!(
         cargo_toml.contains("exclude = [")
-            && cargo_toml.contains("\"plan.md\"")
-            && cargo_toml.contains("\"cpp_benchmark/"),
-        "Cargo.toml [package] must define `exclude` covering `plan.md` and `cpp_benchmark/`"
+            && (!root.join("plan.md").exists() || cargo_toml.contains("\"plan.md\""))
+            && cargo_toml.contains("\"cpp_benchmark/")
+            && cargo_toml.contains("\"fuzz/"),
+        "Cargo.toml [package] must define `exclude` covering `cpp_benchmark/`, `fuzz/`, and `plan.md` (when present)"
     );
 
     // 2. Makefile feature_matrix must run `cargo test` on each single-feature build, not just clippy

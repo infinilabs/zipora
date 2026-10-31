@@ -268,9 +268,7 @@ impl SharedPool {
                     (w & 0x00FF_FFFF)
                         == u32::from_ne_bytes([expected[0], expected[1], expected[2], 0])
                 }
-                4 => {
-                    w == u32::from_ne_bytes([expected[0], expected[1], expected[2], expected[3]])
-                }
+                4 => w == u32::from_ne_bytes([expected[0], expected[1], expected[2], expected[3]]),
                 _ => true,
             };
         }
@@ -278,9 +276,7 @@ impl SharedPool {
         let rem = len % 4;
         let total_words = full_words + usize::from(rem != 0);
         let words = &self.data[slot..slot + total_words];
-        for (w, chunk) in words[..full_words].iter().zip(expected.chunks_exact(4)) {
-            let mut exp = [0u8; 4];
-            exp.copy_from_slice(chunk);
+        for (w, &exp) in words[..full_words].iter().zip(expected.as_chunks::<4>().0) {
             // ORDERING: The caller already Acquire-loaded the parent child pointer and
             // node header word, establishing happens-before for the node's immutable zpath.
             if w.load(Ordering::Relaxed) != u32::from_ne_bytes(exp) {

@@ -99,12 +99,10 @@ pub fn sha256_reader<R: Read>(mut reader: R) -> std::io::Result<String> {
                 slice = &[];
             }
         }
-        let mut chunks = slice.chunks_exact(64);
-        for chunk in &mut chunks {
-            let block: &[u8; 64] = chunk.try_into().unwrap();
+        let (chunks, rem) = slice.as_chunks::<64>();
+        for block in chunks {
             sha256_compress_block(&mut h, block);
         }
-        let rem = chunks.remainder();
         if !rem.is_empty() {
             tail[..rem.len()].copy_from_slice(rem);
             tail_len = rem.len();

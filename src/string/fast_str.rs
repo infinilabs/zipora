@@ -431,13 +431,12 @@ impl<'a> FastStr<'a> {
             let mut h = 2134173u64.wrapping_add(data.len() as u64 * 31);
 
             // AVX2 can process 32 bytes at a time
-            let chunks_32 = data.chunks_exact(32);
-            let remainder_after_32 = chunks_32.remainder();
+            let (chunks_32, remainder_after_32) = data.as_chunks::<32>();
 
             // Process 32-byte chunks with AVX2
             for chunk in chunks_32 {
                 // Load 32 bytes as 4 x 64-bit integers
-                // SAFETY: chunk is 32 bytes from chunks_exact(32), pointer valid from slice
+                // SAFETY: chunk is `[u8; 32]`, pointer valid from slice
                 let data_vec = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
 
                 // Convert to individual 64-bit values for processing
@@ -458,13 +457,10 @@ impl<'a> FastStr<'a> {
             }
 
             // Process remaining bytes with 8-byte chunks
-            let chunks_8 = remainder_after_32.chunks_exact(8);
-            let final_remainder = chunks_8.remainder();
+            let (chunks_8, final_remainder) = remainder_after_32.as_chunks::<8>();
 
-            for chunk in chunks_8 {
-                let word = u64::from_le_bytes([
-                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-                ]);
+            for &chunk in chunks_8 {
+                let word = u64::from_le_bytes(chunk);
                 h = h.wrapping_add(word);
                 h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
                 h ^= h >> 30;
@@ -491,13 +487,12 @@ impl<'a> FastStr<'a> {
             let mut h = 2134173u64.wrapping_add(data.len() as u64 * 31);
 
             // SSE2 can process 16 bytes at a time
-            let chunks_16 = data.chunks_exact(16);
-            let remainder_after_16 = chunks_16.remainder();
+            let (chunks_16, remainder_after_16) = data.as_chunks::<16>();
 
             // Process 16-byte chunks with SSE2
             for chunk in chunks_16 {
                 // Load 16 bytes as 2 x 64-bit integers
-                // SAFETY: chunk is 16 bytes from chunks_exact(16), pointer valid from slice
+                // SAFETY: chunk is `[u8; 16]`, pointer valid from slice
                 let data_vec = _mm_loadu_si128(chunk.as_ptr() as *const __m128i);
 
                 // Extract the two 64-bit values
@@ -518,13 +513,10 @@ impl<'a> FastStr<'a> {
             }
 
             // Process remaining bytes with 8-byte chunks
-            let chunks_8 = remainder_after_16.chunks_exact(8);
-            let final_remainder = chunks_8.remainder();
+            let (chunks_8, final_remainder) = remainder_after_16.as_chunks::<8>();
 
-            for chunk in chunks_8 {
-                let word = u64::from_le_bytes([
-                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-                ]);
+            for &chunk in chunks_8 {
+                let word = u64::from_le_bytes(chunk);
                 h = h.wrapping_add(word);
                 h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
                 h ^= h >> 30;
@@ -567,8 +559,7 @@ impl<'a> FastStr<'a> {
         let mut h = 2134173u64.wrapping_add(data.len() as u64 * 31);
 
         // AVX-512 can process 64 bytes at a time
-        let chunks_64 = data.chunks_exact(64);
-        let remainder_after_64 = chunks_64.remainder();
+        let (chunks_64, remainder_after_64) = data.as_chunks::<64>();
 
         // Process 64-byte chunks with AVX-512
         for chunk in chunks_64 {
@@ -576,7 +567,7 @@ impl<'a> FastStr<'a> {
             use std::arch::x86_64::{__m512i, _mm512_loadu_si512, _mm512_storeu_si512};
 
             // Load 64 bytes as 8 x 64-bit integers using AVX-512
-            // SAFETY: chunk is 64 bytes from chunks_exact(64), pointer valid from slice
+            // SAFETY: chunk is `[u8; 64]`, pointer valid from slice
             let data_vec = unsafe { _mm512_loadu_si512(chunk.as_ptr() as *const __m512i) };
 
             // Convert to individual 64-bit values for processing
@@ -598,12 +589,11 @@ impl<'a> FastStr<'a> {
         }
 
         // Process remaining bytes with 32-byte chunks (AVX2 processing)
-        let chunks_32 = remainder_after_64.chunks_exact(32);
-        let remainder_after_32 = chunks_32.remainder();
+        let (chunks_32, remainder_after_32) = remainder_after_64.as_chunks::<32>();
 
         for chunk in chunks_32 {
             // Use AVX2 for 32-byte chunks if available
-            // SAFETY: chunk is 32 bytes from chunks_exact(32), pointer valid from slice
+            // SAFETY: chunk is `[u8; 32]`, pointer valid from slice
             let data_vec = unsafe { _mm256_loadu_si256(chunk.as_ptr() as *const __m256i) };
             let mut vals = [0u64; 4];
             // SAFETY: vals is 32 bytes (4 * 8), properly aligned for _mm256i store
@@ -621,13 +611,10 @@ impl<'a> FastStr<'a> {
         }
 
         // Process remaining bytes with 8-byte chunks
-        let chunks_8 = remainder_after_32.chunks_exact(8);
-        let final_remainder = chunks_8.remainder();
+        let (chunks_8, final_remainder) = remainder_after_32.as_chunks::<8>();
 
-        for chunk in chunks_8 {
-            let word = u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ]);
+        for &chunk in chunks_8 {
+            let word = u64::from_le_bytes(chunk);
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
             h ^= h >> 30;
@@ -667,13 +654,12 @@ impl<'a> FastStr<'a> {
         let mut h = 2134173u64.wrapping_add(data.len() as u64 * 31);
 
         // NEON can process 16 bytes at a time efficiently
-        let chunks_16 = data.chunks_exact(16);
-        let remainder_after_16 = chunks_16.remainder();
+        let (chunks_16, remainder_after_16) = data.as_chunks::<16>();
 
         // Process 16-byte chunks with NEON
         for chunk in chunks_16 {
             // Load 16 bytes using NEON - this is more efficient than scalar loads
-            // SAFETY: chunk is 16 bytes from chunks_exact(16), pointer valid from slice
+            // SAFETY: chunk is `[u8; 16]`, pointer valid from slice
             let data_vec = unsafe { vld1q_u8(chunk.as_ptr()) };
 
             // Convert to two 64-bit values for processing
@@ -705,13 +691,10 @@ impl<'a> FastStr<'a> {
         }
 
         // Process remaining bytes with 8-byte chunks
-        let chunks_8 = remainder_after_16.chunks_exact(8);
-        let final_remainder = chunks_8.remainder();
+        let (chunks_8, final_remainder) = remainder_after_16.as_chunks::<8>();
 
-        for chunk in chunks_8 {
-            let word = u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ]);
+        for &chunk in chunks_8 {
+            let word = u64::from_le_bytes(chunk);
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
             h ^= h >> 30;
@@ -730,13 +713,10 @@ impl<'a> FastStr<'a> {
         let mut h = 2134173u64.wrapping_add(self.data.len() as u64 * 31);
 
         // Process 8-byte chunks for better performance
-        let chunks = self.data.chunks_exact(8);
-        let remainder = chunks.remainder();
+        let (chunks, remainder) = self.data.as_chunks::<8>();
 
-        for chunk in chunks {
-            let word = u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ]);
+        for &chunk in chunks {
+            let word = u64::from_le_bytes(chunk);
             // Improved mixing for better avalanche effect
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64); // Golden ratio based multiplier
@@ -759,13 +739,10 @@ impl<'a> FastStr<'a> {
         }
 
         // Process remaining bytes in 8-byte chunks if possible
-        let chunks = remainder.chunks_exact(8);
-        let final_remainder = chunks.remainder();
+        let (chunks, final_remainder) = remainder.as_chunks::<8>();
 
-        for chunk in chunks {
-            let word = u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ]);
+        for &chunk in chunks {
+            let word = u64::from_le_bytes(chunk);
             // Use same improved mixing as main algorithm
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64);

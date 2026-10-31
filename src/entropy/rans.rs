@@ -425,10 +425,7 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
                 unreachable!()
             };
             let head = data.get(..full_quads * 4).unwrap_or(&[]);
-            for quad in head.chunks_exact(4).rev() {
-                let &[b0, b1, b2, b3] = quad else {
-                    unreachable!()
-                };
+            for &[b0, b1, b2, b3] in head.as_chunks::<4>().0.iter().rev() {
                 self.encode_symbol(s3, b3, out3)?;
                 self.encode_symbol(s2, b2, out2)?;
                 self.encode_symbol(s1, b1, out1)?;
@@ -707,10 +704,7 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
             let mut p2 = sd2.len();
             let mut p3 = sd3.len();
 
-            for quad in result.chunks_exact_mut(4) {
-                let [o0, o1, o2, o3] = quad else {
-                    unreachable!()
-                };
+            for [o0, o1, o2, o3] in result.as_chunks_mut::<4>().0 {
                 *o0 = self.decode_symbol(s0, sd0, &mut p0)?;
                 *o1 = self.decode_symbol(s1, sd1, &mut p1)?;
                 *o2 = self.decode_symbol(s2, sd2, &mut p2)?;

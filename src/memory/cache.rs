@@ -380,11 +380,15 @@ impl NumaMemoryPool {
         }
         // Saturating: a block freed on a node that never recorded it (the pool
         // was created after the allocation) must not wrap the counter.
-        self.allocated_bytes
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |b| {
-                Some(b.saturating_sub(layout.size()))
-            })
-            .ok();
+        let mut cur = self.allocated_bytes.load(Ordering::Relaxed);
+        while let Err(actual) = self.allocated_bytes.compare_exchange_weak(
+            cur,
+            cur.saturating_sub(layout.size()),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            cur = actual;
+        }
     }
 
     fn stats(&self) -> NumaPoolStats {

@@ -703,8 +703,7 @@ impl BitOps {
     #[cfg(target_arch = "x86_64")]
     fn vectorized_popcount_avx2(&self, data: &[u64]) -> Vec<u32> {
         let mut result = Vec::with_capacity(data.len());
-        let chunks = data.chunks_exact(4);
-        let remainder = chunks.remainder();
+        let (chunks, remainder) = data.as_chunks::<4>();
 
         // SAFETY: AVX2 instructions are available (checked by caller)
         unsafe {

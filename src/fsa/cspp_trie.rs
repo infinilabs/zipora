@@ -567,7 +567,7 @@ pub struct CsppTrie {
     fast_bins: Vec<u32>, // fast_bins[slots-1] = head of free list for that slot count
     free_bin1: std::collections::HashMap<u32, u32>, // next link only for rare 1-slot leftover blocks
     large_list: Vec<(u32, u32)>, // (slot, n_slots) for blocks > FREE_LIST_MAX_SLOTS
-    frag_size: usize,    // total bytes in all free lists
+    frag_size: usize,            // total bytes in all free lists
     // Phase C.2: lazy free list for reader safety
     lazy_free_list: Vec<LazyFreeItem>,
 }
@@ -912,7 +912,7 @@ impl CsppTrie {
 
     /// Reclaim all deferred free nodes. Call when no readers are active.
     pub fn reclaim_lazy_frees(&mut self) {
-        let items: Vec<_> = self.lazy_free_list.drain(..).collect();
+        let items = std::mem::take(&mut self.lazy_free_list);
         for item in items {
             self.free_node(item.slot, item.slots as usize * ALIGN_SIZE);
         }
@@ -2783,7 +2783,3 @@ mod tests {
         }
     }
 }
-
-
-
-

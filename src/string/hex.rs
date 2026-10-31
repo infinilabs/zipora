@@ -91,12 +91,12 @@ pub fn hex_decode_bytes(hex: &[u8]) -> Result<Vec<u8>> {
 
     let mut result = Vec::with_capacity(hex.len() / 2);
 
-    for chunk in hex.chunks_exact(2) {
-        let high = hex_char_to_nibble(chunk[0]).ok_or_else(|| ZiporaError::InvalidData {
-            message: format!("invalid hex character: {:?}", chunk[0] as char),
+    for &[hi, lo] in hex.as_chunks::<2>().0 {
+        let high = hex_char_to_nibble(hi).ok_or_else(|| ZiporaError::InvalidData {
+            message: format!("invalid hex character: {:?}", hi as char),
         })?;
-        let low = hex_char_to_nibble(chunk[1]).ok_or_else(|| ZiporaError::InvalidData {
-            message: format!("invalid hex character: {:?}", chunk[1] as char),
+        let low = hex_char_to_nibble(lo).ok_or_else(|| ZiporaError::InvalidData {
+            message: format!("invalid hex character: {:?}", lo as char),
         })?;
 
         result.push((high << 4) | low);
@@ -134,12 +134,12 @@ pub fn hex_decode_to_slice(hex: &[u8], output: &mut [u8]) -> Result<usize> {
         });
     }
 
-    for (i, chunk) in hex.chunks_exact(2).enumerate() {
-        let high = hex_char_to_nibble(chunk[0]).ok_or_else(|| ZiporaError::InvalidData {
-            message: format!("invalid hex character: {:?}", chunk[0] as char),
+    for (i, &[hi, lo]) in hex.as_chunks::<2>().0.iter().enumerate() {
+        let high = hex_char_to_nibble(hi).ok_or_else(|| ZiporaError::InvalidData {
+            message: format!("invalid hex character: {:?}", hi as char),
         })?;
-        let low = hex_char_to_nibble(chunk[1]).ok_or_else(|| ZiporaError::InvalidData {
-            message: format!("invalid hex character: {:?}", chunk[1] as char),
+        let low = hex_char_to_nibble(lo).ok_or_else(|| ZiporaError::InvalidData {
+            message: format!("invalid hex character: {:?}", lo as char),
         })?;
 
         output[i] = (high << 4) | low;

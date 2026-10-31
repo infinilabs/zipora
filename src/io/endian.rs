@@ -392,10 +392,10 @@ pub mod simd {
         {
             use std::arch::x86_64::*;
 
-            let mut chunks = values.chunks_exact_mut(8);
-            for chunk in chunks.by_ref() {
+            let (chunks, remainder) = values.as_chunks_mut::<8>();
+            for chunk in chunks {
                 let ptr = chunk.as_mut_ptr() as *mut __m128i;
-                // SAFETY: `chunk` is exactly 8 `u16`s = 16 bytes, so the
+                // SAFETY: `chunk` is `[u16; 8]` = 16 bytes, so the
                 // unaligned 16-byte load and store touch only `chunk`, which
                 // this loop borrows mutably. The intrinsics need SSE2 only,
                 // which the build enables (`cfg(target_feature = "sse2")`).
@@ -410,7 +410,7 @@ pub mod simd {
             }
 
             // Handle remainder with scalar operations
-            for value in chunks.into_remainder() {
+            for value in remainder {
                 *value = value.swap_bytes();
             }
         }
@@ -427,10 +427,10 @@ pub mod simd {
         {
             use std::arch::x86_64::*;
 
-            let mut chunks = values.chunks_exact_mut(4);
-            for chunk in chunks.by_ref() {
+            let (chunks, remainder) = values.as_chunks_mut::<4>();
+            for chunk in chunks {
                 let ptr = chunk.as_mut_ptr() as *mut __m128i;
-                // SAFETY: `chunk` is exactly 4 `u32`s = 16 bytes, so the
+                // SAFETY: `chunk` is `[u32; 4]` = 16 bytes, so the
                 // unaligned 16-byte load and store touch only `chunk`, which
                 // this loop borrows mutably. The intrinsics need SSE2 only,
                 // which the build enables (`cfg(target_feature = "sse2")`).
@@ -452,7 +452,7 @@ pub mod simd {
             }
 
             // Handle remainder
-            for value in chunks.into_remainder() {
+            for value in remainder {
                 *value = value.swap_bytes();
             }
         }
@@ -878,14 +878,18 @@ mod tests {
                 let swap = from_little != host_little;
                 let mut got16 = v16.clone();
                 simd::convert_u16_slice_simd(&mut got16, from_little);
-                let want16: Vec<u16> =
-                    v16.iter().map(|&x| if swap { x.swap_bytes() } else { x }).collect();
+                let want16: Vec<u16> = v16
+                    .iter()
+                    .map(|&x| if swap { x.swap_bytes() } else { x })
+                    .collect();
                 assert_eq!(got16, want16, "u16 len {len} from_little {from_little}");
 
                 let mut got32 = v32.clone();
                 simd::convert_u32_slice_simd(&mut got32, from_little);
-                let want32: Vec<u32> =
-                    v32.iter().map(|&x| if swap { x.swap_bytes() } else { x }).collect();
+                let want32: Vec<u32> = v32
+                    .iter()
+                    .map(|&x| if swap { x.swap_bytes() } else { x })
+                    .collect();
                 assert_eq!(got32, want32, "u32 len {len} from_little {from_little}");
             }
         }
@@ -899,7 +903,13 @@ mod tests {
     #[test]
     fn test_c9_e3_u32_simd_swap_needs_only_sse2() {
         for from_little in [true, false] {
-            let orig = [0x0102_0304u32, 0x0506_0708, 0x090A_0B0C, 0x0D0E_0F10, 0x1112_1314];
+            let orig = [
+                0x0102_0304u32,
+                0x0506_0708,
+                0x090A_0B0C,
+                0x0D0E_0F10,
+                0x1112_1314,
+            ];
             let mut values = orig;
             simd::convert_u32_slice_simd(&mut values, from_little);
             let swap = from_little != cfg!(target_endian = "little");

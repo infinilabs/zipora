@@ -141,16 +141,16 @@ unsafe fn popcount_hw(words: &[u64]) -> usize {
     let mut sum2 = 0usize;
     let mut sum3 = 0usize;
 
-    let mut chunks = words.chunks_exact(4);
-    for chunk in &mut chunks {
-        sum0 += _popcnt64(chunk[0] as i64) as usize;
-        sum1 += _popcnt64(chunk[1] as i64) as usize;
-        sum2 += _popcnt64(chunk[2] as i64) as usize;
-        sum3 += _popcnt64(chunk[3] as i64) as usize;
+    let (chunks, rem) = words.as_chunks::<4>();
+    for &[w0, w1, w2, w3] in chunks {
+        sum0 += _popcnt64(w0 as i64) as usize;
+        sum1 += _popcnt64(w1 as i64) as usize;
+        sum2 += _popcnt64(w2 as i64) as usize;
+        sum3 += _popcnt64(w3 as i64) as usize;
     }
 
     let mut remainder = 0usize;
-    for &w in chunks.remainder() {
+    for &w in rem {
         remainder += _popcnt64(w as i64) as usize;
     }
 

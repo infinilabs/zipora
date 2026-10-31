@@ -246,8 +246,7 @@ impl Bmi2RankOps {
         use std::arch::x86_64::*;
 
         let mut result = Vec::with_capacity(words.len());
-        let chunks = words.chunks_exact(4);
-        let remainder = chunks.remainder();
+        let (chunks, remainder) = words.as_chunks::<4>();
 
         for chunk in chunks {
             // Load 4 x 64-bit words into AVX2 register

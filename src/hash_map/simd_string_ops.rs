@@ -525,6 +525,12 @@ mod tests {
         println!("Selected SIMD tier: {:?}", ops.tier());
 
         // Should always work regardless of available features
+        #[cfg(feature = "avx512")]
+        assert!(matches!(
+            ops.tier(),
+            SimdTier::Scalar | SimdTier::Sse42 | SimdTier::Avx2 | SimdTier::Avx512
+        ));
+        #[cfg(not(feature = "avx512"))]
         assert!(matches!(
             ops.tier(),
             SimdTier::Scalar | SimdTier::Sse42 | SimdTier::Avx2

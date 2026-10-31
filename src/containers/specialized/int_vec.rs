@@ -61,11 +61,10 @@ mod int_vec_simd {
             const SIMD_CHUNK_SIZE: usize = 8;
 
             // Handle aligned chunks for vectorization
-            let (aligned_chunks, remainder) =
-                values.split_at((values.len() / SIMD_CHUNK_SIZE) * SIMD_CHUNK_SIZE);
+            let (chunks, remainder) = values.as_chunks::<SIMD_CHUNK_SIZE>();
 
             // Process aligned chunks (compiler can vectorize this loop)
-            for chunk in aligned_chunks.chunks_exact(SIMD_CHUNK_SIZE) {
+            for chunk in chunks {
                 for &value in chunk {
                     min_val = min_val.min(value);
                     max_val = max_val.max(value);

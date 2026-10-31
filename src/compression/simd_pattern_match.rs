@@ -1286,6 +1286,15 @@ mod tests {
         let matcher = SimdPatternMatcher::new();
 
         // Should create successfully with any supported tier
+        #[cfg(feature = "avx512")]
+        assert!(matches!(
+            matcher.simd_tier(),
+            SimdPatternTier::Scalar
+                | SimdPatternTier::Sse42
+                | SimdPatternTier::Avx2
+                | SimdPatternTier::Avx512
+        ));
+        #[cfg(not(feature = "avx512"))]
         assert!(matches!(
             matcher.simd_tier(),
             SimdPatternTier::Scalar | SimdPatternTier::Sse42 | SimdPatternTier::Avx2
@@ -1423,6 +1432,15 @@ mod tests {
         // Test with SIMD enabled
         config.enable_simd = true;
         let tier = SimdPatternMatcher::select_optimal_tier(&config, cpu_features);
+        #[cfg(feature = "avx512")]
+        assert!(matches!(
+            tier,
+            SimdPatternTier::Scalar
+                | SimdPatternTier::Sse42
+                | SimdPatternTier::Avx2
+                | SimdPatternTier::Avx512
+        ));
+        #[cfg(not(feature = "avx512"))]
         assert!(matches!(
             tier,
             SimdPatternTier::Scalar | SimdPatternTier::Sse42 | SimdPatternTier::Avx2

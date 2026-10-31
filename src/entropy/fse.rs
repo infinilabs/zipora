@@ -880,14 +880,14 @@ impl FseEncoder {
     fn count_frequencies_unrolled(&mut self, data: &[u8]) {
         let mut lanes = [[0u32; 256]; 4];
 
-        let mut chunks = data.chunks_exact(4);
-        for chunk in &mut chunks {
-            lanes[0][chunk[0] as usize] += 1;
-            lanes[1][chunk[1] as usize] += 1;
-            lanes[2][chunk[2] as usize] += 1;
-            lanes[3][chunk[3] as usize] += 1;
+        let (chunks, remainder) = data.as_chunks::<4>();
+        for &[b0, b1, b2, b3] in chunks {
+            lanes[0][b0 as usize] += 1;
+            lanes[1][b1 as usize] += 1;
+            lanes[2][b2 as usize] += 1;
+            lanes[3][b3 as usize] += 1;
         }
-        for &byte in chunks.remainder() {
+        for &byte in remainder {
             self.frequency_stats[byte as usize] += 1;
         }
 

@@ -21,7 +21,9 @@ jobs:
 
     - name: Install Rust toolchains (stable, MSRV 1.95, nightly + miri/rust-src)
       run: |
-        rustup toolchain install stable 1.95.0 nightly --profile minimal --component clippy
+        rustup toolchain install stable --profile minimal --component clippy
+        rustup toolchain install 1.95.0 nightly --profile minimal
+        rustup default stable
         rustup component add --toolchain nightly miri rust-src llvm-tools-preview
         rustup target add --toolchain stable aarch64-unknown-linux-gnu
         cargo +nightly miri setup

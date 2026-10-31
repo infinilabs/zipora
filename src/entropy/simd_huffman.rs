@@ -333,8 +333,7 @@ impl SimdHuffmanEncoder {
         }
 
         // Process data in batches of 32 bytes (AVX2 register size)
-        let chunks = data.chunks_exact(32);
-        let remainder = chunks.remainder();
+        let (chunks, remainder) = data.as_chunks::<32>();
 
         for chunk in chunks {
             // Prefetch next chunk

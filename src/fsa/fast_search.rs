@@ -392,10 +392,9 @@ pub mod utils {
                 let mut count = 0usize;
                 // SAFETY: popcnt feature detected at runtime
                 unsafe {
-                    let chunks = data.chunks_exact(8);
-                    let remainder = chunks.remainder();
-                    for chunk in chunks {
-                        let value = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
+                    let (chunks, remainder) = data.as_chunks::<8>();
+                    for &chunk in chunks {
+                        let value = u64::from_le_bytes(chunk);
                         count += _popcnt64(value as i64) as usize;
                     }
                     for &byte in remainder {
