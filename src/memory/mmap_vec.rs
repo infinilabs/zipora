@@ -2837,10 +2837,12 @@ mod tests {
         for i in 0..ATTEMPTS {
             let path = dir.path().join(format!("create{i}.mmap"));
             let config = MmapVecConfig::default().with_initial_capacity(1);
+            let mut unmapped_hole = false;
             match MmapVec::<Page8k>::create(path, config) {
                 Ok(v) if aligned.is_none() => aligned = Some(v),
                 Ok(v) => keep.push(v),
                 Err(e) => {
+                    unmapped_hole = true;
                     if create_err.is_none() {
                         create_err = Some(e);
                     }
@@ -2849,7 +2851,10 @@ mod tests {
             if create_err.is_some() && aligned.is_some() {
                 break;
             }
-            fillers.push(MmapMut::map_anon(2 * 8192 + page).unwrap());
+            if unmapped_hole {
+                fillers.push(MmapMut::map_anon(2 * 8192).unwrap());
+            }
+            fillers.push(MmapMut::map_anon(page).unwrap());
         }
 
         let path = dir.path().join("handmade.mmap");
@@ -2863,6 +2868,7 @@ mod tests {
         let mut open_err = None;
         let mut opened = None;
         for _ in 0..ATTEMPTS {
+            let mut unmapped_hole = false;
             match MmapVec::<Page8k>::open(&path, MmapVecConfig::default()) {
                 Ok(v) => {
                     if opened.is_none() {
@@ -2871,6 +2877,7 @@ mod tests {
                     keep.push(v);
                 }
                 Err(e) => {
+                    unmapped_hole = true;
                     if open_err.is_none() {
                         open_err = Some(e);
                     }
@@ -2879,7 +2886,10 @@ mod tests {
             if open_err.is_some() && opened.is_some() {
                 break;
             }
-            fillers.push(MmapMut::map_anon(2 * 8192 + page).unwrap());
+            if unmapped_hole {
+                fillers.push(MmapMut::map_anon(2 * 8192).unwrap());
+            }
+            fillers.push(MmapMut::map_anon(page).unwrap());
         }
 
         let mut remap_err = None;
@@ -2887,6 +2897,7 @@ mod tests {
         if let Some(mut v) = aligned {
             v.push(Page8k([0xAB; 8192])).unwrap();
             for _ in 0..ATTEMPTS {
+                let prev_bytes = (v.capacity() + 1) * 8192;
                 let step = if v.capacity() > 1 {
                     v.shrink_to_fit()
                 } else {
@@ -2896,7 +2907,8 @@ mod tests {
                     remap_err = Some(e);
                     break;
                 }
-                fillers.push(MmapMut::map_anon(4 * 8192 + page).unwrap());
+                fillers.push(MmapMut::map_anon(prev_bytes).unwrap());
+                fillers.push(MmapMut::map_anon(page).unwrap());
             }
             after = Some(
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
