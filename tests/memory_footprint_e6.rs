@@ -1001,17 +1001,18 @@ fn test_s54_r2_s57_r1_quiet_min_of_3_baselines_match_88e68ad_with_ab_caps() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
 
     for suite in ["core_bench", "competitor_bench", "e2e_search"] {
+        // 3731290 is the origin/main ancestor carrying the byte-identical 88e68ad Stage 16 baselines.
         let old_out = Command::new("git")
             .args([
                 "show",
-                &format!("88e68ad:benches/baselines/bindiego/{suite}.json"),
+                &format!("3731290:benches/baselines/bindiego/{suite}.json"),
             ])
             .current_dir(manifest_dir)
             .output()
-            .expect("git show 88e68ad baseline");
+            .expect("git show 3731290 baseline");
         assert!(
             old_out.status.success(),
-            "failed to read 88e68ad baseline for {suite}"
+            "failed to read 3731290 (88e68ad) baseline for {suite}"
         );
         let old_doc: serde_json::Value =
             serde_json::from_slice(&old_out.stdout).expect("parse 88e68ad baseline");
