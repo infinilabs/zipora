@@ -17,6 +17,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -69,6 +71,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     - name: Install Rust MSRV 1.95 toolchain
       uses: dtolnay/rust-toolchain@master
@@ -109,6 +113,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -146,6 +152,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable

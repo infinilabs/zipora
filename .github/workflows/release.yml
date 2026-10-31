@@ -18,6 +18,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     - name: Install Rust toolchains (stable, MSRV 1.95, nightly + miri/rust-src)
       run: |
