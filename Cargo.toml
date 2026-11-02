@@ -103,7 +103,7 @@ qp-trie = "0.8"
 radix_trie = "0.3"
 hashbrown = { version = "0.16", default-features = false, features = ["inline-more", "raw-entry", "equivalent"] }
 mimalloc = { version = "0.1", default-features = false }
-tikv-jemallocator = "0.6"
+tikv-jemallocator = "0.7"
 constriction = "0.5"
 huffman-compress = "0.7"
 bit-vec = "0.8"
