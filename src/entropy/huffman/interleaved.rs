@@ -19,6 +19,19 @@ const CTX_LUT_MASK: u64 = (CTX_LUT_SIZE as u64) - 1;
 /// memory by ~680x.
 const MAX_DENSE_TREES: usize = 1025;
 
+/// Every symbol in `ContextualHuffmanEncoder` / `ContextualHuffmanDecoder`
+/// (including single-symbol leaf trees) consumes at least 1 bit in the
+/// bitstream, so `output_length` cannot exceed `8 * encoded_len`.
+#[inline]
+fn check_output_length(output_length: usize, encoded_len: usize) -> Result<()> {
+    if output_length > encoded_len.saturating_mul(8) {
+        return Err(ZiporaError::invalid_data(
+            "Implausible output length for encoded Huffman stream",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 struct ContextualEncodeCache {
     tree_codes: Vec<[(u64, u8); 256]>,
@@ -1034,6 +1047,7 @@ impl ContextualHuffmanEncoder {
                 "Empty encoded data for non-zero output_size",
             ));
         }
+        check_output_length(output_size, data.len())?;
 
         // Build decode table (block-based lookup)
         let decode_table = self.build_decode_table()?;
@@ -1448,6 +1462,7 @@ impl ContextualHuffmanDecoder {
                 "Empty encoded data for non-zero output_length",
             ));
         }
+        check_output_length(output_length, encoded_data.len())?;
 
         let result = match self.encoder.order {
             HuffmanOrder::Order0 => {

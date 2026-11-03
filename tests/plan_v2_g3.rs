@@ -2,13 +2,20 @@
 //!
 //! - C1: FSE `compress_parallel` framing (`parallel_blocks` of `Some(0)` /
 //!   `Some(1)` emitted an unframed stream) and its per-block thread spawn.
+//! - C4: rANS / contextual-Huffman decoders preallocating a caller-supplied
+//!   `output_length` before reading a single symbol.
 //!
 //! Every `test_v2_*` here compiles against v5.0.0; the doc comment of each test
 //! states whether it fails there (and why) or is a guard that must keep passing.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use zipora::entropy::{FseConfig, FseDecoder, FseEncoder};
+use zipora::entropy::huffman::InterleavingFactor;
+use zipora::entropy::rans::ParallelVariant as RansVariant;
+use zipora::entropy::{
+    ContextualHuffmanDecoder, ContextualHuffmanEncoder, FseConfig, FseDecoder, FseEncoder,
+    HuffmanOrder, ParallelX1, ParallelX2, ParallelX4, ParallelX8, Rans64Encoder, RansDecoder,
+};
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -195,4 +202,168 @@ fn test_v2_fse_parallel_compress_updates_stats() {
     assert_eq!(compressed[0], FSE_MODE_PARALLEL);
     assert_eq!(encoder.stats().input_size, data.len());
     assert_eq!(encoder.stats().output_size, compressed.len());
+}
+
+// ---------------------------------------------------------------------------
+// C4: caller-supplied output_length must not be preallocated blindly
+// ---------------------------------------------------------------------------
+
+/// A length `Vec` cannot represent: preallocating it panics with "capacity
+/// overflow" (catchable) instead of aborting the process like a merely huge
+/// allocation would.
+const UNALLOCATABLE_LEN: usize = isize::MAX as usize + 1;
+
+fn rans_frequencies(data: &[u8]) -> [u32; 256] {
+    let mut freqs = [0u32; 256];
+    for &b in data {
+        freqs[b as usize] += 1;
+    }
+    freqs
+}
+
+/// Decode a tiny valid stream with a caller-supplied `output_length`.
+/// `Err(msg)` means the decoder panicked.
+fn rans_decode_tiny_with_len<P: RansVariant>(
+    len: usize,
+) -> Result<zipora::Result<Vec<u8>>, String> {
+    let data = b"zipora rans c4: output_length is a caller argument".to_vec();
+    let encoder = Rans64Encoder::<P>::new(&rans_frequencies(&data)).unwrap();
+    let encoded = encoder.encode(&data).unwrap();
+    let decoder = RansDecoder::new(&encoder);
+    assert_eq!(
+        decoder.decode(&encoded, data.len()).unwrap(),
+        data,
+        "control round trip ({})",
+        P::NAME
+    );
+    catch_unwind(AssertUnwindSafe(|| decoder.decode(&encoded, len))).map_err(|p| panic_message(&*p))
+}
+
+/// C4 (fails at v5.0.0 for x2/x4/x8): `decode_parallel` runs
+/// `vec![0u8; output_length]` before decoding anything, so a 75-byte x4 stream
+/// with an absurd `output_length` panics with "capacity overflow" (and a
+/// merely huge one commits gigabytes). x1 already capped its reservation.
+#[test]
+fn test_v2_rans_decode_unallocatable_output_length_is_err() {
+    let mut failures = Vec::new();
+    for (name, outcome) in [
+        (
+            "x1",
+            rans_decode_tiny_with_len::<ParallelX1>(UNALLOCATABLE_LEN),
+        ),
+        (
+            "x2",
+            rans_decode_tiny_with_len::<ParallelX2>(UNALLOCATABLE_LEN),
+        ),
+        (
+            "x4",
+            rans_decode_tiny_with_len::<ParallelX4>(UNALLOCATABLE_LEN),
+        ),
+        (
+            "x8",
+            rans_decode_tiny_with_len::<ParallelX8>(UNALLOCATABLE_LEN),
+        ),
+    ] {
+        match outcome {
+            Ok(Err(_)) => {}
+            Ok(Ok(v)) => failures.push(format!("{name}: returned {} bytes", v.len())),
+            Err(msg) => failures.push(format!("{name}: panicked: {msg}")),
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+fn rans_roundtrip_len<P: RansVariant>(data: &[u8]) {
+    let encoder = Rans64Encoder::<P>::new(&rans_frequencies(data)).unwrap();
+    let encoded = encoder.encode(data).unwrap();
+    let decoded = RansDecoder::new(&encoder)
+        .decode(&encoded, data.len())
+        .unwrap_or_else(|e| panic!("{} decode of {} bytes failed: {e}", P::NAME, data.len()));
+    assert!(
+        decoded == data,
+        "{} round trip of {} bytes differs",
+        P::NAME,
+        data.len()
+    );
+}
+
+/// C4 guard (passes at v5.0.0): legitimate outputs larger than the fixed
+/// decoder's 1 MiB up-front reservation, with lengths that are not a multiple
+/// of the stream count, still round-trip; so does a single-symbol stream whose
+/// symbols cost zero bits (tiny input, multi-MiB output).
+#[test]
+fn test_v2_rans_parallel_decode_large_output_roundtrips() {
+    let len = (3 << 20) + 3;
+    let mixed: Vec<u8> = (0..len)
+        .map(|i| b"abcdefgh"[(i * 7 + i / 13) % 8])
+        .collect();
+    rans_roundtrip_len::<ParallelX2>(&mixed);
+    rans_roundtrip_len::<ParallelX4>(&mixed);
+    rans_roundtrip_len::<ParallelX8>(&mixed);
+
+    let single = vec![b'z'; (2 << 20) + 5];
+    rans_roundtrip_len::<ParallelX4>(&single);
+    rans_roundtrip_len::<ParallelX8>(&single);
+}
+
+/// C4 (fails at v5.0.0): `ContextualHuffmanDecoder::decode` (orders 0/1/2) and
+/// the interleaved `decode_x1..x8` reserve `output_length` up front
+/// (`Vec::with_capacity` / `vec![0; n]` / `resize`), so they panic with
+/// "capacity overflow" for an absurd caller-supplied length.
+#[test]
+fn test_v2_contextual_huffman_unallocatable_output_length_is_err() {
+    let text =
+        b"zipora contextual huffman c4 regression: output_length is caller supplied".to_vec();
+    let mut failures = Vec::new();
+
+    for order in [
+        HuffmanOrder::Order0,
+        HuffmanOrder::Order1,
+        HuffmanOrder::Order2,
+    ] {
+        let encoder = ContextualHuffmanEncoder::new(&text, order).unwrap();
+        let encoded = encoder.encode(&text).unwrap();
+        let decoder = ContextualHuffmanDecoder::new(encoder);
+        assert_eq!(
+            decoder.decode(&encoded, text.len()).unwrap(),
+            text,
+            "control {order:?}"
+        );
+        match catch_unwind(AssertUnwindSafe(|| {
+            decoder.decode(&encoded, UNALLOCATABLE_LEN)
+        })) {
+            Ok(Err(_)) => {}
+            Ok(Ok(v)) => failures.push(format!("decode {order:?}: returned {} bytes", v.len())),
+            Err(p) => failures.push(format!(
+                "decode {order:?}: panicked: {}",
+                panic_message(&*p)
+            )),
+        }
+    }
+
+    let encoder = ContextualHuffmanEncoder::new(&text, HuffmanOrder::Order1).unwrap();
+    for factor in [
+        InterleavingFactor::X1,
+        InterleavingFactor::X2,
+        InterleavingFactor::X4,
+        InterleavingFactor::X8,
+    ] {
+        let encoded = encoder.encode_with_interleaving(&text, factor).unwrap();
+        assert_eq!(
+            encoder
+                .decode_with_interleaving(&encoded, text.len(), factor)
+                .unwrap(),
+            text,
+            "control {factor:?}"
+        );
+        match catch_unwind(AssertUnwindSafe(|| {
+            encoder.decode_with_interleaving(&encoded, UNALLOCATABLE_LEN, factor)
+        })) {
+            Ok(Err(_)) => {}
+            Ok(Ok(v)) => failures.push(format!("{factor:?}: returned {} bytes", v.len())),
+            Err(p) => failures.push(format!("{factor:?}: panicked: {}", panic_message(&*p))),
+        }
+    }
+
+    assert!(failures.is_empty(), "{failures:?}");
 }

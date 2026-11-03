@@ -571,7 +571,17 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
         Ok(symbol)
     }
 
-    /// Decode data using parallel processing
+    /// Decode data using parallel processing.
+    ///
+    /// Multi-stream (`x2`/`x4`/`x8`) outputs larger than `1 MiB` are decoded in
+    /// `1 MiB` windows so truncated or malformed multi-symbol streams with an
+    /// untrusted `output_length` return `Err` after at most one `1 MiB` window
+    /// beyond the decodable prefix.
+    ///
+    /// Note: a single-symbol alphabet encodes each symbol in `0` bits, so no
+    /// fixed input-to-output expansion bound exists for single-symbol tables;
+    /// supplying an accurate `output_length` on single-symbol tables is the
+    /// caller's contract.
     pub fn decode(&self, encoded_data: &[u8], output_length: usize) -> Result<Vec<u8>> {
         if output_length == 0 {
             return Ok(Vec::new());
@@ -620,16 +630,112 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
         Ok(result)
     }
 
+    /// Decode one window of interleaved rANS output, advancing `states` and
+    /// `stream_positions` in place. Every window before the final one must have
+    /// `window.len() % P::N == 0` so stream phases stay synchronized across windows.
+    #[inline(always)]
+    fn decode_window(
+        &self,
+        stream_data: &[&[u8]],
+        states: &mut [Rans64State],
+        stream_positions: &mut [usize],
+        window: &mut [u8],
+    ) -> Result<()> {
+        let n_streams = P::N;
+        if n_streams == 4 {
+            // Keep `sd0..sd3` as `&&[u8]` and `s0..s3` as `&mut Rans64State` into the
+            // caller-owned local `states` buffer: once `decode_window` is inlined, LLVM
+            // promotes `s0..s3` and `p0..p3` to GPRs across the quad loop while keeping
+            // each stream's `shr + imul + add` state update scheduled immediately instead
+            // of hoisting all four `decode_entries` loads and spilling `(freq, bias)` to
+            // the stack, and avoids unpacking 8 fat-slice scalars into registers.
+            let [sd0, sd1, sd2, sd3] = stream_data else {
+                return Err(ZiporaError::invalid_data("Invalid 4-stream slice count"));
+            };
+            let [s0, s1, s2, s3, ..] = states else {
+                return Err(ZiporaError::invalid_data("Invalid 4-stream state count"));
+            };
+            let [sp0, sp1, sp2, sp3, ..] = stream_positions else {
+                return Err(ZiporaError::invalid_data("Invalid 4-stream position count"));
+            };
+            let mut p0 = (*sp0).min(sd0.len());
+            let mut p1 = (*sp1).min(sd1.len());
+            let mut p2 = (*sp2).min(sd2.len());
+            let mut p3 = (*sp3).min(sd3.len());
+
+            let (quads, tail) = window.as_chunks_mut::<4>();
+            for [o0, o1, o2, o3] in quads {
+                *o0 = self.decode_symbol(s0, sd0, &mut p0)?;
+                *o1 = self.decode_symbol(s1, sd1, &mut p1)?;
+                *o2 = self.decode_symbol(s2, sd2, &mut p2)?;
+                *o3 = self.decode_symbol(s3, sd3, &mut p3)?;
+            }
+
+            if let Some(slot) = tail.get_mut(0) {
+                *slot = self.decode_symbol(s0, sd0, &mut p0)?;
+            }
+            if let Some(slot) = tail.get_mut(1) {
+                *slot = self.decode_symbol(s1, sd1, &mut p1)?;
+            }
+            if let Some(slot) = tail.get_mut(2) {
+                *slot = self.decode_symbol(s2, sd2, &mut p2)?;
+            }
+
+            *sp0 = p0;
+            *sp1 = p1;
+            *sp2 = p2;
+            *sp3 = p3;
+            return Ok(());
+        }
+
+        let window_len = window.len();
+        for stream_idx in 0..n_streams {
+            let sd = *stream_data
+                .get(stream_idx)
+                .ok_or_else(|| ZiporaError::invalid_data("Invalid stream index"))?;
+            let mut state = *states
+                .get(stream_idx)
+                .ok_or_else(|| ZiporaError::invalid_data("Invalid stream state index"))?;
+            let mut stream_pos = (*stream_positions
+                .get(stream_idx)
+                .ok_or_else(|| ZiporaError::invalid_data("Invalid stream position index"))?)
+            .min(sd.len());
+
+            for output_idx in (stream_idx..window_len).step_by(n_streams) {
+                let symbol = self.decode_symbol(&mut state, sd, &mut stream_pos)?;
+                if let Some(slot) = window.get_mut(output_idx) {
+                    *slot = symbol;
+                }
+            }
+            if let Some(st) = states.get_mut(stream_idx) {
+                *st = state;
+            }
+            if let Some(sp) = stream_positions.get_mut(stream_idx) {
+                *sp = stream_pos;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Parallel-stream decoding (following advanced approach)
     fn decode_parallel(&self, encoded_data: &[u8], output_length: usize) -> Result<Vec<u8>> {
+        const RANS_PARALLEL_DECODE_WINDOW: usize = 1 << 20;
         let n_streams = P::N;
+        if n_streams == 0 {
+            return Err(ZiporaError::invalid_parameter(
+                "ParallelVariant::N must be at least 1",
+            ));
+        }
 
         if output_length < n_streams {
             // Too little data for parallelization
             return self.decode_single(encoded_data, output_length);
         }
 
-        let min_header_size = n_streams * 8 + n_streams * 4; // states + lengths
+        let min_header_size = n_streams
+            .checked_mul(12)
+            .ok_or_else(|| ZiporaError::invalid_data("Invalid parallel rANS stream count"))?;
         if encoded_data.len() < min_header_size {
             return Err(ZiporaError::invalid_data(
                 "Insufficient data for parallel rANS header",
@@ -689,65 +795,66 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
             pos += length;
         }
 
-        // Decode each stream independently in interleaved fashion
-        let mut result = vec![0u8; output_length];
+        if output_length > RANS_PARALLEL_DECODE_WINDOW {
+            return self.decode_parallel_windowed(stream_data.as_slice(), states, output_length);
+        }
 
+        let mut result = vec![0u8; output_length];
         if n_streams == 4 {
             let [sd0, sd1, sd2, sd3] = stream_data.as_slice() else {
-                unreachable!()
+                return Err(ZiporaError::invalid_data("Invalid 4-stream slice count"));
             };
-            let [s0, s1, s2, s3] = &mut states[..4] else {
-                unreachable!()
-            };
-            let mut p0 = sd0.len();
-            let mut p1 = sd1.len();
-            let mut p2 = sd2.len();
-            let mut p3 = sd3.len();
-
-            for [o0, o1, o2, o3] in result.as_chunks_mut::<4>().0 {
-                *o0 = self.decode_symbol(s0, sd0, &mut p0)?;
-                *o1 = self.decode_symbol(s1, sd1, &mut p1)?;
-                *o2 = self.decode_symbol(s2, sd2, &mut p2)?;
-                *o3 = self.decode_symbol(s3, sd3, &mut p3)?;
-            }
-
-            let rem_start = (output_length / 4) * 4;
-            if let Some(tail) = result.get_mut(rem_start..) {
-                if let Some(slot) = tail.get_mut(0) {
-                    *slot = self.decode_symbol(s0, sd0, &mut p0)?;
-                }
-                if let Some(slot) = tail.get_mut(1) {
-                    *slot = self.decode_symbol(s1, sd1, &mut p1)?;
-                }
-                if let Some(slot) = tail.get_mut(2) {
-                    *slot = self.decode_symbol(s2, sd2, &mut p2)?;
-                }
-            }
+            let mut positions = [sd0.len(), sd1.len(), sd2.len(), sd3.len()];
+            self.decode_window(
+                stream_data.as_slice(),
+                &mut states,
+                &mut positions,
+                &mut result,
+            )?;
             return Ok(result);
         }
+        let mut stream_positions: Vec<usize> = stream_data.iter().map(|s| s.len()).collect();
+        self.decode_window(
+            stream_data.as_slice(),
+            &mut states,
+            &mut stream_positions,
+            &mut result,
+        )?;
+        Ok(result)
+    }
 
-        let mut stream_positions = vec![0usize; n_streams];
-
-        // Initialize stream positions at the end of each stream's data (read backwards)
-        for i in 0..n_streams {
-            stream_positions[i] = stream_data[i].len();
-        }
-
-        // Decode each stream's symbols (in forward order since we encoded in
-        // reverse), walking the same interleaved index sequence the encoder
-        // used. As on the encode side, the sequence is a strided range and
-        // needs no index vector.
-        for stream_idx in 0..n_streams {
-            let mut stream_pos = stream_positions[stream_idx];
-
-            for output_idx in (stream_idx..output_length).step_by(n_streams) {
-                let symbol = self.decode_symbol(
-                    &mut states[stream_idx],
-                    stream_data[stream_idx],
-                    &mut stream_pos,
-                )?;
-                result[output_idx] = symbol;
-            }
+    /// Windowed multi-stream decode for outputs exceeding `1 MiB`.
+    #[cold]
+    #[inline(never)]
+    fn decode_parallel_windowed(
+        &self,
+        stream_data: &[&[u8]],
+        mut states: Vec<Rans64State>,
+        output_length: usize,
+    ) -> Result<Vec<u8>> {
+        const RANS_PARALLEL_DECODE_WINDOW: usize = 1 << 20;
+        let n_streams = P::N;
+        let full_window = (RANS_PARALLEL_DECODE_WINDOW / n_streams)
+            .max(1)
+            .saturating_mul(n_streams);
+        let mut stream_positions: Vec<usize> = stream_data.iter().map(|s| s.len()).collect();
+        let mut result = Vec::with_capacity(full_window.min(output_length));
+        let mut remaining = output_length;
+        while remaining > 0 {
+            let window_len = remaining.min(full_window);
+            let start = result.len();
+            let end = start
+                .checked_add(window_len)
+                .ok_or_else(|| ZiporaError::out_of_memory(output_length))?;
+            result
+                .try_reserve(window_len)
+                .map_err(|_| ZiporaError::out_of_memory(end))?;
+            result.resize(end, 0);
+            let window = result
+                .get_mut(start..end)
+                .ok_or_else(|| ZiporaError::out_of_bounds(end, end))?;
+            self.decode_window(stream_data, &mut states, &mut stream_positions, window)?;
+            remaining -= window_len;
         }
 
         Ok(result)
