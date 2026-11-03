@@ -1,6 +1,6 @@
 //! Cache configuration for performance optimization.
 
-use super::{Config, parse_env_bool, parse_env_var};
+use super::{Config, EnvLookup, parse_bool_with, parse_var_with};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
 
@@ -26,6 +26,25 @@ impl Default for CacheConfig {
     }
 }
 
+impl CacheConfig {
+    pub(crate) fn from_env_lookup(prefix: &str, lookup: EnvLookup<'_>) -> Result<Self> {
+        let mut config = Self::default();
+        config.size = parse_var_with(lookup, &format!("{}CACHE_SIZE", prefix), config.size);
+        config.enable_prefetching = parse_bool_with(
+            lookup,
+            &format!("{}CACHE_PREFETCHING", prefix),
+            config.enable_prefetching,
+        );
+        config.line_size = parse_var_with(
+            lookup,
+            &format!("{}CACHE_LINE_SIZE", prefix),
+            config.line_size,
+        );
+        config.validate()?;
+        Ok(config)
+    }
+}
+
 impl Config for CacheConfig {
     fn validate(&self) -> Result<()> {
         if self.size == 0 {
@@ -42,15 +61,7 @@ impl Config for CacheConfig {
     }
 
     fn from_env_with_prefix(prefix: &str) -> Result<Self> {
-        let mut config = Self::default();
-        config.size = parse_env_var(&format!("{}CACHE_SIZE", prefix), config.size);
-        config.enable_prefetching = parse_env_bool(
-            &format!("{}CACHE_PREFETCHING", prefix),
-            config.enable_prefetching,
-        );
-        config.line_size = parse_env_var(&format!("{}CACHE_LINE_SIZE", prefix), config.line_size);
-        config.validate()?;
-        Ok(config)
+        Self::from_env_lookup(prefix, &|k| std::env::var(k).ok())
     }
 
     fn performance_preset() -> Self {
@@ -89,9 +100,7 @@ impl Config for CacheConfig {
             Ok(())
         }
         #[cfg(not(feature = "serde"))]
-        Err(ZiporaError::invalid_operation(
-            "Requires serde feature",
-        ))
+        Err(ZiporaError::invalid_operation("Requires serde feature"))
     }
 
     fn load_from_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
@@ -107,8 +116,6 @@ impl Config for CacheConfig {
             Ok(config)
         }
         #[cfg(not(feature = "serde"))]
-        Err(ZiporaError::invalid_operation(
-            "Requires serde feature",
-        ))
+        Err(ZiporaError::invalid_operation("Requires serde feature"))
     }
 }

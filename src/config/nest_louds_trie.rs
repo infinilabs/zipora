@@ -4,7 +4,7 @@
 //! enabling fine-grained control over construction parameters, optimization settings,
 //! memory management, and performance characteristics.
 
-use super::{Config, ValidationError, parse_env_bool, parse_env_var};
+use super::{Config, EnvLookup, ValidationError, parse_bool_with, parse_var_with};
 use crate::error::{Result, ZiporaError};
 use bitflags::bitflags;
 use std::collections::HashSet;
@@ -535,105 +535,7 @@ impl Config for NestLoudsTrieConfig {
     }
 
     fn from_env_with_prefix(prefix: &str) -> Result<Self> {
-        let mut config = Self::default();
-
-        // Build-time parameters
-        config.nest_level = parse_env_var(&format!("{}TRIE_NEST_LEVEL", prefix), config.nest_level);
-        config.max_fragment_length = parse_env_var(
-            &format!("{}TRIE_MAX_FRAGMENT_LENGTH", prefix),
-            config.max_fragment_length,
-        );
-        config.min_fragment_length = parse_env_var(
-            &format!("{}TRIE_MIN_FRAGMENT_LENGTH", prefix),
-            config.min_fragment_length,
-        );
-        config.min_link_str_length = parse_env_var(
-            &format!("{}TRIE_MIN_LINK_STR_LENGTH", prefix),
-            config.min_link_str_length,
-        );
-
-        // Compression settings
-        config.core_str_compression_level = parse_env_var(
-            &format!("{}TRIE_COMPRESSION_LEVEL", prefix),
-            config.core_str_compression_level,
-        );
-        config.sa_fragment_min_freq = parse_env_var(
-            &format!("{}TRIE_SA_FRAGMENT_MIN_FREQ", prefix),
-            config.sa_fragment_min_freq,
-        );
-        config.compression_min_length = parse_env_var(
-            &format!("{}TRIE_COMPRESSION_MIN_LENGTH", prefix),
-            config.compression_min_length,
-        );
-
-        // Memory management
-        if let Ok(temp_dir) = std::env::var(format!("{}TRIE_TEMP_DIRECTORY", prefix)) {
-            config.temp_directory = temp_dir;
-        }
-        config.initial_pool_size = parse_env_var(
-            &format!("{}TRIE_INITIAL_POOL_SIZE", prefix),
-            config.initial_pool_size,
-        );
-        config.load_factor =
-            parse_env_var(&format!("{}TRIE_LOAD_FACTOR", prefix), config.load_factor);
-
-        // Performance tuning
-        config.is_input_sorted = parse_env_bool(
-            &format!("{}TRIE_INPUT_SORTED", prefix),
-            config.is_input_sorted,
-        );
-        config.nest_scale = parse_env_var(&format!("{}TRIE_NEST_SCALE", prefix), config.nest_scale);
-        config.enable_queue_compression = parse_env_bool(
-            &format!("{}TRIE_QUEUE_COMPRESSION", prefix),
-            config.enable_queue_compression,
-        );
-        config.use_mixed_core_link = parse_env_bool(
-            &format!("{}TRIE_MIXED_CORE_LINK", prefix),
-            config.use_mixed_core_link,
-        );
-        config.speedup_nest_trie_build = parse_env_bool(
-            &format!("{}TRIE_SPEEDUP_BUILD", prefix),
-            config.speedup_nest_trie_build,
-        );
-
-        // Advanced features
-        config.debug_level =
-            parse_env_var(&format!("{}TRIE_DEBUG_LEVEL", prefix), config.debug_level);
-        config.enable_statistics = parse_env_bool(
-            &format!("{}TRIE_ENABLE_STATISTICS", prefix),
-            config.enable_statistics,
-        );
-        config.enable_profiling = parse_env_bool(
-            &format!("{}TRIE_ENABLE_PROFILING", prefix),
-            config.enable_profiling,
-        );
-        config.max_bfs_depth = parse_env_var(
-            &format!("{}TRIE_MAX_BFS_DEPTH", prefix),
-            config.max_bfs_depth,
-        );
-        config.cache_frequency_threshold = parse_env_var(
-            &format!("{}TRIE_CACHE_FREQ_THRESHOLD", prefix),
-            config.cache_frequency_threshold,
-        );
-        config.enable_adaptive_optimization = parse_env_bool(
-            &format!("{}TRIE_ADAPTIVE_OPTIMIZATION", prefix),
-            config.enable_adaptive_optimization,
-        );
-        config.parallel_threads = parse_env_var(
-            &format!("{}TRIE_PARALLEL_THREADS", prefix),
-            config.parallel_threads,
-        );
-        config.enable_mmap_operations = parse_env_bool(
-            &format!("{}TRIE_ENABLE_MMAP", prefix),
-            config.enable_mmap_operations,
-        );
-        config.node_cache_size = parse_env_var(
-            &format!("{}TRIE_NODE_CACHE_SIZE", prefix),
-            config.node_cache_size,
-        );
-
-        config.validate()?;
-        Ok(config)
+        Self::from_env_lookup(prefix, &|k| std::env::var(k).ok())
     }
 
     fn performance_preset() -> Self {
@@ -733,6 +635,141 @@ impl Config for NestLoudsTrieConfig {
 }
 
 impl NestLoudsTrieConfig {
+    pub(crate) fn from_env_lookup(prefix: &str, lookup: EnvLookup<'_>) -> Result<Self> {
+        let mut config = Self::default();
+
+        // Build-time parameters
+        config.nest_level = parse_var_with(
+            lookup,
+            &format!("{}TRIE_NEST_LEVEL", prefix),
+            config.nest_level,
+        );
+        config.max_fragment_length = parse_var_with(
+            lookup,
+            &format!("{}TRIE_MAX_FRAGMENT_LENGTH", prefix),
+            config.max_fragment_length,
+        );
+        config.min_fragment_length = parse_var_with(
+            lookup,
+            &format!("{}TRIE_MIN_FRAGMENT_LENGTH", prefix),
+            config.min_fragment_length,
+        );
+        config.min_link_str_length = parse_var_with(
+            lookup,
+            &format!("{}TRIE_MIN_LINK_STR_LENGTH", prefix),
+            config.min_link_str_length,
+        );
+
+        // Compression settings
+        config.core_str_compression_level = parse_var_with(
+            lookup,
+            &format!("{}TRIE_COMPRESSION_LEVEL", prefix),
+            config.core_str_compression_level,
+        );
+        config.sa_fragment_min_freq = parse_var_with(
+            lookup,
+            &format!("{}TRIE_SA_FRAGMENT_MIN_FREQ", prefix),
+            config.sa_fragment_min_freq,
+        );
+        config.compression_min_length = parse_var_with(
+            lookup,
+            &format!("{}TRIE_COMPRESSION_MIN_LENGTH", prefix),
+            config.compression_min_length,
+        );
+
+        // Memory management
+        if let Some(temp_dir) = lookup(&format!("{}TRIE_TEMP_DIRECTORY", prefix)) {
+            config.temp_directory = temp_dir;
+        }
+        config.initial_pool_size = parse_var_with(
+            lookup,
+            &format!("{}TRIE_INITIAL_POOL_SIZE", prefix),
+            config.initial_pool_size,
+        );
+        config.load_factor = parse_var_with(
+            lookup,
+            &format!("{}TRIE_LOAD_FACTOR", prefix),
+            config.load_factor,
+        );
+
+        // Performance tuning
+        config.is_input_sorted = parse_bool_with(
+            lookup,
+            &format!("{}TRIE_INPUT_SORTED", prefix),
+            config.is_input_sorted,
+        );
+        config.nest_scale = parse_var_with(
+            lookup,
+            &format!("{}TRIE_NEST_SCALE", prefix),
+            config.nest_scale,
+        );
+        config.enable_queue_compression = parse_bool_with(
+            lookup,
+            &format!("{}TRIE_QUEUE_COMPRESSION", prefix),
+            config.enable_queue_compression,
+        );
+        config.use_mixed_core_link = parse_bool_with(
+            lookup,
+            &format!("{}TRIE_MIXED_CORE_LINK", prefix),
+            config.use_mixed_core_link,
+        );
+        config.speedup_nest_trie_build = parse_bool_with(
+            lookup,
+            &format!("{}TRIE_SPEEDUP_BUILD", prefix),
+            config.speedup_nest_trie_build,
+        );
+
+        // Advanced features
+        config.debug_level = parse_var_with(
+            lookup,
+            &format!("{}TRIE_DEBUG_LEVEL", prefix),
+            config.debug_level,
+        );
+        config.enable_statistics = parse_bool_with(
+            lookup,
+            &format!("{}TRIE_ENABLE_STATISTICS", prefix),
+            config.enable_statistics,
+        );
+        config.enable_profiling = parse_bool_with(
+            lookup,
+            &format!("{}TRIE_ENABLE_PROFILING", prefix),
+            config.enable_profiling,
+        );
+        config.max_bfs_depth = parse_var_with(
+            lookup,
+            &format!("{}TRIE_MAX_BFS_DEPTH", prefix),
+            config.max_bfs_depth,
+        );
+        config.cache_frequency_threshold = parse_var_with(
+            lookup,
+            &format!("{}TRIE_CACHE_FREQ_THRESHOLD", prefix),
+            config.cache_frequency_threshold,
+        );
+        config.enable_adaptive_optimization = parse_bool_with(
+            lookup,
+            &format!("{}TRIE_ADAPTIVE_OPTIMIZATION", prefix),
+            config.enable_adaptive_optimization,
+        );
+        config.parallel_threads = parse_var_with(
+            lookup,
+            &format!("{}TRIE_PARALLEL_THREADS", prefix),
+            config.parallel_threads,
+        );
+        config.enable_mmap_operations = parse_bool_with(
+            lookup,
+            &format!("{}TRIE_ENABLE_MMAP", prefix),
+            config.enable_mmap_operations,
+        );
+        config.node_cache_size = parse_var_with(
+            lookup,
+            &format!("{}TRIE_NODE_CACHE_SIZE", prefix),
+            config.node_cache_size,
+        );
+
+        config.validate()?;
+        Ok(config)
+    }
+
     /// Fluent builder — returns Default for chaining.
     pub fn builder() -> Self {
         Self::default()

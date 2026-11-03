@@ -251,6 +251,26 @@ impl fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
+pub(crate) type EnvLookup<'a> = &'a dyn Fn(&str) -> Option<String>;
+
+pub(crate) fn parse_var_with<T>(lookup: EnvLookup<'_>, var_name: &str, default: T) -> T
+where
+    T: std::str::FromStr + Clone,
+{
+    lookup(var_name)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+pub(crate) fn parse_bool_with(lookup: EnvLookup<'_>, var_name: &str, default: bool) -> bool {
+    lookup(var_name)
+        .map(|s| {
+            let s = s.to_lowercase();
+            matches!(s.as_str(), "true" | "1" | "yes" | "on")
+        })
+        .unwrap_or(default)
+}
+
 /// Utility function to parse environment variable with fallback to default.
 ///
 /// # Arguments
@@ -265,10 +285,7 @@ pub fn parse_env_var<T>(var_name: &str, default: T) -> T
 where
     T: std::str::FromStr + Clone,
 {
-    env::var(var_name)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(default)
+    parse_var_with(&|k| env::var(k).ok(), var_name, default)
 }
 
 /// Utility function to parse boolean environment variable.
@@ -285,13 +302,7 @@ where
 ///
 /// The parsed boolean value or the default value.
 pub fn parse_env_bool(var_name: &str, default: bool) -> bool {
-    env::var(var_name)
-        .ok()
-        .map(|s| {
-            let s = s.to_lowercase();
-            matches!(s.as_str(), "true" | "1" | "yes" | "on")
-        })
-        .unwrap_or(default)
+    parse_bool_with(&|k| env::var(k).ok(), var_name, default)
 }
 
 /// Common configuration presets for different use cases.

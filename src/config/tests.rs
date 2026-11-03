@@ -8,7 +8,7 @@ use crate::config::memory::{AllocationStrategy, CacheOptimizationLevel};
 use crate::config::nest_louds_trie::{CompressionAlgorithm, OptimizationFlags};
 #[cfg(feature = "serde")]
 use crate::error::ZiporaError;
-use std::env;
+use std::collections::HashMap;
 #[cfg(feature = "serde")]
 use std::fs;
 #[cfg(feature = "serde")]
@@ -123,64 +123,106 @@ fn test_preset_characteristics() {
     assert!(!mem_rt.enable_compaction); // Avoid unpredictable latency
 }
 
-/// Test environment variable parsing
+/// Test environment variable parsing via injected lookup (no process env mutation)
 #[test]
 fn test_environment_variable_parsing() {
-    // SAFETY: set_var is unsafe due to potential data races; test runs single-threaded
-    // Set test environment variables
-    unsafe {
-        env::set_var("TEST_TRIE_NEST_LEVEL", "5");
-    }
-    unsafe {
-        env::set_var("TEST_TRIE_COMPRESSION_LEVEL", "9");
-    }
-    unsafe {
-        env::set_var("TEST_TRIE_ENABLE_STATISTICS", "true");
-    }
-    unsafe {
-        env::set_var("TEST_BLOB_COMPRESSION_LEVEL", "12");
-    }
-    unsafe {
-        env::set_var("TEST_MEMORY_INITIAL_POOL_SIZE", "134217728");
-    } // 128MB
+    let vars = HashMap::from([
+        ("TEST_TRIE_NEST_LEVEL", "5"),
+        ("TEST_TRIE_COMPRESSION_LEVEL", "9"),
+        ("TEST_TRIE_ENABLE_STATISTICS", "true"),
+        ("TEST_TRIE_TEMP_DIRECTORY", "/var/tmp/zipora_trie_test"),
+        ("TEST_BLOB_COMPRESSION_LEVEL", "12"),
+        ("TEST_BLOB_CHECKSUMS", "false"),
+        ("TEST_BLOB_BLOCK_SIZE", "32768"),
+        ("TEST_MEMORY_INITIAL_POOL_SIZE", "134217728"), // 128MB
+        ("TEST_MEMORY_NUMA_ENABLE", "true"),
+        ("TEST_CACHE_SIZE", "8388608"),
+        ("TEST_CACHE_PREFETCHING", "false"),
+        ("TEST_CACHE_LINE_SIZE", "128"),
+        ("TEST_COMPRESSION_LEVEL", "11"),
+        ("TEST_COMPRESSION_DICTIONARY", "false"),
+        ("TEST_COMPRESSION_DICT_SIZE", "0"),
+        ("TEST_SIMD_ENABLE", "true"),
+        ("TEST_SIMD_AVX2", "false"),
+        ("TEST_SIMD_BMI2", "true"),
+    ]);
+    let lookup = |k: &str| vars.get(k).map(|v| (*v).to_string());
 
-    // Test NestLoudsTrieConfig environment parsing
-    let nest_config = NestLoudsTrieConfig::from_env_with_prefix("TEST_")
-        .expect("Failed to parse NestLoudsTrieConfig from environment");
+    // NestLoudsTrieConfig (including TRIE_TEMP_DIRECTORY)
+    let nest_config = NestLoudsTrieConfig::from_env_lookup("TEST_", &lookup)
+        .expect("Failed to parse NestLoudsTrieConfig from lookup");
     assert_eq!(nest_config.nest_level, 5);
     assert_eq!(nest_config.core_str_compression_level, 9);
     assert!(nest_config.enable_statistics);
+    assert_eq!(nest_config.temp_directory, "/var/tmp/zipora_trie_test");
 
-    // Test BlobStoreConfig environment parsing
-    let blob_config = BlobStoreConfig::from_env_with_prefix("TEST_")
-        .expect("Failed to parse BlobStoreConfig from environment");
+    // BlobStoreConfig
+    let blob_config = BlobStoreConfig::from_env_lookup("TEST_", &lookup)
+        .expect("Failed to parse BlobStoreConfig from lookup");
     assert_eq!(blob_config.compression_level, 12);
+    assert!(!blob_config.enable_checksums);
+    assert_eq!(blob_config.block_size, 32768);
 
-    // Test MemoryConfig environment parsing
-    let memory_config = MemoryConfig::from_env_with_prefix("TEST_")
-        .expect("Failed to parse MemoryConfig from environment");
+    // MemoryConfig
+    let memory_config = MemoryConfig::from_env_lookup("TEST_", &lookup)
+        .expect("Failed to parse MemoryConfig from lookup");
     assert_eq!(memory_config.initial_pool_size, 134217728);
+    assert!(memory_config.numa_config.enable_numa_awareness);
 
-    // SAFETY: remove_var is unsafe due to potential data races; test runs single-threaded
-    // Clean up environment variables
-    unsafe {
-        env::remove_var("TEST_TRIE_NEST_LEVEL");
-    }
-    unsafe {
-        env::remove_var("TEST_TRIE_COMPRESSION_LEVEL");
-    }
-    unsafe {
-        env::remove_var("TEST_TRIE_ENABLE_STATISTICS");
-    }
-    unsafe {
-        env::remove_var("TEST_BLOB_COMPRESSION_LEVEL");
-    }
-    unsafe {
-        env::remove_var("TEST_MEMORY_INITIAL_POOL_SIZE");
-    }
+    // CacheConfig
+    let cache_config = CacheConfig::from_env_lookup("TEST_", &lookup)
+        .expect("Failed to parse CacheConfig from lookup");
+    assert_eq!(cache_config.size, 8388608);
+    assert!(!cache_config.enable_prefetching);
+    assert_eq!(cache_config.line_size, 128);
+
+    // CompressionConfig
+    let compression_config = CompressionConfig::from_env_lookup("TEST_", &lookup)
+        .expect("Failed to parse CompressionConfig from lookup");
+    assert_eq!(compression_config.level, 11);
+    assert!(!compression_config.enable_dictionary);
+    assert_eq!(compression_config.dictionary_size, 0);
+
+    // SIMDConfig
+    let simd_config = SIMDConfig::from_env_lookup("TEST_", &lookup)
+        .expect("Failed to parse SIMDConfig from lookup");
+    assert!(simd_config.enable_simd);
+    assert!(!simd_config.enable_avx2);
+    assert!(simd_config.enable_bmi2);
+
+    // Empty lookup falls back to defaults across all 6 config types
+    let empty = |_: &str| None;
+    assert_eq!(
+        NestLoudsTrieConfig::from_env_lookup("TEST_", &empty)
+            .unwrap()
+            .nest_level,
+        NestLoudsTrieConfig::default().nest_level
+    );
+    assert_eq!(
+        BlobStoreConfig::from_env_lookup("TEST_", &empty).unwrap(),
+        BlobStoreConfig::default()
+    );
+    assert_eq!(
+        MemoryConfig::from_env_lookup("TEST_", &empty)
+            .unwrap()
+            .initial_pool_size,
+        MemoryConfig::default().initial_pool_size
+    );
+    assert_eq!(
+        CacheConfig::from_env_lookup("TEST_", &empty).unwrap(),
+        CacheConfig::default()
+    );
+    assert_eq!(
+        CompressionConfig::from_env_lookup("TEST_", &empty).unwrap(),
+        CompressionConfig::default()
+    );
+    assert_eq!(
+        SIMDConfig::from_env_lookup("TEST_", &empty).unwrap(),
+        SIMDConfig::default()
+    );
 }
 
-/// Test boolean environment variable parsing
+/// Test boolean environment variable parsing via injected lookup
 #[test]
 fn test_environment_boolean_parsing() {
     // Test various boolean representations
@@ -206,18 +248,14 @@ fn test_environment_boolean_parsing() {
     ];
 
     for (value, expected) in test_cases.iter() {
-        // SAFETY: set_var is unsafe due to potential data races; test runs single-threaded
-        unsafe {
-            env::set_var("TEST_BOOL_VALUE", value);
-        }
-        let result = parse_env_bool("TEST_BOOL_VALUE", false);
+        let lookup = |k: &str| (k == "TEST_BOOL_VALUE").then(|| (*value).to_string());
+        let result = parse_bool_with(&lookup, "TEST_BOOL_VALUE", false);
         assert_eq!(result, *expected, "Failed for value: '{}'", value);
     }
 
-    // SAFETY: remove_var is unsafe due to potential data races; test runs single-threaded
-    unsafe {
-        env::remove_var("TEST_BOOL_VALUE");
-    }
+    // Missing variable falls back to caller's default
+    assert!(parse_bool_with(&|_| None, "TEST_BOOL_VALUE", true));
+    assert!(!parse_bool_with(&|_| None, "TEST_BOOL_VALUE", false));
 }
 
 /// Test file serialization and deserialization
@@ -730,40 +768,23 @@ mod benches {
     /// Benchmark environment variable parsing
     #[test]
     fn bench_env_parsing() -> Result<()> {
-        // SAFETY: set_var is unsafe due to potential data races; bench test runs single-threaded
-        // Set up environment variables
-        unsafe {
-            env::set_var("BENCH_TRIE_NEST_LEVEL", "3");
-        }
-        unsafe {
-            env::set_var("BENCH_TRIE_COMPRESSION_LEVEL", "6");
-        }
-        unsafe {
-            env::set_var("BENCH_TRIE_ENABLE_STATISTICS", "true");
-        }
+        let vars = HashMap::from([
+            ("BENCH_TRIE_NEST_LEVEL", "3"),
+            ("BENCH_TRIE_COMPRESSION_LEVEL", "6"),
+            ("BENCH_TRIE_ENABLE_STATISTICS", "true"),
+        ]);
+        let lookup = |k: &str| vars.get(k).map(|v| (*v).to_string());
 
         let iterations = if cfg!(miri) { 4 } else { 1000 };
         let start = Instant::now();
         for _ in 0..iterations {
-            let _config = NestLoudsTrieConfig::from_env_with_prefix("BENCH_")?;
+            let _config = NestLoudsTrieConfig::from_env_lookup("BENCH_", &lookup)?;
         }
         let duration = start.elapsed();
         println!(
             "Environment parsing: {:.2}μs per config",
             duration.as_nanos() as f64 / iterations as f64 / 1000.0
         );
-
-        // SAFETY: remove_var is unsafe due to potential data races; bench test runs single-threaded
-        // Clean up
-        unsafe {
-            env::remove_var("BENCH_TRIE_NEST_LEVEL");
-        }
-        unsafe {
-            env::remove_var("BENCH_TRIE_COMPRESSION_LEVEL");
-        }
-        unsafe {
-            env::remove_var("BENCH_TRIE_ENABLE_STATISTICS");
-        }
 
         Ok(())
     }

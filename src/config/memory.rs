@@ -3,7 +3,7 @@
 //! This module provides comprehensive configuration for memory allocation,
 //! caching, and optimization strategies throughout the system.
 
-use super::{Config, ValidationError, parse_env_bool, parse_env_var};
+use super::{Config, EnvLookup, ValidationError, parse_bool_with, parse_var_with};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
 
@@ -326,114 +326,7 @@ impl Config for MemoryConfig {
     }
 
     fn from_env_with_prefix(prefix: &str) -> Result<Self> {
-        let mut config = Self::default();
-
-        // Basic memory settings
-        config.initial_pool_size = parse_env_var(
-            &format!("{}MEMORY_INITIAL_POOL_SIZE", prefix),
-            config.initial_pool_size,
-        );
-        config.max_pool_size = parse_env_var(
-            &format!("{}MEMORY_MAX_POOL_SIZE", prefix),
-            config.max_pool_size,
-        );
-        config.growth_factor = parse_env_var(
-            &format!("{}MEMORY_GROWTH_FACTOR", prefix),
-            config.growth_factor,
-        );
-        config.alignment = parse_env_var(&format!("{}MEMORY_ALIGNMENT", prefix), config.alignment);
-        config.cache_line_size = parse_env_var(
-            &format!("{}MEMORY_CACHE_LINE_SIZE", prefix),
-            config.cache_line_size,
-        );
-        config.num_pools = parse_env_var(&format!("{}MEMORY_NUM_POOLS", prefix), config.num_pools);
-
-        // Feature flags
-        config.enable_debug_tracking = parse_env_bool(
-            &format!("{}MEMORY_DEBUG_TRACKING", prefix),
-            config.enable_debug_tracking,
-        );
-        config.enable_statistics = parse_env_bool(
-            &format!("{}MEMORY_STATISTICS", prefix),
-            config.enable_statistics,
-        );
-        config.enable_prefetching = parse_env_bool(
-            &format!("{}MEMORY_PREFETCHING", prefix),
-            config.enable_prefetching,
-        );
-        config.enable_hot_cold_separation = parse_env_bool(
-            &format!("{}MEMORY_HOT_COLD_SEPARATION", prefix),
-            config.enable_hot_cold_separation,
-        );
-        config.enable_compaction = parse_env_bool(
-            &format!("{}MEMORY_COMPACTION", prefix),
-            config.enable_compaction,
-        );
-        config.enable_memory_protection = parse_env_bool(
-            &format!("{}MEMORY_PROTECTION", prefix),
-            config.enable_memory_protection,
-        );
-
-        // Advanced settings
-        config.prefetch_distance = parse_env_var(
-            &format!("{}MEMORY_PREFETCH_DISTANCE", prefix),
-            config.prefetch_distance,
-        );
-        config.hot_access_threshold = parse_env_var(
-            &format!("{}MEMORY_HOT_ACCESS_THRESHOLD", prefix),
-            config.hot_access_threshold,
-        );
-        config.compaction_threshold = parse_env_var(
-            &format!("{}MEMORY_COMPACTION_THRESHOLD", prefix),
-            config.compaction_threshold,
-        );
-        config.max_fragmentation_ratio = parse_env_var(
-            &format!("{}MEMORY_MAX_FRAGMENTATION_RATIO", prefix),
-            config.max_fragmentation_ratio,
-        );
-        config.guard_page_size = parse_env_var(
-            &format!("{}MEMORY_GUARD_PAGE_SIZE", prefix),
-            config.guard_page_size,
-        );
-
-        // NUMA settings
-        config.numa_config.enable_numa_awareness = parse_env_bool(
-            &format!("{}MEMORY_NUMA_ENABLE", prefix),
-            config.numa_config.enable_numa_awareness,
-        );
-        config.numa_config.preferred_node = parse_env_var(
-            &format!("{}MEMORY_NUMA_PREFERRED_NODE", prefix),
-            config.numa_config.preferred_node,
-        );
-        config.numa_config.prefer_local_allocation = parse_env_bool(
-            &format!("{}MEMORY_NUMA_LOCAL_ALLOCATION", prefix),
-            config.numa_config.prefer_local_allocation,
-        );
-        config.numa_config.enable_balancing = parse_env_bool(
-            &format!("{}MEMORY_NUMA_BALANCING", prefix),
-            config.numa_config.enable_balancing,
-        );
-
-        // Huge page settings
-        config.huge_page_config.enable_huge_pages = parse_env_bool(
-            &format!("{}MEMORY_HUGE_PAGES_ENABLE", prefix),
-            config.huge_page_config.enable_huge_pages,
-        );
-        config.huge_page_config.page_size = parse_env_var(
-            &format!("{}MEMORY_HUGE_PAGE_SIZE", prefix),
-            config.huge_page_config.page_size,
-        );
-        config.huge_page_config.min_allocation_size = parse_env_var(
-            &format!("{}MEMORY_HUGE_PAGE_MIN_SIZE", prefix),
-            config.huge_page_config.min_allocation_size,
-        );
-        config.huge_page_config.enable_transparent = parse_env_bool(
-            &format!("{}MEMORY_HUGE_PAGES_TRANSPARENT", prefix),
-            config.huge_page_config.enable_transparent,
-        );
-
-        config.validate()?;
-        Ok(config)
+        Self::from_env_lookup(prefix, &|k| std::env::var(k).ok())
     }
 
     fn performance_preset() -> Self {
@@ -561,6 +454,148 @@ impl Config for MemoryConfig {
 }
 
 impl MemoryConfig {
+    pub(crate) fn from_env_lookup(prefix: &str, lookup: EnvLookup<'_>) -> Result<Self> {
+        let mut config = Self::default();
+
+        // Basic memory settings
+        config.initial_pool_size = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_INITIAL_POOL_SIZE", prefix),
+            config.initial_pool_size,
+        );
+        config.max_pool_size = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_MAX_POOL_SIZE", prefix),
+            config.max_pool_size,
+        );
+        config.growth_factor = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_GROWTH_FACTOR", prefix),
+            config.growth_factor,
+        );
+        config.alignment = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_ALIGNMENT", prefix),
+            config.alignment,
+        );
+        config.cache_line_size = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_CACHE_LINE_SIZE", prefix),
+            config.cache_line_size,
+        );
+        config.num_pools = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_NUM_POOLS", prefix),
+            config.num_pools,
+        );
+
+        // Feature flags
+        config.enable_debug_tracking = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_DEBUG_TRACKING", prefix),
+            config.enable_debug_tracking,
+        );
+        config.enable_statistics = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_STATISTICS", prefix),
+            config.enable_statistics,
+        );
+        config.enable_prefetching = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_PREFETCHING", prefix),
+            config.enable_prefetching,
+        );
+        config.enable_hot_cold_separation = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_HOT_COLD_SEPARATION", prefix),
+            config.enable_hot_cold_separation,
+        );
+        config.enable_compaction = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_COMPACTION", prefix),
+            config.enable_compaction,
+        );
+        config.enable_memory_protection = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_PROTECTION", prefix),
+            config.enable_memory_protection,
+        );
+
+        // Advanced settings
+        config.prefetch_distance = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_PREFETCH_DISTANCE", prefix),
+            config.prefetch_distance,
+        );
+        config.hot_access_threshold = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_HOT_ACCESS_THRESHOLD", prefix),
+            config.hot_access_threshold,
+        );
+        config.compaction_threshold = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_COMPACTION_THRESHOLD", prefix),
+            config.compaction_threshold,
+        );
+        config.max_fragmentation_ratio = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_MAX_FRAGMENTATION_RATIO", prefix),
+            config.max_fragmentation_ratio,
+        );
+        config.guard_page_size = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_GUARD_PAGE_SIZE", prefix),
+            config.guard_page_size,
+        );
+
+        // NUMA settings
+        config.numa_config.enable_numa_awareness = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_NUMA_ENABLE", prefix),
+            config.numa_config.enable_numa_awareness,
+        );
+        config.numa_config.preferred_node = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_NUMA_PREFERRED_NODE", prefix),
+            config.numa_config.preferred_node,
+        );
+        config.numa_config.prefer_local_allocation = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_NUMA_LOCAL_ALLOCATION", prefix),
+            config.numa_config.prefer_local_allocation,
+        );
+        config.numa_config.enable_balancing = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_NUMA_BALANCING", prefix),
+            config.numa_config.enable_balancing,
+        );
+
+        // Huge page settings
+        config.huge_page_config.enable_huge_pages = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_HUGE_PAGES_ENABLE", prefix),
+            config.huge_page_config.enable_huge_pages,
+        );
+        config.huge_page_config.page_size = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_HUGE_PAGE_SIZE", prefix),
+            config.huge_page_config.page_size,
+        );
+        config.huge_page_config.min_allocation_size = parse_var_with(
+            lookup,
+            &format!("{}MEMORY_HUGE_PAGE_MIN_SIZE", prefix),
+            config.huge_page_config.min_allocation_size,
+        );
+        config.huge_page_config.enable_transparent = parse_bool_with(
+            lookup,
+            &format!("{}MEMORY_HUGE_PAGES_TRANSPARENT", prefix),
+            config.huge_page_config.enable_transparent,
+        );
+
+        config.validate()?;
+        Ok(config)
+    }
+
     /// Fluent builder — returns Default for chaining.
     pub fn builder() -> Self {
         Self::default()

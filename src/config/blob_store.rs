@@ -1,6 +1,6 @@
 //! Blob store configuration for different storage backends.
 
-use super::{Config, parse_env_bool, parse_env_var};
+use super::{Config, EnvLookup, parse_bool_with, parse_var_with};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
 
@@ -26,6 +26,29 @@ impl Default for BlobStoreConfig {
     }
 }
 
+impl BlobStoreConfig {
+    pub(crate) fn from_env_lookup(prefix: &str, lookup: EnvLookup<'_>) -> Result<Self> {
+        let mut config = Self::default();
+        config.compression_level = parse_var_with(
+            lookup,
+            &format!("{}BLOB_COMPRESSION_LEVEL", prefix),
+            config.compression_level,
+        );
+        config.enable_checksums = parse_bool_with(
+            lookup,
+            &format!("{}BLOB_CHECKSUMS", prefix),
+            config.enable_checksums,
+        );
+        config.block_size = parse_var_with(
+            lookup,
+            &format!("{}BLOB_BLOCK_SIZE", prefix),
+            config.block_size,
+        );
+        config.validate()?;
+        Ok(config)
+    }
+}
+
 impl Config for BlobStoreConfig {
     fn validate(&self) -> Result<()> {
         if self.compression_level > 22 {
@@ -42,18 +65,7 @@ impl Config for BlobStoreConfig {
     }
 
     fn from_env_with_prefix(prefix: &str) -> Result<Self> {
-        let mut config = Self::default();
-        config.compression_level = parse_env_var(
-            &format!("{}BLOB_COMPRESSION_LEVEL", prefix),
-            config.compression_level,
-        );
-        config.enable_checksums = parse_env_bool(
-            &format!("{}BLOB_CHECKSUMS", prefix),
-            config.enable_checksums,
-        );
-        config.block_size = parse_env_var(&format!("{}BLOB_BLOCK_SIZE", prefix), config.block_size);
-        config.validate()?;
-        Ok(config)
+        Self::from_env_lookup(prefix, &|k| std::env::var(k).ok())
     }
 
     fn performance_preset() -> Self {
@@ -92,9 +104,7 @@ impl Config for BlobStoreConfig {
             Ok(())
         }
         #[cfg(not(feature = "serde"))]
-        Err(ZiporaError::invalid_operation(
-            "Requires serde feature",
-        ))
+        Err(ZiporaError::invalid_operation("Requires serde feature"))
     }
 
     fn load_from_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
@@ -110,8 +120,6 @@ impl Config for BlobStoreConfig {
             Ok(config)
         }
         #[cfg(not(feature = "serde"))]
-        Err(ZiporaError::invalid_operation(
-            "Requires serde feature",
-        ))
+        Err(ZiporaError::invalid_operation("Requires serde feature"))
     }
 }

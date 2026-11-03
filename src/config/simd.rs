@@ -1,6 +1,6 @@
 //! SIMD acceleration configuration.
 
-use super::{Config, parse_env_bool};
+use super::{Config, EnvLookup, parse_bool_with};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
 
@@ -26,6 +26,22 @@ impl Default for SIMDConfig {
     }
 }
 
+impl SIMDConfig {
+    pub(crate) fn from_env_lookup(prefix: &str, lookup: EnvLookup<'_>) -> Result<Self> {
+        let mut config = Self::default();
+        config.enable_simd = parse_bool_with(
+            lookup,
+            &format!("{}SIMD_ENABLE", prefix),
+            config.enable_simd,
+        );
+        let default_sub = config.enable_simd;
+        config.enable_avx2 = parse_bool_with(lookup, &format!("{}SIMD_AVX2", prefix), default_sub);
+        config.enable_bmi2 = parse_bool_with(lookup, &format!("{}SIMD_BMI2", prefix), default_sub);
+        config.validate()?;
+        Ok(config)
+    }
+}
+
 impl Config for SIMDConfig {
     fn validate(&self) -> Result<()> {
         if !self.enable_simd && (self.enable_avx2 || self.enable_bmi2) {
@@ -37,13 +53,7 @@ impl Config for SIMDConfig {
     }
 
     fn from_env_with_prefix(prefix: &str) -> Result<Self> {
-        let mut config = Self::default();
-        config.enable_simd = parse_env_bool(&format!("{}SIMD_ENABLE", prefix), config.enable_simd);
-        let default_sub = config.enable_simd;
-        config.enable_avx2 = parse_env_bool(&format!("{}SIMD_AVX2", prefix), default_sub);
-        config.enable_bmi2 = parse_env_bool(&format!("{}SIMD_BMI2", prefix), default_sub);
-        config.validate()?;
-        Ok(config)
+        Self::from_env_lookup(prefix, &|k| std::env::var(k).ok())
     }
 
     fn performance_preset() -> Self {
@@ -82,9 +92,7 @@ impl Config for SIMDConfig {
             Ok(())
         }
         #[cfg(not(feature = "serde"))]
-        Err(ZiporaError::invalid_operation(
-            "Requires serde feature",
-        ))
+        Err(ZiporaError::invalid_operation("Requires serde feature"))
     }
 
     fn load_from_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
@@ -100,8 +108,6 @@ impl Config for SIMDConfig {
             Ok(config)
         }
         #[cfg(not(feature = "serde"))]
-        Err(ZiporaError::invalid_operation(
-            "Requires serde feature",
-        ))
+        Err(ZiporaError::invalid_operation("Requires serde feature"))
     }
 }
