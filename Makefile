@@ -226,6 +226,11 @@ tsan_pool:
 	TSAN_OPTIONS="suppressions=$(CURDIR)/tsan.supp" \
 	$(CARGO) +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
 		--release --lib memory::lockfree
+	CARGO_TARGET_DIR=target-tsan \
+	RUSTFLAGS="-Zsanitizer=thread --cfg crossbeam_sanitize" \
+	TSAN_OPTIONS="suppressions=$(CURDIR)/tsan.supp" \
+	$(CARGO) +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+		--release --lib memory::fixed_capacity_pool
 
 # Thread and concurrency TSAN stress (plan.md C10). Runs src/thread and
 # src/concurrency (atomic_ext, linux_futex, instance_tls, work_stealing,
