@@ -370,7 +370,7 @@ const WORKER_LIVE: u8 = 2;
 static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(1);
 
 thread_local! {
-    static LAST_RECORDED_FALLBACK: std::cell::Cell<Option<(usize, usize)>> =
+    static LAST_RECORDED_FALLBACK: std::cell::Cell<Option<(usize, tokio::runtime::Id)>> =
         const { std::cell::Cell::new(None) };
 }
 

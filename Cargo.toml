@@ -77,7 +77,7 @@ bitflags = "2.10"
 libc = "0.2"
 
 # Async runtime (optional)
-tokio = { version = "1.43", features = ["full"], optional = true }
+tokio = { version = "1.49", features = ["full"], optional = true }
 
 # System utilities dependencies
 raw-cpuid = "11"

@@ -58,45 +58,11 @@ impl PlatformSync for FallbackSync {
     }
 }
 
-/// Returns a pointer-sized identifier for a [`tokio::runtime::Handle`].
-///
-/// Under `--cfg tokio_unstable`, delegates to [`tokio::runtime::Handle::id`].
-/// Otherwise reads word 1 of the 2-word `scheduler::Handle` `ScalarPair` representation
-/// (`Arc` scheduler pointer). Because the non-`tokio_unstable` fallback returns a heap
-/// allocation address, a newly allocated runtime that reuses the exact scheduler address of
-/// an already-dropped runtime could share the same value on that thread until `submit`
-/// self-heals via `ensure_workers_running`.
-#[cfg(all(feature = "async", tokio_unstable))]
+/// Returns the unique [`tokio::runtime::Id`] for a [`tokio::runtime::Handle`].
+#[cfg(feature = "async")]
 #[inline]
-pub(crate) fn tokio_runtime_handle_id(handle: &tokio::runtime::Handle) -> usize {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    handle.id().hash(&mut hasher);
-    hasher.finish() as usize
-}
-
-/// Returns a pointer-sized identifier for the underlying scheduler allocation
-/// of a [`tokio::runtime::Handle`].
-///
-/// Because this fallback returns a heap allocation address when `tokio_unstable`
-/// is not enabled, a newly allocated runtime that reuses the exact scheduler
-/// address of an already-dropped runtime could match a cached key on that thread
-/// until `submit` self-heals via `ensure_workers_running`.
-#[cfg(all(feature = "async", not(tokio_unstable)))]
-#[inline]
-pub(crate) fn tokio_runtime_handle_id(handle: &tokio::runtime::Handle) -> usize {
-    const _: () = {
-        assert!(
-            std::mem::size_of::<tokio::runtime::Handle>() == 2 * std::mem::size_of::<usize>()
-        );
-        assert!(std::mem::align_of::<tokio::runtime::Handle>() == std::mem::align_of::<usize>());
-    };
-    let base = std::ptr::from_ref(handle).cast::<usize>();
-    // SAFETY: `tokio::runtime::Handle` is a 2-word (`ScalarPair`) wrapper around
-    // `scheduler::Handle::{CurrentThread(Arc<_>), MultiThread(Arc<_>)}` whose second
-    // pointer-aligned word (offset `size_of::<usize>()`) holds the initialized non-null
-    // `Arc` allocation address without padding bytes.
-    unsafe { base.add(1).read() }
+pub(crate) fn tokio_runtime_handle_id(handle: &tokio::runtime::Handle) -> tokio::runtime::Id {
+    handle.id()
 }
 
 #[cfg(all(test, feature = "async"))]
@@ -154,3 +120,28 @@ mod tests {
     }
 }
 
+#[cfg(all(test, feature = "async"))]
+mod plan_v2_s6 {
+    use super::tokio_runtime_handle_id;
+
+    /// S6: the runtime key must identify the runtime, not the address of its
+    /// scheduler allocation. A runtime built right after another one was
+    /// dropped on the same thread usually reuses that allocation, so at
+    /// v5.0.0 (outside `--cfg tokio_unstable`) the key repeats; the stable
+    /// `Handle::id()` (tokio >= 1.49) never does.
+    #[test]
+    fn test_v2_s6_runtime_key_not_reused_after_runtime_drop() {
+        let mut seen = std::collections::HashSet::new();
+        for i in 0..16 {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let key = tokio_runtime_handle_id(rt.handle());
+            assert!(
+                seen.insert(key),
+                "runtime #{i} got the key {key:?} of an already-dropped runtime"
+            );
+            drop(rt);
+        }
+    }
+}

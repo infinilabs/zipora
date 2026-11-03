@@ -20,7 +20,6 @@ fn main() {
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-env-changed=RUSTFLAGS");
     println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
-    println!("cargo:rustc-check-cfg=cfg(tokio_unstable)");
 
     if let Ok(encoded) = env::var("CARGO_ENCODED_RUSTFLAGS") {
         let decoded = encoded
