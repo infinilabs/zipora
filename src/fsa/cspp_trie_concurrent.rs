@@ -1178,45 +1178,71 @@ impl ConcurrentCsppTrie {
     ///
     /// # Panics
     ///
-    /// Panics if `valpos` is not 4-byte aligned or out of bounds.
-    pub fn get_value<T: Copy>(&self, valpos: usize) -> T {
+    /// Panics if `size_of::<T>() > valsize`, or if `valpos` is not 4-byte
+    /// aligned or out of bounds.
+    ///
+    /// `T` must be plain old data: any bytes stored in the pool are read back
+    /// as a `T`, so types with invalid bit patterns are rejected at compile
+    /// time:
+    ///
+    /// ```compile_fail,E0277
+    /// use zipora::fsa::cspp_trie_concurrent::ConcurrentCsppTrie;
+    ///
+    /// let trie = ConcurrentCsppTrie::with_capacity(4, 4096);
+    /// let (_, valpos) = trie.insert(b"key");
+    /// trie.set_value::<u32>(valpos, 2);
+    /// let _flag: bool = trie.get_value::<bool>(valpos); // 2 is not a valid `bool`
+    /// ```
+    ///
+    /// A plain-old-data value of at most `valsize` bytes round-trips:
+    ///
+    /// ```
+    /// use zipora::fsa::cspp_trie_concurrent::ConcurrentCsppTrie;
+    ///
+    /// let trie = ConcurrentCsppTrie::with_capacity(4, 4096);
+    /// let (_, valpos) = trie.insert(b"key");
+    /// trie.set_value::<u32>(valpos, 2);
+    /// assert_eq!(trie.get_value::<u32>(valpos), 2);
+    /// ```
+    pub fn get_value<T: bytemuck::Pod>(&self, valpos: usize) -> T {
         let size = std::mem::size_of::<T>();
+        assert!(
+            size <= self.valsize,
+            "size_of::<T>() ({size}) exceeds configured valsize ({})",
+            self.valsize
+        );
         assert!(valpos.is_multiple_of(4), "valpos must be 4-byte aligned");
         assert!(
-            valpos + size <= self.inner.pool.len() * 4,
+            valpos
+                .checked_add(size)
+                .is_some_and(|end| end <= self.inner.pool.len().saturating_mul(4)),
             "valpos out of bounds"
         );
         self.read_value_at(valpos)
     }
 
     #[inline]
-    fn read_value_at<T: Copy>(&self, valpos: usize) -> T {
-        let size = std::mem::size_of::<T>();
-        let mut result: std::mem::MaybeUninit<T> = std::mem::MaybeUninit::uninit();
-        let dst = result.as_mut_ptr() as *mut u8;
+    fn read_value_at<T: bytemuck::Pod>(&self, valpos: usize) -> T {
+        let mut result: T = bytemuck::Zeroable::zeroed();
+        let dst = bytemuck::bytes_of_mut(&mut result);
         let word_offset = valpos / 4;
 
         // Whole words, then the trailing partial word — byte-exact so types
         // with size % 4 != 0 or align < 4 never over-read/over-write.
-        for i in 0..size / 4 {
-            let word = self.inner.pool.load_acquire(word_offset + i).to_ne_bytes();
-            // SAFETY: dst is valid for `size` bytes; this writes bytes
-            // [i*4, i*4+4) with i*4+4 <= size.
-            unsafe { std::ptr::copy_nonoverlapping(word.as_ptr(), dst.add(i * 4), 4) };
+        let (words, rem) = dst.as_chunks_mut::<4>();
+        for (i, chunk) in words.iter_mut().enumerate() {
+            *chunk = self.inner.pool.load_acquire(word_offset + i).to_ne_bytes();
         }
-        let tail = size % 4;
-        if tail != 0 {
+        if !rem.is_empty() {
             let word = self
                 .inner
                 .pool
-                .load_acquire(word_offset + size / 4)
+                .load_acquire(word_offset + words.len())
                 .to_ne_bytes();
-            // SAFETY: writes exactly the final `tail` bytes of `result`.
-            unsafe { std::ptr::copy_nonoverlapping(word.as_ptr(), dst.add(size - tail), tail) };
+            rem.copy_from_slice(&word[..rem.len()]);
         }
 
-        // SAFETY: all `size` bytes initialized above; T is Copy.
-        unsafe { result.assume_init() }
+        result
     }
 
     /// Set a value at a byte offset previously returned by `insert`/`lookup`.
@@ -1229,42 +1255,42 @@ impl ConcurrentCsppTrie {
     ///
     /// # Panics
     ///
-    /// Panics if `valpos` is not 4-byte aligned or out of bounds.
-    pub fn set_value<T: Copy>(&self, valpos: usize, val: T) {
+    /// Panics if `size_of::<T>() > valsize`, or if `valpos` is not 4-byte
+    /// aligned or out of bounds.
+    pub fn set_value<T: bytemuck::Pod>(&self, valpos: usize, val: T) {
         let size = std::mem::size_of::<T>();
+        assert!(
+            size <= self.valsize,
+            "size_of::<T>() ({size}) exceeds configured valsize ({})",
+            self.valsize
+        );
         assert!(valpos.is_multiple_of(4), "valpos must be 4-byte aligned");
         assert!(
-            valpos + size <= self.inner.pool.len() * 4,
+            valpos
+                .checked_add(size)
+                .is_some_and(|end| end <= self.inner.pool.len().saturating_mul(4)),
             "valpos out of bounds"
         );
         self.write_value_at(valpos, &val);
     }
 
     #[inline]
-    fn write_value_at<T: Copy>(&self, valpos: usize, val: &T) {
-        let size = std::mem::size_of::<T>();
-        let src = val as *const T as *const u8;
+    fn write_value_at<T: bytemuck::Pod>(&self, valpos: usize, val: &T) {
+        let src = bytemuck::bytes_of(val);
         let word_offset = valpos / 4;
 
-        for i in 0..size / 4 {
-            let mut bytes = [0u8; 4];
-            // SAFETY: src is valid for `size` bytes; reads [i*4, i*4+4) with
-            // i*4+4 <= size. Byte copy — no alignment requirement on T.
-            unsafe { std::ptr::copy_nonoverlapping(src.add(i * 4), bytes.as_mut_ptr(), 4) };
+        let (words, rem) = src.as_chunks::<4>();
+        for (i, &chunk) in words.iter().enumerate() {
             self.inner
                 .pool
-                .store_release(word_offset + i, u32::from_ne_bytes(bytes));
+                .store_release(word_offset + i, u32::from_ne_bytes(chunk));
         }
-        let tail = size % 4;
-        if tail != 0 {
+        if !rem.is_empty() {
             let mut bytes = [0u8; 4];
-            // SAFETY: reads exactly the final `tail` bytes of `val`.
-            unsafe {
-                std::ptr::copy_nonoverlapping(src.add(size - tail), bytes.as_mut_ptr(), tail)
-            };
+            bytes[..rem.len()].copy_from_slice(rem);
             self.inner
                 .pool
-                .store_release(word_offset + size / 4, u32::from_ne_bytes(bytes));
+                .store_release(word_offset + words.len(), u32::from_ne_bytes(bytes));
         }
     }
 

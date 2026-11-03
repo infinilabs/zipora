@@ -695,23 +695,54 @@ impl CsppTrie {
     ///
     /// # Panics
     ///
-    /// Panics if `valpos + size_of::<T>()` exceeds the value arena size (§8.5:
-    /// `valpos` is caller-provided on this safe public API, so the bound is
-    /// enforced at runtime, not just in debug builds).
+    /// Panics if `size_of::<T>() > valsize`, if `valpos + size_of::<T>()`
+    /// exceeds the value arena size (§8.5: `valpos` is caller-provided on this
+    /// safe public API, so the bound is enforced at runtime, not just in debug
+    /// builds), or if `valpos` is not a value-slot offset
+    /// (`valpos % valsize != 0`).
+    ///
+    /// `T` must be plain old data: any bytes stored in the arena are read back
+    /// as a `T`, so types with invalid bit patterns are rejected at compile
+    /// time:
+    ///
+    /// ```compile_fail,E0277
+    /// use zipora::fsa::cspp_trie::CsppTrie;
+    ///
+    /// let mut trie = CsppTrie::new(4);
+    /// let (_, valpos) = trie.insert(b"key");
+    /// trie.set_value::<u32>(valpos, 2);
+    /// let _flag: bool = trie.get_value::<bool>(valpos); // 2 is not a valid `bool`
+    /// ```
+    ///
+    /// A plain-old-data value of at most `valsize` bytes round-trips:
+    ///
+    /// ```
+    /// use zipora::fsa::cspp_trie::CsppTrie;
+    ///
+    /// let mut trie = CsppTrie::new(4);
+    /// let (_, valpos) = trie.insert(b"key");
+    /// trie.set_value::<u32>(valpos, 2);
+    /// assert_eq!(trie.get_value::<u32>(valpos), 2);
+    /// ```
     #[inline]
-    pub fn get_value<T: Copy>(&self, valpos: usize) -> T {
+    pub fn get_value<T: bytemuck::Pod>(&self, valpos: usize) -> T {
+        let size = std::mem::size_of::<T>();
+        assert!(
+            size <= self.valsize,
+            "get_value: size_of::<T>() ({size}) exceeds configured valsize ({})",
+            self.valsize
+        );
         assert!(
             valpos
-                .checked_add(std::mem::size_of::<T>())
+                .checked_add(size)
                 .is_some_and(|end| end <= self.values.len()),
             "get_value: valpos out of bounds"
         );
-        // SAFETY: valpos + size_of::<T>() <= self.values.len() validated above,
-        // T is Copy, pointer derived from valid self.values slice.
-        unsafe {
-            let ptr = self.values.as_ptr().add(valpos);
-            std::ptr::read_unaligned(ptr as *const T)
-        }
+        assert!(
+            self.valsize == 0 || valpos.is_multiple_of(self.valsize),
+            "get_value: valpos is not a value-slot offset"
+        );
+        bytemuck::pod_read_unaligned(&self.values[valpos..valpos + size])
     }
 
     /// Write a value at `valpos` (byte offset into the value arena returned by
@@ -723,33 +754,40 @@ impl CsppTrie {
     ///
     /// # Panics
     ///
-    /// Panics if `valpos + size_of::<T>()` exceeds the value arena size (§8.5).
+    /// Panics if `size_of::<T>() > valsize`, if `valpos + size_of::<T>()`
+    /// exceeds the value arena size (§8.5), or if `valpos` is not a value-slot
+    /// offset (`valpos % valsize != 0`).
     #[inline]
-    pub fn set_value<T: Copy>(&mut self, valpos: usize, val: T) {
+    pub fn set_value<T: bytemuck::Pod>(&mut self, valpos: usize, val: T) {
+        let size = std::mem::size_of::<T>();
+        assert!(
+            size <= self.valsize,
+            "set_value: size_of::<T>() ({size}) exceeds configured valsize ({})",
+            self.valsize
+        );
         assert!(
             valpos
-                .checked_add(std::mem::size_of::<T>())
+                .checked_add(size)
                 .is_some_and(|end| end <= self.values.len()),
             "set_value: valpos out of bounds"
         );
-        // SAFETY: valpos + size_of::<T>() <= self.values.len() validated above,
-        // T is Copy, pointer derived from valid self.values slice.
-        unsafe {
-            let ptr = self.values.as_mut_ptr().add(valpos);
-            std::ptr::write_unaligned(ptr as *mut T, val);
-        }
+        assert!(
+            self.valsize == 0 || valpos.is_multiple_of(self.valsize),
+            "set_value: valpos is not a value-slot offset"
+        );
+        self.values[valpos..valpos + size].copy_from_slice(bytemuck::bytes_of(&val));
     }
 
     /// Read the value associated with `key`, if present.
     #[inline]
-    pub fn get_value_by_key<T: Copy>(&self, key: &[u8]) -> Option<T> {
+    pub fn get_value_by_key<T: bytemuck::Pod>(&self, key: &[u8]) -> Option<T> {
         let valpos = self.lookup(key)?;
         Some(self.get_value(valpos))
     }
 
     /// Write `val` for an existing `key`. Returns `true` if `key` was found.
     #[inline]
-    pub fn set_value_by_key<T: Copy>(&mut self, key: &[u8], val: T) -> bool {
+    pub fn set_value_by_key<T: bytemuck::Pod>(&mut self, key: &[u8], val: T) -> bool {
         if let Some(valpos) = self.lookup(key) {
             self.set_value(valpos, val);
             true
@@ -1984,7 +2022,10 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
 
     /// Value at the current position, or `None` if the iterator is not
     /// positioned on a node (e.g. before `seek_begin` or after it is exhausted).
-    pub fn value(&self) -> Option<T> {
+    pub fn value(&self) -> Option<T>
+    where
+        T: bytemuck::Pod,
+    {
         let top = self.stack.last()?;
         let view = self.trie.node_view(top.state);
         Some(self.trie.get_value(view.valpos()))
@@ -2011,6 +2052,24 @@ mod tests {
         let mut trie = CsppTrie::new(16);
         trie.insert(b"a");
         trie.set_value(usize::MAX - 4, 42u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "get_value: valpos is not a value-slot offset")]
+    fn test_get_value_mid_slot_panics() {
+        let mut trie = CsppTrie::new(4);
+        let (_, vp_a) = trie.insert(b"alpha");
+        trie.insert(b"bravo");
+        let _: u32 = trie.get_value(vp_a + 2);
+    }
+
+    #[test]
+    fn test_zero_valsize_zst_roundtrip() {
+        let mut trie = CsppTrie::new(0);
+        let (_, vp) = trie.insert(b"alpha");
+        trie.set_value::<()>(vp, ());
+        assert_eq!(trie.get_value::<()>(vp), ());
+        assert_eq!(trie.get_value_by_key::<()>(b"alpha"), Some(()));
     }
 
     #[test]

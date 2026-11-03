@@ -1,8 +1,11 @@
 //! Plan v2 (reliability-first) regression tests, verifier group G1.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Barrier;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use zipora::fsa::cspp_trie::CsppTrie;
+use zipora::fsa::cspp_trie_concurrent::ConcurrentCsppTrie;
 use zipora::fsa::token::{TokenManager, with_reader_token, with_writer_token};
 use zipora::fsa::version_sync::{ConcurrencyLevel, VersionManager};
 
@@ -164,4 +167,147 @@ fn test_v2_s1_concurrent_owmr_writer_claim_is_exclusive() {
         "OneWriteMultiRead handed out concurrent writer tokens"
     );
     assert_eq!(manager.active_writers(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// S7: CsppTrie / ConcurrentCsppTrie value accessors
+// ---------------------------------------------------------------------------
+
+const S7_NEIGHBOUR: u32 = 0xB0B0_B0B0;
+
+/// S7(a): `CsppTrie::set_value::<T>` does not check `size_of::<T>()` against
+/// `valsize`. At v5.0.0 an 8-byte write into a 4-byte slot silently
+/// overwrites the next key's value.
+#[test]
+fn test_v2_s7_cspp_oversized_set_value_must_not_corrupt_neighbour() {
+    let mut trie = CsppTrie::new(4);
+    let (_, vp_a) = trie.insert(b"alpha");
+    let (_, vp_b) = trie.insert(b"bravo");
+    trie.set_value::<u32>(vp_b, S7_NEIGHBOUR);
+
+    let write = catch_unwind(AssertUnwindSafe(|| trie.set_value::<u64>(vp_a, u64::MAX)));
+    assert_eq!(
+        trie.get_value::<u32>(vp_b),
+        S7_NEIGHBOUR,
+        "8-byte set_value on a 4-byte slot overwrote the neighbouring key's value"
+    );
+    assert!(
+        write.is_err(),
+        "set_value must reject size_of::<T>() > valsize"
+    );
+}
+
+/// S7(a): the read side - at v5.0.0 an 8-byte `get_value` on a 4-byte slot
+/// returns the neighbouring key's bytes instead of panicking.
+#[test]
+fn test_v2_s7_cspp_oversized_get_value_must_not_read_neighbour() {
+    let mut trie = CsppTrie::new(4);
+    let (_, vp_a) = trie.insert(b"alpha");
+    let (_, vp_b) = trie.insert(b"bravo");
+    trie.set_value::<u32>(vp_b, S7_NEIGHBOUR);
+
+    let read = catch_unwind(AssertUnwindSafe(|| trie.get_value::<u64>(vp_a)));
+    assert!(
+        read.is_err(),
+        "get_value must reject size_of::<T>() > valsize, got {:x?}",
+        read
+    );
+}
+
+/// S7(a): `valpos` is not checked against value-slot boundaries either. At
+/// v5.0.0 a 4-byte write starting two bytes into a 4-byte slot spills into
+/// the next key's value.
+#[test]
+fn test_v2_s7_cspp_mid_slot_set_value_must_not_straddle_neighbour() {
+    let mut trie = CsppTrie::new(4);
+    let (_, vp_a) = trie.insert(b"alpha");
+    let (_, vp_b) = trie.insert(b"bravo");
+    trie.set_value::<u32>(vp_b, S7_NEIGHBOUR);
+
+    let write = catch_unwind(AssertUnwindSafe(|| {
+        trie.set_value::<u32>(vp_a + 2, u32::MAX)
+    }));
+    assert_eq!(
+        trie.get_value::<u32>(vp_b),
+        S7_NEIGHBOUR,
+        "set_value at a mid-slot offset overwrote the neighbouring key's value"
+    );
+    assert!(
+        write.is_err(),
+        "set_value must reject a valpos that is not a value-slot offset"
+    );
+}
+
+/// S7(a), concurrent trie: values live in the shared node pool, so at v5.0.0
+/// an 8-byte write into a 4-byte value slot overwrites whatever slot follows
+/// it - here the next key's trie node or value.
+#[test]
+fn test_v2_s7_concurrent_oversized_set_value_must_not_corrupt_neighbour() {
+    let trie = ConcurrentCsppTrie::with_capacity(4, 4096);
+    let (_, vp_a) = trie.insert(b"alpha");
+    let (_, vp_b) = trie.insert(b"bravo");
+    trie.set_value::<u32>(vp_b, S7_NEIGHBOUR);
+
+    let write = catch_unwind(AssertUnwindSafe(|| trie.set_value::<u64>(vp_a, 0)));
+    let found = catch_unwind(AssertUnwindSafe(|| trie.lookup(b"bravo")));
+    assert!(
+        matches!(found, Ok(Some(vp)) if vp == vp_b),
+        "8-byte set_value on a 4-byte slot corrupted the neighbouring key's node: lookup(bravo) = {found:?}, expected Ok(Some({vp_b}))"
+    );
+    assert_eq!(
+        trie.get_value::<u32>(vp_b),
+        S7_NEIGHBOUR,
+        "8-byte set_value on a 4-byte slot overwrote the neighbouring key's value"
+    );
+    assert!(
+        write.is_err(),
+        "set_value must reject size_of::<T>() > valsize"
+    );
+}
+
+/// S7(a), concurrent trie, read side: at v5.0.0 an 8-byte `get_value` on a
+/// 4-byte slot returns the following pool word instead of panicking.
+#[test]
+fn test_v2_s7_concurrent_oversized_get_value_must_not_read_neighbour() {
+    let trie = ConcurrentCsppTrie::with_capacity(4, 4096);
+    let (_, vp_a) = trie.insert(b"alpha");
+    trie.insert(b"bravo");
+
+    let read = catch_unwind(AssertUnwindSafe(|| trie.get_value::<u64>(vp_a)));
+    assert!(
+        read.is_err(),
+        "get_value must reject size_of::<T>() > valsize, got {:x?}",
+        read
+    );
+}
+
+/// S7(a), concurrent trie, bounds check: `get_value`/`set_value` compare
+/// `valpos + size` against the pool size with a plain add. `[profile.release]`
+/// sets `overflow-checks = false`, so a `valpos` near `usize::MAX` wraps past
+/// the check there (and panics with "attempt to add with overflow" in debug).
+/// Both must report "valpos out of bounds", like `CsppTrie::get_value`.
+#[test]
+fn test_v2_s7_concurrent_valpos_overflow_is_reported_as_out_of_bounds() {
+    let trie = ConcurrentCsppTrie::with_capacity(4, 4096);
+    trie.insert(b"alpha");
+    let huge = usize::MAX - 3; // 4-byte aligned; `huge + 4` overflows
+    let get = catch_unwind(AssertUnwindSafe(|| {
+        let _ = trie.get_value::<u32>(huge);
+    }));
+    let set = catch_unwind(AssertUnwindSafe(|| trie.set_value::<u32>(huge, 1)));
+    for (op, outcome) in [("get_value", get), ("set_value", set)] {
+        let payload = match outcome {
+            Ok(()) => panic!("{op}: valpos {huge:#x} was accepted"),
+            Err(payload) => payload,
+        };
+        let msg = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        assert!(
+            msg.contains("valpos out of bounds"),
+            "{op}: expected \"valpos out of bounds\", got {msg:?}"
+        );
+    }
 }
