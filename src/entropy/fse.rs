@@ -923,16 +923,18 @@ impl FseEncoder {
             return Err(ZiporaError::invalid_data("No compression table available"));
         }
 
+        let frequencies_match_data = analyzed_this_call && self.dictionary.is_none();
+
         // Use parallel processing for large data
         if let Some(num_blocks) = self.config.parallel_blocks
-            && data.len() > self.config.block_size * 2
+            && self.config.block_size > 0
+            && data.len() > self.config.block_size.saturating_mul(2)
         {
             // merge_compressed_blocks writes the FSE_MODE_PARALLEL byte
-            return self.compress_parallel(data, num_blocks);
+            return self.compress_parallel(data, num_blocks, frequencies_match_data);
         }
 
         // Single-threaded compression, framed with the single-mode byte in a single allocation
-        let frequencies_match_data = analyzed_this_call && self.dictionary.is_none();
         self.compress_single_with_mode(data, true, frequencies_match_data)
     }
 
@@ -1059,59 +1061,75 @@ impl FseEncoder {
     }
 
     /// Parallel compression for large data (real implementation)
-    fn compress_parallel(&mut self, data: &[u8], num_blocks: usize) -> Result<Vec<u8>> {
+    fn compress_parallel(
+        &mut self,
+        data: &[u8],
+        num_blocks: usize,
+        frequencies_match_data: bool,
+    ) -> Result<Vec<u8>> {
         let block_size = self.config.block_size;
+        if block_size == 0 || num_blocks <= 1 || data.len() <= block_size {
+            return self.compress_single_with_mode(data, true, frequencies_match_data);
+        }
+
         let chunks: Vec<&[u8]> = data.chunks(block_size).collect();
 
         // If we don't have enough chunks for parallelization, fall back to single-threaded
-        if chunks.len() <= 1 || num_blocks <= 1 {
-            return self.compress_single_internal(data);
+        if chunks.len() <= 1 {
+            return self.compress_single_with_mode(data, true, frequencies_match_data);
         }
 
         // Clone the table to avoid borrowing issues
         let table = self
             .table
             .as_ref()
-            .expect("FSE table must be initialized")
+            .ok_or_else(|| ZiporaError::invalid_data("No compression table available"))?
             .clone();
         let config = self.config.clone();
 
-        // Process chunks in parallel using std::thread
-        let handles: Vec<_> = chunks
-            .into_iter()
-            .enumerate()
-            .map(|(idx, chunk)| {
+        let avail = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let workers = num_blocks.min(chunks.len()).min(avail).max(1);
+        let per_worker = chunks.len().div_ceil(workers);
+
+        // Process chunks in parallel using a bounded std::thread::scope pool
+        let compressed_chunks = std::thread::scope(|s| -> Result<Vec<Vec<u8>>> {
+            let mut handles = Vec::with_capacity(workers);
+            for worker_chunks in chunks.chunks(per_worker) {
                 let table_clone = table.clone();
                 let config_clone = config.clone();
-                let chunk_data = chunk.to_vec(); // Convert to owned data
-
-                std::thread::spawn(move || -> Result<Vec<u8>> {
-                    // Create a temporary encoder for this thread
+                handles.push(s.spawn(move || -> Result<Vec<Vec<u8>>> {
                     let mut thread_encoder = FseEncoder::new(config_clone)?;
                     thread_encoder.table = Some(table_clone);
-                    thread_encoder.states[0] = (idx as u64 + 1) * 17; // Different initial state per thread
 
-                    // Compress this chunk
-                    thread_encoder.compress_single_internal(&chunk_data)
-                })
-            })
-            .collect();
-
-        // Collect results
-        let mut compressed_chunks = Vec::new();
-        for handle in handles {
-            match handle.join() {
-                Ok(result) => compressed_chunks.push(result?),
-                Err(_) => {
-                    return Err(ZiporaError::invalid_data(
-                        "Thread panicked during compression",
-                    ));
-                }
+                    let mut out = Vec::with_capacity(worker_chunks.len());
+                    for &chunk in worker_chunks {
+                        out.push(thread_encoder.compress_single_internal(chunk)?);
+                    }
+                    Ok(out)
+                }));
             }
-        }
 
-        // Merge compressed chunks with metadata
-        self.merge_compressed_blocks(compressed_chunks)
+            let mut all_chunks = Vec::with_capacity(chunks.len());
+            for handle in handles {
+                let batch = handle.join().map_err(|_| {
+                    ZiporaError::compression("Parallel compression thread panicked")
+                })??;
+                all_chunks.extend(batch);
+            }
+            Ok(all_chunks)
+        })?;
+
+        // Merge compressed chunks with metadata and update statistics
+        let output = self.merge_compressed_blocks(compressed_chunks)?;
+        let entropy = if frequencies_match_data {
+            EntropyStats::calculate_entropy_from_frequencies(&self.frequency_stats, data.len())
+        } else {
+            EntropyStats::calculate_entropy(data)
+        };
+        self.stats = EntropyStats::new(data.len(), output.len(), entropy);
+        Ok(output)
     }
 
     /// Merge compressed blocks into final output
