@@ -67,7 +67,6 @@ use crate::compression::dict_zip::{
     dfa_cache::CacheStats,
     dictionary::{MatchStats, SuffixArrayDictionary},
     local_matcher::{LocalMatch, LocalMatcher, LocalMatcherConfig, LocalMatcherStats},
-    reference_encoding::compress_record_reference,
 };
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
@@ -112,10 +111,12 @@ pub struct PaZipCompressorConfig {
     /// Enable adaptive threshold adjustment
     pub adaptive_thresholds: bool,
 
-    /// Use reference-compliant encoding matching the reference implementation exactly
+    /// Retained as a compatibility no-op; PA-Zip encoding always uses the
+    /// standard decodable stream format.
     pub use_reference_encoding: bool,
 
-    /// Use suffix array for local matching (when reference encoding is enabled)
+    /// Retained as a compatibility no-op; local matching always uses the
+    /// configured sliding-window hash matcher.
     pub use_suffix_array_local_match: bool,
 
     /// Enable SIMD acceleration where available
@@ -201,13 +202,17 @@ impl PaZipCompressorConfig {
         }
     }
 
-    /// Configuration for reference-compliant compression matching the reference implementation exactly
+    /// High-probe single-threaded configuration preset.
+    ///
+    /// Note: `use_reference_encoding` and `use_suffix_array_local_match` are
+    /// retained as compatibility no-ops; `PaZipCompressor` always emits the
+    /// standard decodable PA-Zip stream format.
     pub fn reference_compliant() -> Self {
         Self {
             max_local_probe_distance: 30,       // Matches reference implementation
             max_global_probe_distance: 100,     // Matches reference implementation
-            use_reference_encoding: true,       // Enable exact reference compliance
-            use_suffix_array_local_match: true, // Use suffix array for accuracy
+            use_reference_encoding: true,       // Compatibility no-op
+            use_suffix_array_local_match: true, // Compatibility no-op
             adaptive_thresholds: false,         // Use static thresholds like reference
             enable_multithreading: false,       // Single-threaded like reference
             collect_detailed_stats: true,       // Collect stats for validation
@@ -498,43 +503,7 @@ impl PaZipCompressor {
 
     /// Sequential compression using 8-step PA-Zip algorithm
     fn compress_sequential(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
-        if self.config.use_reference_encoding {
-            // Use reference-compliant compression matching the reference implementation exactly
-            self.compress_sequential_reference(input, output)
-        } else {
-            // Use legacy compression for backwards compatibility
-            self.compress_sequential_legacy(input, output)
-        }
-    }
-
-    /// Reference-compliant compression using exact reference implementation encoding
-    fn compress_sequential_reference(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
-        // Extract global dictionary data if available
-        let global_dictionary = if self.dictionary.size_in_bytes() > 0 {
-            Some(self.dictionary.data()) // This will need to be implemented in dictionary.rs
-        } else {
-            None
-        };
-
-        // Use parameters matching the reference implementation
-        let g_offset_bits = 24; // Standard value from reference
-        let g_max_short_len = 32; // Standard value from reference
-
-        // Use direct reference compression algorithm
-        let bytes_written = compress_record_reference(
-            input,
-            output,
-            self.config.use_suffix_array_local_match,
-            global_dictionary,
-            g_offset_bits,
-            g_max_short_len,
-        )?;
-
-        // Update statistics
-        self.stats.bytes_processed = input.len() as u64;
-        self.stats.bytes_output = bytes_written as u64;
-
-        Ok(())
+        self.compress_sequential_legacy(input, output)
     }
 
     /// Legacy compression using original implementation
@@ -626,6 +595,50 @@ impl PaZipCompressor {
         }
     }
 
+    /// Recognize and decode streams produced by the `v5.0.0` reference-mode
+    /// encoder, which emitted literal-only runs `[(len - 1) << 3][len bytes]`
+    /// with 32-byte non-final chunks and a `1..=32`-byte final chunk.
+    fn decode_v500_reference_literals(input: &[u8], output: &mut Vec<u8>) -> bool {
+        if input.len() < 2 {
+            return false;
+        }
+
+        let mut pos = 0usize;
+        let mut decoded_len = 0usize;
+        while let Some(&tag) = input.get(pos) {
+            if (tag & 0b111) != 0 {
+                return false;
+            }
+            let run_len = usize::from(tag >> 3) + 1;
+            let Some(end) = pos.checked_add(1 + run_len) else {
+                return false;
+            };
+            if end > input.len() {
+                return false;
+            }
+            if end < input.len() && run_len != 32 {
+                return false;
+            }
+            decoded_len += run_len;
+            pos = end;
+        }
+
+        output.reserve(decoded_len);
+        let mut read_pos = 0usize;
+        while let Some(&tag) = input.get(read_pos) {
+            let run_len = usize::from(tag >> 3) + 1;
+            let start = read_pos + 1;
+            let end = start + run_len;
+            let Some(chunk) = input.get(start..end) else {
+                return false;
+            };
+            output.extend_from_slice(chunk);
+            read_pos = end;
+        }
+
+        true
+    }
+
     /// Decompress PA-Zip compressed data
     pub fn decompress(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
         if input.is_empty() {
@@ -633,6 +646,9 @@ impl PaZipCompressor {
         }
 
         output.clear();
+        if Self::decode_v500_reference_literals(input, output) {
+            return Ok(());
+        }
         output.reserve(input.len().saturating_mul(2).min(64 * 1024));
 
         let mut pos = 0;
@@ -1163,7 +1179,6 @@ impl PaZipCompressor {
         }
     }
 
-
     /// Step 6: Update compression statistics
     fn update_statistics(&mut self, strategy: CompressionStrategy, _advance_length: usize) {
         match strategy {
@@ -1580,13 +1595,21 @@ mod tests {
         // 1. Truncated Global instruction [1] followed by bytes [0, 1, b'X'] that previously
         // got re-interpreted as a valid Literal instruction when Global returned Ok(new_pos).
         let truncated_global = [1u8, 0, 1, b'X'];
-        assert!(compressor.decompress(&truncated_global, &mut output).is_err());
+        assert!(
+            compressor
+                .decompress(&truncated_global, &mut output)
+                .is_err()
+        );
 
         // 2. Truncated Literal header [0] with no length byte.
         assert!(compressor.decompress(&[0u8], &mut output).is_err());
 
         // 3. Unknown instruction opcode (99).
-        assert!(compressor.decompress(&[99u8, 1, b'A'], &mut output).is_err());
+        assert!(
+            compressor
+                .decompress(&[99u8, 1, b'A'], &mut output)
+                .is_err()
+        );
 
         // 4. Far3Long backreference claiming u32::MAX length (previously 4 GiB allocation loop).
         let oversized_far3 = [
