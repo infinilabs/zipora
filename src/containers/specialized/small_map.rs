@@ -566,23 +566,22 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
     pub fn clear(&mut self) {
         match &mut self.storage {
             SmallMapStorage::Small { keys, values, len } => {
-                // Drop all initialized elements
-                for i in 0..*len {
-                    // SAFETY: All elements 0..*len are initialized
-                    unsafe {
-                        keys[i].assume_init_drop();
-                        values[i].assume_init_drop();
-                    }
-                }
-                *len = 0;
+                drop_small_elements(keys, values, len);
             }
             SmallMapStorage::Large(_) => {
-                // Reset to small map for efficiency
-                self.storage = SmallMapStorage::Small {
-                    keys: [const { MaybeUninit::uninit() }; SMALL_MAP_THRESHOLD],
-                    values: [const { MaybeUninit::uninit() }; SMALL_MAP_THRESHOLD],
-                    len: 0,
-                };
+                // Replace `self.storage` with an empty `Small` variant before
+                // dropping the old `Large` map so a panicking destructor inside
+                // `ZiporaHashMap::drop` cannot leave a partially-dropped map in
+                // `self.storage`.
+                let prev = std::mem::replace(
+                    &mut self.storage,
+                    SmallMapStorage::Small {
+                        keys: [const { MaybeUninit::uninit() }; SMALL_MAP_THRESHOLD],
+                        values: [const { MaybeUninit::uninit() }; SMALL_MAP_THRESHOLD],
+                        len: 0,
+                    },
+                );
+                drop(prev);
             }
         }
     }
@@ -666,6 +665,45 @@ where
     }
 }
 
+/// Drops `0..*len` initialized keys and values in-place after resetting `*len = 0`.
+///
+/// Resetting `*len = 0` upfront prevents `SmallMap::drop` from double-dropping
+/// already-dropped slots on unwind. Using slice `drop_in_place` on `*mut [K]`
+/// and `*mut [V]` together with `DropValuesGuard` ensures remaining keys
+/// `i + 1..n` and all initialized values `0..n` are still dropped once if any
+/// destructor panics.
+fn drop_small_elements<K, V>(
+    keys: &mut [MaybeUninit<K>; SMALL_MAP_THRESHOLD],
+    values: &mut [MaybeUninit<V>; SMALL_MAP_THRESHOLD],
+    len: &mut usize,
+) {
+    struct DropValuesGuard<V>(*mut [V]);
+    impl<V> Drop for DropValuesGuard<V> {
+        fn drop(&mut self) {
+            // SAFETY: `self.0` points to the `0..n` initialized `V` slots in `values`,
+            // exclusively borrowed by `drop_small_elements`, and runs at most once.
+            unsafe {
+                std::ptr::drop_in_place(self.0);
+            }
+        }
+    }
+
+    let n = std::mem::replace(len, 0);
+    if n == 0 {
+        return;
+    }
+
+    let keys_slice = std::ptr::slice_from_raw_parts_mut(keys.as_mut_ptr().cast::<K>(), n);
+    let values_slice = std::ptr::slice_from_raw_parts_mut(values.as_mut_ptr().cast::<V>(), n);
+    let _values_guard = DropValuesGuard(values_slice);
+
+    // SAFETY: `0..n` keys are initialized (`n <= SMALL_MAP_THRESHOLD`), `*len` is
+    // already `0`, and `MaybeUninit<K>` has the same layout as `K`.
+    unsafe {
+        std::ptr::drop_in_place(keys_slice);
+    }
+}
+
 impl<K, V> Drop for SmallMap<K, V>
 where
     K: Clone + std::hash::Hash + Eq,
@@ -673,14 +711,7 @@ where
 {
     fn drop(&mut self) {
         if let SmallMapStorage::Small { keys, values, len } = &mut self.storage {
-            // Drop all initialized elements
-            for i in 0..*len {
-                // SAFETY: All elements 0..*len are initialized
-                unsafe {
-                    keys[i].assume_init_drop();
-                    values[i].assume_init_drop();
-                }
-            }
+            drop_small_elements(keys, values, len);
         }
         // Large map will be dropped automatically
     }
@@ -1541,5 +1572,144 @@ mod tests {
             assert_eq!(5i32.find_optimized(&keys_i32, 5), Some(4));
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_s7_clear_small_panicking_key_drop_drops_all_keys_and_values_once() {
+        use std::cell::{Cell, RefCell};
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        use std::rc::Rc;
+
+        #[derive(Default)]
+        struct Ledger {
+            key_drops: RefCell<Vec<usize>>,
+            val_drops: RefCell<Vec<usize>>,
+            armed: Cell<bool>,
+        }
+
+        #[derive(Clone)]
+        struct KeyProbe {
+            id: usize,
+            boom: bool,
+            ledger: Rc<Ledger>,
+        }
+        impl PartialEq for KeyProbe {
+            fn eq(&self, other: &Self) -> bool {
+                self.id == other.id
+            }
+        }
+        impl Eq for KeyProbe {}
+        impl Hash for KeyProbe {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                self.id.hash(state);
+            }
+        }
+        impl Drop for KeyProbe {
+            fn drop(&mut self) {
+                self.ledger.key_drops.borrow_mut().push(self.id);
+                if self.boom && self.ledger.armed.replace(false) {
+                    panic!("KeyProbe {} panics on purpose", self.id);
+                }
+            }
+        }
+
+        #[derive(Clone)]
+        struct ValProbe {
+            id: usize,
+            ledger: Rc<Ledger>,
+        }
+        impl Drop for ValProbe {
+            fn drop(&mut self) {
+                self.ledger.val_drops.borrow_mut().push(self.id);
+            }
+        }
+
+        let ledger = Rc::new(Ledger::default());
+        ledger.armed.set(true);
+
+        let mut map: SmallMap<KeyProbe, ValProbe> = SmallMap::new();
+        for id in 0..4 {
+            map.insert(
+                KeyProbe {
+                    id,
+                    boom: id == 1,
+                    ledger: Rc::clone(&ledger),
+                },
+                ValProbe {
+                    id,
+                    ledger: Rc::clone(&ledger),
+                },
+            )
+            .unwrap();
+        }
+
+        let res = catch_unwind(AssertUnwindSafe(|| map.clear()));
+        assert!(res.is_err(), "panicking key destructor must unwind");
+        assert!(map.is_empty());
+        drop(map);
+
+        let mut k = ledger.key_drops.borrow().clone();
+        let mut v = ledger.val_drops.borrow().clone();
+        k.sort_unstable();
+        v.sort_unstable();
+        assert_eq!(k, vec![0, 1, 2, 3]);
+        assert_eq!(v, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn test_s7_clear_large_panicking_value_drop_demotes_and_drops_each_once() {
+        use std::cell::{Cell, RefCell};
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        use std::rc::Rc;
+
+        #[derive(Default)]
+        struct Ledger {
+            drops: RefCell<Vec<usize>>,
+            armed: Cell<bool>,
+        }
+
+        #[derive(Clone)]
+        struct ValProbe {
+            id: usize,
+            boom: bool,
+            ledger: Rc<Ledger>,
+        }
+        impl Drop for ValProbe {
+            fn drop(&mut self) {
+                self.ledger.drops.borrow_mut().push(self.id);
+                if self.boom && self.ledger.armed.replace(false) {
+                    panic!("Large ValProbe {} panics on purpose", self.id);
+                }
+            }
+        }
+
+        let ledger = Rc::new(Ledger::default());
+        ledger.armed.set(true);
+
+        let n = SMALL_MAP_THRESHOLD + 4;
+        let mut map: SmallMap<u32, ValProbe> = SmallMap::new();
+        for id in 0..n {
+            map.insert(
+                id as u32,
+                ValProbe {
+                    id,
+                    boom: id == 3,
+                    ledger: Rc::clone(&ledger),
+                },
+            )
+            .unwrap();
+        }
+        assert!(map.capacity() > SMALL_MAP_THRESHOLD);
+
+        let res = catch_unwind(AssertUnwindSafe(|| map.clear()));
+        assert!(res.is_err(), "panicking value destructor must unwind");
+        assert!(map.is_empty());
+        assert_eq!(map.capacity(), SMALL_MAP_THRESHOLD);
+        drop(map);
+
+        let mut drops = ledger.drops.borrow().clone();
+        drops.sort_unstable();
+        let expected: Vec<usize> = (0..n).collect();
+        assert_eq!(drops, expected);
     }
 }

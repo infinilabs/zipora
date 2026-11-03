@@ -769,7 +769,6 @@ impl<T> AutoGrowCircularQueue<T> {
         Ok(())
     }
 
-
     /// Copy elements from current buffer to new buffer in linear order
     #[inline(always)]
     fn copy_elements_to_new_buffer(&mut self, new_buffer: *mut T) -> Result<()> {
@@ -796,7 +795,6 @@ impl<T> AutoGrowCircularQueue<T> {
 
         Ok(())
     }
-
 
     /// Ultra-fast element addition with fast/slow path separation
     ///
@@ -1134,32 +1132,16 @@ impl<T> AutoGrowCircularQueue<T> {
             return 0;
         }
 
-        // SAFETY: to_pop <= len, head indices valid, buffer contains len initialized elements
-        unsafe {
-            if self.head < self.tail || (self.head + to_pop <= self.capacity) {
-                // Single contiguous copy - most common case
-                for i in 0..to_pop {
-                    output[i] = self.buffer.add(self.head + i).read();
-                }
-            } else {
-                // Two-part copy for wrapped data
-                let first_part = self.capacity - self.head;
-                let second_part = to_pop - first_part;
-
-                // Copy first part
-                for i in 0..first_part {
-                    output[i] = self.buffer.add(self.head + i).read();
-                }
-
-                // Copy second part
-                for i in 0..second_part {
-                    output[first_part + i] = self.buffer.add(i).read();
-                }
-            }
-
-            // Update indices
-            self.head = (self.head + to_pop) & self.mask;
-            self.len -= to_pop;
+        for slot in &mut output[..to_pop] {
+            // SAFETY: `to_pop <= self.len` initially and `self.len` is decremented
+            // once per iteration, so `self.head` always indexes an initialized slot
+            // in `0..self.capacity`. Advancing `self.head` and `self.len` and moving
+            // `value` into `*slot` via `mem::replace` BEFORE dropping the displaced
+            // old `*slot` guarantees no element is dropped twice if `T::drop` panics.
+            let value = unsafe { self.buffer.add(self.head).read() };
+            self.head = (self.head + 1) & self.mask;
+            self.len -= 1;
+            drop(std::mem::replace(slot, value));
         }
 
         to_pop
@@ -1693,5 +1675,95 @@ mod tests {
         fq.push_back(3)?;
         assert_eq!(format!("{:?}", fq), "[1, 2, 3]");
         Ok(())
+    }
+
+    #[test]
+    fn test_s7_pop_bulk_wrapped_with_panicking_drop_drops_each_once() {
+        use std::cell::{Cell, RefCell};
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        #[derive(Default)]
+        struct DropLog {
+            drops: RefCell<Vec<usize>>,
+            armed: Cell<bool>,
+        }
+
+        #[derive(Clone)]
+        struct Probe<'a> {
+            id: usize,
+            boom: bool,
+            log: &'a DropLog,
+        }
+
+        impl Drop for Probe<'_> {
+            fn drop(&mut self) {
+                self.log.drops.borrow_mut().push(self.id);
+                if self.boom && self.log.armed.replace(false) {
+                    panic!("Probe {} panics on purpose", self.id);
+                }
+            }
+        }
+
+        let log = DropLog::default();
+        log.armed.set(true);
+
+        // Build a wrapped queue (`head > tail`) of capacity 8:
+        // push 6, pop 5 (`head = 5`), push 5 more -> `head = 5, tail = 2, len = 6`.
+        let mut queue = AutoGrowCircularQueue::with_capacity(8);
+        assert_eq!(queue.capacity(), 8);
+        for id in 200..206 {
+            queue
+                .push_back(Probe {
+                    id,
+                    boom: false,
+                    log: &log,
+                })
+                .unwrap();
+        }
+        for _ in 0..5 {
+            drop(queue.pop_front().unwrap());
+        }
+        for id in 1..6 {
+            queue
+                .push_back(Probe {
+                    id,
+                    boom: false,
+                    log: &log,
+                })
+                .unwrap();
+        }
+        assert!(
+            queue.head > queue.tail,
+            "expected wrapped queue (head={}, tail={})",
+            queue.head,
+            queue.tail
+        );
+        assert_eq!(queue.len(), 6);
+
+        // Pop across the wrap boundary into `output`, panicking when replacing slot 3
+        // (after crossing from segment [5..8) into [0..2)).
+        let mut output: Vec<Probe<'_>> = (100..105)
+            .map(|id| Probe {
+                id,
+                boom: id == 103,
+                log: &log,
+            })
+            .collect();
+
+        let res = catch_unwind(AssertUnwindSafe(|| queue.pop_bulk(&mut output)));
+        assert!(res.is_err(), "displaced Probe 103 must panic on drop");
+        // 4 elements (205, 1, 2, 3) were popped before/during slot 3 replacement; 2 remain (4, 5).
+        assert_eq!(queue.len(), 2);
+
+        drop(output);
+        drop(queue);
+
+        let all_ids = [
+            200, 201, 202, 203, 204, 205, 1, 2, 3, 4, 5, 100, 101, 102, 103, 104,
+        ];
+        for id in all_ids {
+            let count = log.drops.borrow().iter().filter(|&&d| d == id).count();
+            assert_eq!(count, 1, "id {id} dropped {count} times (expected 1)");
+        }
     }
 }

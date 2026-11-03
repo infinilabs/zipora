@@ -11,14 +11,17 @@
 //! The one G2 test that needs a private API (`FixedCapacityMemoryPool::deallocate`)
 //! lives in `src/memory/fixed_capacity_pool.rs`, module `plan_v2_fcp`.
 
+use std::cell::{Cell, RefCell};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Barrier;
 use std::sync::atomic::Ordering;
 
-use zipora::containers::GoldHashIdx;
+use zipora::containers::{GoldHashIdx, MinimalSso};
 use zipora::memory::{
     FixedCapacityAllocation, FixedCapacityMemoryPool, FixedCapacityPoolConfig, SecureMemoryPool,
     SecurePoolConfig, ThreadLocalMemoryPool, ThreadLocalPoolConfig,
 };
+use zipora::{AutoGrowCircularQueue, SmallMap};
 
 // ============================================================================
 // S2: ThreadLocalMemoryPool (src/memory/threadlocal_pool.rs)
@@ -461,4 +464,131 @@ fn test_v2_s4_gold_hash_idx_stores_u128_values() {
     for k in 0..64u64 {
         assert_eq!(idx.get(&k), Some(&value(k)));
     }
+}
+
+// ============================================================================
+// S7: panic safety of SmallMap::clear and AutoGrowCircularQueue::pop_bulk
+// ============================================================================
+
+/// Per-test drop ledger. `DropProbe` holds only a `&DropLog`, so dropping a
+/// probe twice (the bug under test) re-runs `Drop::drop` without freeing
+/// anything twice: the test stays deterministic and memory-safe at v5.0.0.
+#[derive(Default)]
+struct DropLog {
+    drops: RefCell<Vec<usize>>,
+    armed: Cell<bool>,
+}
+
+impl DropLog {
+    fn armed() -> Self {
+        let log = Self::default();
+        log.armed.set(true);
+        log
+    }
+
+    fn count(&self, id: usize) -> usize {
+        self.drops.borrow().iter().filter(|&&d| d == id).count()
+    }
+
+    fn counts(&self, ids: &[usize]) -> Vec<(usize, usize)> {
+        ids.iter().map(|&id| (id, self.count(id))).collect()
+    }
+}
+
+/// Records each drop; the probe marked `boom` panics on the first drop only.
+#[derive(Clone)]
+struct DropProbe<'a> {
+    id: usize,
+    boom: bool,
+    log: &'a DropLog,
+}
+
+impl<'a> DropProbe<'a> {
+    fn new(id: usize, boom: bool, log: &'a DropLog) -> Self {
+        Self { id, boom, log }
+    }
+}
+
+impl Drop for DropProbe<'_> {
+    fn drop(&mut self) {
+        self.log.drops.borrow_mut().push(self.id);
+        if self.boom && self.log.armed.replace(false) {
+            panic!("DropProbe {} panics on purpose", self.id);
+        }
+    }
+}
+
+/// S7. `SmallMap::clear` (small_map.rs:566-588) drops elements `0..len` and
+/// only then sets `len = 0`. When a destructor panics, `len` keeps its old
+/// value and `Drop for SmallMap` (669-687) drops the already-dropped elements
+/// a second time. v5.0.0: values 0 and 1 are dropped twice.
+#[test]
+fn test_v2_s7_small_map_clear_with_panicking_drop_drops_each_value_once() {
+    let log = DropLog::armed();
+    let mut map: SmallMap<u32, DropProbe<'_>> = SmallMap::new();
+    for id in 0..4 {
+        map.insert(id as u32, DropProbe::new(id, id == 1, &log))
+            .unwrap();
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| map.clear()));
+    assert!(result.is_err(), "the marked destructor must panic");
+    drop(map);
+    assert_eq!(
+        log.counts(&[0, 1, 2, 3]),
+        vec![(0, 1), (1, 1), (2, 1), (3, 1)],
+        "(value id, times dropped)"
+    );
+}
+
+/// S7. `AutoGrowCircularQueue::pop_bulk` (circular_queue.rs:1129-1166) moves
+/// elements out with `output[i] = read()` -- which first drops the old
+/// `output[i]` -- and advances `head`/`len` only after the loop (1160-1162).
+/// When that drop panics, the elements already moved into `output` are still
+/// owned by the queue and are dropped a second time by `Drop`.
+/// v5.0.0: queue elements 0 and 1 are dropped twice.
+#[test]
+fn test_v2_s7_auto_grow_queue_pop_bulk_with_panicking_drop_drops_each_value_once() {
+    let log = DropLog::armed();
+    let mut queue = AutoGrowCircularQueue::new();
+    for id in 0..4 {
+        queue.push_back(DropProbe::new(id, false, &log)).unwrap();
+    }
+    let mut output: Vec<DropProbe<'_>> = (100..104)
+        .map(|id| DropProbe::new(id, id == 101, &log))
+        .collect();
+    let result = catch_unwind(AssertUnwindSafe(|| queue.pop_bulk(&mut output)));
+    assert!(result.is_err(), "the marked destructor must panic");
+    drop(output);
+    drop(queue);
+    let ids = [0, 1, 2, 3, 100, 101, 102, 103];
+    let expected: Vec<_> = ids.iter().map(|&id| (id, 1)).collect();
+    assert_eq!(log.counts(&ids), expected, "(id, times dropped)");
+}
+
+// ============================================================================
+// MinimalSso (src/containers/specialized/minimal_sso.rs)
+// ============================================================================
+
+/// Needs Miri. `MinimalSso` stores its heap pointer as
+/// `(ptr as usize).to_ne_bytes()` (minimal_sso.rs:258-264) and rebuilds it
+/// with `usize as *mut u8` (237-241). Under `-Zmiri-strict-provenance` the
+/// rebuilt pointer has no provenance, so the first heap access (`realloc` in
+/// `heap_grow`, then reads, then `dealloc` in `Drop`) is rejected. Natively
+/// the test passes at v5.0.0. The `Send + Sync` check guards the fix: storing
+/// a raw pointer must not silently drop the auto traits.
+#[test]
+fn test_v2_minimal_sso_heap_string_keeps_pointer_provenance() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<MinimalSso>();
+
+    let mut s = MinimalSso::from_str("hello");
+    s.push_str(" world, this is a long string!!!"); // 37 bytes: spills to the heap
+    assert!(!s.is_local());
+    s.push_str(&"x".repeat(64)); // 101 bytes: grows the heap buffer
+    let expected = format!("hello world, this is a long string!!!{}", "x".repeat(64));
+    assert_eq!(s.as_str(), expected);
+    let moved = s;
+    let cloned = moved.clone();
+    assert_eq!(cloned.as_bytes(), expected.as_bytes());
+    assert_eq!(moved.len(), expected.len());
 }
