@@ -508,6 +508,7 @@ impl PaZipCompressor {
 
     /// Legacy compression using original implementation
     fn compress_sequential_legacy(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
+        self.output_buffer.clear();
         let mut pos = 0;
         // Bytes in `input[lit_start..pos]` are pending literals not yet emitted.
         // Consecutive literals are coalesced into a single literal run rather
@@ -883,6 +884,8 @@ impl PaZipCompressor {
         for block in compressed_blocks {
             output.extend_from_slice(&block);
         }
+        self.stats.bytes_processed = input.len() as u64;
+        self.stats.bytes_output = output.len() as u64;
 
         Ok(())
     }
