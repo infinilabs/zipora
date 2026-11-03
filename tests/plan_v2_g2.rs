@@ -14,9 +14,10 @@
 use std::sync::Barrier;
 use std::sync::atomic::Ordering;
 
+use zipora::containers::GoldHashIdx;
 use zipora::memory::{
-    FixedCapacityAllocation, FixedCapacityMemoryPool, FixedCapacityPoolConfig,
-    ThreadLocalMemoryPool, ThreadLocalPoolConfig,
+    FixedCapacityAllocation, FixedCapacityMemoryPool, FixedCapacityPoolConfig, SecureMemoryPool,
+    SecurePoolConfig, ThreadLocalMemoryPool, ThreadLocalPoolConfig,
 };
 
 // ============================================================================
@@ -382,4 +383,82 @@ fn test_v2_s3_config_beyond_u32_offsets_is_rejected() {
         "a pool with u32::MAX blocks (offsets up to ~64 GiB) cannot be addressed with u32 links \
          and must be rejected by new()"
     );
+}
+
+// ============================================================================
+// S4: SecureMemoryPool alignment (src/memory/secure_pool.rs) and GoldHashIdx
+// ============================================================================
+
+/// S4(a). `SecureChunk::new` allocates with `Layout::from_size_align(total, 8)`
+/// (secure_pool.rs:505) and returns `raw + size_of::<ChunkHeader>()` =
+/// `raw + 40` (541-543); `config.alignment` is only validated (899-903). With
+/// glibc's 16-byte-aligned `raw`, medium_secure (alignment 16) yields
+/// `addr % 16 == 8` and large_secure (32) yields `addr % 32` in {8, 24}.
+#[test]
+fn test_v2_s4_preset_pools_honor_configured_alignment() {
+    for (name, config) in [
+        ("small_secure", SecurePoolConfig::small_secure()),
+        ("medium_secure", SecurePoolConfig::medium_secure()),
+        ("large_secure", SecurePoolConfig::large_secure()),
+    ] {
+        let align = config.alignment;
+        let pool = SecureMemoryPool::new(config).unwrap();
+        let held: Vec<_> = (0..4).map(|_| pool.allocate().unwrap()).collect();
+        for p in &held {
+            assert_eq!(
+                p.as_ptr() as usize % align,
+                0,
+                "{name}: chunk at {:p} is not {align}-byte aligned",
+                p.as_ptr()
+            );
+            p.validate().unwrap();
+        }
+    }
+}
+
+/// S4(b). Same defect with a caller-chosen alignment: `SecurePoolConfig::new`
+/// accepts 64 and the chunks come back 8 (mod 16) aligned. Recycled chunks
+/// (thread-local cache) must keep the alignment, too.
+#[test]
+fn test_v2_s4_custom_alignment_64_is_honored() {
+    let pool = SecureMemoryPool::new(SecurePoolConfig::new(256, 8, 64)).unwrap();
+    let held: Vec<_> = (0..8).map(|_| pool.allocate().unwrap()).collect();
+    for p in &held {
+        assert_eq!(
+            p.as_ptr() as usize % 64,
+            0,
+            "chunk at {:p} is not 64-byte aligned",
+            p.as_ptr()
+        );
+        p.validate().unwrap();
+    }
+    drop(held);
+    let recycled = pool.allocate().unwrap();
+    assert_eq!(recycled.as_ptr() as usize % 64, 0);
+    recycled.validate().unwrap();
+}
+
+/// S4(c). `GoldHashIdx::allocate_pooled_value` (gold_hash_idx.rs:396-419)
+/// rejects a pooled chunk whose address is not a multiple of
+/// `align_of::<V>()`. A 16-byte `V` goes to the global small_secure pool
+/// (`get_global_pool_for_size`, secure_pool.rs:1595-1597: alignment 8, chunks
+/// at `raw + 40` = 8 mod 16), so with `V = u128` (align 16) every insert fails
+/// with "pooled chunk size (1024) / alignment insufficient". Fixing (a) alone
+/// is not enough: the small preset must provide at least 16-byte alignment.
+#[test]
+fn test_v2_s4_gold_hash_idx_stores_u128_values() {
+    assert_eq!(
+        std::mem::align_of::<u128>(),
+        16,
+        "precondition (x86_64, Rust >= 1.77)"
+    );
+    let value = |k: u64| (u128::from(k) << 64) | 0xDEAD_BEEF;
+    let mut idx: GoldHashIdx<u64, u128> = GoldHashIdx::new();
+    for k in 0..64u64 {
+        idx.insert(k, value(k))
+            .unwrap_or_else(|e| panic!("insert {k}: {e}"));
+    }
+    for k in 0..64u64 {
+        assert_eq!(idx.get(&k), Some(&value(k)));
+    }
 }

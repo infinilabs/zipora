@@ -338,14 +338,30 @@ where
     /// Drop the initialized `V` inside a pooled block before returning the block to the pool.
     #[inline]
     fn drop_pooled_value(ptr: SecurePooledPtr) {
+        struct ScrubAndDrop(SecurePooledPtr, usize);
+        impl Drop for ScrubAndDrop {
+            #[inline]
+            fn drop(&mut self) {
+                if self.1 > 0 {
+                    // SAFETY: `allocate_pooled_value` verified `self.0.size() >= size_of::<V>()`,
+                    // and `V` has already completed `drop_in_place` before `self` drops; zeroing
+                    // `size_of::<V>()` bytes overwrites any uninitialized struct padding in `V`
+                    // before `self.0` (`SecurePooledPtr`) returns the chunk to the pool.
+                    unsafe {
+                        std::ptr::write_bytes(self.0.as_ptr(), 0, self.1);
+                    }
+                }
+            }
+        }
+
+        let guard = ScrubAndDrop(ptr, mem::size_of::<V>());
         if mem::needs_drop::<V>() {
             // SAFETY: Every SecurePooledPtr stored in `self.values` was initialized with a valid `V`
             // in `allocate_pooled_value` and is taken out of `self.values` before dropping here.
             unsafe {
-                std::ptr::drop_in_place(ptr.as_ptr() as *mut V);
+                std::ptr::drop_in_place(guard.0.as_ptr() as *mut V);
             }
         }
-        drop(ptr);
     }
 
     /// Store a value at a specific index

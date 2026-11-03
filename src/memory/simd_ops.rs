@@ -1368,6 +1368,20 @@ pub fn fast_fill(slice: &mut [u8], value: u8) {
     get_global_simd_ops().fill(slice, value)
 }
 
+/// Convenience function for fast raw-pointer memory fill without forming `&mut [u8]`.
+///
+/// # Safety
+/// When `len > 0`, `ptr` must be non-null and valid for writes of `len` contiguous bytes.
+#[inline]
+pub(crate) unsafe fn fast_fill_raw(ptr: *mut u8, value: u8, len: usize) {
+    if len > 0 {
+        // SAFETY: Caller guarantees `ptr` is valid for writes of `len` bytes when `len > 0`.
+        unsafe {
+            get_global_simd_ops().simd_memset(ptr, value, len);
+        }
+    }
+}
+
 /// Convenience function for cache-optimized memory copy
 pub fn fast_copy_cache_optimized(src: &[u8], dst: &mut [u8]) -> Result<()> {
     get_global_simd_ops().copy_cache_optimized(src, dst)
@@ -1893,6 +1907,28 @@ mod tests {
 
                 std::alloc::dealloc(src_ptr, layout);
                 std::alloc::dealloc(dst_ptr, layout);
+            }
+        }
+    }
+
+    #[test]
+    fn test_fast_fill_raw_initializes_uninit_memory() {
+        // Zero-length fill must be a no-op even on a dangling non-null pointer.
+        // SAFETY: `len == 0` performs zero memory accesses.
+        unsafe {
+            fast_fill_raw(std::ptr::NonNull::<u8>::dangling().as_ptr(), 0xAA, 0);
+        }
+
+        for len in [1usize, 7, 16, 33, 128] {
+            let mut buf = vec![std::mem::MaybeUninit::<u8>::uninit(); len];
+            // SAFETY: `buf` has capacity and length `len` of writable bytes.
+            unsafe {
+                fast_fill_raw(buf.as_mut_ptr() as *mut u8, 0x5A, len);
+            }
+            for cell in &buf {
+                // SAFETY: `fast_fill_raw` initialized all `len` bytes above.
+                let byte = unsafe { cell.assume_init() };
+                assert_eq!(byte, 0x5A);
             }
         }
     }

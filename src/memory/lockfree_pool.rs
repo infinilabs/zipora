@@ -462,7 +462,7 @@ pub struct LockFreePoolConfig {
     pub max_cas_retries: u32,
     /// Backoff strategy for failed CAS operations
     pub backoff_strategy: BackoffStrategy,
-    /// Enable cache-line aligned allocations for better performance
+    /// Enables cache-line prefetch hints; allocations are 8-byte aligned.
     pub enable_cache_alignment: bool,
     /// Cache layout configuration for optimization
     pub cache_config: Option<CacheLayoutConfig>,
@@ -560,7 +560,7 @@ pub struct LockFreePoolStats {
     pub cas_successes: AtomicU64,
     /// Memory utilization (allocated / total)
     pub memory_usage: AtomicU64,
-    /// Cache-line aligned allocations
+    /// Allocations made with cache-line prefetch hints enabled
     pub cache_aligned_allocs: AtomicU64,
     /// NUMA-local allocations
     pub numa_local_allocs: AtomicU64,
@@ -1093,7 +1093,9 @@ impl LockFreeMemoryPool {
         Ok(())
     }
 
-    /// Allocate memory from the pool
+    /// Allocate memory from the pool.
+    ///
+    /// Returned pointers are guaranteed to be 8-byte aligned.
     #[inline(always)]
     pub fn allocate(&self, size: usize) -> Result<NonNull<u8>> {
         if size == 0 {

@@ -1,4 +1,3 @@
-// SAFETY comment to add after reading full file
 //! Secure, thread-safe memory pool implementation
 //!
 //! This module provides a production-ready, thread-safe memory pool that eliminates
@@ -36,10 +35,10 @@ use crate::memory::cache_layout::PrefetchHint;
 use crate::memory::cache_layout::{AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator};
 #[cfg(target_arch = "x86_64")]
 use crate::memory::simd_ops::fast_prefetch;
-use crate::memory::simd_ops::{fast_compare, fast_fill};
+use crate::memory::simd_ops::{fast_compare, fast_fill_raw};
 use crate::simd::Operation;
 use crate::simd::adaptive::AdaptiveSimdSelector;
-use std::alloc::{Layout, alloc, dealloc};
+use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr::NonNull;
@@ -93,11 +92,10 @@ pub struct SecurePoolConfig {
     /// SIMD operations provide meaningful performance benefits only for larger
     /// memory regions. The default of 64 bytes aligns with cache line size.
     pub simd_threshold: usize,
-    /// Enable cache-line aligned allocations for better performance
+    /// Enables cache-line prefetch hints for metadata during bulk allocations.
     ///
-    /// When enabled, all allocations are aligned to cache line boundaries
-    /// to minimize false sharing and improve cache efficiency. This provides
-    /// significant performance benefits for data structures accessed across threads.
+    /// Returned allocations are aligned to `self.alignment` bytes (minimum 8 bytes;
+    /// not cache-line aligned unless `self.alignment >= 64`).
     pub enable_cache_alignment: bool,
     /// Cache layout configuration for optimization
     ///
@@ -168,7 +166,7 @@ impl SecurePoolConfig {
         Self {
             chunk_size: 1024,
             max_chunks: 100,
-            alignment: 8,
+            alignment: 16,
             use_guard_pages: false,
             zero_on_free: true,
             zero_on_alloc: false,
@@ -291,11 +289,10 @@ impl SecurePoolConfig {
         self
     }
 
-    /// Builder method to enable/disable cache alignment
+    /// Builder method to enable/disable cache-line prefetch hints.
     ///
-    /// When enabled (default), all allocations are aligned to cache line boundaries
-    /// to minimize false sharing and improve cache efficiency. This provides
-    /// significant performance benefits for data structures accessed across threads.
+    /// Returned allocations are aligned to `self.alignment` bytes (minimum 8 bytes;
+    /// not cache-line aligned unless `self.alignment >= 64`).
     pub fn with_cache_alignment(mut self, enable: bool) -> Self {
         self.enable_cache_alignment = enable;
         self
@@ -408,7 +405,7 @@ pub struct SecurePoolStats {
     pub local_cache_hits: u64,
     /// Cross-thread steals
     pub cross_thread_steals: u64,
-    /// Cache-aligned allocations
+    /// Allocations made with cache-line prefetch hints enabled
     pub cache_aligned_allocs: u64,
     /// NUMA-local allocations
     pub numa_local_allocs: u64,
@@ -470,10 +467,20 @@ struct ChunkFooter {
     magic: u64,
 }
 
+const MIN_CHUNK_ALIGN: usize = 8;
+
+const _: () = assert!(
+    std::mem::size_of::<ChunkHeader>().is_multiple_of(MIN_CHUNK_ALIGN)
+        && std::mem::align_of::<ChunkHeader>() <= MIN_CHUNK_ALIGN
+        && std::mem::align_of::<ChunkFooter>() <= MIN_CHUNK_ALIGN
+        && std::mem::align_of::<usize>() <= MIN_CHUNK_ALIGN
+);
+
 /// Secure wrapper around memory chunks with validation
 pub struct SecureChunk {
     ptr: NonNull<u8>,
     size: usize,
+    align: usize,
     generation: u64,
     pool_id: u32,
     canary: u32,
@@ -493,59 +500,104 @@ fn padded_payload_size(size: usize) -> usize {
     size.next_multiple_of(std::mem::align_of::<ChunkFooter>())
 }
 
+/// Compute `(layout, payload_offset, effective_align)` for a chunk of `size` bytes
+/// with requested `alignment`.
+///
+/// The allocation begins at `raw_ptr` (aligned to `effective_align = alignment.max(8)`),
+/// places `data_ptr = raw_ptr.add(payload_offset)` on an `effective_align` boundary,
+/// places `ChunkHeader` immediately preceding `data_ptr` at `data_ptr.sub(header_size)`,
+/// and places `ChunkFooter` at `data_ptr.add(padded_payload_size(size))`.
+#[inline]
+fn chunk_layout(size: usize, alignment: usize) -> Result<(Layout, usize, usize)> {
+    if size == 0 {
+        return Err(ZiporaError::invalid_data("chunk_size cannot be zero"));
+    }
+    if alignment == 0 || !alignment.is_power_of_two() {
+        return Err(ZiporaError::invalid_data(
+            "alignment must be a power of two",
+        ));
+    }
+    let align = alignment.max(MIN_CHUNK_ALIGN);
+    if !align.is_power_of_two() {
+        return Err(ZiporaError::invalid_data(
+            "alignment must be a power of two",
+        ));
+    }
+
+    let header_size = std::mem::size_of::<ChunkHeader>();
+    let footer_size = std::mem::size_of::<ChunkFooter>();
+    let payload_offset = header_size
+        .checked_next_multiple_of(align)
+        .ok_or_else(|| ZiporaError::invalid_data("Invalid alignment for chunk allocation"))?;
+    let padded_size = size
+        .checked_next_multiple_of(std::mem::align_of::<ChunkFooter>())
+        .ok_or_else(|| ZiporaError::invalid_data("Invalid size for chunk allocation"))?;
+    let total_size = payload_offset
+        .checked_add(padded_size)
+        .and_then(|s| s.checked_add(footer_size))
+        .ok_or_else(|| ZiporaError::invalid_data("Invalid layout for chunk allocation"))?;
+
+    let layout = Layout::from_size_align(total_size, align)
+        .map_err(|_| ZiporaError::invalid_data("Invalid layout for chunk allocation"))?;
+    Ok((layout, payload_offset, align))
+}
+
 impl SecureChunk {
     /// Create a new secure chunk with validation metadata
-    fn new(size: usize, generation: u64, pool_id: u32) -> Result<Self> {
+    fn new(size: usize, alignment: usize, generation: u64, pool_id: u32) -> Result<Self> {
+        let (layout, payload_offset, align) = chunk_layout(size, alignment)?;
         let canary = fastrand::u32(..);
         let header_size = std::mem::size_of::<ChunkHeader>();
-        let footer_size = std::mem::size_of::<ChunkFooter>();
         let padded_size = padded_payload_size(size);
-        let total_size = header_size + padded_size + footer_size;
 
-        let layout = Layout::from_size_align(total_size, 8)
-            .map_err(|_| ZiporaError::invalid_data("Invalid layout for chunk allocation"))?;
-
-        // SAFETY: layout valid (size > 0, align power of 2)
-        let raw_ptr = unsafe { alloc(layout) };
+        // SAFETY: `chunk_layout` validated that `layout` has non-zero size and power-of-two `align`.
+        // `alloc_zeroed` initializes all bytes to zero so `SecurePooledPtr::as_slice` and
+        // `as_mut_slice` never expose uninitialized bytes even when `zero_on_alloc` is false.
+        let raw_ptr = unsafe { alloc_zeroed(layout) };
         if raw_ptr.is_null() {
             return Err(ZiporaError::out_of_memory(size));
         }
 
-        // Initialize header
-        let header = raw_ptr as *mut ChunkHeader;
-        // SAFETY: ptr valid from alloc, aligned, within allocated region
+        // Return pointer to data area (`align`-aligned because `raw_ptr` is `align`-aligned
+        // and `payload_offset` is a multiple of `align`).
+        // SAFETY: `raw_ptr` points to a live allocation of `layout.size()` bytes and `payload_offset < layout.size()`.
+        let data_ptr = unsafe { raw_ptr.add(payload_offset) };
+
+        // Place header immediately before `data_ptr` so `data_ptr.sub(header_size)` locates it
+        // regardless of `align`.
+        // SAFETY: `payload_offset >= header_size`, so `data_ptr.sub(header_size)` lies within
+        // the allocated region; because `align >= 8` is a power of two and `header_size` is a
+        // multiple of 8, `header_ptr` satisfies `align_of::<ChunkHeader>()`.
         unsafe {
-            (*header) = ChunkHeader {
+            let header_ptr = data_ptr.sub(header_size) as *mut ChunkHeader;
+            header_ptr.write(ChunkHeader {
                 magic: CHUNK_HEADER_MAGIC,
                 size,
                 generation,
                 pool_id,
                 allocation_time: current_time_nanos(),
                 canary,
-            };
+            });
         }
 
         // Initialize footer
-        // SAFETY: pointer valid from alloc, offset < total_size
-        let footer_ptr = unsafe { raw_ptr.add(header_size + padded_size) as *mut ChunkFooter };
-        // SAFETY: footer_ptr valid, aligned, within allocated region
+        // SAFETY: `payload_offset + padded_size + size_of::<ChunkFooter>() == layout.size()`,
+        // and both `data_ptr` and `padded_size` are multiples of `align_of::<ChunkFooter>()`.
         unsafe {
-            (*footer_ptr) = ChunkFooter {
+            let footer_ptr = data_ptr.add(padded_size) as *mut ChunkFooter;
+            footer_ptr.write(ChunkFooter {
                 canary,
                 padding: 0,
                 generation,
                 magic: CHUNK_FOOTER_MAGIC,
-            };
+            });
         }
 
-        // Return pointer to data area (after header)
-        // SAFETY: pointer valid from alloc, offset < total_size
-        let data_ptr = unsafe { raw_ptr.add(header_size) };
-
         Ok(Self {
-            // SAFETY: data_ptr non-null (from non-null raw_ptr + offset)
+            // SAFETY: `raw_ptr` is non-null and `add(payload_offset)` remains non-null.
             ptr: unsafe { NonNull::new_unchecked(data_ptr) },
             size,
+            align,
             generation,
             pool_id,
             canary,
@@ -558,7 +610,7 @@ impl SecureChunk {
     /// Validate chunk integrity
     fn validate(&self) -> Result<()> {
         let header_size = std::mem::size_of::<ChunkHeader>();
-        // SAFETY: ptr constructed in new() with header_size offset, sub reverses it
+        // SAFETY: new() places ChunkHeader immediately preceding data_ptr at raw_ptr + (payload_offset - header_size)
         let header_ptr = unsafe { self.ptr.as_ptr().sub(header_size) as *const ChunkHeader };
         // SAFETY: header_ptr valid, aligned to ChunkHeader, from allocation
         let header = unsafe { &*header_ptr };
@@ -623,24 +675,49 @@ impl SecureChunk {
         Ok(())
     }
 
-    /// Zero the data area, with SIMD acceleration for large regions
+    /// Zero the data area on the recycle path, with SIMD acceleration for large regions.
     ///
-    /// Used both when the chunk is really freed and when it is recycled into
-    /// a cache: the caller's bytes must not survive either path.
-    fn zero_payload(&self, enable_simd_ops: bool, simd_threshold: usize) {
-        // SAFETY: pointer valid from allocation, size matches allocation
+    /// Recycled chunks remain live in the thread-local cache or global stack, so
+    /// non-volatile `fast_fill_raw` / `write_bytes` cannot be eliminated as a dead store.
+    fn zero_payload(&mut self, enable_simd_ops: bool, simd_threshold: usize) {
+        // SAFETY: `self.ptr` points to `self.size` writable bytes exclusively owned by `self`.
         unsafe {
             // SIMD-optimized memory zeroing for large regions
             if enable_simd_ops && self.size >= simd_threshold {
-                // Use SIMD fast_fill for large memory regions (≥64 bytes by default)
-                // Provides 2-3x faster zeroing with vectorized instructions
-                let slice = std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size);
-                fast_fill(slice, 0);
+                // Use raw-pointer SIMD fill without forming `&mut [u8]` over potentially
+                // uninitialized bytes written via raw pointer by a caller.
+                fast_fill_raw(self.ptr.as_ptr(), 0, self.size);
             } else {
                 // Standard zeroing for small regions where SIMD overhead isn't beneficial
                 std::ptr::write_bytes(self.ptr.as_ptr(), 0, self.size);
             }
         }
+    }
+
+    /// Zero the data area with volatile writes immediately prior to `dealloc`
+    /// so dead-store elimination cannot remove secret wiping.
+    fn zero_payload_volatile(&mut self) {
+        let base = self.ptr.as_ptr();
+        let word_size = std::mem::size_of::<usize>();
+        let word_count = self.size / word_size;
+        let word_ptr = base as *mut usize;
+
+        for i in 0..word_count {
+            // SAFETY: `base` is aligned to `self.align >= MIN_CHUNK_ALIGN >= align_of::<usize>()`,
+            // and `(i + 1) * word_size <= self.size` lies within the exclusively owned payload.
+            unsafe {
+                std::ptr::write_volatile(word_ptr.add(i), 0usize);
+            }
+        }
+
+        for offset in (word_count * word_size)..self.size {
+            // SAFETY: `offset < self.size` lies within the exclusively owned payload.
+            unsafe {
+                std::ptr::write_volatile(base.add(offset), 0u8);
+            }
+        }
+
+        std::sync::atomic::compiler_fence(Ordering::SeqCst);
     }
 
     /// Get pointer to data area
@@ -660,32 +737,56 @@ impl SecureChunk {
         self.generation
     }
 
-    /// Safely deallocate the chunk with SIMD-optimized memory zeroing
-    ///
-    /// # SIMD Optimization
-    /// For memory regions >= simd_threshold bytes, uses vectorized instructions
-    /// (AVX-512/AVX2/SSE2) for significantly faster zeroing while maintaining
-    /// all security guarantees. Falls back to standard zeroing for smaller regions.
-    fn deallocate(self, zero_on_free: bool, enable_simd_ops: bool, simd_threshold: usize) {
+    /// Safely deallocate the chunk, wiping the payload (when `zero_on_free` is enabled)
+    /// and scrubbing security metadata (`ChunkHeader` and `ChunkFooter`) via volatile
+    /// writes before `dealloc`.
+    fn deallocate(mut self, zero_on_free: bool) {
         if zero_on_free {
-            self.zero_payload(enable_simd_ops, simd_threshold);
+            self.zero_payload_volatile();
         }
 
-        let header_size = std::mem::size_of::<ChunkHeader>();
-        let footer_size = std::mem::size_of::<ChunkFooter>();
-        let total_size = header_size + padded_payload_size(self.size) + footer_size;
+        let Ok((layout, payload_offset, _)) = chunk_layout(self.size, self.align) else {
+            unreachable!("layout parameters were validated in SecureChunk::new");
+        };
 
-        // SAFETY: ptr constructed in new() with header_size offset, sub reverses it
-        let raw_ptr = unsafe { self.ptr.as_ptr().sub(header_size) };
-        // SAFETY: Layout::from_size_align() cannot fail because:
-        // 1. total_size was successfully used to allocate this chunk
-        // 2. Alignment of 8 is always valid (power of 2)
-        // 3. self.size was validated during allocation
-        let layout = Layout::from_size_align(total_size, 8)
-            .expect("layout creation: non-zero size, power-of-two alignment");
-
-        // SAFETY: ptr from matching alloc, layout matches allocation
+        // Scrub security metadata (canaries, magic values, generation, pool_id) before freeing.
+        // SAFETY: `new()` placed `ChunkHeader` immediately preceding `self.ptr` and `ChunkFooter`
+        // at `self.ptr.add(padded_payload_size(self.size))`, both properly aligned and exclusively
+        // owned within `layout`.
         unsafe {
+            let header_ptr =
+                self.ptr.as_ptr().sub(std::mem::size_of::<ChunkHeader>()) as *mut ChunkHeader;
+            std::ptr::write_volatile(
+                header_ptr,
+                ChunkHeader {
+                    magic: 0,
+                    size: 0,
+                    generation: 0,
+                    allocation_time: 0,
+                    pool_id: 0,
+                    canary: 0,
+                },
+            );
+
+            let footer_ptr =
+                self.ptr.as_ptr().add(padded_payload_size(self.size)) as *mut ChunkFooter;
+            std::ptr::write_volatile(
+                footer_ptr,
+                ChunkFooter {
+                    canary: 0,
+                    padding: 0,
+                    generation: 0,
+                    magic: 0,
+                },
+            );
+        }
+
+        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+
+        // SAFETY: `self.ptr` was constructed in `SecureChunk::new` as `raw_ptr.add(payload_offset)`
+        // from an allocation with this exact `layout`.
+        unsafe {
+            let raw_ptr = self.ptr.as_ptr().sub(payload_offset);
             dealloc(raw_ptr, layout);
         }
     }
@@ -693,13 +794,13 @@ impl SecureChunk {
 
 // Note: SecureChunk doesn't implement Drop because deallocate() takes self by value
 // and Drop::drop() takes &mut self. Deallocation is handled explicitly by the pool
-// or by SecurePooledPtr::drop() to ensure proper SIMD optimization based on config.
+// or by SecurePooledPtr::drop().
 
 // SAFETY: SecureChunk is Send because:
 // 1. `ptr: NonNull<u8>` - Raw pointer to heap-allocated memory. The chunk owns
 //    this memory exclusively until deallocated. No thread-local state.
-// 2. `size: usize` - Immutable primitive, trivially Send.
-// 3. `canary: u32` - Immutable after construction, trivially Send.
+// 2. `size: usize`, `align: usize` - Immutable primitives, trivially Send.
+// 3. `canary: u32`, `pool_id: u32` - Immutable after construction, trivially Send.
 // 4. `generation: u64` - Immutable after construction, trivially Send.
 unsafe impl Send for SecureChunk {}
 
@@ -805,23 +906,14 @@ struct LocalCache {
     chunks: Vec<SecureChunk>,
     max_size: usize,
     zero_on_free: bool,
-    enable_simd_ops: bool,
-    simd_threshold: usize,
 }
 
 impl LocalCache {
-    fn new(
-        max_size: usize,
-        zero_on_free: bool,
-        enable_simd_ops: bool,
-        simd_threshold: usize,
-    ) -> Self {
+    fn new(max_size: usize, zero_on_free: bool) -> Self {
         Self {
             chunks: Vec::with_capacity(max_size),
             max_size,
             zero_on_free,
-            enable_simd_ops,
-            simd_threshold,
         }
     }
 
@@ -842,7 +934,7 @@ impl LocalCache {
 impl Drop for LocalCache {
     fn drop(&mut self) {
         for chunk in self.chunks.drain(..) {
-            chunk.deallocate(self.zero_on_free, self.enable_simd_ops, self.simd_threshold);
+            chunk.deallocate(self.zero_on_free);
         }
     }
 }
@@ -892,15 +984,7 @@ impl std::fmt::Debug for SecureMemoryPool {
 impl SecureMemoryPool {
     /// Create a new secure memory pool
     pub fn new(config: SecurePoolConfig) -> Result<Arc<Self>> {
-        if config.chunk_size == 0 {
-            return Err(ZiporaError::invalid_data("chunk_size cannot be zero"));
-        }
-
-        if config.alignment == 0 || !config.alignment.is_power_of_two() {
-            return Err(ZiporaError::invalid_data(
-                "alignment must be a power of two",
-            ));
-        }
+        let _ = chunk_layout(config.chunk_size, config.alignment)?;
 
         static POOL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
         let pool_id = POOL_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -942,7 +1026,9 @@ impl SecureMemoryPool {
         }))
     }
 
-    /// Allocate a chunk from the pool with RAII guard and cache optimization
+    /// Allocate a chunk from the pool with RAII guard and cache optimization.
+    ///
+    /// Returned pointers are guaranteed to be aligned to `config.alignment.max(8)` bytes.
     pub fn allocate(self: &Arc<Self>) -> Result<SecurePooledPtr> {
         self.allocate_with_hint(false) // Default: not marked as hot
     }
@@ -956,8 +1042,6 @@ impl SecureMemoryPool {
             RefCell::new(LocalCache::new(
                 self.config.local_cache_size,
                 self.config.zero_on_free,
-                self.config.enable_simd_ops,
-                self.config.simd_threshold,
             ))
         });
 
@@ -1075,23 +1159,25 @@ impl SecureMemoryPool {
     }
 
     /// Internal deallocation with security validation
-    ///
-    /// # SIMD Performance
-    /// Chunks returned to cache/stack are not immediately deallocated (and thus not SIMD-optimized).
-    /// SIMD optimization occurs when chunks are finally deallocated during:
-    /// - Pool cleanup (clear/drop) - uses pool's SIMD configuration
-    /// - SecurePooledPtr drop when pool is gone - uses conservative SIMD defaults
-    fn deallocate_internal(&self, chunk: SecureChunk) -> Result<()> {
+    fn deallocate_internal(&self, mut chunk: SecureChunk) -> Result<()> {
         self.dealloc_count.fetch_add(1, Ordering::Relaxed);
+        let chunk_ptr = chunk.as_ptr() as usize;
 
         // Validate chunk before deallocation
         if let Err(e) = chunk.validate() {
             self.corruption_detected.fetch_add(1, Ordering::Relaxed);
-            chunk.deallocate(
-                self.config.zero_on_free,
-                self.config.enable_simd_ops,
-                self.config.simd_threshold,
-            );
+            let mut allocs = self
+                .active_allocations
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            if allocs
+                .get(&chunk_ptr)
+                .is_some_and(|&(orig_gen, _)| orig_gen == chunk.generation())
+            {
+                allocs.remove(&chunk_ptr);
+            }
+            drop(allocs);
+            chunk.deallocate(self.config.zero_on_free);
             return Err(e);
         }
 
@@ -1100,17 +1186,12 @@ impl SecureMemoryPool {
             .active_allocations
             .write()
             .unwrap_or_else(|e| e.into_inner());
-        let chunk_ptr = chunk.as_ptr() as usize;
 
         if let Some(&allocation_info) = allocs.get(&chunk_ptr) {
             let (original_generation, _): (u64, Instant) = allocation_info;
             if original_generation != chunk.generation() {
                 self.double_free_detected.fetch_add(1, Ordering::Relaxed);
-                chunk.deallocate(
-                    self.config.zero_on_free,
-                    self.config.enable_simd_ops,
-                    self.config.simd_threshold,
-                );
+                chunk.deallocate(self.config.zero_on_free);
                 return Err(ZiporaError::invalid_data(
                     "Double-free detected: generation mismatch",
                 ));
@@ -1119,11 +1200,7 @@ impl SecureMemoryPool {
             }
         } else {
             self.double_free_detected.fetch_add(1, Ordering::Relaxed);
-            chunk.deallocate(
-                self.config.zero_on_free,
-                self.config.enable_simd_ops,
-                self.config.simd_threshold,
-            );
+            chunk.deallocate(self.config.zero_on_free);
             return Err(ZiporaError::invalid_data(
                 "Double-free detected: pointer not allocated",
             ));
@@ -1143,8 +1220,6 @@ impl SecureMemoryPool {
             RefCell::new(LocalCache::new(
                 self.config.local_cache_size,
                 self.config.zero_on_free,
-                self.config.enable_simd_ops,
-                self.config.simd_threshold,
             ))
         });
 
@@ -1205,15 +1280,14 @@ impl SecureMemoryPool {
             }
         }
 
-        // Fall back to regular allocation
-        let mut chunk = SecureChunk::new(self.config.chunk_size, generation, self.pool_id)?;
-
-        // SIMD-optimized memory zeroing on allocation if configured
-        if self.config.zero_on_alloc {
-            self.zero_chunk_simd(&mut chunk)?;
-        }
-
-        Ok(chunk)
+        // Fall back to regular allocation (`SecureChunk::new` uses `alloc_zeroed`, so fresh
+        // chunks start zero-initialized regardless of `self.config.zero_on_alloc`).
+        SecureChunk::new(
+            self.config.chunk_size,
+            self.config.alignment,
+            generation,
+            self.pool_id,
+        )
     }
 
     /// Zero chunk memory with SIMD acceleration and adaptive selection
@@ -1230,11 +1304,10 @@ impl SecureMemoryPool {
         let selector = AdaptiveSimdSelector::global();
         let start = Instant::now();
 
-        // SAFETY: pointer valid from allocation, size matches allocation
-        let slice = unsafe { std::slice::from_raw_parts_mut(chunk.as_ptr(), chunk.size()) };
-
-        // Use SIMD-accelerated fill
-        fast_fill(slice, 0);
+        // SAFETY: `chunk.as_ptr()` points to `chunk.size()` writable bytes exclusively owned by `chunk`.
+        unsafe {
+            fast_fill_raw(chunk.as_ptr(), 0, chunk.size());
+        }
 
         // Monitor performance for adaptive adjustment
         selector.monitor_performance(Operation::MemZero, start.elapsed(), chunk.size() as u64);
@@ -1349,13 +1422,9 @@ impl SecureMemoryPool {
 
     /// Clear all chunks from the pool
     pub fn clear(&self) -> Result<()> {
-        // Clear global stack and deallocate chunks with SIMD optimization
+        // Clear global stack and deallocate chunks
         while let Some(chunk) = self.global_stack.pop() {
-            chunk.deallocate(
-                self.config.zero_on_free,
-                self.config.enable_simd_ops,
-                self.config.simd_threshold,
-            );
+            chunk.deallocate(self.config.zero_on_free);
         }
 
         // Note: We cannot safely clear thread-local caches from another thread
@@ -1388,7 +1457,7 @@ impl SecureMemoryPool {
             // Read canary from the chunk header for validation
             let data_ptr = ptr_addr as *mut u8;
             let header_size = std::mem::size_of::<ChunkHeader>();
-            // SAFETY: data_ptr from active allocation, sub reverses new() offset
+            // SAFETY: data_ptr is from an active allocation where new() places ChunkHeader immediately preceding data_ptr at raw_ptr + (payload_offset - header_size)
             let header_ptr = unsafe { data_ptr.sub(header_size) as *const ChunkHeader };
             // SAFETY: header_ptr valid, aligned to ChunkHeader, from allocation
             let header = unsafe { &*header_ptr };
@@ -1533,9 +1602,8 @@ impl Drop for SecurePooledPtr {
                 // but this prevents crashes during cleanup
                 let _ = pool.deallocate_internal(chunk);
             } else {
-                // Pool is gone, deallocate directly with SIMD defaults
-                // Use conservative SIMD settings for safety when pool config unavailable
-                chunk.deallocate(true, true, 64); // Always zero on free when pool is gone
+                // Pool is gone; wipe payload with volatile writes before freeing
+                chunk.deallocate(true);
             }
         }
     }
@@ -1671,20 +1739,22 @@ mod tests {
         // multiple of 8 produced a misaligned reference — UB, and an abort
         // under debug assertions. Every shipped preset happens to be a
         // multiple of 8, so only user-chosen sizes hit it.
-        let header_size = std::mem::size_of::<ChunkHeader>();
         let footer_align = std::mem::align_of::<ChunkFooter>();
-        for size in [1usize, 7, 8, 9, 100, 1023, 1024] {
-            let padded = padded_payload_size(size);
-            assert!(padded >= size, "padding shrank the payload for {size}");
-            assert!(
-                padded < size + footer_align,
-                "padding overshot for {size}: {padded}"
-            );
-            assert_eq!(
-                (header_size + padded) % footer_align,
-                0,
-                "footer misaligned for chunk_size {size}"
-            );
+        for align in [1usize, 8, 16, 32, 64, 128] {
+            for size in [1usize, 7, 8, 9, 100, 1023, 1024] {
+                let (_, payload_offset, _) = chunk_layout(size, align).unwrap();
+                let padded = padded_payload_size(size);
+                assert!(padded >= size, "padding shrank the payload for {size}");
+                assert!(
+                    padded < size + footer_align,
+                    "padding overshot for {size}: {padded}"
+                );
+                assert_eq!(
+                    (payload_offset + padded) % footer_align,
+                    0,
+                    "footer misaligned for chunk_size {size} with align {align}"
+                );
+            }
         }
     }
 
@@ -1890,18 +1960,23 @@ mod tests {
         let config = SecurePoolConfig::small_secure();
         let pool = SecureMemoryPool::new(config).unwrap();
         let allocated_count = Arc::new(AtomicUsize::new(0));
+        let (threads, iters) = if cfg!(miri) { (4, 8) } else { (10, 100) };
 
-        let handles: Vec<_> = (0..10)
+        let handles: Vec<_> = (0..threads)
             .map(|_| {
                 let pool = pool.clone();
                 let count = allocated_count.clone();
                 thread::spawn(move || {
-                    for _ in 0..100 {
+                    for _ in 0..iters {
                         let _ptr = pool.allocate().unwrap();
                         count.fetch_add(1, Ordering::Relaxed);
 
                         // Simulate some work
-                        thread::sleep(Duration::from_micros(1));
+                        if cfg!(miri) {
+                            thread::yield_now();
+                        } else {
+                            thread::sleep(Duration::from_micros(1));
+                        }
 
                         // ptr automatically deallocated on scope exit
                     }
@@ -1913,11 +1988,12 @@ mod tests {
             handle.join().unwrap();
         }
 
-        assert_eq!(allocated_count.load(Ordering::Relaxed), 1000);
+        let expected = threads * iters;
+        assert_eq!(allocated_count.load(Ordering::Relaxed), expected);
 
         let stats = pool.stats();
-        assert_eq!(stats.alloc_count, 1000);
-        assert_eq!(stats.dealloc_count, 1000);
+        assert_eq!(stats.alloc_count, expected as u64);
+        assert_eq!(stats.dealloc_count, expected as u64);
         assert_eq!(stats.corruption_detected, 0);
         assert_eq!(stats.double_free_detected, 0);
     }
@@ -2108,15 +2184,21 @@ mod tests {
 
     #[test]
     fn test_cache_optimized_operations() {
-        let config = SecurePoolConfig::large_secure()
+        let mut config = SecurePoolConfig::large_secure()
             .with_simd_ops(true)
             .with_simd_threshold(64)
             .with_cache_alignment(true)
             .with_zero_on_alloc(true);
+        let iters = if cfg!(miri) {
+            config.chunk_size = 4096;
+            3
+        } else {
+            10
+        };
         let pool = SecureMemoryPool::new(config).unwrap();
 
         // Test various sizes to trigger different SIMD paths
-        for _ in 0..10 {
+        for _ in 0..iters {
             let ptr = pool.allocate().unwrap();
             assert!(!ptr.as_ptr().is_null());
 
@@ -2126,7 +2208,7 @@ mod tests {
         }
 
         let stats = pool.stats();
-        assert!(stats.alloc_count >= 10);
+        assert!(stats.alloc_count >= iters as u64);
     }
 
     #[test]
@@ -2173,13 +2255,19 @@ mod tests {
 
     #[test]
     fn test_adaptive_simd_integration() {
-        let config = SecurePoolConfig::large_secure()
+        let mut config = SecurePoolConfig::large_secure()
             .with_simd_ops(true)
             .with_zero_on_alloc(true);
+        let iters = if cfg!(miri) {
+            config.chunk_size = 4096;
+            4
+        } else {
+            100
+        };
         let pool = SecureMemoryPool::new(config).unwrap();
 
         // Allocate multiple times to trigger adaptive monitoring
-        for _ in 0..100 {
+        for _ in 0..iters {
             let ptr = pool.allocate().unwrap();
             assert!(!ptr.as_ptr().is_null());
 
@@ -2191,8 +2279,8 @@ mod tests {
 
         // Verify stats
         let stats = pool.stats();
-        assert_eq!(stats.alloc_count, 100);
-        assert_eq!(stats.dealloc_count, 100);
+        assert_eq!(stats.alloc_count, iters);
+        assert_eq!(stats.dealloc_count, iters);
     }
 
     #[test]
@@ -2200,18 +2288,24 @@ mod tests {
         use std::sync::atomic::AtomicUsize;
         use std::thread;
 
-        let config = SecurePoolConfig::medium_secure()
+        let mut config = SecurePoolConfig::medium_secure()
             .with_simd_ops(true)
             .with_zero_on_alloc(true);
+        let (threads, iters) = if cfg!(miri) {
+            config.chunk_size = 2048;
+            (2, 4)
+        } else {
+            (4, 25)
+        };
         let pool = SecureMemoryPool::new(config).unwrap();
         let verified_count = Arc::new(AtomicUsize::new(0));
 
-        let handles: Vec<_> = (0..4)
+        let handles: Vec<_> = (0..threads)
             .map(|_| {
                 let pool = pool.clone();
                 let count = verified_count.clone();
                 thread::spawn(move || {
-                    for _ in 0..25 {
+                    for _ in 0..iters {
                         let ptr = pool.allocate().unwrap();
 
                         // Verify zeroing
@@ -2227,11 +2321,162 @@ mod tests {
             handle.join().unwrap();
         }
 
-        // All 100 allocations should be verified as zeroed
-        assert_eq!(verified_count.load(Ordering::Relaxed), 100);
+        let expected = threads * iters;
+        assert_eq!(verified_count.load(Ordering::Relaxed), expected);
 
         let stats = pool.stats();
-        assert_eq!(stats.alloc_count, 100);
-        assert_eq!(stats.dealloc_count, 100);
+        assert_eq!(stats.alloc_count, expected as u64);
+        assert_eq!(stats.dealloc_count, expected as u64);
+    }
+
+    #[test]
+    fn test_s4_volatile_zeroing_and_aligned_dealloc_paths() {
+        for (size, align) in [(5usize, 1usize), (100, 64), (256, 128)] {
+            let mut chunk = SecureChunk::new(size, align, 1, 7).unwrap();
+            let effective_align = align.max(MIN_CHUNK_ALIGN);
+            assert_eq!(chunk.as_ptr() as usize % effective_align, 0);
+            // SAFETY: chunk exclusively owns `size` bytes at `chunk.as_ptr()`.
+            unsafe {
+                std::ptr::write_bytes(chunk.as_ptr(), 0xA5, size);
+            }
+            chunk.zero_payload_volatile();
+            // SAFETY: chunk payload was initialized and just zeroed.
+            let slice = unsafe { std::slice::from_raw_parts(chunk.as_ptr(), size) };
+            assert!(slice.iter().all(|&b| b == 0));
+            chunk.validate().unwrap();
+            chunk.deallocate(true);
+        }
+
+        // Pool-gone deallocation path with 64-byte alignment (Miri verifies matching Layout).
+        let ptr = {
+            let pool = SecureMemoryPool::new(SecurePoolConfig::new(100, 4, 64)).unwrap();
+            let mut p = pool.allocate().unwrap();
+            assert_eq!(p.as_ptr() as usize % 64, 0);
+            p.as_mut_slice().fill(0x5A);
+            p
+        };
+        drop(ptr);
+
+        // Overflowing size or alignment must fail cleanly with Err rather than panicking.
+        assert!(SecureMemoryPool::new(SecurePoolConfig::new(usize::MAX, 4, 16)).is_err());
+        assert!(
+            SecureMemoryPool::new(SecurePoolConfig::new(64, 4, 1usize << (usize::BITS - 1)))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_s4_uninit_free_slice_and_gold_hash_idx_padded_recycle() {
+        #[repr(C)]
+        #[derive(Clone, Debug, PartialEq)]
+        struct PaddedVal {
+            tag: u8,
+            // 7 bytes of struct padding on 64-bit targets
+            word: u64,
+        }
+
+        // 1. Fresh chunk on a `zero_on_alloc: false, zero_on_free: false` pool starts
+        // zero-initialized (`alloc_zeroed`), so safe `as_slice()` / `as_mut_slice()` never
+        // expose uninitialized bytes under Miri.
+        let pool = SecureMemoryPool::new(
+            SecurePoolConfig::new(128, 8, 16)
+                .with_zero_on_alloc(false)
+                .with_zero_on_free(false),
+        )
+        .unwrap();
+        let mut fresh = pool.allocate().unwrap();
+        assert!(fresh.as_slice().iter().all(|&b| b == 0));
+        fresh.as_mut_slice()[0] = 0;
+        drop(fresh);
+
+        // 2. Inserting, updating, removing, and dropping padded `(u8, u64)` and `#[repr(C)]`
+        // values in `GoldHashIdx::with_pool` scrubs struct padding before returning chunks to
+        // `pool`, even when both `zero_on_alloc` and `zero_on_free` are false.
+        let mut tuple_idx: crate::containers::GoldHashIdx<u64, (u8, u64)> =
+            crate::containers::GoldHashIdx::with_pool(16, pool.clone());
+        tuple_idx.insert(1, (0x7F, 0xCAFE_BABE_DEAD_BEEF)).unwrap();
+        tuple_idx.insert(1, (0x12, 0x1122_3344_5566_7788)).unwrap();
+        assert_eq!(tuple_idx.remove(&1), Some((0x12, 0x1122_3344_5566_7788)));
+        tuple_idx.insert(2, (0x34, 0x99AA_BBCC_DDEE_FF00)).unwrap();
+        drop(tuple_idx);
+
+        let mut repr_idx: crate::containers::GoldHashIdx<u64, PaddedVal> =
+            crate::containers::GoldHashIdx::with_pool(16, pool.clone());
+        repr_idx
+            .insert(
+                7,
+                PaddedVal {
+                    tag: 0xAB,
+                    word: 0xFEED_FACE_1234_5678,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            repr_idx.remove(&7),
+            Some(PaddedVal {
+                tag: 0xAB,
+                word: 0xFEED_FACE_1234_5678,
+            })
+        );
+        drop(repr_idx);
+
+        let recycled = pool.allocate().unwrap();
+        assert!(pool.stats().local_cache_hits >= 1);
+        assert!(recycled.as_slice().iter().all(|&b| b == 0));
+        drop(recycled);
+
+        // 3. Raw-pointer writes with uninitialized padding bytes into >= 64B SIMD-enabled
+        // chunks must not trigger `&mut [u8]` uninit UB in `zero_payload` (`zero_on_free`) or
+        // `zero_chunk_simd` (`zero_on_alloc`).
+        for (zero_on_free, zero_on_alloc) in [(true, false), (false, true)] {
+            let simd_pool = SecureMemoryPool::new(
+                SecurePoolConfig::new(128, 8, 16)
+                    .with_zero_on_free(zero_on_free)
+                    .with_zero_on_alloc(zero_on_alloc)
+                    .with_simd_ops(true)
+                    .with_simd_threshold(64),
+            )
+            .unwrap();
+            let p = simd_pool.allocate().unwrap();
+            let first_addr = p.as_ptr();
+            // SAFETY: `p` has size 128 >= size_of::<PaddedVal>() and alignment 16 >= align_of::<PaddedVal>()
+            unsafe {
+                std::ptr::write(
+                    p.as_ptr() as *mut PaddedVal,
+                    PaddedVal {
+                        tag: 0x55,
+                        word: 0xABCD_EF01_2345_6789,
+                    },
+                );
+            }
+            drop(p);
+
+            let p2 = simd_pool.allocate().unwrap();
+            assert_eq!(p2.as_ptr(), first_addr);
+            assert!(p2.as_slice().iter().all(|&b| b == 0));
+        }
+    }
+
+    #[test]
+    fn test_s4_corrupted_chunk_removed_from_active_allocations_before_dealloc() {
+        let pool = SecureMemoryPool::new(SecurePoolConfig::new(128, 8, 32)).unwrap();
+        let victim = pool.allocate().unwrap();
+        let survivor = pool.allocate().unwrap();
+
+        // Corrupt victim's footer magic so `deallocate_internal` takes the corruption path.
+        // SAFETY: `victim.as_ptr().add(padded_payload_size(victim.size()))` points to `victim`'s
+        // exclusively owned `ChunkFooter`.
+        unsafe {
+            let footer_ptr =
+                victim.as_ptr().add(padded_payload_size(victim.size())) as *mut ChunkFooter;
+            (*footer_ptr).magic ^= 0xFF;
+        }
+
+        drop(victim);
+        assert_eq!(pool.stats().corruption_detected, 1);
+
+        // `pool.validate()` must succeed without UAF on `victim`'s freed heap allocation.
+        pool.validate().unwrap();
+        survivor.validate().unwrap();
     }
 }
