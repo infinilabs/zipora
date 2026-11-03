@@ -41,7 +41,7 @@
 //! ```
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 // Additional sync primitives (currently unused)
 // use std::sync::atomic::AtomicU8;
 // use std::sync::RwLock;
@@ -342,6 +342,13 @@ impl LazyFreeStats {
 /// still in use by active tokens.
 #[derive(Debug)]
 pub struct VersionManager {
+    inner: Arc<VersionManagerInner>,
+}
+
+#[derive(Debug)]
+struct VersionManagerInner {
+    /// Process-unique identifier keying the thread-local token cache.
+    id: u64,
     /// Current concurrency level.
     concurrency_level: ConcurrencyLevel,
     /// Master version sequence counter.
@@ -358,48 +365,89 @@ pub struct VersionManager {
     stats: Mutex<VersionManagerStats>,
 }
 
+static NEXT_VERSION_MANAGER_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Rolls back an incremented active-token counter on early error or panic unwind
+/// before the constructed token takes ownership of `TokenReleaseCallback`.
+struct ActiveCountGuard<'a> {
+    counter: &'a AtomicU64,
+    armed: bool,
+}
+
+impl<'a> ActiveCountGuard<'a> {
+    #[inline]
+    fn armed(counter: &'a AtomicU64) -> Self {
+        Self {
+            counter,
+            armed: true,
+        }
+    }
+
+    #[inline]
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ActiveCountGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.counter.fetch_sub(1, Ordering::Release);
+        }
+    }
+}
+
 impl VersionManager {
     /// Creates a new version manager with the specified concurrency level.
     pub fn new(concurrency_level: ConcurrencyLevel) -> Self {
         Self {
-            concurrency_level,
-            current_version: AtomicU64::new(1), // Start at 1 to avoid zero-version issues
-            min_version: AtomicU64::new(1),
-            active_readers: AtomicU64::new(0),
-            active_writers: AtomicU64::new(0),
-            token_chain_mutex: Mutex::new(()),
-            stats: Mutex::new(VersionManagerStats::default()),
+            inner: Arc::new(VersionManagerInner {
+                id: NEXT_VERSION_MANAGER_ID.fetch_add(1, Ordering::Relaxed),
+                concurrency_level,
+                current_version: AtomicU64::new(1), // Start at 1 to avoid zero-version issues
+                min_version: AtomicU64::new(1),
+                active_readers: AtomicU64::new(0),
+                active_writers: AtomicU64::new(0),
+                token_chain_mutex: Mutex::new(()),
+                stats: Mutex::new(VersionManagerStats::default()),
+            }),
         }
+    }
+
+    /// Returns the process-unique identifier of this version manager.
+    #[inline]
+    pub(crate) fn id(&self) -> u64 {
+        self.inner.id
     }
 
     /// Returns the current concurrency level.
     #[inline]
     pub fn concurrency_level(&self) -> ConcurrencyLevel {
-        self.concurrency_level
+        self.inner.concurrency_level
     }
 
     /// Returns the current version sequence number.
     #[inline]
     pub fn current_version(&self) -> u64 {
-        self.current_version.load(Ordering::Acquire)
+        self.inner.current_version.load(Ordering::Acquire)
     }
 
     /// Returns the minimum version still in use.
     #[inline]
     pub fn min_version(&self) -> u64 {
-        self.min_version.load(Ordering::Acquire)
+        self.inner.min_version.load(Ordering::Acquire)
     }
 
     /// Returns the number of active reader tokens.
     #[inline]
     pub fn active_readers(&self) -> u64 {
-        self.active_readers.load(Ordering::Relaxed)
+        self.inner.active_readers.load(Ordering::Acquire)
     }
 
     /// Returns the number of active writer tokens.
     #[inline]
     pub fn active_writers(&self) -> u64 {
-        self.active_writers.load(Ordering::Relaxed)
+        self.inner.active_writers.load(Ordering::Acquire)
     }
 
     /// Acquires a new reader token.
@@ -407,22 +455,23 @@ impl VersionManager {
     /// This method implements the token acquisition protocol, assigning a version
     /// sequence number and updating the active token count.
     pub fn acquire_reader_token(&self) -> Result<ReaderToken> {
+        let inner = &*self.inner;
         // Check if readers are allowed at this concurrency level
-        if self.concurrency_level == ConcurrencyLevel::NoWriteReadOnly {
+        if inner.concurrency_level == ConcurrencyLevel::NoWriteReadOnly {
             // Read-only level allows unlimited readers without version tracking
-            return Ok(ReaderToken::new_readonly());
+            return Ok(ReaderToken::new_readonly(inner.id));
         }
 
         let start_time = Instant::now();
 
         // For levels that require synchronization, acquire version under lock
-        let (version, min_version) = if self.concurrency_level.requires_synchronization() {
-            let _lock = self.token_chain_mutex.lock().map_err(|_| {
+        let (version, min_version) = if inner.concurrency_level.requires_synchronization() {
+            let _lock = inner.token_chain_mutex.lock().map_err(|_| {
                 ZiporaError::system_error("Failed to acquire token chain mutex for reader")
             })?;
 
-            let current_min = self.min_version.load(Ordering::Acquire);
-            let version = self.current_version.fetch_add(1, Ordering::AcqRel) + 1;
+            let current_min = inner.min_version.load(Ordering::Acquire);
+            let version = inner.current_version.fetch_add(1, Ordering::AcqRel) + 1;
 
             (version, current_min)
         } else {
@@ -430,25 +479,32 @@ impl VersionManager {
             (1, 1)
         };
 
-        // Increment active reader count
-        self.active_readers.fetch_add(1, Ordering::Relaxed);
+        // Increment active reader count and guard until ReaderToken owns the callback
+        inner.active_readers.fetch_add(1, Ordering::AcqRel);
+        let mut active_guard = ActiveCountGuard::armed(&inner.active_readers);
+
+        let thread_id = thread::current().id();
+        let callback = Arc::new(TokenReleaseCallback {
+            version_manager: Arc::downgrade(&self.inner),
+            token_type: TokenType::Reader,
+        });
 
         // Update statistics
-        if let Ok(mut stats) = self.stats.lock() {
+        if let Ok(mut stats) = inner.stats.lock() {
             stats.reader_tokens_acquired += 1;
             stats.total_reader_acquisition_time += start_time.elapsed();
         }
 
-        Ok(ReaderToken::new(
+        let token = ReaderToken::new(
+            inner.id,
             version,
             min_version,
-            thread::current().id(),
-            self.concurrency_level,
-            Arc::new(TokenReleaseCallback {
-                version_manager: self as *const Self,
-                token_type: TokenType::Reader,
-            }),
-        ))
+            thread_id,
+            inner.concurrency_level,
+            callback,
+        );
+        active_guard.disarm();
+        Ok(token)
     }
 
     /// Acquires a new writer token.
@@ -456,63 +512,108 @@ impl VersionManager {
     /// This method implements writer token acquisition with proper exclusivity
     /// checking based on the concurrency level.
     pub fn acquire_writer_token(&self) -> Result<WriterToken> {
+        let inner = &*self.inner;
         // Check if writers are allowed at this concurrency level
-        if self.concurrency_level == ConcurrencyLevel::NoWriteReadOnly {
+        if inner.concurrency_level == ConcurrencyLevel::NoWriteReadOnly {
             return Err(ZiporaError::invalid_operation(
                 "Writers not allowed in NoWriteReadOnly mode",
             ));
         }
 
         let start_time = Instant::now();
+        let mut active_guard = ActiveCountGuard {
+            counter: &inner.active_writers,
+            armed: false,
+        };
 
-        // For OneWriteMultiRead, ensure no other writers are active
-        if self.concurrency_level == ConcurrencyLevel::OneWriteMultiRead {
-            let current_writers = self.active_writers.load(Ordering::Acquire);
-            if current_writers > 0 {
+        // For OneWriteMultiRead, claim the single writer slot atomically.
+        let exclusive = inner.concurrency_level == ConcurrencyLevel::OneWriteMultiRead;
+        if exclusive {
+            if inner
+                .active_writers
+                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
                 return Err(ZiporaError::resource_busy(
                     "Another writer is already active in OneWriteMultiRead mode",
                 ));
             }
+            active_guard.armed = true;
         }
 
         // Acquire version under lock for synchronized levels
-        let (version, min_version) = if self.concurrency_level.requires_synchronization() {
-            let _lock = self.token_chain_mutex.lock().map_err(|_| {
+        let (version, min_version) = if inner.concurrency_level.requires_synchronization() {
+            let _lock = inner.token_chain_mutex.lock().map_err(|_| {
                 ZiporaError::system_error("Failed to acquire token chain mutex for writer")
             })?;
 
-            let current_min = self.min_version.load(Ordering::Acquire);
-            let version = self.current_version.fetch_add(1, Ordering::AcqRel) + 1;
+            let current_min = inner.min_version.load(Ordering::Acquire);
+            let version = inner.current_version.fetch_add(1, Ordering::AcqRel) + 1;
 
             (version, current_min)
         } else {
             (1, 1)
         };
 
-        // Increment active writer count
-        self.active_writers.fetch_add(1, Ordering::Relaxed);
+        // Increment active writer count for non-exclusive levels
+        if !exclusive {
+            inner.active_writers.fetch_add(1, Ordering::AcqRel);
+            active_guard.armed = true;
+        }
+
+        let thread_id = thread::current().id();
+        let callback = Arc::new(TokenReleaseCallback {
+            version_manager: Arc::downgrade(&self.inner),
+            token_type: TokenType::Writer,
+        });
 
         // Update statistics
-        if let Ok(mut stats) = self.stats.lock() {
+        if let Ok(mut stats) = inner.stats.lock() {
             stats.writer_tokens_acquired += 1;
             stats.total_writer_acquisition_time += start_time.elapsed();
         }
 
-        Ok(WriterToken::new(
+        let token = WriterToken::new(
             version,
             min_version,
-            thread::current().id(),
-            self.concurrency_level,
-            Arc::new(TokenReleaseCallback {
-                version_manager: self as *const Self,
-                token_type: TokenType::Writer,
-            }),
-        ))
+            thread_id,
+            inner.concurrency_level,
+            callback,
+        );
+        active_guard.disarm();
+        Ok(token)
     }
 
+    /// Returns version manager statistics.
+    pub fn stats(&self) -> Result<VersionManagerStats> {
+        self.inner
+            .stats
+            .lock()
+            .map(|stats| stats.clone())
+            .map_err(|_| ZiporaError::system_error("Failed to acquire stats mutex"))
+    }
+
+    /// Clears all statistics.
+    pub fn clear_stats(&self) -> Result<()> {
+        self.inner
+            .stats
+            .lock()
+            .map(|mut stats| *stats = VersionManagerStats::default())
+            .map_err(|_| ZiporaError::system_error("Failed to acquire stats mutex"))
+    }
+
+    /// Validates that a token version is still valid.
+    pub fn validate_token_version(&self, token_version: u64) -> bool {
+        let current = self.current_version();
+        let min = self.min_version();
+        token_version >= min && token_version <= current
+    }
+}
+
+impl VersionManagerInner {
     /// Internal method to release a reader token.
     fn release_reader_token(&self, _token_version: u64) {
-        self.active_readers.fetch_sub(1, Ordering::Relaxed);
+        self.active_readers.fetch_sub(1, Ordering::Release);
 
         // Update minimum version if this was the head token
         if self.concurrency_level.requires_synchronization() {
@@ -527,7 +628,7 @@ impl VersionManager {
 
     /// Internal method to release a writer token.
     fn release_writer_token(&self, _token_version: u64) {
-        self.active_writers.fetch_sub(1, Ordering::Relaxed);
+        self.active_writers.fetch_sub(1, Ordering::Release);
 
         // Update minimum version if this was the head token
         if self.concurrency_level.requires_synchronization() {
@@ -543,35 +644,12 @@ impl VersionManager {
     /// Advances `min_version` to `current_version` when all active readers and
     /// writers have drained.
     fn try_advance_min_version(&self) {
-        if self.active_readers.load(Ordering::Relaxed) == 0
-            && self.active_writers.load(Ordering::Relaxed) == 0
+        if self.active_readers.load(Ordering::Acquire) == 0
+            && self.active_writers.load(Ordering::Acquire) == 0
         {
             let current = self.current_version.load(Ordering::Acquire);
             self.min_version.store(current, Ordering::Release);
         }
-    }
-
-    /// Returns version manager statistics.
-    pub fn stats(&self) -> Result<VersionManagerStats> {
-        self.stats
-            .lock()
-            .map(|stats| stats.clone())
-            .map_err(|_| ZiporaError::system_error("Failed to acquire stats mutex"))
-    }
-
-    /// Clears all statistics.
-    pub fn clear_stats(&self) -> Result<()> {
-        self.stats
-            .lock()
-            .map(|mut stats| *stats = VersionManagerStats::default())
-            .map_err(|_| ZiporaError::system_error("Failed to acquire stats mutex"))
-    }
-
-    /// Validates that a token version is still valid.
-    pub fn validate_token_version(&self, token_version: u64) -> bool {
-        let current = self.current_version();
-        let min = self.min_version();
-        token_version >= min && token_version <= current
     }
 }
 
@@ -630,25 +708,15 @@ enum TokenType {
 }
 
 /// Callback structure for token release.
+#[derive(Debug)]
 struct TokenReleaseCallback {
-    version_manager: *const VersionManager,
+    version_manager: Weak<VersionManagerInner>,
     token_type: TokenType,
-}
-
-impl std::fmt::Debug for TokenReleaseCallback {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TokenReleaseCallback")
-            .field("version_manager", &(self.version_manager as usize))
-            .field("token_type", &self.token_type)
-            .finish()
-    }
 }
 
 impl TokenReleaseCallback {
     fn release(&self, token_version: u64) {
-        // SAFETY: version_manager pointer is valid for the lifetime of this callback (tied to VersionedFsa's lifetime)
-        unsafe {
-            let manager = &*self.version_manager;
+        if let Some(manager) = self.version_manager.upgrade() {
             match self.token_type {
                 TokenType::Reader => manager.release_reader_token(token_version),
                 TokenType::Writer => manager.release_writer_token(token_version),
@@ -657,22 +725,6 @@ impl TokenReleaseCallback {
     }
 }
 
-// SAFETY: TokenReleaseCallback is Send because:
-// 1. `version_manager: *const VersionManager` - Raw pointer to a VersionManager.
-//    The VersionManager is expected to outlive all callbacks (managed by Arc).
-// 2. `token_type: TokenType` - Simple enum, trivially Send.
-//
-// INVARIANT: The VersionManager must remain valid for the lifetime of all callbacks.
-// This is enforced by the Arc<VersionManager> ownership in the token creation path.
-unsafe impl Send for TokenReleaseCallback {}
-
-// SAFETY: TokenReleaseCallback is Sync because:
-// 1. Both fields are read-only after construction.
-// 2. `release()` calls thread-safe methods on VersionManager (which uses atomics).
-// 3. The VersionManager's release_reader_token/release_writer_token are atomic.
-// Sharing &TokenReleaseCallback for concurrent reads is safe.
-unsafe impl Sync for TokenReleaseCallback {}
-
 /// Reader token for safe concurrent read access.
 ///
 /// Reader tokens provide read-only access to data structures with version-based
@@ -680,6 +732,8 @@ unsafe impl Sync for TokenReleaseCallback {}
 /// for most concurrency levels.
 #[derive(Debug)]
 pub struct ReaderToken {
+    /// Process-unique ID of the `VersionManager` that issued this token.
+    manager_id: u64,
     /// Version sequence number when this token was acquired.
     version: u64,
     /// Minimum version that was valid when this token was acquired.
@@ -695,6 +749,7 @@ pub struct ReaderToken {
 impl ReaderToken {
     /// Creates a new reader token.
     fn new(
+        manager_id: u64,
         version: u64,
         min_version: u64,
         thread_id: ThreadId,
@@ -702,6 +757,7 @@ impl ReaderToken {
         release_callback: Arc<TokenReleaseCallback>,
     ) -> Self {
         Self {
+            manager_id,
             version,
             min_version,
             thread_id,
@@ -711,14 +767,21 @@ impl ReaderToken {
     }
 
     /// Creates a read-only token for NoWriteReadOnly mode.
-    fn new_readonly() -> Self {
+    fn new_readonly(manager_id: u64) -> Self {
         Self {
+            manager_id,
             version: 0, // Special version for read-only tokens
             min_version: 0,
             thread_id: thread::current().id(),
             concurrency_level: ConcurrencyLevel::NoWriteReadOnly,
             release_callback: None,
         }
+    }
+
+    /// Returns the process-unique ID of the `VersionManager` that issued this token.
+    #[inline]
+    pub(crate) fn manager_id(&self) -> u64 {
+        self.manager_id
     }
 
     /// Returns the token's version sequence number.
@@ -1041,6 +1104,32 @@ mod tests {
 
         assert_eq!(manager.active_readers(), 0);
         assert_eq!(manager.active_writers(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_writer_token_outlives_and_survives_manager_move() -> Result<()> {
+        // Outliving the VersionManager must be a clean no-op on drop.
+        let orphan_writer = {
+            let manager = VersionManager::new(ConcurrencyLevel::OneWriteMultiRead);
+            manager.acquire_writer_token()?
+        };
+        assert!(orphan_writer.is_valid());
+        drop(orphan_writer);
+
+        // Moving the VersionManager must keep the active writer slot attached
+        // to the moved manager and release it cleanly on drop.
+        let mut managers = vec![VersionManager::new(ConcurrencyLevel::OneWriteMultiRead)];
+        let writer = managers[0].acquire_writer_token()?;
+        managers.reserve(1024);
+        assert_eq!(managers[0].active_writers(), 1);
+        assert!(managers[0].acquire_writer_token().is_err());
+
+        drop(writer);
+        assert_eq!(managers[0].active_writers(), 0);
+        let next_writer = managers[0].acquire_writer_token()?;
+        assert!(next_writer.is_valid());
 
         Ok(())
     }

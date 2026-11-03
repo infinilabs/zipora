@@ -48,8 +48,13 @@ use crate::fsa::version_sync::{ConcurrencyLevel, ReaderToken, VersionManager, Wr
 
 /// Thread-local token cache for high-performance token reuse.
 ///
-/// This structure maintains thread-local caches of reader and writer tokens
-/// to avoid the overhead of repeated token acquisition and release.
+/// This structure maintains thread-local caches of tokens to avoid the overhead
+/// of repeated token acquisition and release. While a synchronized
+/// [`ReaderToken`] remains cached, it stays live (`active_readers > 0` on its
+/// [`VersionManager`]), so [`VersionManager::min_version`] cannot advance past
+/// its snapshot version while it stays cached; call [`TokenCache::clear`] or
+/// [`TokenManager::clear_thread_cache`] (or replace/exit the thread) to release
+/// it and allow version reclamation.
 #[derive(Debug)]
 pub struct TokenCache {
     /// Cached reader token for reuse.
@@ -84,6 +89,21 @@ impl TokenCache {
         }
         self.stats.reader_cache_misses += 1;
         None
+    }
+
+    /// Attempts to get a cached reader token belonging to `manager_id`.
+    ///
+    /// If a reader token from another manager is cached, leaves it in place,
+    /// records a reader cache miss, and returns `None`.
+    pub(crate) fn get_reader_token_for(&mut self, manager_id: u64) -> Option<ReaderToken> {
+        if matches!(
+            self.cached_reader.as_ref(),
+            Some(token) if token.manager_id() != manager_id
+        ) {
+            self.stats.reader_cache_misses += 1;
+            return None;
+        }
+        self.get_reader_token()
     }
 
     /// Attempts to get a cached writer token.
@@ -258,13 +278,15 @@ impl TokenManager {
 
     /// Acquires a reader token with caching optimization.
     ///
-    /// This method first checks the thread-local cache for a valid token.
-    /// If no cached token is available, it acquires a new one from the version manager.
+    /// This method first checks the thread-local cache for a valid token issued
+    /// by this manager. If no matching cached token is available, it acquires a
+    /// new one from the version manager.
     pub fn acquire_reader_token(&self) -> Result<ReaderToken> {
         let start_time = Instant::now();
+        let manager_id = self.version_manager.id();
 
-        // Try to get a cached token first
-        let token = TOKEN_CACHE.with(|cache| cache.borrow_mut().get_reader_token());
+        // Try to get a cached token belonging to this manager first
+        let token = TOKEN_CACHE.with(|cache| cache.borrow_mut().get_reader_token_for(manager_id));
 
         let token = if let Some(cached_token) = token {
             // Update global cache hit statistics
@@ -288,61 +310,56 @@ impl TokenManager {
         Ok(token)
     }
 
-    /// Acquires a writer token with caching optimization.
+    /// Acquires a writer token directly from the version manager.
     ///
-    /// This method first checks the thread-local cache for a valid token.
-    /// If no cached token is available, it acquires a new one from the version manager.
+    /// Writer tokens are never cached in thread-local storage so exclusive
+    /// writer slots are released promptly and cannot cross manager boundaries.
     pub fn acquire_writer_token(&self) -> Result<WriterToken> {
         let start_time = Instant::now();
+        let new_token = self.version_manager.acquire_writer_token()?;
 
-        // Try to get a cached token first
-        let token = TOKEN_CACHE.with(|cache| cache.borrow_mut().get_writer_token());
+        if let Ok(mut stats) = self.global_stats.lock() {
+            stats.total_writer_cache_misses += 1;
+            stats.total_writer_acquisition_time += start_time.elapsed();
+        }
 
-        let token = if let Some(cached_token) = token {
-            // Update global cache hit statistics
-            if let Ok(mut stats) = self.global_stats.lock() {
-                stats.total_writer_cache_hits += 1;
-            }
-            cached_token
-        } else {
-            // Acquire new token from version manager
-            let new_token = self.version_manager.acquire_writer_token()?;
-
-            // Update global cache miss statistics
-            if let Ok(mut stats) = self.global_stats.lock() {
-                stats.total_writer_cache_misses += 1;
-                stats.total_writer_acquisition_time += start_time.elapsed();
-            }
-
-            new_token
-        };
-
-        Ok(token)
+        Ok(new_token)
     }
 
     /// Returns a reader token to the cache for reuse.
     ///
     /// This method caches the token in thread-local storage for future reuse,
     /// avoiding the overhead of repeated token acquisition.
+    ///
+    /// # Version Retention
+    ///
+    /// A cached synchronized [`ReaderToken`] remains live and keeps
+    /// [`VersionManager::active_readers`] `> 0`, so [`VersionManager::min_version`]
+    /// cannot advance past its snapshot version while it stays cached. Call
+    /// [`Self::clear_thread_cache`] (or let a subsequent reader replacement or
+    /// thread exit drop the cached token) when idle threads must release pinned
+    /// versions.
     pub fn return_reader_token(&self, token: ReaderToken) {
-        TOKEN_CACHE.with(|cache| {
-            cache.borrow_mut().cache_reader_token(token);
-        });
+        if token.manager_id() == self.version_manager.id() {
+            TOKEN_CACHE.with(|cache| {
+                cache.borrow_mut().cache_reader_token(token);
+            });
 
-        // Update global statistics
-        if let Ok(mut stats) = self.global_stats.lock() {
-            stats.total_reader_tokens_returned += 1;
+            // Update global statistics
+            if let Ok(mut stats) = self.global_stats.lock() {
+                stats.total_reader_tokens_returned += 1;
+            }
+        } else {
+            drop(token);
         }
     }
 
-    /// Returns a writer token to the cache for reuse.
+    /// Releases a writer token immediately without caching it.
     ///
-    /// This method caches the token in thread-local storage for future reuse,
-    /// avoiding the overhead of repeated token acquisition.
+    /// Dropping the writer token frees exclusive writer slots (such as
+    /// `OneWriteMultiRead`) so other threads can acquire a writer token.
     pub fn return_writer_token(&self, token: WriterToken) {
-        TOKEN_CACHE.with(|cache| {
-            cache.borrow_mut().cache_writer_token(token);
-        });
+        drop(token);
 
         // Update global statistics
         if let Ok(mut stats) = self.global_stats.lock() {
@@ -470,8 +487,11 @@ impl GlobalTokenStats {
 /// Convenience function for executing a closure with a reader token.
 ///
 /// This function automatically acquires a reader token, executes the closure,
-/// and returns the token to the cache for reuse. It provides a clean RAII
-/// pattern for token usage.
+/// and returns the token to the thread-local cache via
+/// [`TokenManager::return_reader_token`]. Because a cached synchronized reader
+/// keeps `active_readers > 0`, [`VersionManager::min_version`] cannot advance
+/// past it while it stays cached; call [`TokenManager::clear_thread_cache`] to
+/// release it on idle threads.
 ///
 /// # Example
 ///
@@ -501,9 +521,8 @@ where
 
 /// Convenience function for executing a closure with a writer token.
 ///
-/// This function automatically acquires a writer token, executes the closure,
-/// and returns the token to the cache for reuse. It provides a clean RAII
-/// pattern for token usage.
+/// This function acquires a writer token, executes the closure, and releases
+/// the token immediately when finished.
 ///
 /// # Example
 ///
@@ -688,8 +707,9 @@ mod tests {
             num_threads * operations_per_thread
         );
 
-        // Cache hit rate should be high after the first operation per thread
-        assert!(global_stats.overall_hit_rate() > 0.5);
+        // Reader cache hit rate should be high after the first operation per thread;
+        // writer tokens are never cached.
+        assert!(global_stats.reader_hit_rate() > 0.5);
 
         Ok(())
     }
@@ -733,6 +753,8 @@ mod tests {
     #[test]
     fn test_statistics_accuracy() -> Result<()> {
         let manager = TokenManager::new(ConcurrencyLevel::OneWriteMultiRead);
+        manager.clear_thread_cache();
+        manager.clear_all_stats()?;
 
         // Perform multiple operations
         for _ in 0..5 {
@@ -743,22 +765,23 @@ mod tests {
         let global_stats = manager.global_stats()?;
         let thread_stats = manager.thread_cache_stats();
 
-        // Verify global statistics
+        // Verify global statistics (readers cached; writers never cached)
         assert_eq!(global_stats.total_reader_cache_misses, 1); // First acquisition
         assert_eq!(global_stats.total_reader_cache_hits, 4); // Subsequent acquisitions
-        assert_eq!(global_stats.total_writer_cache_misses, 1); // First acquisition
-        assert_eq!(global_stats.total_writer_cache_hits, 4); // Subsequent acquisitions
+        assert_eq!(global_stats.total_writer_cache_misses, 5); // Always acquired fresh
+        assert_eq!(global_stats.total_writer_cache_hits, 0);
 
         // Verify thread-local statistics
         assert_eq!(thread_stats.reader_cache_misses, 1);
         assert_eq!(thread_stats.reader_cache_hits, 4);
-        assert_eq!(thread_stats.writer_cache_misses, 1);
-        assert_eq!(thread_stats.writer_cache_hits, 4);
+        assert_eq!(thread_stats.writer_cache_misses, 0);
+        assert_eq!(thread_stats.writer_cache_hits, 0);
+        assert_eq!(thread_stats.writer_tokens_cached, 0);
 
         // Verify hit rates
         assert_eq!(global_stats.reader_hit_rate(), 0.8); // 4/5
-        assert_eq!(global_stats.writer_hit_rate(), 0.8); // 4/5
-        assert_eq!(global_stats.overall_hit_rate(), 0.8); // 8/10
+        assert_eq!(global_stats.writer_hit_rate(), 0.0); // 0/5
+        assert_eq!(global_stats.overall_hit_rate(), 0.4); // 4/10
 
         Ok(())
     }
@@ -766,22 +789,89 @@ mod tests {
     #[test]
     fn test_cache_clearing() -> Result<()> {
         let manager = TokenManager::new(ConcurrencyLevel::OneWriteMultiRead);
+        manager.clear_thread_cache();
+        manager.clear_all_stats()?;
 
-        // Cache some tokens
+        // Cache reader token (writers are not cached)
         with_reader_token(&manager, |_| Ok(()))?;
         with_writer_token(&manager, |_| Ok(()))?;
 
         // Clear thread cache
         manager.clear_thread_cache();
 
-        // Next operations should be cache misses
+        // Next reader operation should be a cache miss
         with_reader_token(&manager, |_| Ok(()))?;
         with_writer_token(&manager, |_| Ok(()))?;
 
         let thread_stats = manager.thread_cache_stats();
         assert_eq!(thread_stats.reader_cache_misses, 2);
-        assert_eq!(thread_stats.writer_cache_misses, 2);
+        assert_eq!(thread_stats.writer_cache_misses, 0);
+        assert_eq!(thread_stats.writer_tokens_cached, 0);
         assert_eq!(thread_stats.cache_clears, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cross_manager_reader_cache_isolation_and_eviction() -> Result<()> {
+        let readonly = TokenManager::new(ConcurrencyLevel::NoWriteReadOnly);
+        let strict = TokenManager::new(ConcurrencyLevel::SingleThreadStrict);
+        let owmr = TokenManager::new(ConcurrencyLevel::OneWriteMultiRead);
+        readonly.clear_thread_cache();
+        readonly.clear_all_stats()?;
+
+        // Read-only manager caches and reuses its own reader token.
+        with_reader_token(&readonly, |t| {
+            assert_eq!(t.concurrency_level(), ConcurrencyLevel::NoWriteReadOnly);
+            Ok(())
+        })?;
+        with_reader_token(&readonly, |t| {
+            assert_eq!(t.concurrency_level(), ConcurrencyLevel::NoWriteReadOnly);
+            Ok(())
+        })?;
+        assert_eq!(readonly.global_stats()?.total_reader_cache_hits, 1);
+
+        // OneWriteMultiRead does not reuse ReadOnly's cached token, and caches its own.
+        with_reader_token(&owmr, |t| {
+            assert_eq!(t.concurrency_level(), ConcurrencyLevel::OneWriteMultiRead);
+            assert_eq!(owmr.version_manager().active_readers(), 1);
+            Ok(())
+        })?;
+        // Cached OWMR reader remains live while cached.
+        assert_eq!(owmr.version_manager().active_readers(), 1);
+
+        // SingleThreadStrict does not reuse OWMR's cached reader, and returning Strict's
+        // reader evicts OWMR's cached reader so OWMR's active_readers drops to 0.
+        with_reader_token(&strict, |t| {
+            assert_eq!(t.concurrency_level(), ConcurrencyLevel::SingleThreadStrict);
+            assert_eq!(strict.version_manager().active_readers(), 1);
+            Ok(())
+        })?;
+        assert_eq!(owmr.version_manager().active_readers(), 0);
+        assert_eq!(strict.version_manager().active_readers(), 1);
+
+        strict.clear_thread_cache();
+        assert_eq!(strict.version_manager().active_readers(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_foreign_return_reader_token_rejected() -> Result<()> {
+        let a = TokenManager::new(ConcurrencyLevel::OneWriteMultiRead);
+        let b = TokenManager::new(ConcurrencyLevel::MultiWriteMultiRead);
+        a.clear_thread_cache();
+        a.clear_all_stats()?;
+        b.clear_all_stats()?;
+
+        let token_a = a.acquire_reader_token()?;
+        assert_eq!(a.version_manager().active_readers(), 1);
+
+        // Returning `a`'s token to `b` drops it immediately without caching or
+        // inflating `b`'s returned-token counter.
+        b.return_reader_token(token_a);
+        assert_eq!(a.version_manager().active_readers(), 0);
+        assert_eq!(b.global_stats()?.total_reader_tokens_returned, 0);
+        assert_eq!(b.thread_cache_stats().reader_tokens_cached, 0);
 
         Ok(())
     }
