@@ -432,13 +432,51 @@ impl Default for CBuffer {
 }
 
 /// String structure for C FFI
+///
+/// `Drop` hands `data` back to `std::ffi::CString::from_raw`, so safe code
+/// must not be able to choose that pointer. The fields are private; the only
+/// way to obtain a non-null `CString` is [`CString::from_string`]:
+///
+/// ```compile_fail,E0451
+/// use zipora::ffi::types::CString;
+///
+/// // Were this to compile, dropping `forged` would free a pointer that
+/// // `std::ffi::CString::into_raw` never returned.
+/// let forged = CString { data: 8 as *mut std::os::raw::c_char, len: 0 };
+/// drop(forged);
+/// ```
+///
+/// Nor can the pointer of a valid string be swapped out afterwards:
+///
+/// ```compile_fail,E0616
+/// use zipora::ffi::types::CString;
+///
+/// let mut s = CString::from_string("hello".to_string()).unwrap();
+/// s.data = 8 as *mut std::os::raw::c_char;
+/// ```
+///
+/// Valid construction and read-only inspection go through the safe accessors:
+///
+/// ```
+/// use zipora::ffi::types::CString;
+///
+/// let empty = CString::new();
+/// assert!(empty.as_ptr().is_null());
+/// assert_eq!(empty.len(), 0);
+/// assert!(empty.is_empty());
+///
+/// let s = CString::from_string("hello".to_string()).unwrap();
+/// assert!(!s.as_ptr().is_null());
+/// assert_eq!(s.len(), 5);
+/// assert!(!s.is_empty());
+/// ```
 #[repr(C)]
 #[derive(Debug)]
 pub struct CString {
     /// Pointer to null-terminated string
-    pub data: *mut c_char,
+    data: *mut c_char,
     /// Length of string (not including null terminator)
-    pub len: usize,
+    len: usize,
 }
 
 impl CString {
@@ -459,13 +497,40 @@ impl CString {
         Ok(Self { data, len })
     }
 
+    /// Return a read-only pointer to the NUL-terminated string buffer.
+    ///
+    /// Returns null when constructed via [`CString::new`] or [`Default::default`]
+    /// (which perform no allocation), whereas [`CString::from_string`] always
+    /// allocates and returns a non-null pointer to a NUL-terminated buffer
+    /// (including for `""`, where `len() == 0` and `is_empty() == true`).
+    #[inline]
+    pub fn as_ptr(&self) -> *const c_char {
+        self.data
+    }
+
+    /// Return the length of the string in bytes (not including the null terminator).
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Return `true` if the string has length zero.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     /// Convert back to a Rust string
     ///
     /// # Safety
     ///
-    /// The data pointer must point to a valid null-terminated string.
+    /// `self` must have been constructed by [`CString::new`], [`Default::default`],
+    /// or [`CString::from_string`], and `unsafe` or C code must not have mutated
+    /// the bytes behind [`CString::as_ptr`] to alter the position of the
+    /// terminating NUL byte.
     pub unsafe fn into_string(mut self) -> Result<String, std::str::Utf8Error> {
         let ptr = std::mem::replace(&mut self.data, std::ptr::null_mut());
+        self.len = 0;
         if ptr.is_null() {
             return Ok(String::new());
         }
@@ -485,7 +550,7 @@ impl CString {
             return Ok("");
         }
 
-        // SAFETY: pointer is valid (null-checked at line 456), points to null-terminated C string
+        // SAFETY: pointer is valid (null-checked above), points to null-terminated C string
         let cstr = unsafe { std::ffi::CStr::from_ptr(self.data) };
         cstr.to_str()
     }
@@ -566,11 +631,32 @@ mod tests {
 
     #[test]
     fn test_cstring_operations() {
+        let empty = CString::new();
+        assert!(empty.as_ptr().is_null());
+        assert_eq!(empty.len(), 0);
+        assert!(empty.is_empty());
+        // SAFETY: `empty` was constructed by `CString::new()`, so `as_str` and `into_string` safely handle the null pointer.
+        unsafe {
+            assert_eq!(empty.as_str(), Ok(""));
+            assert_eq!(empty.into_string().as_deref(), Ok(""));
+        }
+
+        let empty_alloc = CString::from_string(String::new()).unwrap();
+        assert!(!empty_alloc.as_ptr().is_null());
+        assert_eq!(empty_alloc.len(), 0);
+        assert!(empty_alloc.is_empty());
+        // SAFETY: `empty_alloc` was constructed by `CString::from_string(String::new())`, pointing to a valid NUL-terminated `"\0"` buffer.
+        unsafe {
+            assert_eq!(empty_alloc.as_str(), Ok(""));
+            assert_eq!(empty_alloc.into_string().as_deref(), Ok(""));
+        }
+
         let test_string = "Hello, world!".to_string();
         let c_string = CString::from_string(test_string.clone()).unwrap();
 
-        assert!(!c_string.data.is_null());
-        assert_eq!(c_string.len, 13);
+        assert!(!c_string.as_ptr().is_null());
+        assert_eq!(c_string.len(), 13);
+        assert!(!c_string.is_empty());
 
         // SAFETY: c_string contains valid data from from_string, as_str and into_string are called with valid CString
         unsafe {
