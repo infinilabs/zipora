@@ -19,36 +19,65 @@ const INLINE_CAP: usize = 31;
 /// Flag value indicating heap allocation.
 const HEAP_FLAG: u8 = 255;
 
+#[repr(C)]
+union Repr {
+    inline: [u8; 32],
+    heap: HeapRepr,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+struct HeapRepr {
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+    _pad: [u8; 31 - 3 * std::mem::size_of::<usize>()],
+    flag: u8,
+}
+
 /// A 32-byte string with small string optimization.
 /// Strings ≤31 bytes are stored inline without heap allocation.
 #[repr(C)]
 pub struct MinimalSso {
-    bytes: [u8; 32],
+    repr: Repr,
 }
 
-// Check that the struct is exactly 32 bytes
+const _: () = assert!(std::mem::size_of::<HeapRepr>() == 32);
+const _: () = assert!(std::mem::align_of::<HeapRepr>() == 1);
 const _: () = assert!(std::mem::size_of::<MinimalSso>() == 32);
+const _: () = assert!(std::mem::align_of::<MinimalSso>() == 1);
+
+// SAFETY: MinimalSso uniquely owns its heap buffer (like String) and never shares interior mutability.
+unsafe impl Send for MinimalSso {}
+// SAFETY: Shared &MinimalSso references only read immutable bytes/metadata, like String.
+unsafe impl Sync for MinimalSso {}
 
 impl MinimalSso {
     /// Create an empty string (inline, zero length).
     #[inline]
     pub fn new() -> Self {
-        let mut s = Self { bytes: [0u8; 32] };
-        s.bytes[31] = INLINE_CAP as u8; // unused_len = 31 (empty)
-        s
+        let mut inline = [0u8; 32];
+        inline[31] = INLINE_CAP as u8; // unused_len = 31 (empty)
+        Self {
+            repr: Repr { inline },
+        }
     }
 
     /// Create from a byte slice.
     #[inline]
     pub fn from_bytes(data: &[u8]) -> Self {
-        let mut s = Self::new();
         if data.len() <= INLINE_CAP {
-            s.bytes[..data.len()].copy_from_slice(data);
-            s.bytes[31] = (INLINE_CAP - data.len()) as u8;
+            let mut inline = [0u8; 32];
+            inline[..data.len()].copy_from_slice(data);
+            inline[31] = (INLINE_CAP - data.len()) as u8;
+            Self {
+                repr: Repr { inline },
+            }
         } else {
+            let mut s = Self::new();
             s.heap_init(data);
+            s
         }
-        s
     }
 
     /// Create from a string slice.
@@ -63,14 +92,17 @@ impl MinimalSso {
     /// Returns `true` if the string is stored inline (no heap allocation).
     #[inline]
     pub fn is_local(&self) -> bool {
-        self.bytes[31] != HEAP_FLAG
+        // SAFETY: Both `Repr::inline` and `Repr::heap` are 32 bytes with all 32 bytes
+        // initialized (`HeapRepr` initializes `_pad` and `flag = HEAP_FLAG` at byte 31).
+        unsafe { self.repr.inline[31] != HEAP_FLAG }
     }
 
     /// Returns the length in bytes.
     #[inline]
     pub fn len(&self) -> usize {
         if self.is_local() {
-            INLINE_CAP - self.bytes[31] as usize
+            // SAFETY: `is_local()` confirmed `self.repr.inline` is active.
+            INLINE_CAP - unsafe { self.repr.inline[31] } as usize
         } else {
             self.heap_len()
         }
@@ -95,8 +127,12 @@ impl MinimalSso {
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         if self.is_local() {
-            let len = INLINE_CAP - self.bytes[31] as usize;
-            &self.bytes[..len]
+            // SAFETY: `is_local()` confirmed `self.repr.inline` is active and
+            // `inline[31]` holds `INLINE_CAP - len <= INLINE_CAP`.
+            unsafe {
+                let len = INLINE_CAP - self.repr.inline[31] as usize;
+                &self.repr.inline[..len]
+            }
         } else {
             // SAFETY: Heap mode guarantees valid ptr/len from successful allocation in heap_init/write_heap
             unsafe {
@@ -139,8 +175,11 @@ impl MinimalSso {
         if self.is_local() {
             if new_len <= INLINE_CAP {
                 // Still fits inline
-                self.bytes[old_len..old_len + data.len()].copy_from_slice(data);
-                self.bytes[31] = (INLINE_CAP - new_len) as u8;
+                // SAFETY: `is_local()` confirmed `self.repr.inline` is active and `new_len <= INLINE_CAP`.
+                unsafe {
+                    self.repr.inline[old_len..new_len].copy_from_slice(data);
+                    self.repr.inline[31] = (INLINE_CAP - new_len) as u8;
+                }
             } else {
                 // Spill to heap
                 self.spill_to_heap(old_len, data);
@@ -168,7 +207,10 @@ impl MinimalSso {
     /// Clear contents (keeps heap allocation if present).
     pub fn clear(&mut self) {
         if self.is_local() {
-            self.bytes[31] = INLINE_CAP as u8;
+            // SAFETY: `is_local()` confirmed `self.repr.inline` is active.
+            unsafe {
+                self.repr.inline[31] = INLINE_CAP as u8;
+            }
         } else {
             self.set_heap_len(0);
         }
@@ -204,10 +246,11 @@ impl MinimalSso {
         if ptr.is_null() {
             std::alloc::handle_alloc_error(layout);
         }
-        // SAFETY: ptr valid from allocation, old_len + extra.len() <= cap
+        // SAFETY: `self.repr.inline` is still active (`old_len <= INLINE_CAP`), and
+        // `ptr` is valid for `cap >= old_len + extra.len()` bytes.
         unsafe {
-            // Copy existing inline data
-            std::ptr::copy_nonoverlapping(self.bytes.as_ptr(), ptr, old_len);
+            // Copy existing inline data before overwriting union with HeapRepr
+            std::ptr::copy_nonoverlapping(self.repr.inline.as_ptr(), ptr, old_len);
             // Copy new data
             std::ptr::copy_nonoverlapping(extra.as_ptr(), ptr.add(old_len), extra.len());
         }
@@ -231,36 +274,42 @@ impl MinimalSso {
         self.write_heap(ptr, len, new_cap);
     }
 
-    // Read/write heap metadata from the 32-byte blob.
-    // Layout: [ptr:8][len:8][cap:8][pad][flag:1]
+    // Read/write heap metadata from the 32-byte union while preserving pointer provenance.
+    // Layout: [ptr:usize][len:usize][cap:usize][_pad][flag:1]
 
     #[inline]
     fn heap_ptr(&self) -> *mut u8 {
-        let p: usize = usize::from_ne_bytes(self.bytes[0..8].try_into().expect("slice is 8 bytes"));
-        p as *mut u8
+        // SAFETY: Caller verified `!self.is_local()`, so `self.repr.heap` is active;
+        // copying a `Copy` field out of `#[repr(C, packed)]` performs an unaligned
+        // read without creating an unaligned reference, preserving pointer provenance.
+        unsafe { self.repr.heap.ptr }
     }
 
     #[inline]
     fn heap_len(&self) -> usize {
-        usize::from_ne_bytes(self.bytes[8..16].try_into().expect("slice is 8 bytes"))
+        // SAFETY: Caller verified `!self.is_local()`, so `self.repr.heap` is active.
+        unsafe { self.repr.heap.len }
     }
 
     #[inline]
     fn heap_cap(&self) -> usize {
-        usize::from_ne_bytes(self.bytes[16..24].try_into().expect("slice is 8 bytes"))
+        // SAFETY: Caller verified `!self.is_local()`, so `self.repr.heap` is active.
+        unsafe { self.repr.heap.cap }
     }
 
     #[inline]
     fn set_heap_len(&mut self, len: usize) {
-        self.bytes[8..16].copy_from_slice(&len.to_ne_bytes());
+        self.repr.heap.len = len;
     }
 
     fn write_heap(&mut self, ptr: *mut u8, len: usize, cap: usize) {
-        self.bytes[0..8].copy_from_slice(&(ptr as usize).to_ne_bytes());
-        self.bytes[8..16].copy_from_slice(&len.to_ne_bytes());
-        self.bytes[16..24].copy_from_slice(&cap.to_ne_bytes());
-        // pad bytes 24..31 are don't-care
-        self.bytes[31] = HEAP_FLAG;
+        self.repr.heap = HeapRepr {
+            ptr,
+            len,
+            cap,
+            _pad: [0u8; 31 - 3 * std::mem::size_of::<usize>()],
+            flag: HEAP_FLAG,
+        };
     }
 }
 
@@ -527,5 +576,32 @@ mod tests {
         let s = MinimalSso::from_bytes(&[0xFF, 0xFE]);
         assert!(s.to_str().is_err());
         let _ = s.as_str();
+    }
+
+    #[test]
+    fn test_unaligned_1byte_placement_and_provenance() {
+        #[repr(C)]
+        struct UnalignedHolder {
+            _byte: u8,
+            sso: MinimalSso,
+        }
+        assert_eq!(std::mem::align_of::<UnalignedHolder>(), 1);
+        assert_eq!(std::mem::size_of::<UnalignedHolder>(), 33);
+
+        let mut holder = UnalignedHolder {
+            _byte: 0xAA,
+            sso: MinimalSso::from_str("inline start"),
+        };
+        assert!(holder.sso.is_local());
+        holder
+            .sso
+            .push_str(" -- spilling past 31 bytes onto the heap!");
+        assert!(!holder.sso.is_local());
+        holder.sso.push_str(&"z".repeat(80));
+        let cloned = holder.sso.clone();
+        assert_eq!(cloned.as_str(), holder.sso.as_str());
+        holder.sso.clear();
+        assert!(holder.sso.is_empty());
+        assert!(!holder.sso.is_local());
     }
 }
