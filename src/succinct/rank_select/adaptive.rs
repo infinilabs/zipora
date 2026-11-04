@@ -793,6 +793,10 @@ pub struct AdaptiveMultiDimensional {
 
 impl AdaptiveMultiDimensional {
     /// Create adaptive multi-dimensional rank/select for two related bit vectors
+    #[deprecated(
+        since = "5.0.1",
+        note = "only the first bit vector is indexed; use RankSelectMixedIL256::new(bv0, bv1) for two-dimensional rank/select"
+    )]
     pub fn new_dual(bit_vector1: BitVector, bit_vector2: BitVector) -> Result<Self> {
         if bit_vector1.len() != bit_vector2.len() {
             return Err(ZiporaError::invalid_data(
@@ -806,8 +810,8 @@ impl AdaptiveMultiDimensional {
 
         Ok(Self {
             implementation,
-            implementation_name: "RankSelectInterleaved256 (dual dimension)".to_string(),
-            dimensions: 2,
+            implementation_name: "RankSelectInterleaved256 (single dimension)".to_string(),
+            dimensions: 1,
         })
     }
 
@@ -1048,6 +1052,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_multi_dimensional_adaptive() {
         let bv1 = create_balanced_bitvector(1000);
         let bv2 = create_sparse_bitvector(1000, 50);
@@ -1058,7 +1063,7 @@ mod tests {
                 .implementation_name()
                 .contains("RankSelectInterleaved256")
         );
-        assert_eq!(multi.dimensions(), 2);
+        assert_eq!(multi.dimensions(), 1);
 
         // Test basic operations
         assert_eq!(multi.len(), 1000);
@@ -1067,6 +1072,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_multi_dimensional_length_mismatch() {
         let bv1 = create_balanced_bitvector(1000);
         let bv2 = create_balanced_bitvector(500); // Different length
