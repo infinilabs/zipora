@@ -641,7 +641,7 @@ impl PaZipCompressor {
     }
 
     /// Decompress PA-Zip compressed data
-    pub fn decompress(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
+    pub fn decompress(&self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
         if input.is_empty() {
             return Ok(());
         }
@@ -681,7 +681,7 @@ impl PaZipCompressor {
 
     /// Decompress a single match based on compression type
     fn decompress_match(
-        &mut self,
+        &self,
         input: &[u8],
         pos: usize,
         compression_type: CompressionType,
@@ -1592,7 +1592,7 @@ mod tests {
 
     #[test]
     fn test_pa_zip_decompress_rejects_truncated_and_oversized_instructions() -> Result<()> {
-        let mut compressor = setup_test_compressor()?;
+        let compressor = setup_test_compressor()?;
         let mut output = Vec::new();
 
         // 1. Truncated Global instruction [1] followed by bytes [0, 1, b'X'] that previously

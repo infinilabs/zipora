@@ -1258,9 +1258,7 @@ impl BlobStore for DictZipBlobStore {
         let decompressed_data = if blob.is_compressed {
             // Decompress using PA-Zip compressor
             let mut decompressed = Vec::new();
-            // Note: compressor is Arc<PaZipCompressor>, so we need to create a mutable copy for decompression
-            let mut compressor_copy = (*self.compressor).clone();
-            compressor_copy
+            self.compressor
                 .decompress(&dict_compressed, &mut decompressed)
                 .map_err(|e| ZiporaError::invalid_data(format!("Decompression failed: {}", e)))?;
             decompressed

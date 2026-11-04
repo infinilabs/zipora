@@ -4,22 +4,82 @@
 //!   `Some(1)` emitted an unframed stream) and its per-block thread spawn.
 //! - C4: rANS / contextual-Huffman decoders preallocating a caller-supplied
 //!   `output_length` before reading a single symbol.
+//! - C2: PA-Zip `use_reference_encoding` writes streams `decompress` cannot read
+//!   (data loss), plus `DictZipBlobStore::get` cloning the whole compressor.
 //!
 //! Every `test_v2_*` here compiles against v5.0.0; the doc comment of each test
 //! states whether it fails there (and why) or is a guard that must keep passing.
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use zipora::blob_store::{BlobStore, CompressedBlobStore};
+use zipora::compression::dict_zip::{
+    DictZipBlobStoreBuilder, DictZipConfig, DictionaryBuilder, DictionaryBuilderConfig,
+    EntropyAlgorithm, PaZipCompressor, PaZipCompressorConfig,
+};
 use zipora::entropy::huffman::InterleavingFactor;
 use zipora::entropy::rans::ParallelVariant as RansVariant;
 use zipora::entropy::{
     ContextualHuffmanDecoder, ContextualHuffmanEncoder, FseConfig, FseDecoder, FseEncoder,
     HuffmanOrder, ParallelX1, ParallelX2, ParallelX4, ParallelX8, Rans64Encoder, RansDecoder,
 };
+use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/// Per-thread allocation counter, so tests running in parallel do not see
+/// each other's allocations. Counting never changes allocation behaviour.
+struct CountingAlloc;
+
+thread_local! {
+    static ALLOCATED_BYTES: Cell<usize> = const { Cell::new(0) };
+}
+
+fn note_alloc(size: usize) {
+    let _ = ALLOCATED_BYTES.try_with(|c| c.set(c.get().saturating_add(size)));
+}
+
+// SAFETY: every call is forwarded unchanged to `System`; the only extra work
+// is bumping a const-initialised thread-local `Cell`, which never allocates.
+unsafe impl GlobalAlloc for CountingAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        note_alloc(layout.size());
+        // SAFETY: same contract as the caller's.
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        note_alloc(layout.size());
+        // SAFETY: same contract as the caller's.
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        note_alloc(new_size);
+        // SAFETY: same contract as the caller's.
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: same contract as the caller's.
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static GLOBAL: CountingAlloc = CountingAlloc;
+
+/// Bytes allocated by the current thread while running `f`.
+fn bytes_allocated_by<T>(f: impl FnOnce() -> T) -> (T, usize) {
+    let before = ALLOCATED_BYTES.with(Cell::get);
+    let out = f();
+    let after = ALLOCATED_BYTES.with(Cell::get);
+    (out, after - before)
+}
 
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
@@ -36,6 +96,15 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
     })
+}
+
+fn hex_decode(hex: &str) -> Vec<u8> {
+    let digits: Vec<u8> = hex.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    assert_eq!(digits.len() % 2, 0, "odd number of hex digits");
+    digits
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -366,4 +435,320 @@ fn test_v2_contextual_huffman_unallocatable_output_length_is_err() {
     }
 
     assert!(failures.is_empty(), "{failures:?}");
+}
+
+// ---------------------------------------------------------------------------
+// C2: PA-Zip reference mode (data loss) and DictZipBlobStore::get clone
+// ---------------------------------------------------------------------------
+
+const JSON_RECORD: &[u8] = br#"{"service":"zipora-search","status":200,"region":"us-east1"}"#;
+
+fn json_payload() -> Vec<u8> {
+    JSON_RECORD.repeat(16)
+}
+
+fn pazip_compressor(config: PaZipCompressorConfig) -> PaZipCompressor {
+    let dictionary = DictionaryBuilder::with_config(DictionaryBuilderConfig::default())
+        .build(&json_payload())
+        .expect("dictionary");
+    let pool = SecureMemoryPool::new(SecurePoolConfig::new(4096, 1024, 8)).expect("pool");
+    PaZipCompressor::new(dictionary, config, pool).expect("compressor")
+}
+
+/// Decode through a `&mut` binding so this file compiles (warning-free) both
+/// before and after `decompress` moves to `&self`.
+fn pazip_decompress(compressor: &mut PaZipCompressor, stream: &[u8]) -> zipora::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    compressor.decompress(stream, &mut out).map(|()| out)
+}
+
+fn reference_configs() -> [(&'static str, PaZipCompressorConfig); 2] {
+    [
+        (
+            "reference_compliant (suffix array)",
+            PaZipCompressorConfig::reference_compliant(),
+        ),
+        (
+            "use_reference_encoding (hash table)",
+            PaZipCompressorConfig {
+                use_reference_encoding: true,
+                use_suffix_array_local_match: false,
+                ..PaZipCompressorConfig::default()
+            },
+        ),
+    ]
+}
+
+/// C2 (fails at v5.0.0, DATA LOSS): with `use_reference_encoding` the encoder
+/// writes reference-format instructions that `decompress` cannot parse
+/// ("Invalid PA-Zip compression instruction type"); the 960-byte payload also
+/// grows to 990 bytes and `bytes_output` reports the input length (960).
+#[test]
+fn test_v2_pazip_reference_encoding_configs_roundtrip() {
+    let input = json_payload();
+    for (name, config) in reference_configs() {
+        let mut compressor = pazip_compressor(config);
+        let mut compressed = Vec::new();
+        let stats = compressor
+            .compress(&input, &mut compressed)
+            .expect("compress");
+        let decoded = pazip_decompress(&mut compressor, &compressed).unwrap_or_else(|e| {
+            panic!(
+                "{name}: {}-byte stream does not decode: {e}",
+                compressed.len()
+            )
+        });
+        assert_eq!(decoded, input, "{name}: round trip differs");
+        assert_eq!(
+            stats.bytes_output,
+            compressed.len() as u64,
+            "{name}: bytes_output"
+        );
+        assert!(
+            compressed.len() < input.len(),
+            "{name}: {} -> {} bytes, highly repetitive input must shrink",
+            input.len(),
+            compressed.len()
+        );
+    }
+}
+
+/// C2 guard (passes at v5.0.0): the default (legacy) encoder round-trips the
+/// same payload plus edge-case sizes.
+#[test]
+fn test_v2_pazip_legacy_default_roundtrips() {
+    let mut compressor = pazip_compressor(PaZipCompressorConfig::default());
+    let inputs: [Vec<u8>; 7] = [
+        json_payload(),
+        JSON_RECORD.to_vec(),
+        vec![0u8],
+        vec![0x41],
+        b"AB".to_vec(),
+        (0..=255u8).collect(),
+        b"abc".repeat(100),
+    ];
+    for input in inputs {
+        let mut compressed = Vec::new();
+        compressor
+            .compress(&input, &mut compressed)
+            .expect("compress");
+        let decoded =
+            pazip_decompress(&mut compressor, &compressed).expect("legacy stream must decode");
+        assert_eq!(decoded, input);
+    }
+}
+
+/// v5.0.0 reference-mode layout for `data` (its match selection never accepted
+/// a match, so the stream is reference literal runs only):
+/// `[(len - 1) << 3][len bytes]` per 32-byte chunk, shorter final chunk.
+fn v500_reference_layout(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + data.len().div_ceil(32));
+    for chunk in data.chunks(32) {
+        out.push(((chunk.len() - 1) << 3) as u8);
+        out.extend_from_slice(chunk);
+    }
+    out
+}
+
+/// Captured from the v5.0.0 encoder (tag v5.0.0, commit 4a5f4e5):
+/// `PaZipCompressorConfig::reference_compliant()` compressing `JSON_RECORD`.
+const V500_REFERENCE_JSON_RECORD_HEX: &str = "\
+    f87b2273657276696365223a227a69706f72612d736561726368222c2273746174\
+    d87573223a3230302c22726567696f6e223a2275732d6561737431227d";
+
+/// C2 recovery guard (passes at v5.0.0): the captured v5.0.0 reference stream
+/// is exactly the literal-run layout, so it can be recognized structurally
+/// (first byte 0xF8 here, never a legacy opcode 0..=7).
+#[test]
+fn test_v2_pazip_v500_reference_golden_is_literal_layout() {
+    let golden = hex_decode(V500_REFERENCE_JSON_RECORD_HEX);
+    assert_eq!(golden, v500_reference_layout(JSON_RECORD));
+    assert_eq!(golden[0], 0xF8);
+}
+
+/// C2 recovery (fails at v5.0.0): streams written by v5.0.0 in reference mode
+/// must decode to the original bytes ("Invalid PA-Zip compression instruction
+/// type" at v5.0.0). Covers the captured golden stream and every chunking
+/// shape, including the 1-byte stream `[0x00, b]` (whose `b == 0` form v5.0.0
+/// silently decoded to an empty output).
+#[test]
+fn test_v2_pazip_decodes_v500_reference_streams() {
+    let mut compressor = pazip_compressor(PaZipCompressorConfig::default());
+    let golden = hex_decode(V500_REFERENCE_JSON_RECORD_HEX);
+    let decoded = pazip_decompress(&mut compressor, &golden)
+        .unwrap_or_else(|e| panic!("captured v5.0.0 reference stream does not decode: {e}"));
+    assert_eq!(decoded, JSON_RECORD);
+
+    let payload = json_payload();
+    let mut cases: Vec<Vec<u8>> = [1usize, 2, 7, 31, 32, 33, 64, 65, 960]
+        .iter()
+        .map(|&n| payload[..n].to_vec())
+        .collect();
+    cases.push(vec![0x00]);
+    cases.push(vec![0xF8; 40]);
+    let mut failures = Vec::new();
+    for data in cases {
+        match pazip_decompress(&mut compressor, &v500_reference_layout(&data)) {
+            Ok(out) if out == data => {}
+            Ok(out) => failures.push(format!(
+                "{} bytes: decoded {} different bytes",
+                data.len(),
+                out.len()
+            )),
+            Err(e) => failures.push(format!("{} bytes: {e}", data.len())),
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// C2 recovery guard (passes at v5.0.0): only streams that match the v5.0.0
+/// layout exactly are recovered; near misses keep failing.
+#[test]
+fn test_v2_pazip_v500_recovery_rejects_near_miss_streams() {
+    let mut compressor = pazip_compressor(PaZipCompressorConfig::default());
+    let good = v500_reference_layout(&json_payload()[..70]); // 32 + 32 + 6
+    let near_misses = [
+        // Truncated final run.
+        good[..good.len() - 1].to_vec(),
+        // Trailing garbage after the final run.
+        [good.as_slice(), &[0x00]].concat(),
+        // Non-final run shorter than 32 bytes.
+        [v500_reference_layout(&json_payload()[..20]), good.clone()].concat(),
+        // Header with a non-literal type in its low bits.
+        [&[0xF9], &good[1..]].concat(),
+    ];
+    for stream in near_misses {
+        assert!(
+            pazip_decompress(&mut compressor, &stream).is_err(),
+            "near-miss stream of {} bytes (first byte {:#04x}) must not decode",
+            stream.len(),
+            stream[0]
+        );
+    }
+}
+
+fn dict_zip_store_config() -> DictZipConfig {
+    DictZipConfig {
+        dict_builder_config: DictionaryBuilderConfig {
+            target_dict_size: 1024,
+            max_dict_size: 8192,
+            validate_result: false,
+            ..DictionaryBuilderConfig::default()
+        },
+        min_compression_size: 10,
+        ..DictZipConfig::default()
+    }
+}
+
+/// C2 (fails at v5.0.0, DATA LOSS through the blob store): reference-mode
+/// output is only stored when an entropy layer shrinks it below the original
+/// size, after which `get` fails with "Decompression failed: Invalid PA-Zip
+/// compression instruction type".
+#[test]
+fn test_v2_dict_zip_store_reference_config_with_entropy_roundtrips() {
+    let config = DictZipConfig {
+        compressor_config: PaZipCompressorConfig::reference_compliant(),
+        entropy_algorithm: EntropyAlgorithm::HuffmanO1,
+        entropy_interleaved: 1,
+        entropy_zip_ratio_require: 0.95,
+        ..dict_zip_store_config()
+    };
+    let mut builder = DictZipBlobStoreBuilder::with_config(config).unwrap();
+    builder.add_training_sample(&json_payload()).unwrap();
+    let mut store = builder.finish().unwrap();
+    let record = json_payload();
+    let id = store.put(&record).unwrap();
+    let got = store
+        .get(id)
+        .unwrap_or_else(|e| panic!("record written with reference_compliant() is unreadable: {e}"));
+    assert_eq!(got, record);
+}
+
+/// C2 guard for the `get` clone removal (passes at v5.0.0): compressed records
+/// read back byte-exactly, repeatedly and in reverse order.
+#[test]
+fn test_v2_dict_zip_store_get_returns_original_bytes() {
+    let mut builder = DictZipBlobStoreBuilder::with_config(dict_zip_store_config()).unwrap();
+    builder.add_training_sample(&json_payload()).unwrap();
+    let mut store = builder.finish().unwrap();
+    let records: Vec<Vec<u8>> = (1..=12).map(|k| JSON_RECORD.repeat(k)).collect();
+    let ids: Vec<_> = records.iter().map(|r| store.put(r).unwrap()).collect();
+    assert!(
+        store.compression_stats().compressed_count > 0,
+        "compressed path not exercised"
+    );
+    for _ in 0..2 {
+        for (id, record) in ids.iter().zip(&records).rev() {
+            assert_eq!(&store.get(*id).unwrap(), record);
+        }
+    }
+}
+
+/// C2 perf (fails at v5.0.0): every cache-miss `get` deep-clones the whole
+/// `PaZipCompressor` (DFA cache, matcher state, last compressed output)
+/// because `decompress` took `&mut self`; with a 64 KiB dictionary that is
+/// ~290 KB of allocation to read a 120-byte record.
+#[test]
+fn test_v2_dict_zip_store_get_does_not_clone_compressor() {
+    let config = DictZipConfig {
+        dict_builder_config: DictionaryBuilderConfig {
+            target_dict_size: 64 * 1024,
+            max_dict_size: 256 * 1024,
+            validate_result: false,
+            ..DictionaryBuilderConfig::default()
+        },
+        min_compression_size: 10,
+        ..DictZipConfig::default()
+    };
+    let mut builder = DictZipBlobStoreBuilder::with_config(config).unwrap();
+    let corpus: Vec<u8> = (0..2000)
+        .flat_map(|i| {
+            format!(r#"{{"id":{i},"service":"zipora-search","status":200}}"#).into_bytes()
+        })
+        .collect();
+    builder.add_training_sample(&corpus).unwrap();
+    let mut store = builder.finish().unwrap();
+    for k in 1..=16 {
+        store.put(&JSON_RECORD.repeat(k)).unwrap();
+    }
+    let record = JSON_RECORD.repeat(2);
+    let id = store.put(&record).unwrap();
+    let (got, allocated) = bytes_allocated_by(|| store.get(id).unwrap());
+    assert_eq!(got, record);
+    assert!(
+        allocated < 32 * 1024,
+        "cache-miss get of a {}-byte record allocated {allocated} bytes",
+        record.len()
+    );
+}
+
+/// C2b (fails at v5.0.0, DATA LOSS in the default config): inputs of at least
+/// 1 MiB take `compress_parallel`, which runs the legacy encoder once per
+/// 64 KiB block without clearing `output_buffer`, so block k's output repeats
+/// blocks 1..k (a 1,052,672-byte probe grew to 10,044,034 bytes and decoded to
+/// 9,965,568 wrong bytes). `enable_multithreading: true` is the default.
+#[test]
+fn test_v2_pazip_default_config_large_input_roundtrips() {
+    let mut compressor = pazip_compressor(PaZipCompressorConfig::default());
+    let input = JSON_RECORD.repeat(17_500); // 1,050,000 bytes > 1 MiB threshold
+    assert!(input.len() >= 1 << 20);
+    let mut compressed = Vec::new();
+    compressor
+        .compress(&input, &mut compressed)
+        .expect("compress");
+    let decoded = pazip_decompress(&mut compressor, &compressed).expect("decode");
+    assert_eq!(
+        decoded.len(),
+        input.len(),
+        "{} -> {} bytes",
+        input.len(),
+        compressed.len()
+    );
+    assert!(decoded == input, "decoded bytes differ");
+    assert!(
+        compressed.len() < input.len(),
+        "{} -> {} bytes",
+        input.len(),
+        compressed.len()
+    );
 }
