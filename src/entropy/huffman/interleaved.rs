@@ -22,12 +22,17 @@ const MAX_DENSE_TREES: usize = 1025;
 /// Every symbol in `ContextualHuffmanEncoder` / `ContextualHuffmanDecoder`
 /// (including single-symbol leaf trees) consumes at least 1 bit in the
 /// bitstream, so `output_length` cannot exceed `8 * encoded_len`.
-#[inline]
+#[inline(always)]
 fn check_output_length(output_length: usize, encoded_len: usize) -> Result<()> {
-    if output_length > encoded_len.saturating_mul(8) {
-        return Err(ZiporaError::invalid_data(
+    #[cold]
+    #[inline(never)]
+    fn implausible_len_err() -> Result<()> {
+        Err(ZiporaError::invalid_data(
             "Implausible output length for encoded Huffman stream",
-        ));
+        ))
+    }
+    if output_length > encoded_len.saturating_mul(8) {
+        return implausible_len_err();
     }
     Ok(())
 }

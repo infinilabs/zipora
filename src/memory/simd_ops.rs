@@ -1372,7 +1372,6 @@ pub fn fast_fill(slice: &mut [u8], value: u8) {
 ///
 /// # Safety
 /// When `len > 0`, `ptr` must be non-null and valid for writes of `len` contiguous bytes.
-#[inline]
 pub(crate) unsafe fn fast_fill_raw(ptr: *mut u8, value: u8, len: usize) {
     if len > 0 {
         // SAFETY: Caller guarantees `ptr` is valid for writes of `len` bytes when `len > 0`.

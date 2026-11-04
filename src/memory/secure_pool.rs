@@ -462,7 +462,7 @@ struct ChunkHeader {
 #[derive(Debug)]
 struct ChunkFooter {
     canary: u32,
-    padding: u32,
+    align_shift: u32,
     generation: u64,
     magic: u64,
 }
@@ -480,7 +480,6 @@ const _: () = assert!(
 pub struct SecureChunk {
     ptr: NonNull<u8>,
     size: usize,
-    align: usize,
     generation: u64,
     pool_id: u32,
     canary: u32,
@@ -587,7 +586,7 @@ impl SecureChunk {
             let footer_ptr = data_ptr.add(padded_size) as *mut ChunkFooter;
             footer_ptr.write(ChunkFooter {
                 canary,
-                padding: 0,
+                align_shift: align.trailing_zeros(),
                 generation,
                 magic: CHUNK_FOOTER_MAGIC,
             });
@@ -597,7 +596,6 @@ impl SecureChunk {
             // SAFETY: `raw_ptr` is non-null and `add(payload_offset)` remains non-null.
             ptr: unsafe { NonNull::new_unchecked(data_ptr) },
             size,
-            align,
             generation,
             pool_id,
             canary,
@@ -740,20 +738,18 @@ impl SecureChunk {
     /// Safely deallocate the chunk, wiping the payload (when `zero_on_free` is enabled)
     /// and scrubbing security metadata (`ChunkHeader` and `ChunkFooter`) via volatile
     /// writes before `dealloc`.
+    #[cold]
+    #[inline(never)]
     fn deallocate(mut self, zero_on_free: bool) {
         if zero_on_free {
             self.zero_payload_volatile();
         }
 
-        let Ok((layout, payload_offset, _)) = chunk_layout(self.size, self.align) else {
-            unreachable!("layout parameters were validated in SecureChunk::new");
-        };
-
         // Scrub security metadata (canaries, magic values, generation, pool_id) before freeing.
         // SAFETY: `new()` placed `ChunkHeader` immediately preceding `self.ptr` and `ChunkFooter`
         // at `self.ptr.add(padded_payload_size(self.size))`, both properly aligned and exclusively
         // owned within `layout`.
-        unsafe {
+        let align = unsafe {
             let header_ptr =
                 self.ptr.as_ptr().sub(std::mem::size_of::<ChunkHeader>()) as *mut ChunkHeader;
             std::ptr::write_volatile(
@@ -770,16 +766,25 @@ impl SecureChunk {
 
             let footer_ptr =
                 self.ptr.as_ptr().add(padded_payload_size(self.size)) as *mut ChunkFooter;
+            let shift = (*footer_ptr).align_shift;
             std::ptr::write_volatile(
                 footer_ptr,
                 ChunkFooter {
                     canary: 0,
-                    padding: 0,
+                    align_shift: 0,
                     generation: 0,
                     magic: 0,
                 },
             );
-        }
+            1usize
+                .checked_shl(shift)
+                .unwrap_or(MIN_CHUNK_ALIGN)
+                .max(MIN_CHUNK_ALIGN)
+        };
+
+        let Ok((layout, payload_offset, _)) = chunk_layout(self.size, align) else {
+            unreachable!("layout parameters were validated in SecureChunk::new");
+        };
 
         std::sync::atomic::compiler_fence(Ordering::SeqCst);
 
@@ -906,14 +911,23 @@ struct LocalCache {
     chunks: Vec<SecureChunk>,
     max_size: usize,
     zero_on_free: bool,
+    _enable_simd_ops: bool,
+    _simd_threshold: usize,
 }
 
 impl LocalCache {
-    fn new(max_size: usize, zero_on_free: bool) -> Self {
+    fn new(
+        max_size: usize,
+        zero_on_free: bool,
+        enable_simd_ops: bool,
+        simd_threshold: usize,
+    ) -> Self {
         Self {
             chunks: Vec::with_capacity(max_size),
             max_size,
             zero_on_free,
+            _enable_simd_ops: enable_simd_ops,
+            _simd_threshold: simd_threshold,
         }
     }
 
@@ -1042,6 +1056,8 @@ impl SecureMemoryPool {
             RefCell::new(LocalCache::new(
                 self.config.local_cache_size,
                 self.config.zero_on_free,
+                self.config.enable_simd_ops,
+                self.config.simd_threshold,
             ))
         });
 
@@ -1158,6 +1174,33 @@ impl SecureMemoryPool {
         })
     }
 
+    #[cold]
+    #[inline(never)]
+    fn deallocate_corrupted(&self, chunk: SecureChunk, chunk_ptr: usize, e: ZiporaError) -> Result<()> {
+        self.corruption_detected.fetch_add(1, Ordering::Relaxed);
+        let mut allocs = self
+            .active_allocations
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        if allocs
+            .get(&chunk_ptr)
+            .is_some_and(|&(orig_gen, _)| orig_gen == chunk.generation())
+        {
+            allocs.remove(&chunk_ptr);
+        }
+        drop(allocs);
+        chunk.deallocate(self.config.zero_on_free);
+        Err(e)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn deallocate_double_free(&self, chunk: SecureChunk, msg: &'static str) -> Result<()> {
+        self.double_free_detected.fetch_add(1, Ordering::Relaxed);
+        chunk.deallocate(self.config.zero_on_free);
+        Err(ZiporaError::invalid_data(msg))
+    }
+
     /// Internal deallocation with security validation
     fn deallocate_internal(&self, mut chunk: SecureChunk) -> Result<()> {
         self.dealloc_count.fetch_add(1, Ordering::Relaxed);
@@ -1165,20 +1208,7 @@ impl SecureMemoryPool {
 
         // Validate chunk before deallocation
         if let Err(e) = chunk.validate() {
-            self.corruption_detected.fetch_add(1, Ordering::Relaxed);
-            let mut allocs = self
-                .active_allocations
-                .write()
-                .unwrap_or_else(|e| e.into_inner());
-            if allocs
-                .get(&chunk_ptr)
-                .is_some_and(|&(orig_gen, _)| orig_gen == chunk.generation())
-            {
-                allocs.remove(&chunk_ptr);
-            }
-            drop(allocs);
-            chunk.deallocate(self.config.zero_on_free);
-            return Err(e);
+            return self.deallocate_corrupted(chunk, chunk_ptr, e);
         }
 
         // Check for double-free
@@ -1187,23 +1217,21 @@ impl SecureMemoryPool {
             .write()
             .unwrap_or_else(|e| e.into_inner());
 
-        if let Some(&allocation_info) = allocs.get(&chunk_ptr) {
-            let (original_generation, _): (u64, Instant) = allocation_info;
+        if let Some((original_generation, prev_time)) = allocs.remove(&chunk_ptr) {
             if original_generation != chunk.generation() {
-                self.double_free_detected.fetch_add(1, Ordering::Relaxed);
-                chunk.deallocate(self.config.zero_on_free);
-                return Err(ZiporaError::invalid_data(
+                allocs.insert(chunk_ptr, (original_generation, prev_time));
+                drop(allocs);
+                return self.deallocate_double_free(
+                    chunk,
                     "Double-free detected: generation mismatch",
-                ));
-            } else {
-                allocs.remove(&chunk_ptr);
+                );
             }
         } else {
-            self.double_free_detected.fetch_add(1, Ordering::Relaxed);
-            chunk.deallocate(self.config.zero_on_free);
-            return Err(ZiporaError::invalid_data(
+            drop(allocs);
+            return self.deallocate_double_free(
+                chunk,
                 "Double-free detected: pointer not allocated",
-            ));
+            );
         }
         drop(allocs);
 
@@ -1220,6 +1248,8 @@ impl SecureMemoryPool {
             RefCell::new(LocalCache::new(
                 self.config.local_cache_size,
                 self.config.zero_on_free,
+                self.config.enable_simd_ops,
+                self.config.simd_threshold,
             ))
         });
 
@@ -1232,6 +1262,8 @@ impl SecureMemoryPool {
     }
 
     /// Allocate a new chunk with cache optimizations
+    #[cold]
+    #[inline(never)]
     fn allocate_new_chunk_optimized(&self, generation: u64, is_hot: bool) -> Result<SecureChunk> {
         // Use cache allocator if available and chunk size meets threshold
         if let Some(ref _cache_allocator) = self.cache_allocator {
@@ -1282,12 +1314,16 @@ impl SecureMemoryPool {
 
         // Fall back to regular allocation (`SecureChunk::new` uses `alloc_zeroed`, so fresh
         // chunks start zero-initialized regardless of `self.config.zero_on_alloc`).
-        SecureChunk::new(
+        let mut chunk = SecureChunk::new(
             self.config.chunk_size,
             self.config.alignment,
             generation,
             self.pool_id,
-        )
+        )?;
+        if self.config.zero_on_alloc {
+            self.zero_chunk_simd(&mut chunk)?;
+        }
+        Ok(chunk)
     }
 
     /// Zero chunk memory with SIMD acceleration and adaptive selection
