@@ -335,6 +335,8 @@ where
     config: TrieBlobStoreConfig,
     /// Statistics collection
     stats: TrieBlobStoreStats,
+    /// Number of live records currently in the store
+    record_count: usize,
     /// Next available record ID
     next_record_id: RecordId,
     /// Whether the store has been finalized (no more writes allowed)
@@ -521,6 +523,18 @@ where
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     pub fn new(config: TrieBlobStoreConfig) -> Result<Self> {
+        match config.trie_config.trie_strategy {
+            crate::fsa::TrieStrategy::Patricia { .. }
+            | crate::fsa::TrieStrategy::DoubleArray { .. } => {}
+            crate::fsa::TrieStrategy::Louds { .. }
+            | crate::fsa::TrieStrategy::CompressedSparse { .. }
+            | crate::fsa::TrieStrategy::CriticalBit { .. } => {
+                return Err(ZiporaError::not_supported(
+                    "NestLoudsTrieBlobStore requires Patricia or DoubleArray trie strategy",
+                ));
+            }
+        }
+
         let trie = ZiporaTrie::<R>::with_config(config.trie_config.clone());
         let blob_builder = Some(ZipOffsetBlobStoreBuilder::with_config(
             config.blob_config.clone(),
@@ -544,6 +558,7 @@ where
             key_cache,
             config,
             stats: TrieBlobStoreStats::new(),
+            record_count: 0,
             next_record_id: 0,
             finalized: false,
             _phantom: PhantomData,
@@ -601,6 +616,20 @@ where
 
         // Insert key into trie to get node ID
         let node_id = self.trie.insert_and_get_node_id(key)?;
+        for &(old_state, new_state) in self.trie.last_relocations() {
+            let (old_id, new_id) = (old_state as usize, new_state as usize);
+            if old_id == new_id {
+                continue;
+            }
+            if let Some(moved_blob_id) = self.node_to_blob_map.remove(&old_id) {
+                self.node_to_blob_map.insert(new_id, moved_blob_id);
+                if let Some(slot) = self.record_to_node_map.get_mut(moved_blob_id)
+                    && *slot != usize::MAX
+                {
+                    *slot = new_id;
+                }
+            }
+        }
 
         // Always create a new blob record for each put operation (even for duplicate keys)
         let blob_id = self.next_record_id;
@@ -621,6 +650,7 @@ where
         // Create record ID and maintain mappings
         let record_id = self.next_record_id;
         self.next_record_id += 1;
+        self.record_count += 1;
 
         // Update mappings:
         // - For duplicate keys, update the node-to-blob mapping to point to the latest blob
@@ -906,54 +936,44 @@ where
 
     /// Remove a blob by its record ID
     fn remove(&mut self, id: RecordId) -> Result<()> {
-        // Get node ID from record mapping
-        let node_id = self
-            .record_to_node_map
-            .get(id as usize)
-            .copied()
-            .ok_or_else(|| ZiporaError::not_found("record ID not found"))?;
-
-        if node_id == usize::MAX {
-            return Err(ZiporaError::not_found("invalid record ID"));
-        }
-
-        // Get blob ID from node mapping
-        let _blob_id = *self
-            .node_to_blob_map
-            .get(&{ node_id })
-            .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
-
-        // Remove from blob store (only allowed if not finalized, since finalized stores are read-only)
         if self.finalized {
             return Err(ZiporaError::invalid_operation(
                 "Cannot remove from finalized store",
             ));
         }
 
-        // Remove from trie (reconstruct key first)
-        let key = self
-            .trie
-            .restore_string(node_id as u32)
-            .ok_or_else(|| ZiporaError::not_found("Could not restore key from node ID"))?;
-        self.trie.remove(&key)?;
-
-        // Mark record as removed
-        if (id as usize) < self.record_to_node_map.len() {
-            self.record_to_node_map[id as usize] = usize::MAX;
-        }
-        if (id as usize) < self.record_to_blob_map.len() {
-            self.record_to_blob_map[id as usize] = usize::MAX;
+        let blob_id = self
+            .record_to_blob_map
+            .get(id as usize)
+            .copied()
+            .ok_or_else(|| ZiporaError::not_found("record ID not found"))?;
+        if blob_id == usize::MAX {
+            return Err(ZiporaError::not_found("invalid record ID"));
         }
 
-        // Remove from cache if present
-        if self.config.key_cache_size > 0 {
-            self.key_cache.remove(&key);
+        let node_id = self
+            .record_to_node_map
+            .get(id as usize)
+            .copied()
+            .ok_or_else(|| ZiporaError::not_found("record ID not found"))?;
+        if node_id == usize::MAX {
+            return Err(ZiporaError::not_found("invalid record ID"));
         }
 
-        // Update statistics
-        if self.config.enable_statistics {
-            self.stats.blob_stats.record_remove(0); // Size not tracked for removes
-            if self.stats.key_count > 0 {
+        let is_latest = self.node_to_blob_map.get(&node_id).copied() == Some(blob_id);
+        if is_latest {
+            let key = self
+                .trie
+                .restore_string(node_id as u32)
+                .ok_or_else(|| ZiporaError::not_found("Could not restore key from node ID"))?;
+            self.trie.remove(&key)?;
+            self.node_to_blob_map.remove(&node_id);
+
+            if self.config.key_cache_size > 0 {
+                self.key_cache.remove(&key);
+            }
+
+            if self.config.enable_statistics && self.stats.key_count > 0 {
                 self.stats.key_count -= 1;
                 self.stats.total_key_size = self.stats.total_key_size.saturating_sub(key.len());
                 self.stats.average_key_length = if self.stats.key_count > 0 {
@@ -962,6 +982,15 @@ where
                     0.0
                 };
             }
+        }
+
+        self.record_to_node_map[id as usize] = usize::MAX;
+        self.record_to_blob_map[id as usize] = usize::MAX;
+        self.pending_blobs.remove(&blob_id);
+        self.record_count = self.record_count.saturating_sub(1);
+
+        if self.config.enable_statistics {
+            self.stats.blob_stats.record_remove(0);
         }
 
         Ok(())
@@ -994,7 +1023,7 @@ where
 
     /// Get the total number of blobs stored
     fn len(&self) -> usize {
-        self.stats.blob_stats.blob_count
+        self.record_count
     }
 
     /// Flush any pending operations to storage
@@ -1095,22 +1124,15 @@ where
 {
     /// Get the compression ratio for a specific blob
     fn compression_ratio(&self, id: RecordId) -> Result<Option<f32>> {
-        // Get node ID from record mapping
-        let node_id = self
-            .record_to_node_map
+        let blob_id = self
+            .record_to_blob_map
             .get(id as usize)
             .copied()
             .ok_or_else(|| ZiporaError::not_found("record ID not found"))?;
 
-        if node_id == usize::MAX {
+        if blob_id == usize::MAX {
             return Ok(None);
         }
-
-        // Get blob ID from node mapping
-        let blob_id = *self
-            .node_to_blob_map
-            .get(&{ node_id })
-            .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
         // Before finalize the bytes still sit uncompressed in the pending buffer.
         match &self.blob_store {
@@ -1121,22 +1143,15 @@ where
 
     /// Get the compressed size of a blob
     fn compressed_size(&self, id: RecordId) -> Result<Option<usize>> {
-        // Get node ID from record mapping
-        let node_id = self
-            .record_to_node_map
+        let blob_id = self
+            .record_to_blob_map
             .get(id as usize)
             .copied()
             .ok_or_else(|| ZiporaError::not_found("record ID not found"))?;
 
-        if node_id == usize::MAX {
+        if blob_id == usize::MAX {
             return Ok(None);
         }
-
-        // Get blob ID from node mapping
-        let blob_id = *self
-            .node_to_blob_map
-            .get(&{ node_id })
-            .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
         match &self.blob_store {
             Some(store) => store.compressed_size(Self::sealed_id(blob_id)?),

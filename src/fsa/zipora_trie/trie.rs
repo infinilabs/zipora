@@ -496,6 +496,12 @@ where
         Ok(node_id)
     }
 
+    /// State moves `(old_state, new_state)` recorded during the most recent insert.
+    #[inline]
+    pub(crate) fn last_relocations(&self) -> &[(StateId, StateId)] {
+        &self.relocations
+    }
+
     /// Lookup node ID for a key
     pub fn lookup_node_id(&self, key: &[u8]) -> Option<StateId> {
         match &self.storage {
