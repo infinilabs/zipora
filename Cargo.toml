@@ -21,6 +21,7 @@ exclude = [
     "deny.toml",
     "run_benchmarks.sh",
     "run_miri_tests.sh",
+    "/plan*.md", # excludes "plan.md" and working plan files at crate root
 ]
 
 [lib]
