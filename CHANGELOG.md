@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.1] - 2026-11-06
+
+### ⚠️ Data-loss advisory
+- **PA-Zip reference mode** (`PaZipCompressorConfig::reference_compliant()` or any config with
+  `use_reference_encoding = true`): streams written by 5.0.0 could not be decompressed. 5.0.1
+  decodes those streams (they contain literal runs only), and reference-mode configs now emit the
+  standard PA-Zip stream. Re-read and verify any data written with these configs.
+- **PA-Zip default config, inputs ≥ 1 MiB**: `compress` duplicated earlier blocks in its output
+  (multithreaded path). Such 5.0.0 streams decode (with 5.0.0 or 5.0.1) to `B1 | B1B2 | … | B1…Bn`,
+  whose last part is the original input. To recover an N-byte input, decompress and keep the
+  **last N bytes**. If N was not stored, derive it from the decoded length D:
+  N = D − 32768 · n · (n − 1) for the unique n with 65536 · (n − 1) < N ≤ 65536 · n (try n = 16, 17, …).
+  `DictZipBlobStore` usually stored such records raw (the duplicated stream was larger than the input).
+- **FSE `parallel_blocks: Some(0 | 1)`**: for inputs larger than `2 × block_size`, `FseEncoder::compress`
+  in 5.0.0 omitted the 1-byte `0xF5` single-block framing prefix. If `FseDecoder::decompress` rejects
+  such a stream with "unknown FSE stream mode byte", prepend `0xF5` and decode again. Streams of
+  smaller inputs are already framed and decode as is.
+- **NestLoudsTrieBlobStore**: with DoubleArray tries (`memory_optimized()`), ~10% of keys became
+  unreachable after later inserts, and `remove(id)` could delete other keys (also with Patricia,
+  via duplicate keys). Rebuild such stores from source.
+
+### Security & Soundness (two intentional breaking changes, permitted as soundness fixes)
+- `ffi::types::CString` fields are now private (safe code could make `Drop` free a forged pointer).
+  Use `as_ptr()`, `len()`, `is_empty()`. The struct is not declared in `include/zipora.h`, so C
+  callers are unaffected.
+- `CsppTrie`/`ConcurrentCsppTrie::{get_value, set_value}` now require `T: bytemuck::Pod` and
+  `size_of::<T>() <= valsize` (safe code could read invalid `bool`/`char`/references or write
+  padding; oversized writes corrupted the neighbouring key). Integer and byte-array value types
+  (`u8`..`u64`, `[u8; N]`) are unaffected.
+- Fixed use-after-free reachable from safe code in `VersionManager` tokens (dropped, moved or
+  TLS-cached managers), `ThreadLocalMemoryPool` slabs and `FixedCapacityAllocation`; a safe-code
+  heap overflow in `ThreadLocalMemoryPool` (block reused for a larger size class); data races and
+  double allocation in `FixedCapacityMemoryPool`; misaligned `SecureMemoryPool` pointers
+  (`GoldHashIdx<_, u128>` now works); non-volatile secret zeroing; unsound
+  `tokio::runtime::Handle` field read; panic-safety double drops in `SmallMap::clear` and
+  `AutoGrowCircularQueue::pop_bulk`; integer-to-pointer provenance loss in `MinimalSso`.
+
+### Changed
+- `PaZipCompressor::decompress` now takes `&self` (was `&mut self`). The reference-encoding flags
+  (`use_reference_encoding`, `use_suffix_array_local_match`) are now no-ops: every config emits the
+  standard PA-Zip stream.
+- `FixedCapacityMemoryPool`: a `FixedCapacityAllocation` keeps the pool's arena alive, so dropping it
+  after the pool is dropped or moved is safe. `new()` rejects `total_blocks >= u32::MAX`.
+- `ThreadLocalMemoryPool`: caches are per pool instance (no longer one thread-local cache shared by all
+  pools). Requests above 4096 bytes or above `arena_size / 4` are served as standalone,
+  zero-initialized heap allocations (requests above `arena_size / 4` previously panicked or returned
+  `Err`; 4097 bytes up to `arena_size / 4` previously came from the arena). Blocks are 16-byte
+  aligned. `new()` rejects `arena_size == 0` and `arena_size > u32::MAX`.
+- `SecureMemoryPool` honors `config.alignment` (minimum 8 bytes; `small_secure()` now uses 16). Fresh
+  chunks are zero-initialized; recycled chunks are zeroed on return when `zero_on_free` is set (the
+  default) and on allocation when `zero_on_alloc` is set. With `zero_on_free`, the final free wipes
+  the payload with volatile writes.
+- `NestLoudsTrieBlobStore::new` returns `Err(NotSupported)` for
+  `TrieStrategy::{Louds, CompressedSparse, CriticalBit}`, whose node ids the store cannot resolve
+  reliably. `len()` no longer depends on `enable_statistics`, and `remove(id)`
+  deletes the key only when `id` is that key's latest record.
+- `CsppTrie::{get_value, set_value}` also panic when `valpos` is not a value-slot offset (a multiple of
+  `valsize`). The `Pod` bound also applies to `get_value_by_key`, `set_value_by_key` and
+  `CsppTrieIterator::value`.
+- `TokenManager` no longer caches writer tokens: every writer acquisition counts as a cache miss, so
+  writer hit rates are 0. Cached reader tokens are returned only to the manager that issued them.
+- `AdaptiveMultiDimensional::dimensions()` returns 1 for instances built with the deprecated `new_dual`.
+- The optional `tokio` dependency (`async` feature) now requires `>= 1.49`.
+
+### Known issues
+- With `enable_multithreading` (the default), `PaZipCompressor::compress` replaces the contents of
+  `output` for inputs ≥ 1 MiB instead of appending to it as it does for smaller inputs. Pass an empty
+  buffer; this will be fixed in 5.0.2.
+
+### Fixed
+- FSE `parallel_blocks: Some(0|1)` produced undecodable streams; parallel compression spawned one
+  OS thread per block; `block_size: 0` panicked.
+- rANS x2/x4/x8 and contextual Huffman decoders preallocated a caller-supplied `output_length`.
+- `OneWriteMultiRead` could grant concurrent writers; a read-only `TokenManager` could hand out
+  a cached writer token.
+- `DictZipBlobStore::get` no longer clones the whole compressor per read.
+
+### Deprecated
+- `AdaptiveMultiDimensional::new_dual` (indexed only the first bit vector; use
+  `RankSelectMixedIL256`).
+
 ## [5.0.0] - 2026-10-30
 
 ### BREAKING CHANGES

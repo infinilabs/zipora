@@ -41,6 +41,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -67,10 +68,10 @@ def git_commit_exists(commit: str) -> bool:
     return proc.returncode == 0
 
 
-def compute_cargo_lock_sha256(commit: Optional[str] = None) -> Optional[str]:
+def _read_cargo_lock_bytes(commit: Optional[str] = None) -> Optional[bytes]:
     if commit is None:
         try:
-            return hashlib.sha256(Path("Cargo.lock").read_bytes()).hexdigest().lower()
+            return Path("Cargo.lock").read_bytes()
         except OSError:
             return None
     proc = subprocess.run(
@@ -80,7 +81,27 @@ def compute_cargo_lock_sha256(commit: Optional[str] = None) -> Optional[str]:
     )
     if proc.returncode != 0:
         return None
-    return hashlib.sha256(proc.stdout).hexdigest().lower()
+    return proc.stdout
+
+
+def compute_cargo_lock_sha256(commit: Optional[str] = None) -> Optional[str]:
+    raw = _read_cargo_lock_bytes(commit)
+    if raw is None:
+        return None
+    return hashlib.sha256(raw).hexdigest().lower()
+
+
+def compute_cargo_lock_dep_sha256(commit: Optional[str] = None) -> Optional[str]:
+    raw = _read_cargo_lock_bytes(commit)
+    if raw is None:
+        return None
+    normalized = re.sub(
+        rb'(name = "zipora"\r?\nversion = ")[^"]+(")',
+        rb"\g<1>0.0.0\2",
+        raw,
+        count=1,
+    )
+    return hashlib.sha256(normalized).hexdigest().lower()
 
 
 def detect_short_host() -> str:
@@ -378,12 +399,21 @@ def compare_benchmarks(
 
         disk_lock_sha = compute_cargo_lock_sha256(None)
         git_lock_sha = compute_cargo_lock_sha256(base_commit)
-        if base_lock_sha != curr_lock_sha:
+        disk_dep_sha = compute_cargo_lock_dep_sha256(None)
+        git_dep_sha = compute_cargo_lock_dep_sha256(base_commit)
+        valid_curr_lock_shas = {base_lock_sha}
+        if (
+            disk_lock_sha is not None
+            and disk_dep_sha is not None
+            and disk_dep_sha == git_dep_sha
+        ):
+            valid_curr_lock_shas.add(disk_lock_sha)
+        if curr_lock_sha not in valid_curr_lock_shas:
             failures.append(
                 f"provenance: current cargo_lock_sha256 ({curr_lock_sha[:16]}...) "
                 f"does not match baseline cargo_lock_sha256 ({base_lock_sha[:16]}...) (S54-R1)"
             )
-        if disk_lock_sha is None or base_lock_sha != disk_lock_sha:
+        if disk_dep_sha is None or git_dep_sha is None or disk_dep_sha != git_dep_sha:
             failures.append(
                 f"provenance: cargo_lock_sha256 ({base_lock_sha[:16]}...) "
                 f"does not match workspace Cargo.lock ({str(disk_lock_sha)[:16]}...) (S54-R1)"
