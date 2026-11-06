@@ -627,6 +627,7 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
             result.push(symbol);
         }
 
+        result.shrink_to_fit();
         Ok(result)
     }
 
@@ -857,6 +858,7 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
             remaining -= window_len;
         }
 
+        result.shrink_to_fit();
         Ok(result)
     }
 }

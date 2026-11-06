@@ -354,6 +354,12 @@ fn rans_roundtrip_len<P: RansVariant>(data: &[u8]) {
         P::NAME,
         data.len()
     );
+    assert_eq!(
+        decoded.capacity(),
+        data.len(),
+        "{} decoded buffer capacity should match exact output length",
+        P::NAME
+    );
 }
 
 /// C4 guard (passes at v5.0.0): legitimate outputs larger than the fixed

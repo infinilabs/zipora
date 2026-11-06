@@ -466,6 +466,36 @@ fn test_v2_s4_gold_hash_idx_stores_u128_values() {
     }
 }
 
+/// S4(d). Buffer overflow corrupting `ChunkFooter` (including any bytes right
+/// after the user payload) must never cause `deallocate()` to free a shifted
+/// pointer or invalid `Layout` — neither when the corrupted chunk is returned
+/// to a live pool nor when it is dropped after the pool itself has been dropped.
+#[test]
+fn test_v2_s4_corrupted_footer_deallocate_live_and_dropped_pool() {
+    // 1. Live pool with 64-byte alignment: overwrite the entire 24-byte footer
+    // immediately after the 128-byte payload with 0xFF and drop the chunk.
+    let pool = SecureMemoryPool::new(SecurePoolConfig::new(128, 4, 64)).unwrap();
+    let ptr = pool.allocate().unwrap();
+    assert_eq!(ptr.as_ptr() as usize % 64, 0);
+    unsafe {
+        std::ptr::write_bytes(ptr.as_ptr().add(128), 0xFF, 24);
+    }
+    assert!(ptr.validate().is_err());
+    drop(ptr);
+    assert_eq!(pool.stats().corruption_detected, 1);
+
+    // 2. Pool dropped before the corrupted chunk is dropped.
+    let pool2 = SecureMemoryPool::new(SecurePoolConfig::new(128, 4, 64)).unwrap();
+    let ptr2 = pool2.allocate().unwrap();
+    assert_eq!(ptr2.as_ptr() as usize % 64, 0);
+    drop(pool2);
+    unsafe {
+        std::ptr::write_bytes(ptr2.as_ptr().add(128), 0xFF, 24);
+    }
+    assert!(ptr2.validate().is_err());
+    drop(ptr2);
+}
+
 // ============================================================================
 // S7: panic safety of SmallMap::clear and AutoGrowCircularQueue::pop_bulk
 // ============================================================================

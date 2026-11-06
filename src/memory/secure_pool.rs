@@ -462,12 +462,13 @@ struct ChunkHeader {
 #[derive(Debug)]
 struct ChunkFooter {
     canary: u32,
-    align_shift: u32,
+    _padding: u32,
     generation: u64,
     magic: u64,
 }
 
 const MIN_CHUNK_ALIGN: usize = 8;
+const GENERATION_MASK: u64 = (1u64 << 56) - 1;
 
 const _: () = assert!(
     std::mem::size_of::<ChunkHeader>().is_multiple_of(MIN_CHUNK_ALIGN)
@@ -476,11 +477,19 @@ const _: () = assert!(
         && std::mem::align_of::<usize>() <= MIN_CHUNK_ALIGN
 );
 
-/// Secure wrapper around memory chunks with validation
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<SecureChunk>() == 32);
+
+/// Secure wrapper around memory chunks with validation.
+///
+/// The chunk's allocation alignment shift (`align.trailing_zeros() as u8`) is packed
+/// into the upper 8 bits of `gen_and_align_shift` (with the 56-bit generation counter
+/// in the lower 56 bits) so `size_of::<SecureChunk>()` stays 32 bytes while keeping
+/// the layout alignment out-of-band outside the heap buffer.
 pub struct SecureChunk {
     ptr: NonNull<u8>,
     size: usize,
-    generation: u64,
+    gen_and_align_shift: u64,
     pool_id: u32,
     canary: u32,
 }
@@ -545,6 +554,8 @@ impl SecureChunk {
     /// Create a new secure chunk with validation metadata
     fn new(size: usize, alignment: usize, generation: u64, pool_id: u32) -> Result<Self> {
         let (layout, payload_offset, align) = chunk_layout(size, alignment)?;
+        let generation = generation & GENERATION_MASK;
+        let gen_and_align_shift = generation | ((align.trailing_zeros() as u64) << 56);
         let canary = fastrand::u32(..);
         let header_size = std::mem::size_of::<ChunkHeader>();
         let padded_size = padded_payload_size(size);
@@ -586,7 +597,7 @@ impl SecureChunk {
             let footer_ptr = data_ptr.add(padded_size) as *mut ChunkFooter;
             footer_ptr.write(ChunkFooter {
                 canary,
-                align_shift: align.trailing_zeros(),
+                _padding: 0,
                 generation,
                 magic: CHUNK_FOOTER_MAGIC,
             });
@@ -596,7 +607,7 @@ impl SecureChunk {
             // SAFETY: `raw_ptr` is non-null and `add(payload_offset)` remains non-null.
             ptr: unsafe { NonNull::new_unchecked(data_ptr) },
             size,
-            generation,
+            gen_and_align_shift,
             pool_id,
             canary,
         })
@@ -607,6 +618,7 @@ impl SecureChunk {
 
     /// Validate chunk integrity
     fn validate(&self) -> Result<()> {
+        let generation = self.generation();
         let header_size = std::mem::size_of::<ChunkHeader>();
         // SAFETY: new() places ChunkHeader immediately preceding data_ptr at raw_ptr + (payload_offset - header_size)
         let header_ptr = unsafe { self.ptr.as_ptr().sub(header_size) as *const ChunkHeader };
@@ -621,10 +633,10 @@ impl SecureChunk {
             )));
         }
 
-        if header.generation != self.generation {
+        if header.generation != generation {
             return Err(ZiporaError::invalid_data(format!(
                 "Generation mismatch: header={}, chunk={}",
-                header.generation, self.generation
+                header.generation, generation
             )));
         }
 
@@ -663,10 +675,10 @@ impl SecureChunk {
             )));
         }
 
-        if footer.generation != self.generation {
+        if footer.generation != generation {
             return Err(ZiporaError::invalid_data(format!(
                 "Footer generation mismatch: footer={}, chunk={}",
-                footer.generation, self.generation
+                footer.generation, generation
             )));
         }
 
@@ -731,8 +743,15 @@ impl SecureChunk {
     }
 
     /// Get generation for validation
+    #[inline]
     pub fn generation(&self) -> u64 {
-        self.generation
+        self.gen_and_align_shift & GENERATION_MASK
+    }
+
+    /// Get allocation alignment stored out-of-band in `SecureChunk`
+    #[inline]
+    fn align(&self) -> usize {
+        1usize << ((self.gen_and_align_shift >> 56) as u32)
     }
 
     /// Safely deallocate the chunk, wiping the payload (when `zero_on_free` is enabled)
@@ -741,6 +760,11 @@ impl SecureChunk {
     #[cold]
     #[inline(never)]
     fn deallocate(mut self, zero_on_free: bool) {
+        let align = self.align();
+        let Ok((layout, payload_offset, _)) = chunk_layout(self.size, align) else {
+            unreachable!("layout parameters were validated in SecureChunk::new");
+        };
+
         if zero_on_free {
             self.zero_payload_volatile();
         }
@@ -749,7 +773,7 @@ impl SecureChunk {
         // SAFETY: `new()` placed `ChunkHeader` immediately preceding `self.ptr` and `ChunkFooter`
         // at `self.ptr.add(padded_payload_size(self.size))`, both properly aligned and exclusively
         // owned within `layout`.
-        let align = unsafe {
+        unsafe {
             let header_ptr =
                 self.ptr.as_ptr().sub(std::mem::size_of::<ChunkHeader>()) as *mut ChunkHeader;
             std::ptr::write_volatile(
@@ -766,25 +790,16 @@ impl SecureChunk {
 
             let footer_ptr =
                 self.ptr.as_ptr().add(padded_payload_size(self.size)) as *mut ChunkFooter;
-            let shift = (*footer_ptr).align_shift;
             std::ptr::write_volatile(
                 footer_ptr,
                 ChunkFooter {
                     canary: 0,
-                    align_shift: 0,
+                    _padding: 0,
                     generation: 0,
                     magic: 0,
                 },
             );
-            1usize
-                .checked_shl(shift)
-                .unwrap_or(MIN_CHUNK_ALIGN)
-                .max(MIN_CHUNK_ALIGN)
-        };
-
-        let Ok((layout, payload_offset, _)) = chunk_layout(self.size, align) else {
-            unreachable!("layout parameters were validated in SecureChunk::new");
-        };
+        }
 
         std::sync::atomic::compiler_fence(Ordering::SeqCst);
 
@@ -1176,7 +1191,12 @@ impl SecureMemoryPool {
 
     #[cold]
     #[inline(never)]
-    fn deallocate_corrupted(&self, chunk: SecureChunk, chunk_ptr: usize, e: ZiporaError) -> Result<()> {
+    fn deallocate_corrupted(
+        &self,
+        chunk: SecureChunk,
+        chunk_ptr: usize,
+        e: ZiporaError,
+    ) -> Result<()> {
         self.corruption_detected.fetch_add(1, Ordering::Relaxed);
         let mut allocs = self
             .active_allocations
@@ -1221,17 +1241,13 @@ impl SecureMemoryPool {
             if original_generation != chunk.generation() {
                 allocs.insert(chunk_ptr, (original_generation, prev_time));
                 drop(allocs);
-                return self.deallocate_double_free(
-                    chunk,
-                    "Double-free detected: generation mismatch",
-                );
+                return self
+                    .deallocate_double_free(chunk, "Double-free detected: generation mismatch");
             }
         } else {
             drop(allocs);
-            return self.deallocate_double_free(
-                chunk,
-                "Double-free detected: pointer not allocated",
-            );
+            return self
+                .deallocate_double_free(chunk, "Double-free detected: pointer not allocated");
         }
         drop(allocs);
 
