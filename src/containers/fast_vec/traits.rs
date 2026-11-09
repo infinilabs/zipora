@@ -80,6 +80,11 @@ impl<T> FromIterator<T> for FastVec<T> {
 }
 
 impl<T> Extend<T> for FastVec<T> {
+    /// Extends the vector with the contents of an iterator.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the new capacity overflows `usize` or if memory allocation fails.
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         let mut iter = iter.into_iter();
         let (lower, _) = iter.size_hint();
@@ -115,7 +120,7 @@ impl<T> Extend<T> for FastVec<T> {
         }
 
         for item in iter {
-            let _ = self.push(item);
+            self.push(item).expect("FastVec capacity overflow");
         }
     }
 }

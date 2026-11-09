@@ -257,3 +257,41 @@ mod lru_page_cache {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// C6.8 `FastVec`'s `Extend` (src/containers/fast_vec/traits.rs)
+// ---------------------------------------------------------------------------
+
+mod fast_vec_extend {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use zipora::FastVec;
+
+    /// The `Extend` impl falls back to `let _ = self.push(item)`, so every
+    /// element `push` rejects is silently dropped. It is reached through
+    /// `collect`/`FromIterator` and any code generic over `Extend` (the
+    /// inherent, fallible `FastVec::extend` shadows it for method calls).
+    /// `push` fails on allocation failure or when the length cannot grow; a
+    /// zero-sized element type at `len == usize::MAX` reaches the latter
+    /// deterministically. `Vec<()>` panics with "capacity overflow" here, and
+    /// so must `FastVec`'s `Extend`.
+    #[test]
+    fn test_v2_fast_vec_extend_does_not_silently_drop_elements() {
+        let mut v: FastVec<()> = FastVec::new();
+        v.reserve(1).unwrap(); // ZST: capacity becomes usize::MAX
+        assert_eq!(v.capacity(), usize::MAX);
+        // SAFETY: `()` needs no initialisation and `usize::MAX <= capacity()`.
+        unsafe { v.set_len(usize::MAX) };
+        assert!(v.push(()).is_err(), "push at usize::MAX must fail");
+        // The inherent, fallible `extend` already reports the failure.
+        assert!(v.extend(std::iter::once(())).is_err());
+
+        let extended = catch_unwind(AssertUnwindSafe(|| {
+            <FastVec<()> as Extend<()>>::extend(&mut v, std::iter::once(()))
+        }));
+        assert!(
+            extended.is_err(),
+            "Extend::extend returned normally although push rejected the element (silently dropped)"
+        );
+        assert_eq!(v.len(), usize::MAX);
+    }
+}
