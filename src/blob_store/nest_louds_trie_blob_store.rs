@@ -614,8 +614,9 @@ where
             ));
         }
 
-        // Insert key into trie to get node ID
-        let node_id = self.trie.insert_and_get_node_id(key)?;
+        // Insert key into trie to get node ID, applying any state relocations
+        // even if `insert_and_get_node_id` returns an error after relocating states.
+        let insert_res = self.trie.insert_and_get_node_id(key);
         for &(old_state, new_state) in self.trie.last_relocations() {
             let (old_id, new_id) = (old_state as usize, new_state as usize);
             if old_id == new_id {
@@ -630,6 +631,7 @@ where
                 }
             }
         }
+        let node_id = insert_res?;
 
         // Always create a new blob record for each put operation (even for duplicate keys)
         let blob_id = self.next_record_id;
@@ -655,8 +657,10 @@ where
         // Update mappings:
         // - For duplicate keys, update the node-to-blob mapping to point to the latest blob
         // - Always add new entries to record-to-node and record-to-blob mappings
-        self.node_to_blob_map
-            .insert(node_id as usize, blob_id as usize);
+        let is_new_key = self
+            .node_to_blob_map
+            .insert(node_id as usize, blob_id as usize)
+            .is_none();
 
         while self.record_to_node_map.len() <= record_id as usize {
             self.record_to_node_map.push(usize::MAX);
@@ -682,10 +686,12 @@ where
         // Update statistics
         if self.config.enable_statistics {
             self.stats.blob_stats.record_put(data.len());
-            self.stats.key_count += 1;
-            self.stats.total_key_size += key.len();
-            self.stats.average_key_length =
-                self.stats.total_key_size as f64 / self.stats.key_count as f64;
+            if is_new_key {
+                self.stats.key_count += 1;
+                self.stats.total_key_size += key.len();
+                self.stats.average_key_length =
+                    self.stats.total_key_size as f64 / self.stats.key_count as f64;
+            }
         }
 
         Ok(record_id)
@@ -2503,5 +2509,39 @@ mod tests {
         let comp_stats = store.compression_stats();
         assert!(comp_stats.uncompressed_size >= comp_stats.compressed_size);
         assert!(comp_stats.compression_ratio >= 0.0 && comp_stats.compression_ratio <= 1.0);
+    }
+
+    #[test]
+    fn test_v2_c3_key_count_tracks_live_keys_across_duplicate_puts_and_removes() {
+        let mut store = TestStore::default().unwrap();
+        let id1 = store.put_with_key(b"dup_key", b"v1").unwrap();
+        assert_eq!(store.trie_stats().key_count, 1);
+
+        let id2 = store.put_with_key(b"dup_key", b"v2").unwrap();
+        assert_eq!(
+            store.trie_stats().key_count,
+            1,
+            "duplicate put_with_key must not inflate key_count"
+        );
+        assert_eq!(
+            store.trie_stats().total_key_size,
+            b"dup_key".len(),
+            "duplicate put_with_key must not double-count total_key_size"
+        );
+
+        store.remove(id1).unwrap();
+        assert_eq!(
+            store.trie_stats().key_count,
+            1,
+            "removing superseded record must keep key_count at 1"
+        );
+
+        store.remove(id2).unwrap();
+        assert_eq!(
+            store.trie_stats().key_count,
+            0,
+            "removing latest record must drop key_count to 0"
+        );
+        assert_eq!(store.trie_stats().total_key_size, 0);
     }
 }
