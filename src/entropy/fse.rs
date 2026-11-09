@@ -1093,33 +1093,80 @@ impl FseEncoder {
         let workers = num_blocks.min(chunks.len()).min(avail).max(1);
         let per_worker = chunks.len().div_ceil(workers);
 
-        // Process chunks in parallel using a bounded std::thread::scope pool
-        let compressed_chunks = std::thread::scope(|s| -> Result<Vec<Vec<u8>>> {
-            let mut handles = Vec::with_capacity(workers);
-            for worker_chunks in chunks.chunks(per_worker) {
-                let table_clone = table.clone();
-                let config_clone = config.clone();
-                handles.push(s.spawn(move || -> Result<Vec<Vec<u8>>> {
-                    let mut thread_encoder = FseEncoder::new(config_clone)?;
-                    thread_encoder.table = Some(table_clone);
-
-                    let mut out = Vec::with_capacity(worker_chunks.len());
-                    for &chunk in worker_chunks {
-                        out.push(thread_encoder.compress_single_internal(chunk)?);
-                    }
-                    Ok(out)
-                }));
-            }
-
+        let compressed_chunks = if workers <= 1 {
+            let mut inline_encoder = FseEncoder::new(config)?;
+            inline_encoder.table = Some(table);
             let mut all_chunks = Vec::with_capacity(chunks.len());
-            for handle in handles {
-                let batch = handle.join().map_err(|_| {
-                    ZiporaError::compression("Parallel compression thread panicked")
-                })??;
-                all_chunks.extend(batch);
+            for &chunk in &chunks {
+                all_chunks.push(inline_encoder.compress_single_internal(chunk)?);
             }
-            Ok(all_chunks)
-        })?;
+            all_chunks
+        } else {
+            // Process chunks in parallel using a bounded std::thread::scope pool,
+            // falling back to inline encoding if OS thread creation fails.
+            std::thread::scope(|s| -> Result<Vec<Vec<u8>>> {
+                enum BatchSlot<'scope> {
+                    Spawned(std::thread::ScopedJoinHandle<'scope, Result<Vec<Vec<u8>>>>),
+                    Inline(Result<Vec<Vec<u8>>>),
+                }
+
+                let mut slots = Vec::with_capacity(workers);
+                for worker_chunks in chunks.chunks(per_worker) {
+                    let table_clone = table.clone();
+                    let config_clone = config.clone();
+                    let encode_batch = move || -> Result<Vec<Vec<u8>>> {
+                        let mut thread_encoder = FseEncoder::new(config_clone)?;
+                        thread_encoder.table = Some(table_clone);
+
+                        let mut out = Vec::with_capacity(worker_chunks.len());
+                        for &chunk in worker_chunks {
+                            out.push(thread_encoder.compress_single_internal(chunk)?);
+                        }
+                        Ok(out)
+                    };
+
+                    match std::thread::Builder::new().spawn_scoped(s, encode_batch) {
+                        Ok(handle) => slots.push(BatchSlot::Spawned(handle)),
+                        Err(_) => {
+                            let mut fallback_encoder = FseEncoder::new(config.clone())?;
+                            fallback_encoder.table = Some(table.clone());
+                            let res = (|| -> Result<Vec<Vec<u8>>> {
+                                let mut out = Vec::with_capacity(worker_chunks.len());
+                                for &chunk in worker_chunks {
+                                    out.push(fallback_encoder.compress_single_internal(chunk)?);
+                                }
+                                Ok(out)
+                            })();
+                            slots.push(BatchSlot::Inline(res));
+                        }
+                    }
+                }
+
+                let mut all_chunks = Vec::with_capacity(chunks.len());
+                let mut first_err: Option<ZiporaError> = None;
+                for slot in slots {
+                    let batch_res = match slot {
+                        BatchSlot::Spawned(handle) => handle.join().map_err(|_| {
+                            ZiporaError::compression("Parallel compression thread panicked")
+                        })?,
+                        BatchSlot::Inline(res) => res,
+                    };
+                    match batch_res {
+                        Ok(batch) if first_err.is_none() => all_chunks.extend(batch),
+                        Ok(_) => {}
+                        Err(e) => {
+                            if first_err.is_none() {
+                                first_err = Some(e);
+                            }
+                        }
+                    }
+                }
+                if let Some(err) = first_err {
+                    return Err(err);
+                }
+                Ok(all_chunks)
+            })?
+        };
 
         // Merge compressed chunks with metadata and update statistics
         let output = self.merge_compressed_blocks(compressed_chunks)?;
