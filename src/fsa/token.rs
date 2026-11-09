@@ -328,8 +328,10 @@ impl TokenManager {
 
     /// Returns a reader token to the cache for reuse.
     ///
-    /// This method caches the token in thread-local storage for future reuse,
-    /// avoiding the overhead of repeated token acquisition.
+    /// If `token` was issued by this manager (`token.manager_id() == self.version_manager.id()`),
+    /// caches it in thread-local storage for future reuse and increments
+    /// `total_reader_tokens_returned`. Tokens issued by a different manager are
+    /// dropped immediately without caching.
     ///
     /// # Version Retention
     ///
@@ -422,11 +424,14 @@ pub struct GlobalTokenStats {
     /// Total time spent acquiring reader tokens across all threads.
     pub total_reader_acquisition_time: Duration,
 
-    /// Total writer token cache hits across all threads.
+    /// Total writer token cache hits across all threads (always `0`: [`TokenManager`]
+    /// never caches writer tokens, so every writer acquisition is recorded in
+    /// [`Self::total_writer_cache_misses`] and [`Self::writer_hit_rate`] is `0.0`).
     pub total_writer_cache_hits: u64,
-    /// Total writer token cache misses across all threads.
+    /// Total writer token acquisitions across all threads (counted as cache misses
+    /// because [`TokenManager`] never caches writer tokens).
     pub total_writer_cache_misses: u64,
-    /// Total writer tokens returned to cache across all threads.
+    /// Total writer tokens released via [`TokenManager::return_writer_token`] across all threads.
     pub total_writer_tokens_returned: u64,
     /// Total time spent acquiring writer tokens across all threads.
     pub total_writer_acquisition_time: Duration,

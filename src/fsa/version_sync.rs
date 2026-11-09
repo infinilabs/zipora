@@ -464,6 +464,12 @@ impl VersionManager {
 
         let start_time = Instant::now();
 
+        // Increment active reader count BEFORE locking `token_chain_mutex` and
+        // reading `min_version` / advancing `current_version` so `try_advance_min_version`
+        // cannot advance `min_version` past a reader that is acquiring its snapshot.
+        inner.active_readers.fetch_add(1, Ordering::AcqRel);
+        let mut active_guard = ActiveCountGuard::armed(&inner.active_readers);
+
         // For levels that require synchronization, acquire version under lock
         let (version, min_version) = if inner.concurrency_level.requires_synchronization() {
             let _lock = inner.token_chain_mutex.lock().map_err(|_| {
@@ -478,10 +484,6 @@ impl VersionManager {
             // Single-threaded modes don't need version tracking
             (1, 1)
         };
-
-        // Increment active reader count and guard until ReaderToken owns the callback
-        inner.active_readers.fetch_add(1, Ordering::AcqRel);
-        let mut active_guard = ActiveCountGuard::armed(&inner.active_readers);
 
         let thread_id = thread::current().id();
         let callback = Arc::new(TokenReleaseCallback {
@@ -527,6 +529,8 @@ impl VersionManager {
         };
 
         // For OneWriteMultiRead, claim the single writer slot atomically.
+        // For non-exclusive levels, increment active_writers BEFORE locking
+        // `token_chain_mutex` so `try_advance_min_version` never races with acquisition.
         let exclusive = inner.concurrency_level == ConcurrencyLevel::OneWriteMultiRead;
         if exclusive {
             if inner
@@ -538,6 +542,9 @@ impl VersionManager {
                     "Another writer is already active in OneWriteMultiRead mode",
                 ));
             }
+            active_guard.armed = true;
+        } else {
+            inner.active_writers.fetch_add(1, Ordering::AcqRel);
             active_guard.armed = true;
         }
 
@@ -554,12 +561,6 @@ impl VersionManager {
         } else {
             (1, 1)
         };
-
-        // Increment active writer count for non-exclusive levels
-        if !exclusive {
-            inner.active_writers.fetch_add(1, Ordering::AcqRel);
-            active_guard.armed = true;
-        }
 
         let thread_id = thread::current().id();
         let callback = Arc::new(TokenReleaseCallback {
@@ -642,13 +643,17 @@ impl VersionManagerInner {
     }
 
     /// Advances `min_version` to `current_version` when all active readers and
-    /// writers have drained.
+    /// writers have drained, serialized under `token_chain_mutex` so `min_version`
+    /// never advances past an in-flight or live token.
     fn try_advance_min_version(&self) {
         if self.active_readers.load(Ordering::Acquire) == 0
             && self.active_writers.load(Ordering::Acquire) == 0
+            && let Ok(_lock) = self.token_chain_mutex.lock()
+            && self.active_readers.load(Ordering::Acquire) == 0
+            && self.active_writers.load(Ordering::Acquire) == 0
         {
             let current = self.current_version.load(Ordering::Acquire);
-            self.min_version.store(current, Ordering::Release);
+            self.min_version.fetch_max(current, Ordering::AcqRel);
         }
     }
 }
@@ -1131,6 +1136,48 @@ mod tests {
         let next_writer = managers[0].acquire_writer_token()?;
         assert!(next_writer.is_valid());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_v2_s1_min_version_never_advances_past_active_reader() -> Result<()> {
+        let manager = Arc::new(VersionManager::new(ConcurrencyLevel::MultiWriteMultiRead));
+        let iters = if cfg!(miri) { 32 } else { 2000 };
+
+        std::thread::scope(|s| {
+            for _ in 0..4 {
+                let mgr = Arc::clone(&manager);
+                s.spawn(move || {
+                    for _ in 0..iters {
+                        let reader = mgr.acquire_reader_token().unwrap();
+                        let v = reader.version();
+                        assert!(
+                            mgr.min_version() <= v,
+                            "min_version ({}) advanced past live reader version ({v})",
+                            mgr.min_version()
+                        );
+                        assert!(reader.is_valid());
+                        let writer = mgr.acquire_writer_token().unwrap();
+                        assert!(
+                            mgr.min_version() <= v,
+                            "min_version ({}) advanced past live reader version ({v}) while writer active",
+                            mgr.min_version()
+                        );
+                        drop(writer);
+                        assert!(
+                            mgr.min_version() <= v,
+                            "min_version ({}) advanced past live reader version ({v}) after writer drop",
+                            mgr.min_version()
+                        );
+                        drop(reader);
+                    }
+                });
+            }
+        });
+
+        assert_eq!(manager.active_readers(), 0);
+        assert_eq!(manager.active_writers(), 0);
+        assert_eq!(manager.min_version(), manager.current_version());
         Ok(())
     }
 }
