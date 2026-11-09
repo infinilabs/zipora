@@ -341,7 +341,7 @@ impl ZReorderMap {
             self.pos += 1;
 
             // Check for overflow before shifting
-            if shift >= 64 {
+            if shift >= 64 || (shift == 63 && byte > 1) {
                 return Err(ZiporaError::invalid_data("ZReorderMap: var_uint overflow"));
             }
 
@@ -1073,7 +1073,6 @@ mod tests {
 
         Ok(())
     }
-
 
     /// A sequence entry whose run length is zero is malformed: `next()` would
     /// decrement the counter past zero and treat the run as infinite, silently

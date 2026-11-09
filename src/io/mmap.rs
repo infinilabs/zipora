@@ -680,6 +680,9 @@ impl DataInput for MemoryMappedInput {
 
         for _ in 0..VarInt::MAX_ENCODED_LEN {
             let byte = self.read_u8()?;
+            if shift == 63 && byte > 1 {
+                return Err(ZiporaError::invalid_data("varint overflows u64"));
+            }
             result |= ((byte & 0x7F) as u64) << shift;
 
             if byte & 0x80 == 0 {
