@@ -806,7 +806,7 @@ impl EntropyBitOps {
     /// Pack bits into a stream optimized for entropy encoding
     #[inline]
     pub fn pack_bits(&self, stream: &mut u64, value: u32, offset: u32, width: u32) -> Result<()> {
-        if width > 32 || offset > 64 {
+        if width > 32 || offset > 64 || offset + width > 64 {
             return Err(ZiporaError::invalid_data("Invalid bit packing parameters"));
         }
 

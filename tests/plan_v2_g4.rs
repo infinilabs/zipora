@@ -75,3 +75,51 @@ mod mmap_var_int {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// C5.4 `EntropyBitOps::pack_bits` (src/entropy/bit_ops.rs)
+// ---------------------------------------------------------------------------
+
+mod pack_bits {
+    use zipora::entropy::EntropyBitOps;
+
+    /// `pack_bits` validates `width <= 32` and `offset <= 64` but not
+    /// `offset + width <= 64`, so `64 - offset - width` underflows: a panic
+    /// with overflow checks (test profile), a silent `Ok` that drops the value
+    /// in release. It must return `Err`.
+    #[test]
+    fn test_v2_pack_bits_rejects_field_past_bit_64() {
+        let ops = EntropyBitOps::new();
+        for (offset, width) in [(60u32, 8u32), (64, 1), (33, 32), (57, 8)] {
+            let mut stream = 0u64;
+            let got = ops.pack_bits(&mut stream, 0xFF, offset, width);
+            assert!(
+                got.is_err(),
+                "offset {offset} + width {width} > 64 must be rejected, got {got:?}"
+            );
+            assert_eq!(stream, 0, "rejected call must not modify the stream");
+        }
+    }
+
+    /// Guard: fields that end exactly at bit 64 (or are empty) still pack.
+    #[test]
+    fn test_v2_pack_bits_boundaries_guard() {
+        let ops = EntropyBitOps::new();
+        let cases = [
+            (0xFFu32, 56u32, 8u32, 0xFFu64),
+            (0xFFFF_FFFF, 32, 32, 0xFFFF_FFFF),
+            (0xFFFF_FFFF, 0, 32, 0xFFFF_FFFF_0000_0000),
+            (0x1, 63, 1, 0x1),
+            (0x0, 64, 0, 0x0),
+            (0xAB, 0, 0, 0x0),
+        ];
+        for (value, offset, width, expected) in cases {
+            let mut stream = 0u64;
+            ops.pack_bits(&mut stream, value, offset, width).unwrap();
+            assert_eq!(stream, expected, "offset {offset} width {width}");
+        }
+        let mut stream = 0u64;
+        assert!(ops.pack_bits(&mut stream, 1, 65, 0).is_err());
+        assert!(ops.pack_bits(&mut stream, 1, 0, 33).is_err());
+    }
+}
