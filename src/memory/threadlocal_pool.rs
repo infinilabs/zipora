@@ -8,11 +8,16 @@
 //! - **Per-Pool TLS Ownership**: Each [`ThreadLocalMemoryPool`] owns its own
 //!   per-thread cache table so independent pools never share slabs or statistics
 //! - **Reference-Counted Slabs**: Replaced, cleared, or slot-recycled slabs stay
-//!   alive via atomic reference counting until every live allocation drops
+//!   alive via atomic reference counting until every live allocation drops. An
+//!   exited thread's current slab reference remains retained in its TLS slot
+//!   until another thread reuses that slot or the pool itself is dropped.
 //! - **Size-Class Carving**: Bump and free-list paths both carve full size-class
-//!   quanta (`16..=4096` bytes, 16-byte aligned)
-//! - **Standalone Oversize Path**: Requests above `arena_size / 4` or above the
-//!   maximum size class allocate directly without borrowing the thread cache
+//!   quanta (`16..=4096` bytes, 16-byte aligned) when `size <= arena_size / 4`
+//!   and `arena_size` is in `1..=u32::MAX`
+//! - **Standalone Oversize Path**: Requests above `arena_size / 4` or above
+//!   `4096` bytes (or made during late thread-local teardown) allocate a dedicated
+//!   16-byte-aligned zero-initialized buffer from the global allocator without
+//!   borrowing the thread cache
 //!
 //! # Performance Benefits
 //!
@@ -134,7 +139,7 @@ pub struct ThreadLocalPoolConfig {
     pub max_cached_chunks: usize,
     /// Retained for configuration compatibility; currently inert on the allocation
     /// path because [`ThreadLocalMemoryPool`] serves slab and standalone oversize
-    /// allocations from the system allocator (when `true`, [`ThreadLocalMemoryPool::new`]
+    /// allocations from the global allocator (when `true`, [`ThreadLocalMemoryPool::new`]
     /// still validates and initializes the [`SecureMemoryPool`] instance).
     pub use_secure_memory: bool,
 }
@@ -436,8 +441,9 @@ impl Drop for ThreadCache {
 
 /// Thread-local memory pool with per-instance slab caching.
 ///
-/// Slab and standalone oversize allocations are served from the system allocator;
-/// [`ThreadLocalPoolConfig::use_secure_memory`] is currently inert on the allocation path.
+/// Slab and standalone oversize allocations are 16-byte aligned and served from the
+/// global allocator; [`ThreadLocalPoolConfig::use_secure_memory`] is currently inert
+/// on the allocation path.
 pub struct ThreadLocalMemoryPool {
     /// Configuration
     config: ThreadLocalPoolConfig,
@@ -499,15 +505,20 @@ impl ThreadLocalMemoryPool {
             return self.allocate_standalone(size);
         };
 
-        let cache_cell = self.caches.get_or(|| RefCell::new(ThreadCache::new(0)));
-        let tid = match tid_state {
-            TidState::Live(id) => id,
+        let (cache_cell, tid) = match tid_state {
+            TidState::Live(id) => (self.caches.get_or(|| RefCell::new(ThreadCache::new(0))), id),
             TidState::Uninit => {
+                let Ok(cell) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.caches.get_or(|| RefCell::new(ThreadCache::new(0)))
+                })) else {
+                    let _ = OS_TID.try_with(|c| c.set(DEAD_OS_TID));
+                    return self.allocate_standalone(size);
+                };
                 let id = init_os_tid();
                 if id == 0 {
                     return self.allocate_standalone(size);
                 }
-                id
+                (cell, id)
             }
             TidState::Dead => return self.allocate_standalone(size),
         };
@@ -554,7 +565,8 @@ impl ThreadLocalMemoryPool {
         self.stats.clone()
     }
 
-    /// Get memory usage statistics
+    /// Get total bytes currently held in per-thread free lists across all threads
+    /// (returns `0` when `enable_stats` is `false`).
     #[inline]
     pub fn memory_usage(&self) -> usize {
         if let Some(stats) = &self.stats {
@@ -595,7 +607,11 @@ pub struct ThreadLocalAllocation {
 }
 
 impl ThreadLocalAllocation {
-    /// Get pointer to allocated memory
+    /// Get pointer to allocated memory.
+    ///
+    /// Note: recycled slab blocks are not re-zeroed on free, so callers using raw
+    /// pointer writes must only write initialized bytes within `0..self.size()`
+    /// if the block may later be recycled and viewed through [`Self::as_slice`].
     #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
@@ -610,16 +626,20 @@ impl ThreadLocalAllocation {
     /// Get mutable slice view of allocation
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        // SAFETY: `self.ptr` points to a uniquely owned, initialized region (initially zeroed)
-        // of at least `self.size` bytes (`size <= class_size` for slab blocks or `size` for standalone).
+        // SAFETY: `self.ptr` points to a uniquely owned region of at least `self.size`
+        // bytes (`size <= class_size` for slab blocks or `size` for standalone) that was
+        // zero-initialized at slab/standalone creation and only mutated via initialized
+        // writes on prior safe uses.
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
     }
 
     /// Get immutable slice view of allocation
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        // SAFETY: `self.ptr` points to a uniquely owned, initialized region (initially zeroed)
-        // of at least `self.size` bytes (`size <= class_size` for slab blocks or `size` for standalone).
+        // SAFETY: `self.ptr` points to a uniquely owned region of at least `self.size`
+        // bytes (`size <= class_size` for slab blocks or `size` for standalone) that was
+        // zero-initialized at slab/standalone creation and only mutated via initialized
+        // writes on prior safe uses.
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
     }
 }
@@ -927,5 +947,58 @@ mod tests {
         let compact_pool = ThreadLocalMemoryPool::new(compact_config).unwrap();
         assert!(compact_pool.stats.is_some()); // Stats enabled
         assert_eq!(compact_pool.config.arena_size, 512 * 1024);
+    }
+
+    #[test]
+    fn test_v2_s2_allocate_from_late_tls_destructor_on_fresh_thread() {
+        let pool = ThreadLocalMemoryPool::new(ThreadLocalPoolConfig {
+            use_secure_memory: false,
+            ..ThreadLocalPoolConfig::default()
+        })
+        .unwrap();
+
+        struct LateTlsAllocator {
+            pool: Option<Arc<ThreadLocalMemoryPool>>,
+        }
+
+        impl Drop for LateTlsAllocator {
+            fn drop(&mut self) {
+                if let Some(pool) = self.pool.take() {
+                    let mut alloc = pool.allocate(64).expect(
+                        "late TLS destructor allocation should succeed via standalone fallback",
+                    );
+                    alloc.as_mut_slice().fill(0x5A);
+                    assert!(alloc.as_slice().iter().all(|&b| b == 0x5A));
+                }
+            }
+        }
+
+        thread_local! {
+            static LATE_ALLOC: RefCell<LateTlsAllocator> = const {
+                RefCell::new(LateTlsAllocator { pool: None })
+            };
+        }
+
+        let warmup_pool = ThreadLocalMemoryPool::new(ThreadLocalPoolConfig {
+            use_secure_memory: false,
+            ..ThreadLocalPoolConfig::default()
+        })
+        .unwrap();
+
+        let pool_for_thread = Arc::clone(&pool);
+        std::thread::spawn(move || {
+            // Register `LATE_ALLOC` first so its destructor runs last (LIFO),
+            // after `thread_local`'s `ThreadGuard` has already been destroyed.
+            LATE_ALLOC.with(|cell| {
+                cell.borrow_mut().pool = Some(pool_for_thread);
+            });
+            // Touch `thread_local` crate's TLS via a separate `ThreadLocal<u8>`
+            // without initializing `OS_TID` on this thread.
+            let dummy_tls: ThreadLocal<u8> = ThreadLocal::new();
+            let _ = dummy_tls.get_or(|| 1u8);
+            drop(warmup_pool);
+        })
+        .join()
+        .expect("late TLS destructor thread should exit cleanly without aborting");
     }
 }
