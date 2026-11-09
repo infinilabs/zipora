@@ -576,7 +576,7 @@ impl PaZipCompressor {
         // Copy compressed data to output
         output.extend_from_slice(&self.output_buffer);
         self.stats.bytes_processed = input.len() as u64;
-        self.stats.bytes_output = output.len() as u64;
+        self.stats.bytes_output = self.output_buffer.len() as u64;
 
         Ok(())
     }
@@ -879,13 +879,13 @@ impl PaZipCompressor {
             compressed_blocks.push(block_output);
         }
 
-        // Combine compressed blocks
-        output.clear();
+        // Combine compressed blocks by appending to the caller's buffer
+        let start_len = output.len();
         for block in compressed_blocks {
             output.extend_from_slice(&block);
         }
         self.stats.bytes_processed = input.len() as u64;
-        self.stats.bytes_output = output.len() as u64;
+        self.stats.bytes_output = (output.len() - start_len) as u64;
 
         Ok(())
     }
@@ -1959,6 +1959,32 @@ mod reference_compliance_tests {
             ht_stats.compression_ratio
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_v2_m3_parallel_compress_appends_to_existing_output() -> Result<()> {
+        let compressor_base = setup_reference_compliant_compressor()?;
+        let dictionary = compressor_base.dictionary.clone();
+        let pool = SecureMemoryPool::new(SecurePoolConfig::new(4096, 1024, 8))?;
+        let mut config = PaZipCompressorConfig::default();
+        config.enable_multithreading = true;
+        config.multithreading_threshold = 1024 * 1024;
+        let mut compressor = PaZipCompressor::new(dictionary, config, pool)?;
+
+        let prefix = b"PAZIP_CALLER_HDR";
+        let mut output = prefix.to_vec();
+        let input: Vec<u8> = (0..(1024 * 1024 + 4096))
+            .map(|i| b"abcdefghij"[i % 10])
+            .collect();
+
+        let stats = compressor.compress(&input, &mut output)?;
+        assert_eq!(&output[..prefix.len()], prefix);
+        assert_eq!(stats.bytes_output as usize, output.len() - prefix.len());
+
+        let mut decompressed = Vec::new();
+        compressor.decompress(&output[prefix.len()..], &mut decompressed)?;
+        assert_eq!(decompressed, input);
         Ok(())
     }
 }
