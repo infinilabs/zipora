@@ -334,13 +334,18 @@ impl SimdHuffmanEncoder {
 
         // Process data in batches of 32 bytes (AVX2 register size)
         let (chunks, remainder) = data.as_chunks::<32>();
+        let chunks_len = chunks.len();
 
-        for chunk in chunks {
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
             // Prefetch next chunk
-            if self.config.enable_prefetching {
-                // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2,bmi2")], pointer valid from chunk slice
+            if self.config.enable_prefetching && chunk_idx + 1 < chunks_len {
+                // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2,bmi2")];
+                // `chunk_idx + 1 < chunks_len` ensures `(chunk_idx + 1) * 32` is in-bounds of `data`.
                 unsafe {
-                    _mm_prefetch(chunk.as_ptr().add(32) as *const i8, _MM_HINT_T0);
+                    _mm_prefetch(
+                        data.as_ptr().add((chunk_idx + 1) * 32) as *const i8,
+                        _MM_HINT_T0,
+                    );
                 }
             }
 
