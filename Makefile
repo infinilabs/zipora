@@ -525,10 +525,20 @@ pre_commit: format clippy test_debug safety_tests
 
 # Authoritative pre-publish release gate (Rule F4 / plan.md §1.7):
 # `make release_prep` is the only path to `cargo publish`. It runs `sanity`,
-# B4 `feature_matrix`, B5 `audit`, B2.2 `miri_weak`, and A3's adversarial set
+# B4 `feature_matrix`, B5 `audit`, B2.2 `miri_weak`, A3's adversarial set
 # (`miri_core`, `miri_simd`, `miri_cspp`, `tsan_cspp`, `tsan_pool`, `fuzz_smoke`),
-# followed by `cargo publish --dry-run --locked`.
+# AArch64 check, `memory::secure_pool` under Miri, and optional `fuzz_soak`
+# (`ZIPORA_RELEASE_FUZZ_SOAK=1` for releases touching decoders), followed by
+# `cargo publish --dry-run --locked`.
 release_prep: sanity feature_matrix audit miri_core miri_simd miri_cspp miri_weak tsan_cspp tsan_pool fuzz_smoke
+	@if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then \
+		RUSTFLAGS="" $(CARGO) check --locked --target aarch64-unknown-linux-gnu --all-features; \
+	else \
+		RUSTFLAGS="" $(CARGO) check --locked --target aarch64-unknown-linux-gnu --no-default-features --features simd,mmap,serde,lz4,async,ffi,avx512 --lib; \
+	fi
+	MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks -Zmiri-disable-isolation" \
+		$(CARGO_MIRI) test --lib memory::secure_pool -- --test-threads=1
+	@if [ "$${ZIPORA_RELEASE_FUZZ_SOAK:-0}" = "1" ]; then $(MAKE) fuzz_soak; fi
 	$(CARGO) publish --dry-run --locked
 
 publish: release_prep
