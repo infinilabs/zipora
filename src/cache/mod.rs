@@ -522,6 +522,9 @@ impl FileManager {
             FileBacking::Virtual(buf) => {
                 let end = end_offset as usize;
                 if buf.len() < end {
+                    let add = end - buf.len();
+                    buf.try_reserve(add)
+                        .map_err(|_| ZiporaError::out_of_memory(add))?;
                     buf.resize(end, 0);
                 }
                 let start = offset as usize;

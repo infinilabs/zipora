@@ -123,3 +123,137 @@ mod pack_bits {
         assert!(ops.pack_bits(&mut stream, 1, 0, 33).is_err());
     }
 }
+
+// ---------------------------------------------------------------------------
+// C6.6 `LruPageCache` (src/cache/basic_cache.rs)
+// ---------------------------------------------------------------------------
+
+mod lru_page_cache {
+    use super::*;
+    use zipora::cache::{LruPageCache, PAGE_SIZE, PageCacheConfig};
+
+    fn file_with(len: usize) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&vec![0u8; len]).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    /// (a) `write()` only marks pages dirty; `LruPageCache` has no `Drop`, so
+    /// dropping it without `flush_file`/`close_file` discards the writes.
+    #[test]
+    fn test_v2_lru_cache_drop_flushes_dirty_pages() {
+        let file = file_with(2 * PAGE_SIZE);
+        {
+            let cache = LruPageCache::new(PageCacheConfig::balanced()).unwrap();
+            let fid = cache.open_file(file.path()).unwrap();
+            cache.write(fid, 100, b"PERSIST-ME").unwrap();
+            cache.write(fid, PAGE_SIZE as u64 + 7, b"PAGE-ONE").unwrap();
+        }
+        let disk = std::fs::read(file.path()).unwrap();
+        assert_eq!(
+            &disk[100..110],
+            b"PERSIST-ME",
+            "dirty page 0 was lost when the cache was dropped without flush_file"
+        );
+        assert_eq!(&disk[PAGE_SIZE + 7..PAGE_SIZE + 15], b"PAGE-ONE");
+    }
+
+    /// (b) Every miss also calls `record_hit(InitialFree)` (and
+    /// `record_hit(EvictedOthers)` when it evicts), so `N` cold reads report
+    /// `N` hits: a 50% hit ratio (63.6% with evictions) where 0% is true.
+    #[test]
+    fn test_v2_lru_cache_cold_reads_report_zero_hit_ratio() {
+        const PAGES: usize = 8;
+        let file = file_with(PAGES * PAGE_SIZE);
+        for capacity_pages in [PAGES * 4, 2] {
+            let config = PageCacheConfig::balanced()
+                .with_capacity(capacity_pages * PAGE_SIZE)
+                .with_shards(1);
+            let cache = LruPageCache::new(config).unwrap();
+            let fid = cache.open_file(file.path()).unwrap();
+            for page in 0..PAGES {
+                cache.read(fid, (page * PAGE_SIZE) as u64, 16).unwrap();
+            }
+            let stats = cache.stats();
+            assert_eq!(
+                stats.total_misses, PAGES as u64,
+                "capacity {capacity_pages} pages"
+            );
+            assert_eq!(
+                (stats.total_hits, stats.hit_ratio),
+                (0, 0.0),
+                "capacity {capacity_pages} pages: {PAGES} distinct cold reads must not count as hits"
+            );
+            // One warm read is exactly one hit.
+            cache
+                .read(fid, ((PAGES - 1) * PAGE_SIZE) as u64, 16)
+                .unwrap();
+            assert_eq!(
+                cache.stats().total_hits,
+                1,
+                "capacity {capacity_pages} pages"
+            );
+        }
+    }
+
+    /// (c) `PageId` is `u32`, so `offset_to_page_id` truncates offsets at or
+    /// above 2^44 (16 TiB). `write` then computes `PAGE_SIZE - offset_in_page`
+    /// with `offset_in_page ~ 2^44` (overflow panic in the test profile, a
+    /// ~16 TiB `resize` in release). Offsets the 32-bit page id cannot
+    /// address must be rejected with `Err`. A virtual file (`fd == -1`) needs
+    /// no backing storage.
+    #[test]
+    fn test_v2_lru_cache_rejects_offsets_beyond_32bit_page_ids() {
+        let cache = LruPageCache::new(PageCacheConfig::balanced()).unwrap();
+        let fid = cache.register_file(-1).unwrap();
+        let limit = 1u64 << 44;
+        assert!(cache.write(fid, limit, b"x").is_err(), "write at 16 TiB");
+        assert!(
+            cache.write(fid, limit - 2, b"xyzw").is_err(),
+            "write across 16 TiB"
+        );
+        assert!(cache.read(fid, limit, 1).is_err(), "read at 16 TiB");
+        assert!(cache.read(fid, limit - 2, 4).is_err(), "read across 16 TiB");
+        assert!(cache.prefetch(fid, limit, 1).is_err(), "prefetch at 16 TiB");
+        // The last addressable bytes are still accepted (EOF of an empty file).
+        // No write there: flushing a dirty page of a virtual file grows its
+        // backing `Vec` to the page offset.
+        assert!(cache.read(fid, limit - 4, 4).unwrap().is_empty());
+    }
+
+    /// (c) Same truncation on the read side, observable only with a file
+    /// larger than 16 TiB: v5.0.0 maps offset 2^44 to page 0 and returns an
+    /// empty buffer for data that exists. Needs a filesystem that allows a
+    /// sparse file above 16 TiB (tmpfs, xfs, btrfs; not ext4); otherwise the
+    /// test logs and returns.
+    #[test]
+    fn test_v2_lru_cache_read_beyond_16tib_is_not_silently_short() {
+        use std::os::unix::fs::FileExt;
+        let limit = 1u64 << 44;
+        let candidates = [std::env::temp_dir(), "/dev/shm".into(), "/tmp".into()];
+        let Some(file) = candidates.iter().find_map(|dir| {
+            let file = tempfile::Builder::new()
+                .prefix("zipora-v2-sparse")
+                .tempfile_in(dir)
+                .ok()?;
+            file.as_file().set_len(limit + 2 * PAGE_SIZE as u64).ok()?;
+            Some(file)
+        }) else {
+            eprintln!("skipped: no filesystem here supports a sparse file above 16 TiB");
+            return;
+        };
+        file.as_file().write_all_at(b"HELLO", limit).unwrap();
+
+        let cache = LruPageCache::new(PageCacheConfig::balanced()).unwrap();
+        let fid = cache.open_file(file.path()).unwrap();
+        if let Ok(buf) = cache.read(fid, limit, 5) {
+            assert_eq!(
+                buf.data(),
+                b"HELLO",
+                "read at 16 TiB returned {:?}: the page id was truncated to 0",
+                buf.data()
+            );
+        }
+    }
+}

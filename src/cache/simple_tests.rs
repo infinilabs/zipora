@@ -85,17 +85,17 @@ fn test_cache_read_same_page_twice() -> Result<()> {
     let cache = LruPageCache::new(config)?;
     let file_id = cache.open_file(temp_file.path())?;
 
-    // First read - cache miss (which loads into cache, triggering an InitialFree hit)
+    // First read - cache miss (loads into cache without counting as a hit)
     let buffer1 = cache.read(file_id, 0, test_data.len())?;
     assert_eq!(buffer1.data(), test_data);
     assert_eq!(cache.stats().total_misses, 1);
-    assert_eq!(cache.stats().total_hits, 1);
+    assert_eq!(cache.stats().total_hits, 0);
 
     // Second read - should be cache hit
     let buffer2 = cache.read(file_id, 0, test_data.len())?;
     assert_eq!(buffer2.data(), test_data);
     assert_eq!(cache.stats().total_misses, 1);
-    assert_eq!(cache.stats().total_hits, 2);
+    assert_eq!(cache.stats().total_hits, 1);
 
     cache.close_file(file_id)?;
     Ok(())
@@ -140,15 +140,15 @@ fn test_cache_miss_then_hit() -> Result<()> {
 
     // Verify statistics are being tracked by the cache itself
     let stats = cache.stats();
-    // The first read triggers a Miss + InitialFree (Hit). The second read triggers a Hit.
-    assert_eq!(stats.total_hits, 2);
+    // The first read triggers a Miss. The second read triggers a Hit.
+    assert_eq!(stats.total_hits, 1);
     assert_eq!(stats.total_misses, 1);
 
     // Test the ratios
-    // total operations = misses + hits = 1 + 2 = 3.
-    // Hit ratio = 2/3, Miss ratio = 1/3
-    assert!((stats.hit_ratio - 0.666).abs() < 0.01);
-    assert!((stats.miss_ratio - 0.333).abs() < 0.01);
+    // total operations = misses + hits = 1 + 1 = 2.
+    // Hit ratio = 1/2, Miss ratio = 1/2
+    assert!((stats.hit_ratio - 0.5).abs() < 0.01);
+    assert!((stats.miss_ratio - 0.5).abs() < 0.01);
 
     cache.close_file(file_id)?;
     Ok(())

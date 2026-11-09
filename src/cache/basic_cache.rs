@@ -93,6 +93,28 @@ impl InvalidationTracker {
 }
 
 impl LruPageCache {
+    /// Maximum byte offset addressable by a 32-bit `PageId` (`2^32 * 4096 = 16 TiB`).
+    const MAX_PAGE_ADDRESSABLE_BYTES: u64 = (PageId::MAX as u64 + 1) * PAGE_SIZE as u64;
+
+    fn page_range(offset: u64, len: usize) -> Result<(PageId, PageId)> {
+        let end_offset = offset.checked_add(len as u64).ok_or_else(|| {
+            ZiporaError::invalid_data("cache offset + length overflows u64".to_string())
+        })?;
+        if offset >= Self::MAX_PAGE_ADDRESSABLE_BYTES
+            || end_offset > Self::MAX_PAGE_ADDRESSABLE_BYTES
+        {
+            return Err(ZiporaError::invalid_data(format!(
+                "cache offset range {}..{} exceeds 32-bit PageId limit ({} bytes)",
+                offset,
+                end_offset,
+                Self::MAX_PAGE_ADDRESSABLE_BYTES
+            )));
+        }
+        let start_page = FileManager::offset_to_page_id(offset);
+        let end_page = FileManager::offset_to_page_id(end_offset.saturating_sub(1));
+        Ok((start_page, end_page))
+    }
+
     /// Create new LRU cache with real file I/O
     pub fn new(config: PageCacheConfig) -> Result<Self> {
         config.validate()?;
@@ -144,9 +166,7 @@ impl LruPageCache {
         }
 
         // Calculate which pages we need
-        let start_page = FileManager::offset_to_page_id(offset);
-        let end_offset = offset.saturating_add(length as u64);
-        let end_page = FileManager::offset_to_page_id(end_offset.saturating_sub(1));
+        let (start_page, end_page) = Self::page_range(offset, length)?;
 
         let mut result_buffer = CacheBuffer::new();
         let mut current_offset = offset;
@@ -186,9 +206,7 @@ impl LruPageCache {
             return Ok(());
         }
 
-        let start_page = FileManager::offset_to_page_id(offset);
-        let end_offset = offset.saturating_add(data.len() as u64);
-        let end_page = FileManager::offset_to_page_id(end_offset.saturating_sub(1));
+        let (start_page, end_page) = Self::page_range(offset, data.len())?;
 
         let mut current_offset = offset;
         let mut data_pos = 0usize;
@@ -282,12 +300,12 @@ impl LruPageCache {
                 inner.remove(&lru_key);
                 tracker.evict(lru_key);
                 self.stats.record_eviction();
-                self.stats.record_hit(CacheHitType::EvictedOthers);
+                self.stats.record_miss_detail(CacheHitType::EvictedOthers);
             }
         }
 
         self.stats.record_bytes_cached(page_buffer.len() as u64);
-        self.stats.record_hit(CacheHitType::InitialFree);
+        self.stats.record_miss_detail(CacheHitType::InitialFree);
         inner.insert(cache_key, page_buffer);
         tracker.mark_accessed(cache_key);
         Ok(())
@@ -326,9 +344,7 @@ impl LruPageCache {
             return Ok(());
         }
         // Calculate pages to prefetch
-        let start_page = FileManager::offset_to_page_id(offset);
-        let end_offset = offset.saturating_add(length as u64);
-        let end_page = FileManager::offset_to_page_id(end_offset.saturating_sub(1));
+        let (start_page, end_page) = Self::page_range(offset, length)?;
 
         // Prefetch each page (load into cache without returning data)
         for page_id in start_page..=end_page {
@@ -386,9 +402,7 @@ impl LruPageCache {
         if length == 0 {
             return Ok(());
         }
-        let start_page = FileManager::offset_to_page_id(start_offset);
-        let end_offset = start_offset.saturating_add(length as u64);
-        let end_page = FileManager::offset_to_page_id(end_offset.saturating_sub(1));
+        let (start_page, end_page) = Self::page_range(start_offset, length)?;
 
         for page_id in start_page..=end_page {
             self.invalidate_page(file_id, page_id)?;
@@ -475,6 +489,32 @@ impl LruPageCache {
     /// Get number of shards (always 1 for basic implementation)
     pub fn shard_count(&self) -> usize {
         1
+    }
+}
+
+impl Drop for LruPageCache {
+    fn drop(&mut self) {
+        let Ok(inner) = self.inner.lock() else {
+            return;
+        };
+        let Ok(mut tracker) = self.invalidation_tracker.lock() else {
+            return;
+        };
+        let mut dirty_pages: Vec<(FileId, PageId)> = tracker.dirty_pages.iter().copied().collect();
+        dirty_pages.sort_unstable();
+        for (fid, page_id) in dirty_pages {
+            if let Some(data) = inner.get(&(fid, page_id))
+                && let Err(e) = self.file_manager.write_page(fid, page_id, data)
+            {
+                log::warn!(
+                    "LruPageCache::drop failed to flush dirty page ({}, {}): {}",
+                    fid,
+                    page_id,
+                    e
+                );
+            }
+            tracker.mark_clean((fid, page_id));
+        }
     }
 }
 

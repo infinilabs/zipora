@@ -98,6 +98,12 @@ impl CacheStatistics {
         self.total_hits.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record miss-path detail without incrementing `total_hits`
+    pub(crate) fn record_miss_detail(&self, hit_type: CacheHitType) {
+        // ORDERING: Relaxed is sufficient for independent telemetry counters.
+        self.hit_counts[hit_type.as_index()].fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Record cache miss
     pub fn record_miss(&self) {
         // ORDERING: Relaxed is sufficient for independent telemetry counters.
