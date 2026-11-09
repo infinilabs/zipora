@@ -623,6 +623,16 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
         let mut result = Vec::with_capacity(output_length.min(1 << 20));
 
         for _ in 0..output_length {
+            if result.len() == result.capacity() {
+                let target_cap = result
+                    .capacity()
+                    .saturating_mul(2)
+                    .max(1 << 20)
+                    .min(output_length);
+                result
+                    .try_reserve_exact(target_cap - result.len())
+                    .map_err(|_| ZiporaError::out_of_memory(target_cap))?;
+            }
             let symbol = self.decode_symbol(&mut state, encoded_data, &mut pos)?;
             result.push(symbol);
         }
@@ -847,9 +857,16 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
             let end = start
                 .checked_add(window_len)
                 .ok_or_else(|| ZiporaError::out_of_memory(output_length))?;
-            result
-                .try_reserve(window_len)
-                .map_err(|_| ZiporaError::out_of_memory(end))?;
+            if end > result.capacity() {
+                let target_cap = result
+                    .capacity()
+                    .saturating_mul(2)
+                    .max(end)
+                    .min(output_length);
+                result
+                    .try_reserve_exact(target_cap - start)
+                    .map_err(|_| ZiporaError::out_of_memory(target_cap))?;
+            }
             result.resize(end, 0);
             let window = result
                 .get_mut(start..end)
@@ -1301,5 +1318,37 @@ mod tests {
         let decoder4 = Rans64Decoder::<ParallelX4>::new(&encoder4);
         assert!(decoder4.decode(&[], 10).is_err());
         assert!(decoder4.decode(&[0u8; 12], 10).is_err());
+    }
+
+    #[test]
+    fn test_v2_m1_windowed_decode_caps_reservation_at_output_length() {
+        let len = (2 << 20) + 5;
+        let data: Vec<u8> = (0..len).map(|i| (i * 13 % 7) as u8 + b'a').collect();
+        let mut frequencies = [0u32; 256];
+        for &b in &data {
+            frequencies[b as usize] += 1;
+        }
+
+        fn check_variant<P: ParallelVariant>(data: &[u8], frequencies: &[u32; 256]) {
+            let encoder = Rans64Encoder::<P>::new(frequencies).unwrap();
+            let encoded = encoder.encode(data).unwrap();
+            let decoder = Rans64Decoder::<P>::new(&encoder);
+            let decoded = decoder.decode(&encoded, data.len()).unwrap();
+            assert_eq!(decoded.len(), data.len());
+            assert_eq!(
+                decoded.capacity(),
+                data.len(),
+                "{} decoded capacity {} exceeded output_length {}",
+                P::NAME,
+                decoded.capacity(),
+                data.len()
+            );
+            assert_eq!(decoded, data);
+        }
+
+        check_variant::<ParallelX1>(&data, &frequencies);
+        check_variant::<ParallelX2>(&data, &frequencies);
+        check_variant::<ParallelX4>(&data, &frequencies);
+        check_variant::<ParallelX8>(&data, &frequencies);
     }
 }
