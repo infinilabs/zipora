@@ -387,9 +387,8 @@ impl CacheObliviousSort {
 
     /// L2 cache-optimized sorting  
     fn l2_optimized_sort<T: Clone + Ord>(&mut self, data: &mut [T]) {
-        // Use quicksort with cache-aware partitioning
         if data.len() > 16 {
-            self.cache_aware_quicksort(data, 0, data.len() - 1);
+            data.sort_unstable();
         } else {
             self.insertion_sort(data);
         }
@@ -454,41 +453,6 @@ impl CacheObliviousSort {
 
             data[j] = key;
         }
-    }
-
-    /// Cache-aware quicksort with optimal partitioning
-    fn cache_aware_quicksort<T: Clone + Ord>(&mut self, data: &mut [T], low: usize, high: usize) {
-        if low < high {
-            let pivot = self.cache_aware_partition(data, low, high);
-
-            if pivot > 0 {
-                self.cache_aware_quicksort(data, low, pivot - 1);
-            }
-            if pivot < high {
-                self.cache_aware_quicksort(data, pivot + 1, high);
-            }
-        }
-    }
-
-    /// Cache-aware partitioning for quicksort
-    fn cache_aware_partition<T: Clone + Ord>(
-        &mut self,
-        data: &mut [T],
-        low: usize,
-        high: usize,
-    ) -> usize {
-        let pivot = data[high].clone();
-        let mut i = low;
-
-        for j in low..high {
-            if data[j] <= pivot {
-                data.swap(i, j);
-                i += 1;
-            }
-        }
-
-        data.swap(i, high);
-        i
     }
 
     /// Cache-aware merge sort
@@ -658,8 +622,7 @@ impl<T: Clone> VanEmdeBoas<T> {
 
             // Prefetch nearby cache lines for better performance
             if self.cpu_features.has_avx2 && self.data.len() > 64 && std::mem::size_of::<T>() > 0 {
-                let cache_line_elements =
-                    self.cache_line_size / std::mem::size_of::<T>().max(1);
+                let cache_line_elements = self.cache_line_size / std::mem::size_of::<T>().max(1);
                 let _ = cache_line_elements;
                 #[cfg(all(target_arch = "x86_64", not(miri)))]
                 {
@@ -991,6 +954,96 @@ mod tests {
             sorter.cache_oblivious_sort(&mut v).unwrap();
             let got: Vec<(u16, u32)> = v.iter().map(|r| (r.key, r.tag)).collect();
             assert!(got == want, "small_threshold={small_threshold}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod plan_v2_cache_oblivious {
+    use super::*;
+    use std::cell::Cell;
+
+    thread_local! {
+        static COMPARISONS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// 16-byte element whose `Ord` counts comparisons.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct Counted {
+        key: u64,
+        pad: u64,
+    }
+
+    impl Ord for Counted {
+        fn cmp(&self, other: &Self) -> cmp::Ordering {
+            COMPARISONS.with(|c| c.set(c.get() + 1));
+            self.key.cmp(&other.key)
+        }
+    }
+
+    impl PartialOrd for Counted {
+        fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    /// Fixed cache sizes, so the path does not depend on the host:
+    /// `n * 8 <= L1` makes `sort` pick `CacheAware`, and
+    /// `L1 < n * size_of::<Counted>() <= L2` makes `cache_aware_sort` pick
+    /// `l2_optimized_sort` (the quicksort).
+    fn l2_quicksort_config(n: usize) -> CacheObliviousConfig {
+        CacheObliviousConfig {
+            cache_hierarchy: CacheHierarchy {
+                l1_size: n * 8 + n / 2,
+                l2_size: 1 << 30,
+                l3_size: 1 << 31,
+                ..CacheHierarchy::default()
+            },
+            ..CacheObliviousConfig::default()
+        }
+    }
+
+    /// Sorts on a thread with a 64 MiB stack (v5.0.0 recurses `n` deep on
+    /// these inputs) and returns the output and the number of comparisons.
+    fn sort_counting(input: Vec<Counted>) -> (Vec<Counted>, u64) {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(move || {
+                let mut data = input;
+                let mut sorter = CacheObliviousSort::with_config(l2_quicksort_config(data.len()));
+                COMPARISONS.with(|c| c.set(0));
+                sorter.sort(&mut data).unwrap();
+                (data, COMPARISONS.with(|c| c.get()))
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    /// `l2_optimized_sort` is a Lomuto quicksort with a last-element pivot
+    /// (`cache_aware_partition`): sorted, reverse-sorted and all-equal input
+    /// cost `n(n-1)/2` comparisons and `n` levels of recursion (2·10^8
+    /// comparisons for n = 20 000, and a stack overflow on a default 2 MiB
+    /// thread). The sort must stay within `30 · n · log2 n` comparisons.
+    #[test]
+    fn test_v2_cache_aware_l2_sort_is_n_log_n_on_adversarial_input() {
+        const N: u64 = 20_000;
+        let bound = 30 * N * (N as f64).log2().ceil() as u64;
+        let mk = |key: u64| Counted { key, pad: key };
+        let inputs: [(&str, Vec<Counted>); 3] = [
+            ("sorted", (0..N).map(mk).collect()),
+            ("reverse-sorted", (0..N).rev().map(mk).collect()),
+            ("all-equal", (0..N).map(|_| mk(7)).collect()),
+        ];
+        for (name, input) in inputs {
+            let mut expected = input.clone();
+            expected.sort_by_key(|c| c.key);
+            let (sorted, comparisons) = sort_counting(input);
+            assert!(sorted == expected, "{name}: output is not sorted");
+            assert!(
+                comparisons <= bound,
+                "{name}: {comparisons} comparisons for n = {N} (bound 30·n·log2 n = {bound})"
+            );
         }
     }
 }
