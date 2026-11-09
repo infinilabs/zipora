@@ -701,3 +701,107 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod plan_v2_loser_tree {
+    use super::*;
+
+    fn tree_of(ways: Vec<Vec<i32>>) -> EnhancedLoserTree<i32> {
+        let mut tree = EnhancedLoserTree::new(LoserTreeConfig::default());
+        for way in ways {
+            tree.add_way(way.into_iter()).unwrap();
+        }
+        tree
+    }
+
+    /// The O(k) scan `is_empty` must keep agreeing with.
+    fn scan_is_empty(tree: &EnhancedLoserTree<i32>) -> bool {
+        tree.ways.iter().all(|way| way.is_exhausted())
+    }
+
+    /// Guard: before `initialize()` the `winner` field is 0 (stale), so an
+    /// O(1) `is_empty` must not trust it.
+    #[test]
+    fn test_v2_loser_tree_is_empty_before_initialize_guard() {
+        assert!(!tree_of(vec![vec![], vec![1]]).is_empty());
+        assert!(!tree_of(vec![vec![], vec![], vec![], vec![2]]).is_empty());
+        assert!(tree_of(vec![vec![], vec![]]).is_empty());
+        assert!(tree_of(vec![]).is_empty());
+    }
+
+    /// Guard: `add_way` clears `initialized` but leaves `winner` pointing at
+    /// the old (possibly exhausted) winner.
+    #[test]
+    fn test_v2_loser_tree_is_empty_after_add_way_guard() {
+        let mut tree = tree_of(vec![vec![]]);
+        tree.initialize().unwrap();
+        assert!(tree.is_empty());
+        tree.add_way(vec![5].into_iter()).unwrap();
+        assert!(!tree.is_empty());
+        assert_eq!(tree.pop().unwrap(), Some(5));
+        assert!(tree.is_empty());
+
+        let mut tree = tree_of(vec![vec![1, 2]]);
+        assert_eq!(tree.merge_to_vec().unwrap(), vec![1, 2]);
+        assert!(tree.is_empty());
+        tree.add_way(vec![3].into_iter()).unwrap();
+        assert!(!tree.is_empty());
+        assert_eq!(tree.merge_to_vec().unwrap(), vec![3]);
+        assert!(tree.is_empty());
+    }
+
+    /// Guard: partially and fully exhausted trees, popped one value at a time.
+    #[test]
+    fn test_v2_loser_tree_is_empty_partial_and_full_guard() {
+        let mut tree = tree_of(vec![vec![1, 2], vec![10], vec![], vec![3, 30]]);
+        tree.initialize().unwrap();
+        for expected in [1, 2, 3, 10, 30] {
+            assert!(!tree.is_empty(), "before popping {expected}");
+            assert_eq!(tree.pop().unwrap(), Some(expected));
+        }
+        assert!(tree.is_empty());
+        assert_eq!(tree.pop().unwrap(), None);
+        assert!(tree.is_empty());
+    }
+
+    /// Guard: for 1..=17 ways of random (possibly empty) runs, `is_empty`
+    /// equals the full scan after every pop, through `pop` and the iterator.
+    #[test]
+    fn test_v2_loser_tree_is_empty_matches_scan_guard() {
+        let mut state = 0xA076_1D64_78BD_642Fu64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for k in 1..=17usize {
+            for round in 0..20 {
+                let ways: Vec<Vec<i32>> = (0..k)
+                    .map(|_| {
+                        let len = (next() % 6) as usize;
+                        let mut way: Vec<i32> = (0..len).map(|_| (next() % 20) as i32).collect();
+                        way.sort_unstable();
+                        way
+                    })
+                    .collect();
+                let mut expected: Vec<i32> = ways.iter().flatten().copied().collect();
+                expected.sort_unstable();
+                let mut tree = tree_of(ways);
+                assert_eq!(tree.is_empty(), scan_is_empty(&tree));
+                if round % 2 == 0 {
+                    tree.initialize().unwrap();
+                }
+                let mut merged = Vec::new();
+                loop {
+                    assert_eq!(tree.is_empty(), scan_is_empty(&tree), "k {k} round {round}");
+                    if tree.is_empty() {
+                        break;
+                    }
+                    merged.push(tree.next().expect("non-empty tree yields a value"));
+                }
+                assert_eq!(merged, expected, "k {k} round {round}");
+                assert_eq!(tree.next(), None);
+            }
+        }
+    }
+}
