@@ -411,6 +411,9 @@ impl SimdStringSearch {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_strstr_impl(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        let budget = haystack.len().saturating_mul(2).saturating_add(256);
+        let mut verified_bytes = 0usize;
+
         if needle.len() > 16 {
             // For needles > 16 bytes, use first character matching + verification
             let first_char = needle[0];
@@ -425,6 +428,10 @@ impl SimdStringSearch {
                             return Some(candidate_pos);
                         }
                         pos = candidate_pos + 1;
+                        verified_bytes = verified_bytes.saturating_add(needle.len());
+                        if verified_bytes > budget {
+                            return memchr::memmem::find(&haystack[pos..], needle).map(|i| pos + i);
+                        }
                     } else {
                         break;
                     }
@@ -508,6 +515,10 @@ impl SimdStringSearch {
                     return Some(candidate);
                 }
                 start = candidate + 1;
+                verified_bytes = verified_bytes.saturating_add(needle.len());
+                if verified_bytes > budget {
+                    return memchr::memmem::find(&haystack[start..], needle).map(|i| start + i);
+                }
             } else {
                 // No match inside the window, which rules out every offset in
                 // [start, start + search_len - needle.len()] at once.
@@ -734,6 +745,8 @@ impl SimdStringSearch {
     unsafe fn avx2_strstr(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
         let first_char = needle[0];
         let mut pos = 0;
+        let budget = haystack.len().saturating_mul(2).saturating_add(256);
+        let mut verified_bytes = 0usize;
 
         while pos <= haystack.len() - needle.len() {
             // SAFETY: avx2 guaranteed by #[target_feature], haystack[pos..] is valid slice
@@ -745,6 +758,10 @@ impl SimdStringSearch {
                         return Some(candidate_pos);
                     }
                     pos = candidate_pos + 1;
+                    verified_bytes = verified_bytes.saturating_add(needle.len());
+                    if verified_bytes > budget {
+                        return memchr::memmem::find(&haystack[pos..], needle).map(|i| pos + i);
+                    }
                 } else {
                     break;
                 }
@@ -901,6 +918,8 @@ impl SimdStringSearch {
         // Similar to AVX2 implementation but with 64-byte chunks
         let first_char = needle[0];
         let mut pos = 0;
+        let budget = haystack.len().saturating_mul(2).saturating_add(256);
+        let mut verified_bytes = 0usize;
 
         while pos <= haystack.len() - needle.len() {
             // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], haystack[pos..] is valid slice
@@ -912,6 +931,10 @@ impl SimdStringSearch {
                         return Some(candidate_pos);
                     }
                     pos = candidate_pos + 1;
+                    verified_bytes = verified_bytes.saturating_add(needle.len());
+                    if verified_bytes > budget {
+                        return memchr::memmem::find(&haystack[pos..], needle).map(|i| pos + i);
+                    }
                 } else {
                     break;
                 }
@@ -1029,10 +1052,25 @@ impl SimdStringSearch {
         if needle.is_empty() {
             return Some(0);
         }
+        if needle.len() > haystack.len() {
+            return None;
+        }
 
-        haystack
-            .windows(needle.len())
-            .position(|window| window == needle)
+        let budget = haystack.len().saturating_mul(2).saturating_add(256);
+        let mut verified_bytes = 0usize;
+        let max_pos = haystack.len() - needle.len();
+        let mut pos = 0usize;
+        while pos <= max_pos {
+            if &haystack[pos..pos + needle.len()] == needle {
+                return Some(pos);
+            }
+            pos += 1;
+            verified_bytes = verified_bytes.saturating_add(needle.len());
+            if verified_bytes > budget {
+                return memchr::memmem::find(&haystack[pos..], needle).map(|i| pos + i);
+            }
+        }
+        None
     }
 
     fn scalar_multi_search(&self, haystack: &[u8], needles: &[u8]) -> MultiSearchResult {

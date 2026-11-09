@@ -211,10 +211,20 @@ impl<'a> FastStr<'a> {
             }
         }
 
-        // Fallback to optimized naive search
-        for i in 0..=(self.len() - needle.len()) {
+        // Fallback to bounded search with memchr::memmem fallback once candidate verification
+        // exceeds 2 * haystack.len() + 256 bytes.
+        let budget = self.len().saturating_mul(2).saturating_add(256);
+        let mut verified_bytes = 0usize;
+        let max_pos = self.len() - needle.len();
+        let mut i = 0usize;
+        while i <= max_pos {
             if &self.data[i..i + needle.len()] == needle.data {
                 return Some(i);
+            }
+            i += 1;
+            verified_bytes = verified_bytes.saturating_add(needle.len());
+            if verified_bytes > budget {
+                return memchr::memmem::find(&self.data[i..], needle.data).map(|off| i + off);
             }
         }
         None
@@ -269,6 +279,8 @@ impl<'a> FastStr<'a> {
         let first_vec = _mm512_set1_epi8(needle_data[0] as i8);
         let needle_len = needle_data.len();
         let search_end = haystack.len() - needle_len + 1;
+        let budget = haystack.len().saturating_mul(2).saturating_add(256);
+        let mut verified_bytes = 0usize;
         let mut i = 0;
 
         while i + 64 <= haystack.len() && i < search_end {
@@ -288,15 +300,26 @@ impl<'a> FastStr<'a> {
                 if &haystack[pos..pos + needle_len] == needle_data {
                     return Some(pos);
                 }
+                verified_bytes = verified_bytes.saturating_add(needle_len);
+                if verified_bytes > budget {
+                    return memchr::memmem::find(&haystack[pos + 1..], needle_data)
+                        .map(|off| pos + 1 + off);
+                }
                 m &= m - 1;
             }
 
             i += 64;
         }
 
-        for pos in i..search_end {
+        let mut pos = i;
+        while pos < search_end {
             if &haystack[pos..pos + needle_len] == needle_data {
                 return Some(pos);
+            }
+            pos += 1;
+            verified_bytes = verified_bytes.saturating_add(needle_len);
+            if verified_bytes > budget {
+                return memchr::memmem::find(&haystack[pos..], needle_data).map(|off| pos + off);
             }
         }
 

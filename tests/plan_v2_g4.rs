@@ -295,3 +295,110 @@ mod fast_vec_extend {
         assert_eq!(v.len(), usize::MAX);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Algorithmic worst case: substring search (src/string/simd_search.rs,
+// src/string/fast_str.rs)
+// ---------------------------------------------------------------------------
+
+mod strstr_guard {
+    use zipora::FastStr;
+    use zipora::string::{SimdStringSearch, sse42_strstr};
+
+    fn naive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.len() > haystack.len() {
+            return None;
+        }
+        (0..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
+    }
+
+    struct XorShift(u64);
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+    }
+
+    fn check(searcher: &SimdStringSearch, haystack: &[u8], needle: &[u8]) {
+        let expected = naive(haystack, needle);
+        let simd_expected = if needle.is_empty() { None } else { expected };
+        assert_eq!(
+            searcher.sse42_strstr(haystack, needle),
+            simd_expected,
+            "sse42_strstr hay {} needle {:?}",
+            haystack.len(),
+            needle
+        );
+        assert_eq!(
+            sse42_strstr(haystack, needle),
+            simd_expected,
+            "global sse42_strstr"
+        );
+        assert_eq!(
+            FastStr::new(haystack).find(FastStr::new(needle)),
+            expected,
+            "FastStr::find hay {} needle {:?}",
+            haystack.len(),
+            needle
+        );
+    }
+
+    /// Guard (passes at v5.0.0): every search entry point agrees with a naive
+    /// reference on periodic, adversarial and random inputs, including the
+    /// `a…ab` worst case at small sizes. A Two-Way / `memchr::memmem` fix must
+    /// keep this green.
+    #[test]
+    fn test_v2_strstr_matches_naive_reference_guard() {
+        let searcher = SimdStringSearch::new();
+        // Adversarial periodic inputs.
+        for n in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 200, 1000] {
+            let hay_a = vec![b'a'; n];
+            let mut hay_ab = hay_a.clone();
+            if n > 0 {
+                hay_ab[n - 1] = b'b';
+            }
+            for m in [1usize, 2, 15, 16, 17, 32, 33, 64, 65, 300] {
+                let mut needle = vec![b'a'; m.saturating_sub(1)];
+                needle.push(b'b');
+                for hay in [&hay_a, &hay_ab] {
+                    check(&searcher, hay, &needle);
+                    check(&searcher, hay, &vec![b'a'; m]);
+                }
+            }
+        }
+        // Overlapping self-similar needles.
+        let hay = b"abaabaabaababaabaabaabab".repeat(9);
+        for needle in [
+            &b"abaabab"[..],
+            &b"aabaab"[..],
+            &b"babaa"[..],
+            &b"abab"[..],
+            &b"bb"[..],
+            &b"abaabaabaabab"[..],
+        ] {
+            check(&searcher, &hay, needle);
+        }
+        // Random small alphabets (many partial matches).
+        let mut rng = XorShift(0x5EED_1234_ABCD_0001);
+        for _ in 0..3000 {
+            let n = (rng.next() % 300) as usize;
+            let m = 1 + (rng.next() % 40) as usize;
+            let alphabet = 1 + (rng.next() % 3) as u8;
+            let hay: Vec<u8> = (0..n)
+                .map(|_| b'a' + (rng.next() % alphabet as u64) as u8)
+                .collect();
+            let needle: Vec<u8> = if n >= m && rng.next().is_multiple_of(2) {
+                let start = (rng.next() as usize) % (n - m + 1);
+                hay[start..start + m].to_vec()
+            } else {
+                (0..m)
+                    .map(|_| b'a' + (rng.next() % alphabet as u64) as u8)
+                    .collect()
+            };
+            check(&searcher, &hay, &needle);
+        }
+    }
+}
