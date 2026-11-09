@@ -1175,6 +1175,10 @@ impl ConcurrentCsppTrie {
     ///
     /// When `valsize > 0`, `valpos` points to a permanent value slot for the
     /// key that is preserved across all subsequent node splits and relocations.
+    /// Callers must pass a `valpos` returned by [`insert`](Self::insert) or
+    /// [`lookup`](Self::lookup) on this trie (passing an arbitrary 4-byte-aligned
+    /// in-bounds offset is memory-safe because `T: Pod` and accesses are word-atomic,
+    /// but reads node words rather than a value slot).
     ///
     /// # Panics
     ///
@@ -1249,6 +1253,11 @@ impl ConcurrentCsppTrie {
     ///
     /// When `valsize > 0`, `valpos` points to a permanent value slot for the
     /// key that is preserved across all node splits and relocations.
+    /// Callers must pass a `valpos` returned by [`insert`](Self::insert) or
+    /// [`lookup`](Self::lookup) on this trie: passing an arbitrary 4-byte-aligned
+    /// in-bounds offset (such as a node header or child-pointer word) is memory-safe
+    /// because `T: Pod` and writes are word-atomic, but can corrupt the logical trie
+    /// structure and make keys unreachable.
     ///
     /// For `size_of::<T>() % 4 != 0`, the final partial word is zero-padded;
     /// the padding lands in the slot's alignment padding.
