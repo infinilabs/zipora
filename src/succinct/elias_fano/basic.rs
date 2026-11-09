@@ -169,6 +169,19 @@ impl EliasFano {
         target >= self.universe && self.universe != u64::MAX
     }
 
+    /// Maximum supported `high_len_bits`: sampled bit positions in `select1_samples`
+    /// and `select0_samples` are stored as `u32`.
+    const MAX_HIGH_LEN_BITS: usize = u32::MAX as usize;
+
+    fn check_sample_capacity(high_len_bits: usize) -> crate::error::Result<()> {
+        if high_len_bits > Self::MAX_HIGH_LEN_BITS {
+            return Err(crate::error::ZiporaError::invalid_data(format!(
+                "EliasFano: high_len_bits {high_len_bits} exceeds the u32 sample range"
+            )));
+        }
+        Ok(())
+    }
+
     /// Shared construction logic. `get_val(i)` returns the i-th value as u64.
     fn from_sorted_impl(n: usize, universe: u64, get_val: impl Fn(usize) -> u64) -> Self {
         // L = floor(log2(universe / n)), at least 0
@@ -177,6 +190,14 @@ impl EliasFano {
         } else {
             (64 - (universe / n as u64).leading_zeros()).saturating_sub(1)
         };
+
+        let last_val = get_val(n - 1);
+        let max_high = last_val >> low_bit_width;
+        let max_high_usize = usize::try_from(max_high).unwrap_or(usize::MAX);
+        let high_len_bits = n.saturating_add(max_high_usize).saturating_add(1);
+        if let Err(e) = Self::check_sample_capacity(high_len_bits) {
+            panic!("{e}");
+        }
 
         let low_mask = if low_bit_width == 0 {
             0u64
@@ -204,9 +225,6 @@ impl EliasFano {
         }
 
         // Build high bits in unary encoding
-        let last_val = get_val(n - 1);
-        let max_high = last_val >> low_bit_width;
-        let high_len_bits = n + max_high as usize + 1;
         let high_words = high_len_bits.div_ceil(64);
         let mut high_bits = vec![0u64; high_words];
 
@@ -254,20 +272,20 @@ impl EliasFano {
         let mut select1_samples = Vec::new();
         let mut select0_samples = Vec::new();
 
-        let mut cumul_ones: u32 = 0;
-        let mut cumul_zeros: u32 = 0;
+        let mut cumul_ones: usize = 0;
+        let mut cumul_zeros: usize = 0;
         // Next select threshold to record
-        let mut next_sel1: u32 = 0;
-        let mut next_sel0: u32 = 0;
+        let mut next_sel1: usize = 0;
+        let mut next_sel0: usize = 0;
 
         for (word_idx, &word) in high_bits.iter().enumerate() {
             if word_idx * 64 >= high_len_bits {
                 break;
             }
             let valid = if (word_idx + 1) * 64 <= high_len_bits {
-                64u32
+                64usize
             } else {
-                (high_len_bits - word_idx * 64) as u32
+                high_len_bits - word_idx * 64
             };
             let valid_mask = if valid >= 64 {
                 u64::MAX
@@ -275,24 +293,24 @@ impl EliasFano {
                 (1u64 << valid) - 1
             };
             let masked_word = word & valid_mask;
-            let ones = masked_word.count_ones();
+            let ones = masked_word.count_ones() as usize;
             let inverted = (!masked_word) & valid_mask;
             let zeros = valid - ones;
 
             // Select1: record exact bit position for each threshold crossed
             let after_ones = cumul_ones + ones;
             while next_sel1 < after_ones {
-                let bit_in_word = select_in_word(masked_word, (next_sel1 - cumul_ones) as usize);
+                let bit_in_word = select_in_word(masked_word, next_sel1 - cumul_ones);
                 select1_samples.push((word_idx * 64 + bit_in_word) as u32);
-                next_sel1 += SELECT1_SAMPLE_RATE as u32;
+                next_sel1 += SELECT1_SAMPLE_RATE;
             }
 
             // Select0: record exact bit position for next_geq hot path
             let after_zeros = cumul_zeros + zeros;
             while next_sel0 < after_zeros {
-                let bit_in_word = select_in_word(inverted, (next_sel0 - cumul_zeros) as usize);
+                let bit_in_word = select_in_word(inverted, next_sel0 - cumul_zeros);
                 select0_samples.push((word_idx * 64 + bit_in_word) as u32);
-                next_sel0 += SELECT0_SAMPLE_RATE as u32;
+                next_sel0 += SELECT0_SAMPLE_RATE;
             }
 
             cumul_ones = after_ones;
@@ -1153,5 +1171,35 @@ impl crate::succinct::elias_fano::PostingList for EliasFano {
     }
     fn size_bytes(&self) -> usize {
         self.size_bytes()
+    }
+}
+
+#[cfg(test)]
+mod plan_v2_ef {
+    use super::*;
+
+    /// `build_samples` stores every sampled bit position as `u32` and keeps
+    /// its counters in `u32`, but `from_sorted_impl` never checks that
+    /// `high_len_bits` fits that range (only the serde wire path clamps it).
+    /// Through the public constructors this needs `n >= 2^31` elements, so the
+    /// test drives `from_sorted_impl` directly: `n = 2, universe = 2` forces
+    /// `low_bit_width = 0`, and a last value of `2^32 + 100` makes the high
+    /// array `2^32 + 103` bits long. The constructor must refuse that with a
+    /// clear message before allocating, instead of overflowing (debug) or
+    /// silently truncating / looping (release) inside `build_samples`.
+    #[test]
+    #[should_panic(expected = "EliasFano: high_len_bits")]
+    fn test_v2_ef_rejects_high_bits_beyond_u32_sample_range() {
+        let values = [0u64, (1u64 << 32) + 100];
+        let _ = EliasFano::from_sorted_impl(values.len(), 2, |i| values[i]);
+    }
+
+    /// Boundary of the guard (needs the new helper, so it lands with the fix).
+    #[test]
+    fn test_v2_ef_sample_capacity_boundary() {
+        assert!(EliasFano::check_sample_capacity(0).is_ok());
+        assert!(EliasFano::check_sample_capacity(u32::MAX as usize).is_ok());
+        assert!(EliasFano::check_sample_capacity(u32::MAX as usize + 1).is_err());
+        assert!(EliasFano::check_sample_capacity(usize::MAX).is_err());
     }
 }
