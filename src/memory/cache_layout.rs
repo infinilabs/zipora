@@ -543,6 +543,10 @@ pub struct HotColdStats {
 
 /// Align size to cache line boundaries
 pub fn align_to_cache_line(size: usize, cache_line_size: usize) -> usize {
+    assert!(
+        cache_line_size.is_power_of_two(),
+        "cache_line_size must be a power of two"
+    );
     (size + cache_line_size - 1) & !(cache_line_size - 1)
 }
 
@@ -1024,5 +1028,16 @@ mod tests {
         assert_eq!(stats.hot_items, 3);
         assert_eq!(stats.cold_items, 7);
         assert_eq!(stats.total_accesses, 3 * 2000 + 7 * 100);
+    }
+}
+
+#[cfg(test)]
+mod plan_v2_tail_cache_layout {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "cache_line_size must be a power of two")]
+    fn test_v2_align_to_cache_line_rejects_zero() {
+        let _ = align_to_cache_line(10, 0);
     }
 }
