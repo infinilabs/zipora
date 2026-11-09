@@ -561,8 +561,10 @@ impl SecureChunk {
         let padded_size = padded_payload_size(size);
 
         // SAFETY: `chunk_layout` validated that `layout` has non-zero size and power-of-two `align`.
-        // `alloc_zeroed` initializes all bytes to zero so `SecurePooledPtr::as_slice` and
-        // `as_mut_slice` never expose uninitialized bytes even when `zero_on_alloc` is false.
+        // `alloc_zeroed` initializes all bytes of a freshly allocated chunk to zero so
+        // `SecurePooledPtr::as_slice` and `as_mut_slice` never expose uninitialized heap
+        // memory on fresh allocations (recycled chunks retain prior initialized bytes unless
+        // `zero_on_free` or `zero_on_alloc` is enabled).
         let raw_ptr = unsafe { alloc_zeroed(layout) };
         if raw_ptr.is_null() {
             return Err(ZiporaError::out_of_memory(size));
@@ -713,7 +715,7 @@ impl SecureChunk {
         let word_ptr = base as *mut usize;
 
         for i in 0..word_count {
-            // SAFETY: `base` is aligned to `self.align >= MIN_CHUNK_ALIGN >= align_of::<usize>()`,
+            // SAFETY: `base` is aligned to `self.align() >= MIN_CHUNK_ALIGN >= align_of::<usize>()`,
             // and `(i + 1) * word_size <= self.size` lies within the exclusively owned payload.
             unsafe {
                 std::ptr::write_volatile(word_ptr.add(i), 0usize);
@@ -819,9 +821,10 @@ impl SecureChunk {
 // SAFETY: SecureChunk is Send because:
 // 1. `ptr: NonNull<u8>` - Raw pointer to heap-allocated memory. The chunk owns
 //    this memory exclusively until deallocated. No thread-local state.
-// 2. `size: usize`, `align: usize` - Immutable primitives, trivially Send.
+// 2. `size: usize` - Immutable primitive, trivially Send.
 // 3. `canary: u32`, `pool_id: u32` - Immutable after construction, trivially Send.
-// 4. `generation: u64` - Immutable after construction, trivially Send.
+// 4. `gen_and_align_shift: u64` - Immutable packed generation and log2(align)
+//    after construction, trivially Send.
 unsafe impl Send for SecureChunk {}
 
 // SAFETY: SecureChunk is Sync because:
