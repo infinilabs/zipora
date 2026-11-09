@@ -95,25 +95,30 @@ where
     /// # Arguments
     /// * `key` - The key to insert
     /// * `value` - The value to associate with the key
-    pub fn put(&mut self, key: K, value: V) {
-        // Auto-grow if needed
-        if self.auto_grow && self.should_grow() {
-            // Force growth by recreating map with larger capacity
-            let current_capacity = self.inner.capacity();
-            let new_capacity = (current_capacity * 2).max(64);
-
-            if let Ok(mut new_map) = ZiporaHashMap::with_capacity(new_capacity) {
-                // Copy existing entries using get_all_entries helper
-                let entries_to_copy = self.get_all_entries();
-                for (k, v) in entries_to_copy {
-                    let _ = new_map.insert(k, v);
-                }
-                self.inner = new_map;
-            }
+    /// Atomically grow the underlying table to at least `2 * capacity` (min 64),
+    /// swapping `self.inner` only if every existing entry was copied successfully.
+    fn grow(&mut self) -> Result<()> {
+        let current_capacity = self.inner.capacity();
+        let new_capacity = current_capacity.saturating_mul(2).max(64);
+        let mut new_map = ZiporaHashMap::with_capacity(new_capacity)?;
+        for (k, v) in self.get_all_entries() {
+            new_map.insert(k, v)?;
         }
+        self.inner = new_map;
+        Ok(())
+    }
 
-        // Insert - if it fails due to memory, just continue silently
-        let _ = self.inner.insert(key, value);
+    /// Fallible insert that propagates growth and insertion errors.
+    fn try_put(&mut self, key: K, value: V) -> Result<()> {
+        if self.auto_grow && self.should_grow() {
+            self.grow()?;
+        }
+        let _ = self.inner.insert(key, value)?;
+        Ok(())
+    }
+
+    pub fn put(&mut self, key: K, value: V) {
+        let _ = self.try_put(key, value);
     }
 
     /// Get a reference to the value associated with a key
@@ -135,13 +140,12 @@ where
     pub fn get_or_insert(&mut self, key: K, value: V) -> Result<&mut V> {
         let key_exists = self.inner.contains_key(&key);
         if !key_exists {
-            self.put(key.clone(), value);
+            self.try_put(key.clone(), value)?;
         }
 
-        Ok(self
-            .inner
+        self.inner
             .get_mut(&key)
-            .expect("key exists in map after put call"))
+            .ok_or_else(|| crate::error::ZiporaError::invalid_state("key missing after try_put"))
     }
 
     /// Get a mutable reference to the value, inserting with closure result if missing
@@ -152,13 +156,12 @@ where
         let key_exists = self.inner.contains_key(&key);
         if !key_exists {
             let value = f();
-            self.put(key.clone(), value);
+            self.try_put(key.clone(), value)?;
         }
 
-        Ok(self
-            .inner
+        self.inner
             .get_mut(&key)
-            .expect("key exists in map after put call"))
+            .ok_or_else(|| crate::error::ZiporaError::invalid_state("key missing after try_put"))
     }
 
     /// Remove a key-value pair
@@ -319,11 +322,12 @@ where
             // Calculate new capacity - at least 2x the current length, minimum 16
             let new_capacity = (current_len * 2).max(16);
 
-            // Create new map with smaller capacity
-            if let Ok(mut new_map) = ZiporaHashMap::with_capacity(new_capacity) {
-                for (key, value) in entries {
-                    let _ = new_map.insert(key, value);
-                }
+            // Create new map with smaller capacity and swap only if all copies succeed
+            if let Ok(mut new_map) = ZiporaHashMap::with_capacity(new_capacity)
+                && entries
+                    .into_iter()
+                    .all(|(key, value)| new_map.insert(key, value).is_ok())
+            {
                 self.inner = new_map;
             }
         }
@@ -810,5 +814,36 @@ mod tests {
 
         // Map should still work
         assert_eq!(map.get(&"key"), Some(&43));
+    }
+}
+
+#[cfg(test)]
+mod plan_v2_easy_hash_map {
+    use super::*;
+
+    /// Guard (passes at v5.0.0) for making the grow path atomic: growth
+    /// through many doublings, with removals leaving tombstones, never loses
+    /// an entry, and `get_or_insert*` always find the key they insert.
+    #[test]
+    fn test_v2_easy_hash_map_growth_preserves_entries_guard() {
+        let mut map = EasyHashMap::new();
+        let mut model = std::collections::HashMap::new();
+        for i in 0..20_000u64 {
+            map.put(i, i * 3);
+            model.insert(i, i * 3);
+            if i.is_multiple_of(3) {
+                assert_eq!(map.remove(&(i / 2)), model.remove(&(i / 2)));
+            }
+            if i.is_multiple_of(7) {
+                *map.get_or_insert(i + 1_000_000, 0).unwrap() += 1;
+                *model.entry(i + 1_000_000).or_insert(0) += 1;
+                *map.get_or_insert_with(i + 2_000_000, || 5).unwrap() += 1;
+                *model.entry(i + 2_000_000).or_insert(5) += 1;
+            }
+        }
+        assert_eq!(map.len(), model.len());
+        for (k, v) in &model {
+            assert_eq!(map.get(k), Some(v), "key {k}");
+        }
     }
 }
