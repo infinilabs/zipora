@@ -272,13 +272,7 @@ where
             // Grandchildren still name the old position as their parent.
             let child_base = raw_base & DA_VALUE_MASK;
             if child_base != 0 && child_base != DA_NIL_STATE {
-                Self::update_grandchildren_check_values(
-                    base,
-                    check,
-                    child_links,
-                    old_pos,
-                    new_pos,
-                );
+                Self::update_grandchildren_check_values(base, check, child_links, old_pos, new_pos);
             }
         }
         for &(_, old_pos, _, _) in &children {
@@ -473,33 +467,11 @@ where
 
     pub(super) fn contains_patricia_actual(
         nodes: &FastVec<PatriciaNode>,
-        _edge_data: &FastVec<u8>,
-        _compressed_paths: &HashMap<StateId, Vec<u8>>,
+        edge_data: &FastVec<u8>,
+        compressed_paths: &HashMap<StateId, Vec<u8>>,
         key: &[u8],
     ) -> bool {
-        if nodes.is_empty() {
-            return false;
-        }
-
-        let mut current = 0;
-        let mut key_pos = 0;
-
-        while key_pos < key.len() {
-            let symbol = key[key_pos];
-            let node = &nodes[current];
-
-            // Binary search in compact children
-            if let Ok(idx) = node.children.binary_search_by_key(&symbol, |(s, _)| *s) {
-                let child_id = node.children[idx].1;
-                current = child_id as usize;
-                key_pos += 1;
-            } else {
-                return false;
-            }
-        }
-
-        // Check if we've consumed the entire key and reached a final state
-        key_pos == key.len() && nodes[current].is_final
+        Self::lookup_node_id_patricia_actual(nodes, edge_data, compressed_paths, key).is_some()
     }
 
     pub(super) fn remove_patricia_actual(
