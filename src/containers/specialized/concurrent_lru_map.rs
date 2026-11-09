@@ -7,8 +7,8 @@ use super::lru_map::{
     EvictionCallback, LruMap, LruMapConfig, LruMapStatistics, NoOpEvictionCallback,
 };
 use crate::error::{Result, ZiporaError};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hash};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -219,6 +219,9 @@ where
     /// Shard selection mask for efficient modulo
     shard_mask: usize,
 
+    /// Per-map seeded hash builder for HashDoS-resistant shard selection
+    hash_builder: RandomState,
+
     /// Aggregated statistics
     stats: ConcurrentLruMapStatistics,
 }
@@ -266,6 +269,7 @@ where
         Ok(Self {
             shards,
             shard_mask: config.shard_count - 1,
+            hash_builder: RandomState::new(),
             config,
             stats: ConcurrentLruMapStatistics::new(shard_stats),
         })
@@ -323,6 +327,7 @@ where
         Ok(Self {
             shards,
             shard_mask: config.shard_count - 1,
+            hash_builder: RandomState::new(),
             config,
             stats: ConcurrentLruMapStatistics::new(shard_stats),
         })
@@ -412,9 +417,7 @@ where
 
     /// Hash a key for shard selection
     fn hash_key(&self, key: &K) -> usize {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        let hash = hasher.finish();
+        let hash = self.hash_builder.hash_one(key);
 
         // Use upper bits for better distribution
         ((hash >> 32) ^ hash) as usize
@@ -682,11 +685,14 @@ mod routing_regression_tests {
 
         // 2. total_capacity < shard_count (with total_capacity > 0) must round up per-shard capacity to >= 1
         let cache = ConcurrentLruMap::new(2, 4).unwrap();
+        let second_key = (2..100)
+            .find(|k| cache.select_shard(k) != cache.select_shard(&1))
+            .unwrap();
         cache.put(1, "a".to_string()).unwrap();
-        cache.put(2, "b".to_string()).unwrap();
+        cache.put(second_key, "b".to_string()).unwrap();
         let mut keys = cache.keys();
         keys.sort_unstable();
-        assert_eq!(keys, vec![1, 2]);
+        assert_eq!(keys, vec![1, second_key]);
         cache.rebalance().unwrap();
     }
 }
