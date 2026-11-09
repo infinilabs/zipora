@@ -802,7 +802,7 @@ mod plan_v2_msd {
     /// general). The sort must stay within `30 · n · log2 n` comparisons.
     #[test]
     fn test_v2_msd_long_common_prefix_is_not_quadratic() {
-        const N: usize = 4096;
+        const N: usize = if cfg!(miri) { 1_024 } else { 4096 };
         let storage: Vec<Vec<u8>> = (0..N as u32)
             .rev()
             .map(|i| {
@@ -842,7 +842,8 @@ mod plan_v2_msd {
             state ^= state << 17;
             state
         };
-        let storage: Vec<Vec<u8>> = (0..3000)
+        let count = if cfg!(miri) { 256 } else { 3000 };
+        let storage: Vec<Vec<u8>> = (0..count)
             .map(|_| {
                 let prefix = (next() % 90) as usize;
                 let tail = (next() % 4) as usize;

@@ -1967,9 +1967,11 @@ mod reference_compliance_tests {
         let compressor_base = setup_reference_compliant_compressor()?;
         let dictionary = compressor_base.dictionary.clone();
         let pool = SecureMemoryPool::new(SecurePoolConfig::new(4096, 1024, 8))?;
-        let mut config = PaZipCompressorConfig::default();
-        config.enable_multithreading = true;
-        config.multithreading_threshold = 1024 * 1024;
+        let config = PaZipCompressorConfig {
+            enable_multithreading: true,
+            multithreading_threshold: 1024 * 1024,
+            ..PaZipCompressorConfig::default()
+        };
         let mut compressor = PaZipCompressor::new(dictionary, config, pool)?;
 
         let prefix = b"PAZIP_CALLER_HDR";

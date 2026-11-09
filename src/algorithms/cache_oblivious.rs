@@ -1027,7 +1027,7 @@ mod plan_v2_cache_oblivious {
     /// thread). The sort must stay within `30 · n · log2 n` comparisons.
     #[test]
     fn test_v2_cache_aware_l2_sort_is_n_log_n_on_adversarial_input() {
-        const N: u64 = 20_000;
+        const N: u64 = if cfg!(miri) { 1_024 } else { 20_000 };
         let bound = 30 * N * (N as f64).log2().ceil() as u64;
         let mk = |key: u64| Counted { key, pad: key };
         let inputs: [(&str, Vec<Counted>); 3] = [
