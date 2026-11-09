@@ -222,6 +222,51 @@ fn test_environment_variable_parsing() {
     );
 }
 
+/// Test public `parse_env_var`, `parse_env_bool`, and `Config::from_env_with_prefix`
+/// directly using an unset prefix (read-only: never mutates the process environment).
+#[test]
+fn test_v2_s7b_parse_env_helpers_and_from_env_with_unset_prefix() {
+    const UNSET_PREFIX: &str = "ZIPORA_UNSET_TEST_PREFIX_V502_";
+    assert_eq!(
+        parse_env_var::<u32>("ZIPORA_UNSET_TEST_PREFIX_V502_U32", 42),
+        42
+    );
+    assert_eq!(
+        parse_env_var::<String>("ZIPORA_UNSET_TEST_PREFIX_V502_STR", "fallback".to_string()),
+        "fallback"
+    );
+    assert!(parse_env_bool("ZIPORA_UNSET_TEST_PREFIX_V502_BOOL_T", true));
+    assert!(!parse_env_bool(
+        "ZIPORA_UNSET_TEST_PREFIX_V502_BOOL_F",
+        false
+    ));
+
+    let nest = NestLoudsTrieConfig::from_env_with_prefix(UNSET_PREFIX).unwrap();
+    assert_eq!(nest.nest_level, NestLoudsTrieConfig::default().nest_level);
+    assert_eq!(
+        BlobStoreConfig::from_env_with_prefix(UNSET_PREFIX).unwrap(),
+        BlobStoreConfig::default()
+    );
+    assert_eq!(
+        MemoryConfig::from_env_with_prefix(UNSET_PREFIX)
+            .unwrap()
+            .initial_pool_size,
+        MemoryConfig::default().initial_pool_size
+    );
+    assert_eq!(
+        CacheConfig::from_env_with_prefix(UNSET_PREFIX).unwrap(),
+        CacheConfig::default()
+    );
+    assert_eq!(
+        CompressionConfig::from_env_with_prefix(UNSET_PREFIX).unwrap(),
+        CompressionConfig::default()
+    );
+    assert_eq!(
+        SIMDConfig::from_env_with_prefix(UNSET_PREFIX).unwrap(),
+        SIMDConfig::default()
+    );
+}
+
 /// Test boolean environment variable parsing via injected lookup
 #[test]
 fn test_environment_boolean_parsing() {
