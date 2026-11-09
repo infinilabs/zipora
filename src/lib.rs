@@ -76,6 +76,9 @@
 // #![warn(missing_docs)] -- suppressed at top of file (P3.7 task)
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(windows)]
+compile_error!("zipora does not support Windows; see README \"Supported platforms\"");
+
 pub mod algorithms;
 pub mod blob_store;
 pub mod cache;

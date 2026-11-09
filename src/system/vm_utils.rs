@@ -65,26 +65,9 @@ impl KernelInfo {
         {
             // SAFETY: sysconf with _SC_PAGESIZE is always safe to call, returns valid page size or -1 on error
             let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-            if ps > 0 {
-                ps as usize
-            } else {
-                4096
-            }
+            if ps > 0 { ps as usize } else { 4096 }
         }
-        #[cfg(all(windows, not(miri)))]
-        {
-            use std::mem;
-            use winapi::um::sysinfoapi::{GetSystemInfo, SYSTEM_INFO};
-
-            // SAFETY: SYSTEM_INFO is a C-compatible struct that is safe to zero-initialize,
-            // GetSystemInfo fills it correctly per Windows API contract
-            unsafe {
-                let mut system_info: SYSTEM_INFO = mem::zeroed();
-                GetSystemInfo(&mut system_info);
-                (system_info.dwPageSize as usize).max(4096)
-            }
-        }
-        #[cfg(any(miri, not(any(unix, windows))))]
+        #[cfg(any(miri, not(unix)))]
         {
             4096 // Standard page size under Miri and fallback platforms
         }
@@ -245,11 +228,7 @@ impl VmManager {
                             self.madv_willneed(aligned_addr, aligned_len)
                         }
                     }
-                    #[cfg(target_os = "windows")]
-                    {
-                        self.prefetch_virtual_memory(aligned_addr, aligned_len)
-                    }
-                    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+                    #[cfg(not(target_os = "linux"))]
                     {
                         let _ = (aligned_addr, aligned_len);
                         self.manual_prefetch(data)
@@ -321,28 +300,6 @@ impl VmManager {
                 "madvise MADV_WILLNEED failed: {}",
                 std::io::Error::last_os_error()
             )))
-        }
-    }
-
-    /// Use PrefetchVirtualMemory on Windows
-    #[cfg(all(target_os = "windows", not(miri)))]
-    fn prefetch_virtual_memory(&self, addr: *const u8, len: usize) -> Result<()> {
-        use winapi::um::memoryapi::PrefetchVirtualMemory;
-        use winapi::um::processthreadsapi::GetCurrentProcess;
-        use winapi::um::winnt::WIN32_MEMORY_RANGE_ENTRY;
-
-        let range = WIN32_MEMORY_RANGE_ENTRY {
-            VirtualAddress: addr as *mut std::ffi::c_void,
-            NumberOfBytes: len,
-        };
-
-        // SAFETY: pointer and length derived from valid slice, GetCurrentProcess() always valid, range is properly initialized
-        let result = unsafe { PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0) };
-
-        if result != 0 {
-            Ok(())
-        } else {
-            Err(ZiporaError::invalid_data("PrefetchVirtualMemory failed"))
         }
     }
 
@@ -485,22 +442,9 @@ impl VmManager {
             }
         }
 
-        #[cfg(target_os = "windows")]
+        #[cfg(not(unix))]
         {
-            use winapi::um::memoryapi::VirtualLock;
-
-            // SAFETY: pointer and length derived from valid slice, VirtualLock returns non-zero on success
-            let result = unsafe { VirtualLock(addr as *mut std::ffi::c_void, len) };
-
-            if result != 0 {
-                Ok(())
-            } else {
-                Err(ZiporaError::invalid_data("VirtualLock failed"))
-            }
-        }
-
-        #[cfg(not(any(unix, target_os = "windows")))]
-        {
+            let _ = (addr, len);
             Err(ZiporaError::invalid_data(
                 "Memory locking not supported on this platform",
             ))
@@ -535,22 +479,9 @@ impl VmManager {
             }
         }
 
-        #[cfg(target_os = "windows")]
+        #[cfg(not(unix))]
         {
-            use winapi::um::memoryapi::VirtualUnlock;
-
-            // SAFETY: pointer and length derived from valid slice, VirtualUnlock returns non-zero on success
-            let result = unsafe { VirtualUnlock(addr as *mut std::ffi::c_void, len) };
-
-            if result != 0 {
-                Ok(())
-            } else {
-                Err(ZiporaError::invalid_data("VirtualUnlock failed"))
-            }
-        }
-
-        #[cfg(not(any(unix, target_os = "windows")))]
-        {
+            let _ = (addr, len);
             Err(ZiporaError::invalid_data(
                 "Memory unlocking not supported on this platform",
             ))
@@ -850,7 +781,9 @@ mod tests {
         let mut buf = alloc.allocate(512).expect("allocate(512) must succeed");
         buf.as_mut_slice().fill(0xAA);
         drop(buf);
-        let buf2 = alloc.allocate(512).expect("second allocate(512) must succeed");
+        let buf2 = alloc
+            .allocate(512)
+            .expect("second allocate(512) must succeed");
         assert!(
             buf2.as_slice().iter().all(|&b| b == 0),
             "PageAlignedAlloc::allocate must zero-initialize the buffer"
@@ -880,4 +813,3 @@ mod tests {
         );
     }
 }
-

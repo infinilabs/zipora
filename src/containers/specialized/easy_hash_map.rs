@@ -87,14 +87,6 @@ where
         }
     }
 
-    /// Insert a key-value pair (ergonomic interface)
-    ///
-    /// This method automatically handles capacity growth and never panics.
-    /// If an internal error occurs, it will be silently handled.
-    ///
-    /// # Arguments
-    /// * `key` - The key to insert
-    /// * `value` - The value to associate with the key
     /// Atomically grow the underlying table to at least `2 * capacity` (min 64),
     /// swapping `self.inner` only if every existing entry was copied successfully.
     fn grow(&mut self) -> Result<()> {
@@ -117,6 +109,14 @@ where
         Ok(())
     }
 
+    /// Insert a key-value pair (ergonomic interface)
+    ///
+    /// This method automatically handles capacity growth and never panics.
+    /// If an internal error occurs, it will be silently handled.
+    ///
+    /// # Arguments
+    /// * `key` - The key to insert
+    /// * `value` - The value to associate with the key
     pub fn put(&mut self, key: K, value: V) {
         let _ = self.try_put(key, value);
     }

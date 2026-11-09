@@ -191,6 +191,13 @@ Across all **197** head-to-head comparisons in [`docs/review/e2_e3.md`](docs/rev
 - **Suffix Array (`10M` bytes, SA-IS)**: construction `75.28 ns/byte` (`9.05 B/byte`), `search_range` query `1330.43 ns/op`.
 <!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->
 
+## Supported platforms
+
+- **Linux `x86_64`**: primary development, benchmark, and CI platform (tested).
+- **Linux `aarch64`**: tested in CI (`test-aarch64` job).
+- **macOS**: best-effort portability (untested in CI).
+- **Windows**: not supported (`compile_error!` at crate root).
+
 ## Dependencies
 
 Minimal dependency footprint by design:

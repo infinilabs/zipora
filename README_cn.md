@@ -191,6 +191,13 @@ Across all **197** head-to-head comparisons in [`docs/review/e2_e3.md`](docs/rev
 - **Suffix Array (`10M` bytes, SA-IS)**: construction `75.28 ns/byte` (`9.05 B/byte`), `search_range` query `1330.43 ns/op`.
 <!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->
 
+## 支持的平台
+
+- **Linux `x86_64`**：主要开发、基准测试与 CI 平台（已测试）。
+- **Linux `aarch64`**：在 CI 中执行单元测试（`test-aarch64` 任务）。
+- **macOS**：尽力支持（未在 CI 中测试）。
+- **Windows**：不支持（编译期显式报错）。
+
 ## 依赖
 
 精简的依赖设计：
