@@ -217,9 +217,9 @@ tsan_cspp:
 	$(CARGO) +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
 		--release --lib fsa::cspp_trie_concurrent
 
-# LockFreeMemoryPool TSAN stress (plan.md 6.3). Same recipe as tsan_cspp;
-# drives the module's multi-threaded alloc/free stress tests under the
-# thread sanitizer. Run periodically — CI is build-only by policy.
+# LockFreeMemoryPool and FixedCapacityMemoryPool TSAN stress (plan.md 6.3, S3).
+# Same recipe as tsan_cspp; drives both pools' multi-threaded alloc/free stress
+# tests under the thread sanitizer. Run periodically — CI is build-only by policy.
 tsan_pool:
 	CARGO_TARGET_DIR=target-tsan \
 	RUSTFLAGS="-Zsanitizer=thread --cfg crossbeam_sanitize" \

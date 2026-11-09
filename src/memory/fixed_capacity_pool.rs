@@ -367,8 +367,26 @@ impl Inner {
             // the CAS push below publishes `idx` onto `heads[size_class_index]`.
             unsafe {
                 let base_ptr = backing.base.as_ptr().add(byte_offset);
-                for offset in 0..clear_len {
-                    base_ptr.add(offset).write_volatile(0);
+                if (base_ptr as usize).is_multiple_of(std::mem::align_of::<u64>()) {
+                    let word_size = std::mem::size_of::<u64>();
+                    let word_count = clear_len / word_size;
+                    let word_ptr = base_ptr as *mut u64;
+                    for w in 0..word_count {
+                        word_ptr.add(w).write_volatile(0);
+                    }
+                    for offset in (word_count * word_size)..clear_len {
+                        base_ptr.add(offset).write_volatile(0);
+                    }
+                } else {
+                    let word_size = std::mem::size_of::<u32>();
+                    let word_count = clear_len / word_size;
+                    let word_ptr = base_ptr as *mut u32;
+                    for w in 0..word_count {
+                        word_ptr.add(w).write_volatile(0);
+                    }
+                    for offset in (word_count * word_size)..clear_len {
+                        base_ptr.add(offset).write_volatile(0);
+                    }
                 }
             }
             compiler_fence(Ordering::SeqCst);
@@ -675,7 +693,11 @@ impl FixedCapacityAllocation {
         }
     }
 
-    /// Get pointer to allocated memory
+    /// Get pointer to allocated memory.
+    ///
+    /// Note: when `secure_clear` is `false`, recycled blocks preserve prior bytes,
+    /// so callers writing through `as_ptr()` must only write initialized bytes within
+    /// `0..self.size()` if the block may later be recycled and viewed via [`Self::as_slice`].
     #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
@@ -691,8 +713,8 @@ impl FixedCapacityAllocation {
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         // SAFETY: `self.ptr` points to a block exclusively owned by `self`, `self.pool`
-        // keeps the `Backing` arena alive for the lifetime of `self`, and `alloc_zeroed`
-        // initialized all `self.size` bytes.
+        // keeps the `Backing` arena alive for the lifetime of `self`, and the arena was
+        // initially zeroed by `alloc_zeroed` and only mutated via initialized writes.
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
     }
 
@@ -700,8 +722,8 @@ impl FixedCapacityAllocation {
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
         // SAFETY: `self.ptr` points to a block owned by `self`, `self.pool` keeps the
-        // `Backing` arena alive for the lifetime of `self`, and `alloc_zeroed` initialized
-        // all `self.size` bytes.
+        // `Backing` arena alive for the lifetime of `self`, and the arena was initially
+        // zeroed by `alloc_zeroed` and only mutated via initialized writes.
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
     }
 }
@@ -1219,5 +1241,62 @@ mod plan_v2_fcp {
             second.is_err(),
             "the second free of the same block must be rejected"
         );
+    }
+
+    #[test]
+    fn test_v2_s3_treiber_head_tag_prevents_aba_on_recycled_block() {
+        let pool = FixedCapacityMemoryPool::new(FixedCapacityPoolConfig {
+            max_block_size: 64,
+            total_blocks: 3,
+            alignment: 8,
+            enable_stats: false,
+            eager_allocation: true,
+            secure_clear: true,
+        })
+        .unwrap();
+        let top_class = pool.inner.size_classes.len() - 1;
+        let head = &pool.inner.heads[top_class];
+
+        // Initially head is block 0 with tag 0 (`0 -> 1 -> 2 -> LIST_TAIL`).
+        let initial_head = head.load(Ordering::Acquire);
+        assert_eq!(initial_head as u32, 0);
+        assert_eq!(initial_head >> 32, 0);
+
+        // Pop block 0 (`a`) and block 1 (`b`), then return block 0 (`a`) so head
+        // points to block 0 again, but now with `next[0] == 2` instead of `1`.
+        let mut a = pool.allocate(64).unwrap();
+        a.as_mut_slice().fill(0xAA);
+        let b = pool.allocate(64).unwrap();
+        drop(a);
+
+        let recycled_head = head.load(Ordering::Acquire);
+        assert_eq!(
+            recycled_head as u32, 0,
+            "block 0 should be back at the Treiber head"
+        );
+        assert_ne!(
+            recycled_head >> 32,
+            initial_head >> 32,
+            "ABA generation tag must advance across pop + push of block 0"
+        );
+
+        // A stale popper that observed `initial_head` (block 0, tag 0) and cached
+        // `next = 1` (which is currently live in `b`!) must fail its CAS.
+        let stale_new_head = (1u64 << 32) | 1u64;
+        assert!(
+            head.compare_exchange(
+                initial_head,
+                stale_new_head,
+                Ordering::AcqRel,
+                Ordering::Acquire
+            )
+            .is_err(),
+            "stale ABA CAS must fail when block 0 has been popped and re-pushed"
+        );
+
+        // And `secure_clear` must have wiped block 0 when `a` was dropped.
+        let a_reused = pool.allocate(64).unwrap();
+        assert!(a_reused.as_slice().iter().all(|&byte| byte == 0));
+        drop(b);
     }
 }
