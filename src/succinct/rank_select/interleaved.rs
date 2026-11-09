@@ -28,9 +28,9 @@
 //!
 //! - **Rank Time**: O(1) with single cache line access
 //! - **Select Time**: O(log n) with binary search + cache-friendly lookup
-//! - **Memory Overhead**: ~100% — each `InterleavedLine` is 64 bytes for 256
-//!   bits of data (8 bytes rank metadata + 24 bytes alignment padding from
-//!   `align(32)`). Use `Rank9` when a ~25% index is required.
+//! - **Memory Overhead**: 25% (rank only) / 31.25% (with `select1` + `select0`
+//!   caches); each `InterleavedLine` is a `#[repr(C)]` 40-byte line covering
+//!   256 bits.
 //! - **Cache Performance**: 20-30% faster rank operations due to locality
 //!
 //! # Examples
