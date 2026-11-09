@@ -1,6 +1,5 @@
 use super::config::{
-    AdvancedAlgorithmStats, AdvancedRadixSortConfig, CpuFeatures, PhaseTimes,
-    SortingStrategy,
+    AdvancedAlgorithmStats, AdvancedRadixSortConfig, CpuFeatures, PhaseTimes, SortingStrategy,
 };
 use crate::algorithms::{Algorithm, AlgorithmStats};
 use crate::error::{Result, ZiporaError};
@@ -15,7 +14,6 @@ use std::arch::x86_64::{
     __m256i, _mm_cvtsi32_si128, _mm256_and_si256, _mm256_loadu_si256, _mm256_set1_epi64x,
     _mm256_srl_epi64, _mm256_storeu_si256,
 };
-
 
 /// Trait for sortable data types with radix sort optimizations
 pub trait RadixSortable: Clone + Copy + Send + Sync + Ord {
@@ -553,9 +551,13 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             return Ok(());
         }
 
-        // Switch to insertion sort for small datasets or deep recursion
-        if data.len() <= self.config.insertion_sort_threshold || depth > 64 {
+        // Switch to insertion sort for small datasets; past depth 64 use O(n log n) stable sort
+        if data.len() <= self.config.insertion_sort_threshold {
             return self.insertion_sort(data);
+        }
+        if depth > 64 {
+            data.sort();
+            return Ok(());
         }
 
         // Create buckets for each possible byte value (0-255) plus end-of-string bucket
@@ -746,3 +748,116 @@ pub type AdvancedU64RadixSort = AdvancedRadixSort<u64>;
 
 /// Convenience type alias for advanced string radix sort
 pub type AdvancedStringRadixSort<'a> = AdvancedRadixSort<RadixString<'a>>;
+
+#[cfg(test)]
+mod plan_v2_msd {
+    use super::*;
+    use std::cell::Cell;
+
+    thread_local! {
+        static COMPARISONS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// `RadixString` clone whose `Ord` counts comparisons.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct CountedStr<'a>(&'a [u8]);
+
+    impl Ord for CountedStr<'_> {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            COMPARISONS.with(|c| c.set(c.get() + 1));
+            self.0.cmp(other.0)
+        }
+    }
+
+    impl PartialOrd for CountedStr<'_> {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl RadixSortable for CountedStr<'_> {
+        fn extract_key(&self) -> u64 {
+            RadixString::new(self.0).extract_key()
+        }
+        fn get_byte(&self, position: usize) -> Option<u8> {
+            self.0.get(position).copied()
+        }
+        fn max_bytes(&self) -> usize {
+            self.0.len()
+        }
+    }
+
+    fn msd_config() -> AdvancedRadixSortConfig {
+        AdvancedRadixSortConfig {
+            force_strategy: Some(SortingStrategy::MsdRadix),
+            use_secure_memory: false,
+            ..AdvancedRadixSortConfig::default()
+        }
+    }
+
+    /// `msd_radix_sort` caps its recursion at depth 64 (so there is no stack
+    /// overflow) but then hands the whole bucket to `insertion_sort`: `n`
+    /// strings sharing a prefix longer than 64 bytes cost `n(n-1)/2`
+    /// full-length comparisons (8.4·10^6 for n = 4096 here; quadratic in
+    /// general). The sort must stay within `30 · n · log2 n` comparisons.
+    #[test]
+    fn test_v2_msd_long_common_prefix_is_not_quadratic() {
+        const N: usize = 4096;
+        let storage: Vec<Vec<u8>> = (0..N as u32)
+            .rev()
+            .map(|i| {
+                let mut s = vec![b'p'; 100];
+                s.extend_from_slice(&i.to_be_bytes());
+                s
+            })
+            .collect();
+        let mut data: Vec<CountedStr<'_>> = storage.iter().map(|s| CountedStr(s)).collect();
+
+        let mut sorter = AdvancedRadixSort::with_config(msd_config()).unwrap();
+        COMPARISONS.with(|c| c.set(0));
+        sorter.sort(&mut data).unwrap();
+        let comparisons = COMPARISONS.with(|c| c.get());
+
+        assert!(
+            data.windows(2).all(|w| w[0].0 <= w[1].0),
+            "output is not sorted"
+        );
+        let bound = 30 * N as u64 * (N as f64).log2().ceil() as u64;
+        assert!(
+            comparisons <= bound,
+            "{comparisons} comparisons for n = {N} strings with a 100-byte common prefix \
+             (bound 30·n·log2 n = {bound})"
+        );
+    }
+
+    /// Guard (passes at v5.0.0): MSD output equals a stable sort, including
+    /// the relative order of equal strings, on random strings with long
+    /// shared prefixes and many duplicates.
+    #[test]
+    fn test_v2_msd_matches_stable_sort_guard() {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let storage: Vec<Vec<u8>> = (0..3000)
+            .map(|_| {
+                let prefix = (next() % 90) as usize;
+                let tail = (next() % 4) as usize;
+                let mut s = vec![b'x'; prefix];
+                s.extend((0..tail).map(|_| b'a' + (next() % 2) as u8));
+                s
+            })
+            .collect();
+        let mut data: Vec<CountedStr<'_>> = storage.iter().map(|s| CountedStr(s)).collect();
+        let mut expected = data.clone();
+        expected.sort_by(|a, b| a.0.cmp(b.0)); // stable
+
+        let mut sorter = AdvancedRadixSort::with_config(msd_config()).unwrap();
+        sorter.sort(&mut data).unwrap();
+        let ptrs = |v: &[CountedStr<'_>]| v.iter().map(|s| s.0.as_ptr()).collect::<Vec<_>>();
+        assert_eq!(ptrs(&data), ptrs(&expected));
+    }
+}
