@@ -354,7 +354,7 @@ impl Algorithm for MultiWayMerge {
     }
 
     fn supports_parallel(&self) -> bool {
-        true // Could be enhanced with parallel processing
+        false
     }
 }
 
@@ -658,7 +658,7 @@ mod tests {
     fn test_algorithm_trait() {
         let merger = MultiWayMerge::new();
 
-        assert!(merger.supports_parallel());
+        assert!(!merger.supports_parallel());
 
         let memory_estimate = merger.estimate_memory(1000);
         assert!(memory_estimate > 0);
@@ -693,5 +693,16 @@ mod tests {
         let stats = merger.stats();
         assert_eq!(stats.items_processed, 100);
         assert!(stats.processing_time_us > 0);
+    }
+}
+
+#[cfg(test)]
+mod plan_v2_tail_multiway {
+    use super::*;
+    use crate::algorithms::Algorithm;
+
+    #[test]
+    fn test_v2_multiway_merge_does_not_claim_parallel_support() {
+        assert!(!MultiWayMerge::new().supports_parallel());
     }
 }
