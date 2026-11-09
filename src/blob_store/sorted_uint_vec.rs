@@ -972,6 +972,13 @@ impl SortedUintVecBuilder {
 
             let block_min = values[block_start];
 
+            if config.sample_width < 64 && block_min >= (1u64 << config.sample_width) {
+                return Err(ZiporaError::invalid_data(format!(
+                    "block minimum {} too large for sample_width {}",
+                    block_min, config.sample_width
+                )));
+            }
+
             // Store block minimum in index
             Self::store_sample_static(
                 &mut result.index,
@@ -1502,6 +1509,73 @@ mod tests {
             let (val1, val2) = vec.get2(0).unwrap();
             assert_eq!(val1, 0);
             assert_eq!(val2, 100);
+        }
+    }
+}
+
+#[cfg(test)]
+mod plan_v2_suv {
+    use super::*;
+
+    fn build(config: SortedUintVecConfig, values: &[u64]) -> Result<SortedUintVec> {
+        let mut builder = SortedUintVecBuilder::with_config(config);
+        builder.extend(values.iter().copied())?;
+        builder.finish()
+    }
+
+    /// Two full blocks: block 0 starts at 0, block 1 starts at `block1_min`.
+    fn two_blocks(config: &SortedUintVecConfig, block1_min: u64) -> Vec<u64> {
+        let bs = config.block_size() as u64;
+        (0..bs).chain((0..bs).map(|i| block1_min + i)).collect()
+    }
+
+    fn presets() -> [SortedUintVecConfig; 3] {
+        [
+            SortedUintVecConfig::memory_optimized(), // 24-bit samples
+            SortedUintVecConfig::default(),          // 32-bit samples
+            SortedUintVecConfig::performance_optimized(), // 40-bit samples
+        ]
+    }
+
+    /// `compress_values` rejects a delta wider than `offset_width`, but the
+    /// block minimum goes through `store_bits_static`, which masks it to
+    /// `sample_width` bits: a block starting at `1 << sample_width` is stored
+    /// as 0 and every value in it reads back wrong. `finish()` must return
+    /// `Err` (like the delta check) instead of `Ok` with corrupted samples.
+    /// `ZipOffsetBlobStoreConfig::compression_optimized()` uses the 24-bit
+    /// preset, so its offsets corrupt once a store passes 16 MiB.
+    #[test]
+    fn test_v2_suv_block_min_beyond_sample_width_is_rejected() {
+        for config in presets() {
+            let width = config.sample_width;
+            let values = two_blocks(&config, 1u64 << width);
+            if let Ok(vec) = build(config, &values) {
+                let i = config.block_size();
+                panic!(
+                    "sample_width {width}: finish() returned Ok and get({i}) = {:?} instead of {} \
+                     (block minimum silently truncated to {width} bits)",
+                    vec.get(i),
+                    values[i]
+                );
+            }
+        }
+    }
+
+    /// Guard for the fix: the largest representable block minimum still
+    /// round-trips (passes at v5.0.0).
+    #[test]
+    fn test_v2_suv_block_min_at_sample_width_limit_round_trips() {
+        for config in presets() {
+            let values = two_blocks(&config, (1u64 << config.sample_width) - 1);
+            let vec = build(config, &values).expect("block minimum fits sample_width");
+            for (i, &v) in values.iter().enumerate() {
+                assert_eq!(
+                    vec.get(i).unwrap(),
+                    v,
+                    "sample_width {}",
+                    config.sample_width
+                );
+            }
         }
     }
 }
