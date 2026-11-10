@@ -5,6 +5,16 @@
 //! - **Scalar galloping** (exponential + binary search): O(n log m) for skewed lists
 //! - **Adaptive**: picks the best strategy based on |A|/|B| ratio
 //!
+//! # Preconditions
+//!
+//! Every function in this module expects both inputs to be sorted in **strictly
+//! ascending** order (no duplicate elements within a slice), as DocID posting
+//! lists are. The inputs are not checked. If an input is unsorted or contains
+//! duplicates, the functions still return and never read out of bounds, but the
+//! result is unspecified: a value may be reported more than once, the count may
+//! exceed `min(a.len(), b.len())`, and the result may differ between CPUs and
+//! between the SIMD, galloping and scalar strategies.
+//!
 //! # Examples
 //!
 //! ```rust
@@ -33,6 +43,11 @@ const SIMD_MIN_SIZE: usize = 8;
 /// Intersect two sorted u32 slices. Adaptive: picks SIMD or galloping based on sizes.
 ///
 /// Output is written to `out` (cleared first). Returns the intersection count.
+///
+/// # Preconditions
+///
+/// `a` and `b` must be sorted strictly ascending (no duplicates); otherwise the
+/// result is unspecified. See the [module documentation](self#preconditions).
 #[inline]
 pub fn sorted_intersect_adaptive(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     out.clear();
@@ -65,6 +80,11 @@ pub fn sorted_intersect_adaptive(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> us
 }
 
 /// Count-only intersection (no materialization). Faster when you only need the count.
+///
+/// # Preconditions
+///
+/// `a` and `b` must be sorted strictly ascending (no duplicates); otherwise the
+/// result is unspecified. See the [module documentation](self#preconditions).
 #[inline]
 pub fn sorted_intersect_count(a: &[u32], b: &[u32]) -> usize {
     if a.is_empty() || b.is_empty() {
@@ -95,6 +115,11 @@ pub fn sorted_intersect_count(a: &[u32], b: &[u32]) -> usize {
 }
 
 /// SIMD intersection (always uses SIMD if available, fallback to scalar).
+///
+/// # Preconditions
+///
+/// `a` and `b` must be sorted strictly ascending (no duplicates); otherwise the
+/// result is unspecified. See the [module documentation](self#preconditions).
 #[inline]
 pub fn sorted_intersect_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     out.clear();
@@ -120,6 +145,11 @@ pub fn sorted_intersect_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize 
 }
 
 /// Scalar galloping intersection (best for skewed sizes).
+///
+/// # Preconditions
+///
+/// `a` and `b` must be sorted strictly ascending (no duplicates); otherwise the
+/// result is unspecified. See the [module documentation](self#preconditions).
 #[inline]
 pub fn sorted_intersect_galloping(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     out.clear();
@@ -788,5 +818,80 @@ mod tests {
         );
         assert_eq!(r2, vec![1, 3, 5]);
     }
-}
 
+    /// Every SIMD kernel this CPU supports, and both scalar strategies, must
+    /// equal the scalar merge on strictly ascending inputs (the documented
+    /// precondition), in both argument orders.
+    #[test]
+    fn test_kernels_match_scalar_merge_on_strict_sets() {
+        fn next(state: &mut u64) -> u64 {
+            // xorshift64*
+            *state ^= *state >> 12;
+            *state ^= *state << 25;
+            *state ^= *state >> 27;
+            state.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn set(state: &mut u64, max_len: u64, universe: u64, base: u32) -> Vec<u32> {
+            let len = next(state) % (max_len + 1);
+            let mut v: Vec<u32> = (0..len)
+                .map(|_| base + (next(state) % universe) as u32)
+                .collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        }
+
+        let (iterations, max_len) = if cfg!(miri) {
+            (40u64, 80u64)
+        } else {
+            (20_000, 600)
+        };
+        let mut state = 0x5EED_0004u64;
+        for it in 0..iterations {
+            let universe = [24u64, 64, 300, 4096, 1 << 20][(it % 5) as usize];
+            let base = if it % 7 == 0 {
+                u32::MAX - universe as u32
+            } else {
+                0
+            };
+            let x = set(&mut state, max_len, universe, base);
+            let y = set(&mut state, max_len, universe, base);
+
+            for (a, b) in [(&x, &y), (&y, &x)] {
+                let mut want = Vec::new();
+                let n = intersect_scalar_merge(a, b, &mut want);
+                assert_eq!(intersect_scalar_merge_count(a, b), n);
+
+                let mut out = Vec::new();
+                assert_eq!(intersect_galloping(a, b, &mut out), n, "galloping count");
+                assert_eq!(out, want, "galloping");
+                assert_eq!(intersect_galloping_count(a, b), n, "galloping count-only");
+
+                #[cfg(target_arch = "x86_64")]
+                {
+                    if std::arch::is_x86_feature_detected!("sse4.1") {
+                        out.clear();
+                        // SAFETY: SSE4.1 support was detected just above.
+                        let got = unsafe { intersect_simd_sse41(a, b, &mut out) };
+                        assert_eq!(got, n, "sse4.1 count");
+                        assert_eq!(out, want, "sse4.1");
+                        // SAFETY: SSE4.1 support was detected just above.
+                        let got = unsafe { intersect_simd_count_sse41(a, b) };
+                        assert_eq!(got, n, "sse4.1 count-only");
+                    }
+                    #[cfg(feature = "avx512")]
+                    if crate::algorithms::simd_search::has_avx512f() {
+                        out.clear();
+                        // SAFETY: AVX-512F support was detected just above.
+                        let got = unsafe { intersect_simd_avx512(a, b, &mut out) };
+                        assert_eq!(got, n, "avx512f count");
+                        assert_eq!(out, want, "avx512f");
+                        // SAFETY: AVX-512F support was detected just above.
+                        let got = unsafe { intersect_simd_count_avx512(a, b) };
+                        assert_eq!(got, n, "avx512f count-only");
+                    }
+                }
+            }
+        }
+    }
+}
