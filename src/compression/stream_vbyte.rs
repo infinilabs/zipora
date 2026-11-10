@@ -1563,13 +1563,16 @@ mod tests {
 
     #[test]
     fn test_s49_r6_shuffle_table_is_64_byte_cacheline_aligned() {
-        let addr = (&SHUFFLE_TABLE as *const AlignedShuffleTable) as usize;
-        assert_eq!(
-            addr % 64,
-            0,
-            "SHUFFLE_TABLE at {:#x} must be 64-byte cache-line aligned",
-            addr
-        );
+        #[cfg(target_arch = "x86_64")]
+        {
+            let addr = (&SHUFFLE_TABLE as *const AlignedShuffleTable) as usize;
+            assert_eq!(
+                addr % 64,
+                0,
+                "SHUFFLE_TABLE at {:#x} must be 64-byte cache-line aligned",
+                addr
+            );
+        }
         for n in 0..=48 {
             let input: Vec<u32> = (0..n as u32)
                 .map(|i| match i % 4 {

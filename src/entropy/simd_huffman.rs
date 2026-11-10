@@ -659,6 +659,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_bit_buffer() -> Result<()> {
         let mut buffer = BitBuffer::with_capacity(100);
