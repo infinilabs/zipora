@@ -65,11 +65,24 @@ jobs:
       run: cargo test --locked --test ffi_c_smoke --features ffi
 
   test-aarch64:
+    name: Test (aarch64, lib)
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --locked --lib --all-features
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config
+
+    - name: Test (debug, all features, lib)
+      run: cargo test --locked --lib --all-features
 
   feature_matrix:
     name: Feature Matrix & MSRV 1.95 (B4)
