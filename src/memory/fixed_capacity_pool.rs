@@ -25,7 +25,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 /// Alignment for fixed capacity allocations
 const ALIGN_SIZE: usize = 8;
-/// Minimum alignment enforced by configuration validation
+/// Minimum alignment enforced by configuration validation. `secure_clear`
+/// zeroes blocks with `u32` writes when a block is not 8-byte aligned, so this
+/// must stay at least `align_of::<u32>()`.
 const MIN_BLOCK_ALIGN: usize = 4;
 /// Minimum block size enforced by configuration validation
 const MIN_BLOCK_SIZE: usize = 16;
@@ -365,6 +367,11 @@ impl Inner {
             // so `[byte_offset .. byte_offset + clear_len)` lies within the `Backing` arena,
             // and winning `LIVE -> FREE` above grants exclusive access to block `idx` until
             // the CAS push below publishes `idx` onto `heads[size_class_index]`.
+            // Alignment: the arena is aligned to `config.alignment` and blocks are
+            // `max_block_size` apart, a multiple of it, so every block starts at a
+            // multiple of `config.alignment >= MIN_BLOCK_ALIGN`. The `u64` branch
+            // checks 8-byte alignment at run time; the `u32` branch relies on
+            // `MIN_BLOCK_ALIGN >= align_of::<u32>()`.
             unsafe {
                 let base_ptr = backing.base.as_ptr().add(byte_offset);
                 if (base_ptr as usize).is_multiple_of(std::mem::align_of::<u64>()) {
@@ -378,6 +385,7 @@ impl Inner {
                         base_ptr.add(offset).write_volatile(0);
                     }
                 } else {
+                    debug_assert!((base_ptr as usize).is_multiple_of(std::mem::align_of::<u32>()));
                     let word_size = std::mem::size_of::<u32>();
                     let word_count = clear_len / word_size;
                     let word_ptr = base_ptr as *mut u32;
@@ -448,13 +456,13 @@ impl FixedCapacityMemoryPool {
         }
         if config.alignment < MIN_BLOCK_ALIGN {
             return Err(ZiporaError::invalid_data(format!(
-                "FixedCapacityPoolConfig::alignment ({}) must be at least {} (block header alignment)",
+                "FixedCapacityPoolConfig::alignment ({}) must be at least {} (minimum block alignment)",
                 config.alignment, MIN_BLOCK_ALIGN
             )));
         }
         if config.max_block_size < MIN_BLOCK_SIZE {
             return Err(ZiporaError::invalid_data(format!(
-                "FixedCapacityPoolConfig::max_block_size ({}) must be at least {} (block header size)",
+                "FixedCapacityPoolConfig::max_block_size ({}) must be at least {} (minimum block size)",
                 config.max_block_size, MIN_BLOCK_SIZE
             )));
         }
@@ -695,9 +703,10 @@ impl FixedCapacityAllocation {
 
     /// Get pointer to allocated memory.
     ///
-    /// Note: when `secure_clear` is `false`, recycled blocks preserve prior bytes,
-    /// so callers writing through `as_ptr()` must only write initialized bytes within
-    /// `0..self.size()` if the block may later be recycled and viewed via [`Self::as_slice`].
+    /// Bytes written through this pointer within `0..self.size()` must be
+    /// initialized: [`Self::as_slice`] and [`Self::as_mut_slice`] expose them as
+    /// `u8`, on this allocation and, unless `secure_clear` is set, on later
+    /// allocations that reuse the block.
     #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
@@ -769,10 +778,10 @@ mod tests {
             };
             let err = expect_config_rejected(
                 config,
-                "max_block_size below size_of::<BlockHeader>() must be rejected",
+                "max_block_size below the minimum block size must be rejected",
             );
             assert!(
-                err.contains("block header size"),
+                err.contains("minimum block size"),
                 "unexpected error for max_block_size {max_block_size}: {err}"
             );
         }
@@ -842,9 +851,9 @@ mod tests {
                 alignment: 2,
                 ..FixedCapacityPoolConfig::default()
             },
-            "alignment below the block header's must be rejected",
+            "alignment below the minimum block alignment must be rejected",
         );
-        assert!(err.contains("block header alignment"), "got: {err}");
+        assert!(err.contains("minimum block alignment"), "got: {err}");
     }
 
     /// C3.1. Every preset must survive its own validation.

@@ -1592,7 +1592,12 @@ pub struct SecurePooledPtr {
 }
 
 impl SecurePooledPtr {
-    /// Get pointer to allocated memory
+    /// Get pointer to allocated memory (null once the chunk has been released).
+    ///
+    /// Bytes written through this pointer within `0..self.size()` must be
+    /// initialized: [`Self::as_slice`] and [`Self::as_mut_slice`] expose them as
+    /// `u8`, on this allocation and, when neither `zero_on_free` nor
+    /// `zero_on_alloc` is set, on later allocations that reuse the chunk.
     #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
         self.chunk

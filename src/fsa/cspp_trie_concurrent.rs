@@ -1256,8 +1256,8 @@ impl ConcurrentCsppTrie {
     /// Callers must pass a `valpos` returned by [`insert`](Self::insert) or
     /// [`lookup`](Self::lookup) on this trie: passing an arbitrary 4-byte-aligned
     /// in-bounds offset (such as a node header or child-pointer word) is memory-safe
-    /// because `T: Pod` and writes are word-atomic, but can corrupt the logical trie
-    /// structure and make keys unreachable.
+    /// because `T: Pod` and writes are word-atomic, but can corrupt the trie: keys
+    /// may become unreachable, and later operations may panic or never return.
     ///
     /// For `size_of::<T>() % 4 != 0`, the final partial word is zero-padded;
     /// the padding lands in the slot's alignment padding.

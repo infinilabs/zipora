@@ -18,6 +18,13 @@
 //!   `4096` bytes (or made during late thread-local teardown) allocate a dedicated
 //!   16-byte-aligned zero-initialized buffer from the global allocator without
 //!   borrowing the thread cache
+//! - **Late thread-local teardown**: an allocation made from a thread-local
+//!   destructor, on a thread that had not used any `ThreadLocalMemoryPool`
+//!   before, takes the standalone path. Detecting that state means catching a
+//!   panic raised inside the `thread_local` crate, so it needs
+//!   `panic = "unwind"` (with `panic = "abort"` the process aborts), the panic
+//!   hook still reports the panic once per thread, and one `thread_local`
+//!   thread id is leaked per occurrence.
 //!
 //! # Performance Benefits
 //!
@@ -609,9 +616,10 @@ pub struct ThreadLocalAllocation {
 impl ThreadLocalAllocation {
     /// Get pointer to allocated memory.
     ///
-    /// Note: recycled slab blocks are not re-zeroed on free, so callers using raw
-    /// pointer writes must only write initialized bytes within `0..self.size()`
-    /// if the block may later be recycled and viewed through [`Self::as_slice`].
+    /// Bytes written through this pointer within `0..self.size()` must be
+    /// initialized: [`Self::as_slice`] and [`Self::as_mut_slice`] expose them as
+    /// `u8`, on this allocation and on later allocations that reuse the block
+    /// (blocks are not zeroed when they are freed).
     #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
