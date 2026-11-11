@@ -12,7 +12,7 @@
 .PHONY: test test_debug test_release test_simd_base64
 .PHONY: bench bench_all bench_core bench_competitors bench_smoke bench_e2e_search bench_compare bench_avx512 bench_fsa bench_io bench_serialization
 .PHONY: safety_tests miri_tests miri_full miri_pool miri_algorithms
-.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_c12 miri_scalar miri_weak
+.PHONY: miri_cspp miri_core miri_simd miri_string miri_io miri_thread miri_ffi miri_c12 miri_scalar miri_weak miri_sync
 .PHONY: tsan_cspp tsan_pool tsan_concurrency
 .PHONY: fuzz_seed fuzz_smoke fuzz_soak
 .PHONY: format clippy doc
@@ -209,6 +209,18 @@ miri_full:
 miri_cspp:
 	MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" \
 	$(CARGO_MIRI) test --lib fsa::cspp_trie_concurrent -- --test-threads=1
+
+# Token and version bookkeeping (fsa::version_sync, fsa::token) and
+# ThreadLocalMemoryPool under Miri: the 5.0.1/5.0.2 fixes for the min_version
+# race, cross-manager token caching and per-pool slab ownership. The first two
+# run under the default flags. threadlocal_pool embeds a SecureMemoryPool, so it
+# needs miri_cspp's flags (crossbeam-epoch: Tree Borrows, leak check off) plus
+# -Zmiri-disable-isolation (SystemTime::now()). Three runs, about a minute each.
+miri_sync:
+	$(CARGO_MIRI) test --lib fsa::version_sync -- --test-threads=1
+	$(CARGO_MIRI) test --lib fsa::token -- --test-threads=1
+	MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks -Zmiri-disable-isolation" \
+	$(CARGO_MIRI) test --lib memory::threadlocal_pool -- --test-threads=1
 
 tsan_cspp:
 	CARGO_TARGET_DIR=target-tsan \
@@ -526,11 +538,11 @@ pre_commit: format clippy test_debug safety_tests
 # Authoritative pre-publish release gate (Rule F4 / plan.md §1.7):
 # `make release_prep` is the only path to `cargo publish`. It runs `sanity`,
 # B4 `feature_matrix`, B5 `audit`, B2.2 `miri_weak`, A3's adversarial set
-# (`miri_core`, `miri_simd`, `miri_cspp`, `tsan_cspp`, `tsan_pool`, `fuzz_smoke`),
+# (`miri_core`, `miri_simd`, `miri_cspp`, `miri_sync`, `tsan_cspp`, `tsan_pool`, `fuzz_smoke`),
 # AArch64 check, `memory::secure_pool` under Miri, and optional `fuzz_soak`
 # (`ZIPORA_RELEASE_FUZZ_SOAK=1` for releases touching decoders), followed by
 # `cargo publish --dry-run --locked`.
-release_prep: sanity feature_matrix audit miri_core miri_simd miri_cspp miri_weak tsan_cspp tsan_pool fuzz_smoke
+release_prep: sanity feature_matrix audit miri_core miri_simd miri_cspp miri_sync miri_weak tsan_cspp tsan_pool fuzz_smoke
 	@if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then \
 		RUSTFLAGS="" $(CARGO) check --locked --target aarch64-unknown-linux-gnu --all-features; \
 	else \
