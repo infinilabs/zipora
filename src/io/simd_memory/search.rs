@@ -13,8 +13,8 @@
 //!   PCMPEQB / PMOVMSKB.
 //! - **Hybrid Strategy**: needles of up to 32 bytes are matched by their
 //!   first `min(n, 8)` bytes with PCMPESTRI (17..=32-byte needles through
-//!   their first 16 bytes), longer needles by their first byte; every
-//!   candidate is compared in full.
+//!   their first 16 bytes) and every candidate is compared in full; longer
+//!   needles use `memchr::memmem`, which is linear time.
 //! - **In-bounds loads**: every 16-byte load lies inside the caller's
 //!   slice; a window shorter than 16 bytes is copied into a zeroed stack
 //!   buffer first.
@@ -156,9 +156,10 @@ impl SimdStringSearch {
     /// # Performance
     ///
     /// - SSE4.2 tier: needles of up to 32 bytes are matched by their first
-    ///   `min(n, 8)` bytes with one PCMPESTRI per 16-byte window, longer
-    ///   needles by their first byte; candidates are compared in full
-    /// - Scalar tier: `slice::windows`
+    ///   `min(n, 8)` bytes with one PCMPESTRI per 16-byte window and
+    ///   candidates are compared in full; longer needles use
+    ///   `memchr::memmem` (linear time)
+    /// - Scalar tier: `memchr::memmem` (linear time)
     ///
     /// # Example
     ///
@@ -314,9 +315,9 @@ unsafe fn sse42_strchr_impl(haystack: &[u8], ch: u8) -> Option<usize> {
 /// Find pattern using SSE4.2 PCMPESTRI with hybrid strategy
 ///
 /// Needles of up to 32 bytes are matched by their first `min(n, 8)` bytes
-/// with PCMPESTRI (17..=32-byte needles through their first 16 bytes),
-/// longer needles by their first byte; every candidate is compared in full.
-/// Runs the scalar search when the CPU lacks SSE4.2.
+/// with PCMPESTRI (17..=32-byte needles through their first 16 bytes) and
+/// every candidate is compared in full; longer needles use `memchr::memmem`,
+/// which is linear time. Runs the scalar search when the CPU lacks SSE4.2.
 #[cfg(target_arch = "x86_64")]
 pub fn sse42_strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
@@ -479,8 +480,10 @@ unsafe fn sse42_strstr_medium(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     None
 }
 
-/// Long pattern search (>32 bytes): finds candidates for the first needle
-/// byte with [`sse42_strchr_impl`], then compares the whole needle.
+/// Long pattern search (>32 bytes): delegates to [`memchr::memmem::find`],
+/// which runs in `O(haystack.len() + needle.len())` time. (A first-byte
+/// filter followed by a full compare is `O(n * m)` on inputs such as a
+/// haystack of `a`s and a needle `a...ab`.)
 ///
 /// # Safety
 ///
@@ -488,27 +491,10 @@ unsafe fn sse42_strstr_medium(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.2")]
 unsafe fn sse42_strstr_long(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    let Some(&first_byte) = needle.first() else {
+    if needle.is_empty() {
         return Some(0);
-    };
-    let last_start = haystack.len().checked_sub(needle.len())?;
-    // Only positions up to `last_start` can start a match.
-    let starts = &haystack[..=last_start];
-
-    let mut offset = 0;
-    while offset <= last_start {
-        // SAFETY: SSE4.2 support is this function's own precondition, and it
-        // is the only precondition of `sse42_strchr_impl`.
-        let found = unsafe { sse42_strchr_impl(&starts[offset..], first_byte) }?;
-        let candidate = offset + found;
-        // Verify full pattern with scalar comparison
-        if haystack.get(candidate..candidate + needle.len()) == Some(needle) {
-            return Some(candidate);
-        }
-        offset = candidate + 1;
     }
-
-    None
+    memchr::memmem::find(haystack, needle)
 }
 
 /// Find any character from set using SSE4.2
@@ -673,7 +659,7 @@ pub fn scalar_strchr(haystack: &[u8], ch: u8) -> Option<usize> {
     haystack.iter().position(|&b| b == ch)
 }
 
-/// Scalar pattern search fallback
+/// Scalar pattern search fallback (`memchr::memmem`, linear time)
 pub fn scalar_strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
@@ -682,9 +668,8 @@ pub fn scalar_strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         return None;
     }
 
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+    // Linear time; `windows().position()` is O(n * m) on adversarial input.
+    memchr::memmem::find(haystack, needle)
 }
 
 /// Scalar multi-character search fallback

@@ -10,7 +10,7 @@
 //! The pattern matching follows a sophisticated multi-level strategy:
 //! 1. **≤16 bytes**: Single SSE4.2 `_mm_cmpestri` with PCMPESTRI
 //! 2. **≤35 bytes**: Cascaded SSE4.2 operations with early exit
-//! 3. **>35 bytes**: Vectorized processing with AVX2/BMI2 acceleration
+//! 3. **>35 bytes**: `memchr::memmem` (linear-time, SIMD-accelerated)
 //! 4. **Fallback**: Existing suffix array binary search
 //!
 //! # Template-Based Parallel Processing
@@ -681,7 +681,7 @@ impl SimdPatternMatcher {
         Ok(matches)
     }
 
-    /// AVX2 vectorized pattern search for large patterns
+    /// Pattern search for large patterns on the AVX2 tier (`memchr::memmem`)
     #[cfg(target_arch = "x86_64")]
     fn avx2_vectorized_pattern_search(
         &self,
@@ -691,32 +691,26 @@ impl SimdPatternMatcher {
     ) -> Result<Vec<(usize, usize)>> {
         let mut matches = Vec::new();
 
-        let Some(&first_char) = pattern.first() else {
-            return Ok(matches);
-        };
-        if input.len() < pattern.len() {
+        if pattern.is_empty() || input.len() < pattern.len() {
             return Ok(matches);
         }
 
+        // `memmem` is linear in the bytes it scans, so a non-matching
+        // adversarial input costs O(n + m) instead of O(n * m). Restarting one
+        // byte after each hit reports overlapping matches, in order.
+        let finder = memchr::memmem::Finder::new(pattern);
         let mut search_pos = 0;
 
-        while search_pos <= input.len() - pattern.len() && matches.len() < max_matches {
+        while matches.len() < max_matches {
             let Some(search_window) = input.get(search_pos..) else {
                 break;
             };
-            // Use SIMD to find first character
-            if let Some(found_pos) = self.simd_ops.find_byte(search_window, first_char) {
-                let absolute_pos = search_pos + found_pos;
-
-                if let Some(candidate) = input.get(absolute_pos..absolute_pos + pattern.len())
-                    && self.simd_ops.compare(candidate, pattern) == 0
-                {
-                    matches.push((absolute_pos, absolute_pos));
-                }
-                search_pos = absolute_pos + 1;
-            } else {
+            let Some(found_pos) = finder.find(search_window) else {
                 break;
-            }
+            };
+            let absolute_pos = search_pos + found_pos;
+            matches.push((absolute_pos, absolute_pos));
+            search_pos = absolute_pos + 1;
         }
 
         Ok(matches)
@@ -817,7 +811,7 @@ impl SimdPatternMatcher {
         self.avx2_vectorized_pattern_search(input, pattern, max_matches)
     }
 
-    /// Scalar pattern search implementation
+    /// Scalar-tier pattern search (`memchr::memmem`)
     fn scalar_pattern_search(
         &self,
         input: &[u8],
@@ -830,14 +824,21 @@ impl SimdPatternMatcher {
             return Ok(matches);
         }
 
-        for i in 0..=input.len() - pattern.len() {
-            if matches.len() >= max_matches {
-                break;
-            }
+        // See `avx2_vectorized_pattern_search`: linear-time scan, overlapping
+        // matches in order, capped at `max_matches`.
+        let finder = memchr::memmem::Finder::new(pattern);
+        let mut search_pos = 0;
 
-            if input.get(i..i + pattern.len()) == Some(pattern) {
-                matches.push((i, i));
-            }
+        while matches.len() < max_matches {
+            let Some(search_window) = input.get(search_pos..) else {
+                break;
+            };
+            let Some(found_pos) = finder.find(search_window) else {
+                break;
+            };
+            let absolute_pos = search_pos + found_pos;
+            matches.push((absolute_pos, absolute_pos));
+            search_pos = absolute_pos + 1;
         }
 
         Ok(matches)
