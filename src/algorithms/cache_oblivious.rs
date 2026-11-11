@@ -369,11 +369,16 @@ impl CacheObliviousSort {
         }
     }
 
-    /// Insertion sort for inputs that fit in L1. With `use_simd`, and AVX2 with
-    /// at least 16 elements or SSE4.2 with at least 8, it runs
-    /// `simd_insertion_sort`, which adds prefetch hints on AVX2 hosts. No SIMD
-    /// instructions either way.
+    /// Sort for inputs that fit in L1. Up to 16 elements use insertion sort
+    /// (with `use_simd` on AVX2/SSE4.2 hosts, `simd_insertion_sort`, which adds
+    /// prefetch hints; no SIMD instructions either way). Longer inputs use
+    /// `slice::sort`: insertion sort is O(n^2), and both are stable, so the
+    /// output is the same.
     fn l1_optimized_sort<T: Clone + Ord>(&mut self, data: &mut [T]) {
+        if data.len() > 16 {
+            data.sort();
+            return;
+        }
         // Use insertion sort with prefetching for L1 cache
         if self.config.use_simd
             && ((self.config.cpu_features.has_avx2 && data.len() >= 16)
