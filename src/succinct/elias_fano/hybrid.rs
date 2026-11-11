@@ -83,6 +83,11 @@ impl TryFrom<RawHybridPostingList> for HybridPostingList {
 
 impl HybridPostingList {
     /// Build from a sorted slice, automatically selecting the best encoding.
+    ///
+    /// # Panics
+    ///
+    /// Panics under the conditions of [`EliasFano::from_sorted`] when the
+    /// selected encoding is plain Elias-Fano.
     pub fn from_sorted(values: &[u32]) -> Self {
         let n = values.len();
         if n <= DENSE_THRESHOLD {
@@ -103,6 +108,11 @@ impl HybridPostingList {
     }
 
     /// Build from sorted u64 values.
+    ///
+    /// # Panics
+    ///
+    /// Panics under the conditions of [`EliasFano::from_sorted`] when the
+    /// selected encoding is plain Elias-Fano.
     pub fn from_sorted_u64(values: &[u64]) -> Self {
         let n = values.len();
         if n == 0 {
@@ -128,6 +138,11 @@ impl HybridPostingList {
     }
 
     /// Force a specific encoding regardless of list size.
+    ///
+    /// # Panics
+    ///
+    /// With `PostingEncoding::EliasFano`, panics under the conditions of
+    /// [`EliasFano::from_sorted`].
     pub fn with_encoding(values: &[u32], encoding: PostingEncoding) -> Self {
         match encoding {
             PostingEncoding::Dense => {

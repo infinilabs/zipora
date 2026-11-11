@@ -127,6 +127,13 @@ impl From<EliasFanoWire> for EliasFano {
 impl EliasFano {
     /// Build from a sorted slice of u32 values. Zero-allocation — processes
     /// u32 values directly without converting to an intermediate `Vec<u64>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `values` is not sorted, or if the upper-bits array would need
+    /// more than 2^32 bits (`EliasFano: high_len_bits ... exceeds the u32 sample
+    /// range`). That takes at least about 1.43 billion values; use
+    /// [`PartitionedEliasFano`](super::PartitionedEliasFano) for lists that large.
     pub fn from_sorted(values: &[u32]) -> Self {
         if values.is_empty() {
             return Self::from_sorted_u64(&[]);
@@ -137,6 +144,10 @@ impl EliasFano {
     }
 
     /// Build from sorted u64 values.
+    ///
+    /// # Panics
+    ///
+    /// Same conditions as [`EliasFano::from_sorted`].
     pub fn from_sorted_u64(values: &[u64]) -> Self {
         if values.is_empty() {
             return Self {
@@ -169,12 +180,13 @@ impl EliasFano {
         target >= self.universe && self.universe != u64::MAX
     }
 
-    /// Maximum supported `high_len_bits`: sampled bit positions in `select1_samples`
-    /// and `select0_samples` are stored as `u32`.
-    const MAX_HIGH_LEN_BITS: usize = u32::MAX as usize;
+    /// Maximum supported `high_len_bits`. `select1_samples` and `select0_samples`
+    /// store bit positions as `u32`, and every position is below `high_len_bits`,
+    /// so an upper-bits array of exactly 2^32 bits still fits.
+    const MAX_HIGH_LEN_BITS: u64 = 1 << 32;
 
     fn check_sample_capacity(high_len_bits: usize) -> crate::error::Result<()> {
-        if high_len_bits > Self::MAX_HIGH_LEN_BITS {
+        if high_len_bits as u64 > Self::MAX_HIGH_LEN_BITS {
             return Err(crate::error::ZiporaError::invalid_data(format!(
                 "EliasFano: high_len_bits {high_len_bits} exceeds the u32 sample range"
             )));
@@ -1199,7 +1211,26 @@ mod plan_v2_ef {
     fn test_v2_ef_sample_capacity_boundary() {
         assert!(EliasFano::check_sample_capacity(0).is_ok());
         assert!(EliasFano::check_sample_capacity(u32::MAX as usize).is_ok());
-        assert!(EliasFano::check_sample_capacity(u32::MAX as usize + 1).is_err());
+        assert!(EliasFano::check_sample_capacity(1usize << 32).is_ok());
+        assert!(EliasFano::check_sample_capacity((1usize << 32) + 1).is_err());
         assert!(EliasFano::check_sample_capacity(usize::MAX).is_err());
+    }
+
+    /// `high_len_bits == 2^32` exactly: `from_sorted(&(0..1u32 << 31).collect())`
+    /// has `universe == n`, so `low_bit_width == 0` and the upper-bits array is
+    /// `2^31 + (2^31 - 1) + 1` bits long. Every sampled position is below 2^32,
+    /// so the list builds and answers queries, as it did in 5.0.1. Driven
+    /// through `from_sorted_impl` to avoid the 8 GiB input slice.
+    #[test]
+    #[ignore = "allocates about 1 GiB; run with --ignored"]
+    fn test_v2_ef_high_len_bits_exactly_2pow32_builds() {
+        let n = 1usize << 31;
+        let ef = EliasFano::from_sorted_impl(n, n as u64, |i| i as u64);
+        assert_eq!(ef.high_len_bits, 1usize << 32);
+        assert_eq!(ef.len(), n);
+        for i in [0usize, 1, 127, 128, 129, n / 2, n - 129, n - 2, n - 1] {
+            assert_eq!(ef.get(i), Some(i as u64), "get({i})");
+            assert_eq!(ef.next_geq(i as u64), Some((i, i as u64)), "next_geq({i})");
+        }
     }
 }
