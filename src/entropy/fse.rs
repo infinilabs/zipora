@@ -1146,9 +1146,14 @@ impl FseEncoder {
                 let mut first_err: Option<ZiporaError> = None;
                 for slot in slots {
                     let batch_res = match slot {
-                        BatchSlot::Spawned(handle) => handle.join().map_err(|_| {
-                            ZiporaError::compression("Parallel compression thread panicked")
-                        })?,
+                        // Join every worker, also after a failure: returning at the
+                        // first panic would let a second panicking worker turn this
+                        // `Err` into a panic when the scope ends.
+                        BatchSlot::Spawned(handle) => handle.join().unwrap_or_else(|_| {
+                            Err(ZiporaError::compression(
+                                "Parallel compression thread panicked",
+                            ))
+                        }),
                         BatchSlot::Inline(res) => res,
                     };
                     match batch_res {
