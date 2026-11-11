@@ -100,10 +100,14 @@ where
         Ok(())
     }
 
-    /// Fallible insert that propagates growth and insertion errors.
+    /// Fallible insert that propagates insertion errors.
+    ///
+    /// A failed early rebuild is not an error: `grow` leaves the map unchanged
+    /// when it fails, and `ZiporaHashMap::insert` grows the table itself when
+    /// it has to (without the copy of every entry that `grow` needs).
     fn try_put(&mut self, key: K, value: V) -> Result<()> {
         if self.auto_grow && self.should_grow() {
-            self.grow()?;
+            let _ = self.grow();
         }
         let _ = self.inner.insert(key, value)?;
         Ok(())
