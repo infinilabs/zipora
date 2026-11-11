@@ -338,28 +338,31 @@ impl EliasFano {
         high_len_bits: usize,
     ) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
         const LEGACY_RANK_SAMPLE_RATE: usize = 8;
-        const LEGACY_SELECT1_SAMPLE_RATE: u32 = 256;
-        const LEGACY_SELECT0_SAMPLE_RATE: u32 = 64;
+        const LEGACY_SELECT1_SAMPLE_RATE: usize = 256;
+        const LEGACY_SELECT0_SAMPLE_RATE: usize = 64;
 
         let mut rank_samples = Vec::new();
         let mut select1_samples = Vec::new();
         let mut select0_samples = Vec::new();
 
-        let mut cumul_ones: u32 = 0;
-        let mut cumul_zeros: u32 = 0;
-        let mut next_sel1: u32 = 0;
-        let mut next_sel0: u32 = 0;
+        // usize counters: with close to 2^32 one-bits, `next_sel1` steps past
+        // u32::MAX before the loop ends. The stored values all fit in u32
+        // (`high_len_bits <= 2^32`, so every count is at most 2^32 - 1).
+        let mut cumul_ones: usize = 0;
+        let mut cumul_zeros: usize = 0;
+        let mut next_sel1: usize = 0;
+        let mut next_sel0: usize = 0;
 
         for (word_idx, &word) in high_bits.iter().enumerate() {
             if word_idx % LEGACY_RANK_SAMPLE_RATE == 0 {
-                rank_samples.push(cumul_ones);
+                rank_samples.push(cumul_ones as u32);
             }
 
-            let ones = word.count_ones();
+            let ones = word.count_ones() as usize;
             let valid = if (word_idx + 1) * 64 <= high_len_bits {
-                64u32
+                64usize
             } else {
-                (high_len_bits.saturating_sub(word_idx * 64)) as u32
+                high_len_bits.saturating_sub(word_idx * 64)
             };
             let zeros = valid.saturating_sub(ones);
 
@@ -379,7 +382,7 @@ impl EliasFano {
             cumul_zeros = after_zeros;
         }
 
-        rank_samples.push(cumul_ones);
+        rank_samples.push(cumul_ones as u32);
 
         (rank_samples, select1_samples, select0_samples)
     }
@@ -1232,5 +1235,23 @@ mod plan_v2_ef {
             assert_eq!(ef.get(i), Some(i as u64), "get({i})");
             assert_eq!(ef.next_geq(i as u64), Some((i, i as u64)), "next_geq({i})");
         }
+    }
+
+    /// Serializing a list with close to 2^32 elements: the legacy wire sampler's
+    /// select1 threshold steps past `u32::MAX` (debug: overflow panic; release:
+    /// wrapped and looped forever). Uses the upper bits of
+    /// `from_sorted(&vec![0u32; (1 << 32) - 10])`: n one-bits, then the terminator.
+    #[cfg(feature = "serde")]
+    #[test]
+    #[ignore = "allocates about 600 MiB; run with --ignored"]
+    fn test_v2_ef_legacy_wire_samples_near_2pow32_ones() {
+        let n = (1usize << 32) - 10;
+        let high_len_bits = n + 1;
+        let mut high_bits = vec![u64::MAX; high_len_bits.div_ceil(64)];
+        *high_bits.last_mut().unwrap() = (1u64 << (n % 64)) - 1;
+        let (rank, select1, _select0) =
+            EliasFano::build_legacy_wire_samples(&high_bits, high_len_bits);
+        assert_eq!(*rank.last().unwrap() as usize, n);
+        assert_eq!(select1.len(), n.div_ceil(256));
     }
 }
