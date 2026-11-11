@@ -979,12 +979,6 @@ mod tests {
             };
         }
 
-        let warmup_pool = ThreadLocalMemoryPool::new(ThreadLocalPoolConfig {
-            use_secure_memory: false,
-            ..ThreadLocalPoolConfig::default()
-        })
-        .unwrap();
-
         let pool_for_thread = Arc::clone(&pool);
         std::thread::spawn(move || {
             // Register `LATE_ALLOC` first so its destructor runs last (LIFO),
@@ -996,9 +990,23 @@ mod tests {
             // without initializing `OS_TID` on this thread.
             let dummy_tls: ThreadLocal<u8> = ThreadLocal::new();
             let _ = dummy_tls.get_or(|| 1u8);
-            drop(warmup_pool);
         })
         .join()
         .expect("late TLS destructor thread should exit cleanly without aborting");
+
+        // The late allocation took the standalone fallback: no slab was created.
+        let stats = pool.stats().expect("stats are enabled by default");
+        assert_eq!(
+            stats
+                .arena_allocations
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            stats
+                .cache_misses
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
     }
 }

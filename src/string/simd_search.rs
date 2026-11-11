@@ -1536,4 +1536,60 @@ mod tests {
             }
         }
     }
+
+    /// Every tier available on this host agrees with a naive
+    /// search on inputs whose verification work exceeds `2 * haystack.len() + 256`,
+    /// so each tier's `memchr::memmem` fallback branch actually runs.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_v2_strstr_budget_fallback_matches_naive_on_all_tiers() {
+        let mut tiers = vec![SearchTier::Scalar];
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("sse4.2") {
+                tiers.push(SearchTier::Sse42);
+            }
+            if is_x86_feature_detected!("avx2") {
+                tiers.push(SearchTier::Avx2);
+            }
+            #[cfg(feature = "avx512")]
+            if is_x86_feature_detected!("avx512f")
+                && is_x86_feature_detected!("avx512vl")
+                && is_x86_feature_detected!("avx512bw")
+            {
+                tiers.push(SearchTier::Avx512);
+            }
+        }
+        fn naive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+            if needle.is_empty() || needle.len() > haystack.len() {
+                return None;
+            }
+            haystack.windows(needle.len()).position(|w| w == needle)
+        }
+        for n in [300usize, 1000, 4096] {
+            for fill in [b'a', 0x80u8] {
+                let mut hays = vec![vec![fill; n]; 3];
+                hays[1][n - 1] = b'b';
+                hays[2][n / 2] = b'b';
+                for m in [2usize, 8, 15, 16, 17, 33, 64, 129, 299] {
+                    let mut needle_b = vec![fill; m - 1];
+                    needle_b.push(b'b');
+                    let needle_fill = vec![fill; m];
+                    for hay in &hays {
+                        for needle in [&needle_b, &needle_fill] {
+                            let want = naive(hay, needle);
+                            for &tier in &tiers {
+                                let s = SimdStringSearch { impl_tier: tier };
+                                assert_eq!(
+                                    s.sse42_strstr(hay, needle),
+                                    want,
+                                    "tier {tier:?} n={n} m={m} fill={fill:#x}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
