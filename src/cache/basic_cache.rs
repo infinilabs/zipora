@@ -22,6 +22,16 @@ struct InvalidationTracker {
 type PageCacheMap = HashMap<(FileId, PageId), Vec<u8>>;
 
 /// Basic LRU page cache for blob operations with real file I/O
+///
+/// # Dirty pages and `Drop`
+///
+/// Dropping the cache writes the dirty cached pages of file-backed files back
+/// to their files, as [`LruPageCache::flush_file`] does. This is best effort:
+/// a failed write is only reported through `log::warn!`, nothing is synced to
+/// disk, and nothing is written if an internal lock is poisoned. Call
+/// [`LruPageCache::flush_file`] or [`LruPageCache::close_file`] to see write
+/// errors. Pages of virtual files (`register_file(-1)`) are discarded: their
+/// in-memory buffer is freed together with the cache.
 pub struct LruPageCache {
     /// Cache storage: (file_id, page_id) -> page data
     inner: Arc<Mutex<PageCacheMap>>,
@@ -500,7 +510,15 @@ impl Drop for LruPageCache {
         let Ok(mut tracker) = self.invalidation_tracker.lock() else {
             return;
         };
-        let mut dirty_pages: Vec<(FileId, PageId)> = tracker.dirty_pages.iter().copied().collect();
+        // Only cached pages can be written back, so walk the cache (bounded by
+        // its capacity) rather than the dirty set. A virtual file's buffer is
+        // freed with `self.file_manager` right after this, so writing to it
+        // could only allocate and zero-fill memory up to the page's offset.
+        let mut dirty_pages: Vec<(FileId, PageId)> = inner
+            .keys()
+            .copied()
+            .filter(|key| tracker.is_dirty(key) && !self.file_manager.is_virtual(key.0))
+            .collect();
         dirty_pages.sort_unstable();
         for (fid, page_id) in dirty_pages {
             if let Some(data) = inner.get(&(fid, page_id))

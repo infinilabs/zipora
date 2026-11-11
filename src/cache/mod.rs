@@ -347,6 +347,16 @@ impl FileManager {
         Ok(file_id)
     }
 
+    /// Whether `file_id` is an in-memory virtual file (see
+    /// [`FileManager::register_virtual_file`]). `false` for unknown ids.
+    pub(crate) fn is_virtual(&self, file_id: FileId) -> bool {
+        self.files.read().is_ok_and(|files| {
+            files
+                .get(&file_id)
+                .is_some_and(|entry| matches!(entry.backing, FileBacking::Virtual(_)))
+        })
+    }
+
     /// Ensure that a registered file is open with write permission
     pub fn ensure_writable(&self, file_id: FileId) -> Result<()> {
         let files = self
