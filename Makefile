@@ -271,10 +271,10 @@ miri_core:
 # `memory::cache` needs -Zmiri-disable-isolation: detect_numa_nodes() reads
 # /sys/devices/system/node, and Miri's isolation blocks `open`.
 #
-# The five lines are five separate Miri runs and the whole target takes the
+# The seven lines are seven separate Miri runs and the whole target takes the
 # better part of an hour. make stops at the first failing line, so a failure in
 # an early suite means the later ones did not run at all -- read the output for
-# five `test result:` lines before calling the target green.
+# seven `test result:` lines before calling the target green.
 miri_pool:
 	$(CARGO_MIRI) test --lib memory::fixed_capacity_pool
 	$(CARGO_MIRI) test --lib memory::five_level_pool
@@ -486,7 +486,7 @@ fuzz_smoke: fuzz_seed
 # the committed fuzz/corpus/<target>/seed_0001.bin seeds stay clean, collects
 # every background PID, and exits non-zero if any job fails (S52-R2).
 fuzz_soak: fuzz_seed
-	@cargo +nightly fuzz build && rm -rf /tmp/zipora_fuzz_soak && pids="" && fail=0 && \
+	@cargo +nightly fuzz build || exit 1; rm -rf /tmp/zipora_fuzz_soak || exit 1; pids=""; fail=0; \
 	for t in $(FUZZ_TARGETS); do \
 		mkdir -p /tmp/zipora_fuzz_soak/corpus/$$t /tmp/zipora_fuzz_soak/logs; \
 		cargo +nightly fuzz run $$t /tmp/zipora_fuzz_soak/corpus/$$t fuzz/corpus/$$t \
