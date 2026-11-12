@@ -467,6 +467,14 @@ fn test_b5_supply_chain_audit_and_deny_gates() {
         deny_toml.contains("unsound = \"all\"") && deny_toml.contains("RUSTSEC-2026-0253"),
         "S52-R4: deny.toml must set `unsound = \"all\"` so lru (RUSTSEC-2026-0253) is in cargo-deny's unsound scope"
     );
+    // RUSTSEC-2026-0486 (rustix xattr functions) is ignored only while Cargo.lock still pins the
+    // affected rustix 1.0.8: updating the lockfile needs a benchmark re-baseline (S54-R1). The
+    // ignore must go in the same change that updates rustix.
+    assert_eq!(
+        deny_toml.contains("RUSTSEC-2026-0486"),
+        cargo_lock.contains("name = \"rustix\"\nversion = \"1.0.8\""),
+        "deny.toml must ignore RUSTSEC-2026-0486 exactly while Cargo.lock pins rustix 1.0.8"
+    );
 
     let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
     assert!(
