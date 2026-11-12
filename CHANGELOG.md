@@ -5,6 +5,161 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.2] - 2026-11-12
+
+### ⚠️ Data-loss advisory
+- **`SortedUintVec` / `ZipOffsetBlobStore`, values ≥ 2^`sample_width`**: every release from 1.1.1 (where
+  these types were introduced) through 5.0.1 built such vectors without error. `SortedUintVecBuilder::finish`
+  kept only the low `sample_width` bits of each block's first value and returned `Ok`, so every value in
+  that block read back wrong.
+  - **Every configuration is affected:**
+
+    | Config | Sample width | Affected values / store content |
+    |---|---|---|
+    | `SortedUintVecConfig::memory_optimized()` | 24-bit | ≥ 16 MiB |
+    | `SortedUintVecConfig::default()` | 32-bit | ≥ 4 GiB |
+    | `SortedUintVecConfig::performance_optimized()` | 40-bit | ≥ 1 TiB |
+    | `ZipOffsetBlobStoreConfig::compression_optimized()` | 24-bit | ≥ 16 MiB |
+    | `ZipOffsetBlobStoreConfig::default()`, `security_optimized()`, `NestLoudsTrieBlobStore`'s default | 32-bit | ≥ 4 GiB |
+    | `ZipOffsetBlobStoreConfig::performance_optimized()` | 40-bit | ≥ 1 TiB |
+
+    `ZipOffsetBlobStore` keeps its record offsets in a `SortedUintVec`, so a store whose content reached
+    the size in the table was written with wrong offsets.
+  - **Symptoms:** such a store still loads, because the optional file checksum covers the record bytes, not
+    the offset index. Reading an affected record either fails (checksum, zstd or bounds error) or silently
+    returns bytes from another position. That can happen even with per-record checksums, when the wrong
+    offset lands on the start of another record (for example with fixed-size records).
+  - **Detection and repair:** 5.0.2 cannot repair these files.
+    - A store file smaller than 2^`sample_width` bytes is unaffected.
+      `ZipOffsetBlobStore::config().offset_config.sample_width` reports the width after loading.
+    - Rebuild larger stores, and any `SortedUintVec` that held values ≥ 2^`sample_width`, from the source data.
+  - **New errors:** `SortedUintVecBuilder::finish` now returns `Err(InvalidData)` for such input, and so do
+    `ZipOffsetBlobStoreBuilder::finish`, `BatchZipOffsetBlobStoreBuilder::finish` and
+    `NestLoudsTrieBlobStore::finalize`. To build larger stores, use a wider `offset_config.sample_width`
+    (up to 64), for example `ZipOffsetBlobStoreConfig::performance_optimized()`.
+- **`LruPageCache`**: in 5.0.0 and 5.0.1, dropping an `LruPageCache` (or `SingleLruPageCache`) discarded
+  data passed to `write` that had not yet been written back by `flush_file`, `close_file` or eviction.
+  Files written that way may be missing those writes. 5.0.2 writes the dirty pages of file-backed files
+  back on drop.
+
+### Changed
+- `memchr` 2.7 is now a regular dependency, used by the bounded substring searches below. It was a
+  dev-dependency before; default builds already pulled it in through `serde_json` (`serde` feature).
+- `sorted_intersect_adaptive`, `sorted_intersect_simd`, `sorted_intersect_count` and
+  `sorted_intersect_galloping` (`zipora::algorithms`) now document their precondition: both inputs must be
+  sorted strictly ascending (no duplicates), as `sorted_union_count` already required. Behaviour is
+  unchanged. With duplicates or unsorted input the calls still return, but the result is unspecified: the
+  SIMD kernels may report a value more than once, and results can differ between CPUs.
+
+### Fixed
+- **Silent truncation and overflow**:
+  - **`EliasFano::from_sorted` / `from_sorted_u64`** (and the `HybridPostingList` constructors when they pick
+    plain Elias-Fano) now panic with `EliasFano: high_len_bits … exceeds the u32 sample range` when the
+    upper-bits array would need more than 2^32 bits. This needs at least about 1.43 × 10^9 values.
+    - Previously the `u32` select-sample counters overflowed: debug builds panicked with an arithmetic
+      overflow, and release builds stored truncated samples or looped forever.
+    - These constructors return `Self`, so this is a panic, not an `Err`.
+    - Serializing (`serde`) an `EliasFano` with close to 2^32 elements no longer overflows a `u32`
+      counter (debug: panic; release: endless loop).
+  - **`SortedUintVecBuilder::finish`** returns `Err(InvalidData)` ("block minimum … too large for
+    sample_width …") when a block's first value needs more than `sample_width` bits (see the advisory).
+  - **Varints:** `MemoryMappedInput`'s `DataInput::read_var_int` and `ZReorderMap`'s run-length varint reader
+    (`ZReorderMap::open`, `rewind` and iteration) reject a 10th varint byte greater than `0x01` with
+    `Err(InvalidData)`.
+    - Previously its high bits were silently dropped and a wrong value was returned. Longer encodings were
+      already rejected.
+    - During iteration, such an entry ends the iteration, as other malformed entries already did.
+  - **`EntropyBitOps::pack_bits(stream: &mut u64, value, offset, width)`** also rejects `offset + width > 64`
+    with `Err(InvalidData)`, in addition to `width > 32` and `offset > 64`. Previously such calls panicked
+    with an arithmetic overflow in debug builds and returned `Ok(())` without writing anything in release
+    builds.
+- **`LruPageCache`**:
+  - **Drop:** dropping an `LruPageCache` (or `SingleLruPageCache`) writes back the dirty cached pages of
+    file-backed files, as `flush_file` does.
+    - Errors are only logged (`log::warn!`) and nothing is synced to disk. Call `flush_file` or
+      `close_file` to see errors.
+    - Pages of virtual files (`register_file(-1)`) are discarded, as before.
+  - **Statistics:** a page load no longer also counts as a hit.
+    - Misses used to call `record_miss` and also `record_hit(InitialFree)` (plus `record_hit(EvictedOthers)`
+      when a page was evicted). So `total_hits`, `hit_ratio` and `miss_ratio` in `stats()` were inflated for
+      `read`, `write`, `prefetch` and the methods built on them.
+    - A cold read now reports a hit ratio of 0 instead of 0.5. The per-type `hit_counts` are unchanged.
+  - **16 TiB limit:** `read`, `write`, `prefetch` and `invalidate_range` (and `read_batch`,
+    `read_with_prefetch` and the `SingleLruPageCache` wrappers) return `Err(InvalidData)` for byte ranges
+    that start at or extend past 16 TiB (2^32 pages × 4096 bytes), or whose end overflows `u64`.
+    - Previously the 32-bit page id wrapped. Such reads returned an empty buffer, writes that crossed
+      16 TiB were silently dropped, and writes at or above it panicked (debug) or tried to allocate about
+      16 TiB (release).
+    - `FileManager::write_page` now returns `Err(OutOfMemory)` instead of aborting when a virtual file
+      cannot grow.
+- **Containers**:
+  - **`impl Extend<T> for FastVec<T>`**, and therefore `FromIterator` (`collect()`), panics with
+    `FastVec capacity overflow` when an element cannot be stored (capacity overflow or allocation failure)
+    instead of silently dropping it. The inherent `FastVec::extend` still returns `Result`; use it, or the
+    fallible `FastVec::reserve`, to handle the failure.
+  - **`EasyHashMap`** growth and `shrink_to_fit` replace the table only after every entry was copied.
+    `get_or_insert` / `get_or_insert_with` return the insertion error instead of panicking (`key exists in
+    map after put call`).
+- **Worst-case complexity**:
+  - **`CacheObliviousSort::sort`** no longer has quadratic paths.
+    - Data larger than L1 and at most L2 is sorted with `slice::sort_unstable`. The old Lomuto quicksort
+      with a last-element pivot took n(n−1)/2 comparisons and n levels of recursion on sorted,
+      reverse-sorted and all-equal input; n = 20,000 overflowed a 2 MiB stack. This path stays unstable,
+      so equal elements may come out in a different order than in 5.0.1.
+    - Data that fits in L1 uses insertion sort only up to 16 elements and the stable `slice::sort` above
+      that. Output is unchanged.
+  - **`AdvancedRadixSort`'s MSD radix sort** (`force_strategy: Some(SortingStrategy::MsdRadix)`) finishes
+    buckets whose keys share a prefix longer than 64 bytes with the stable `slice::sort` (O(n log n))
+    instead of insertion sort (O(n²)). Output is unchanged.
+  - **Substring search** now takes O(n + m) time on adversarial input (for example a haystack of `a`s and
+    a needle `a…ab`) instead of O(n·m): about 1.4 s before for a 1 MiB haystack and a 64 KiB needle.
+    Results are unchanged.
+    - `zipora::string::SimdStringSearch::sse42_strstr`, `zipora::string::sse42_strstr` (every dispatch
+      tier) and `FastStr::find` count the bytes spent verifying candidate matches. Once that exceeds
+      `2 * haystack.len() + 256`, they finish with `memchr::memmem::find`.
+    - `zipora::io::simd_memory` (`SimdStringSearch::find_pattern`, `find_pattern`, `search::sse42_strstr`
+      for needles over 32 bytes, and `search::scalar_strstr`) uses `memchr::memmem`.
+    - `compression::SimdPatternMatcher::find_pattern_matches` uses `memchr::memmem` for patterns over
+      35 bytes, and for every pattern on its scalar tier.
+- **Other fixes**:
+  - `zipora::memory::align_to_cache_line(size, cache_line_size)` panics with `cache_line_size must be a
+    power of two` unless `cache_line_size` is a power of two. Previously `0` underflowed (debug panic;
+    release returned 0) and other values returned a misaligned size.
+  - `MultiWayMerge::supports_parallel()` returns `false`. It returned `true`, but the merge never ran in
+    parallel.
+  - `ConcurrentLruMap` picks shards with a per-map, randomly seeded `RandomState` instead of the fixed-key
+    `DefaultHasher`, so keys cannot be steered into one shard. Shard assignment, and therefore which
+    entries a full shard evicts, now differs between maps and between runs.
+  - `ZiporaTrie` (Patricia) `contains` uses the same lookup as `get` (no observable change today).
+  - **`PaZipCompressor::compress`:** with `enable_multithreading` (the default), on inputs of at least
+    1 MiB (and at least `multithreading_threshold`) it appends to `output` instead of replacing its
+    contents, fixing the 5.0.1 known issue. In both this path and the sequential one,
+    `stats.bytes_output` (and `compression_ratio`) now count only the bytes written by the call; they used
+    to be based on `output.len()`, which included bytes already in `output`.
+  - `Rans64Decoder::decode` reserves output space with `try_reserve_exact` and never beyond
+    `output_length`. Allocation failures return `Err`.
+  - `VersionManager::min_version()` no longer advances past the version of a live reader token. Readers
+    and writers are counted as active before they read their version, and `min_version` only advances
+    (never decreases) under the token-chain lock.
+  - **`ThreadLocalMemoryPool::allocate`**, called from a thread-local destructor on a thread that had not
+    yet used any `ThreadLocalMemoryPool`, falls back to a standalone allocation instead of aborting the
+    process.
+    - This needs `panic = "unwind"` (the default). The fallback catches a panic raised inside the
+      `thread_local` crate, and that panic is still reported to the panic hook, once per thread.
+    - With `panic = "abort"`, such an allocation still aborts.
+  - `FixedCapacityMemoryPool` with `secure_clear` zeroes freed blocks with word-sized volatile writes
+    (faster; same result).
+  - `FseEncoder` encodes single-worker batches inline, and falls back to inline encoding instead of
+    panicking when a worker thread cannot be spawned. Output is unchanged.
+  - `NestLoudsTrieBlobStore::put_with_key` applies trie relocations even when the insert fails.
+    `key_count`, `total_key_size` and `average_key_length` no longer count repeated puts of the same key.
+- **Build and platforms**:
+  - Removed from `build.rs`: unused `cargo:rustc-cfg` flags (19 fixed names plus per-feature
+    `zipora_has_*` flags), the build-time `rustc` feature probes and the `-lpthread` link directive.
+  - Removed dead Windows code (it never compiled, since `winapi` is not a dependency). Added a
+    crate-level `compile_error!` on Windows and a "Supported platforms" section to the README.
+  - CI runs the library tests natively on `aarch64`.
+
 ## [5.0.1] - 2026-11-06
 
 ### ⚠️ Data-loss advisory

@@ -2319,7 +2319,7 @@ dependencies = [
 
 [[package]]
 name = "zipora"
-version = "5.0.1"
+version = "5.0.2"
 dependencies = [
  "ahash",
  "aho-corasick",
