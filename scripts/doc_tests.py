@@ -68,8 +68,9 @@ def scan_forbidden_fences(doc_path):
 
 
 def resolve_zipora_rlib():
+    cargo = os.environ.get("CARGO", "cargo")
     cmd = [
-        "cargo",
+        cargo,
         "build",
         "--locked",
         "--lib",
@@ -82,6 +83,14 @@ def resolve_zipora_rlib():
         sys.exit(res.returncode)
 
     rlib_path = None
+    search_specs = []
+    seen_specs = set()
+
+    def add_search(spec):
+        if spec and spec not in seen_specs:
+            seen_specs.add(spec)
+            search_specs.append(spec)
+
     for line in res.stdout.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -90,27 +99,38 @@ def resolve_zipora_rlib():
             msg = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if msg.get("reason") == "compiler-artifact":
+        reason = msg.get("reason")
+        if reason == "compiler-artifact":
+            for fn in msg.get("filenames", []):
+                d = os.path.dirname(fn)
+                if d and os.path.isdir(d):
+                    add_search(d)
             target = msg.get("target", {})
             kinds = target.get("kind", [])
             if target.get("name") == "zipora" and ("lib" in kinds or "rlib" in kinds):
                 for fn in msg.get("filenames", []):
                     if fn.endswith(".rlib"):
                         rlib_path = fn
+        elif reason == "build-script-executed":
+            for lp in msg.get("linked_paths", []):
+                add_search(lp)
+
     if not rlib_path or not os.path.exists(rlib_path):
         print("ERROR: failed to locate compiled libzipora.rlib", file=sys.stderr)
         sys.exit(1)
     parent_dir = os.path.dirname(rlib_path)
-    deps_dir = (
+    legacy_deps_dir = (
         parent_dir
         if os.path.basename(parent_dir) == "deps"
         else os.path.join(parent_dir, "deps")
     )
-    return rlib_path, deps_dir
+    if os.path.isdir(legacy_deps_dir):
+        add_search(legacy_deps_dir)
+    return rlib_path, search_specs
 
 
 def run_markdown_doctest(args):
-    doc, rlib_path, deps_dir = args
+    doc, rlib_path, search_specs = args
     fence_violations = scan_forbidden_fences(doc)
     if fence_violations:
         details = "\n".join(
@@ -119,16 +139,19 @@ def run_markdown_doctest(args):
         )
         return doc, 1, 0, len(fence_violations), 0, details
 
+    rustdoc = os.environ.get("RUSTDOC", "rustdoc")
     cmd = [
-        "rustdoc",
+        rustdoc,
         "--edition=2024",
         "--test",
         doc,
-        "-L",
-        deps_dir,
+    ]
+    for spec in search_specs:
+        cmd.extend(["-L", spec])
+    cmd.extend([
         "--extern",
         f"zipora={rlib_path}",
-    ]
+    ])
     try:
         res = subprocess.run(
             cmd,
@@ -152,7 +175,7 @@ def run_markdown_doctest(args):
 
 
 def main():
-    rlib_path, deps_dir = resolve_zipora_rlib()
+    rlib_path, search_specs = resolve_zipora_rlib()
     docs = ["README.md", "README_cn.md"] + sorted(glob.glob("docs/*.md"))
 
     print("=== Markdown Doctests Gate (README.md, README_cn.md, docs/*.md) ===")
@@ -165,7 +188,7 @@ def main():
         results = list(
             pool.map(
                 run_markdown_doctest,
-                [(doc, rlib_path, deps_dir) for doc in docs],
+                [(doc, rlib_path, search_specs) for doc in docs],
             )
         )
 
