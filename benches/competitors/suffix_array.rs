@@ -6,11 +6,19 @@ use std::collections::BTreeMap;
 use std::hint::black_box;
 
 use libsais::SuffixArrayConstruction;
-use sacabase::StringIndex as SacabaseStringIndex;
 use suffix::SuffixTable;
 use zipora::algorithms::suffix_array::SuffixArray;
 
 use crate::common::*;
+
+/// Plain lower/upper-bound `equal_range` over a competitor SA (Task 3.0 fairness): the same
+/// `(start, count)` answer as Zipora's `SuffixArray::search`, with no LCP skipping and no
+/// bucket table.
+fn sa_equal_range(text: &[u8], sa: &[i32], pat: &[u8]) -> (usize, usize) {
+    let lo = sa.partition_point(|&p| &text[p as usize..] < pat);
+    let hi = lo + sa[lo..].partition_point(|&p| text[p as usize..].starts_with(pat));
+    (lo, hi - lo)
+}
 
 fn verify_sa_with<F: Fn(usize) -> usize>(
     text: &[u8],
@@ -125,7 +133,6 @@ pub fn bench_suffix_array(
     let mut expected_sa_sample: Option<Vec<u32>> = None;
     let mut expected_occ_hits: Option<usize> = None;
     let warm_queries = sa_batch * 24;
-    let expected_matched_queries = warm_queries - warm_queries / 10;
 
     // 1. Zipora: SuffixArray (1 instance, 1 text buffer)
     if should_run_any(&["suffix_array/construct", "suffix_array/search_query"]) {
@@ -371,7 +378,7 @@ pub fn bench_suffix_array(
         }
         if should_run_bench("suffix_array/divsufsort_rust/search_query") {
             trim_allocator_arena();
-            let dss0 = divsufsort::sort(&text0);
+            let (_, dss_sa) = divsufsort::sort(&text0).into_parts();
 
             let mut warm_hits = 0usize;
             for idx in 0..warm_queries {
@@ -382,25 +389,26 @@ pub fn bench_suffix_array(
                 if is_miss {
                     pat[pat_len - 1] = b'~';
                 }
-                let m = dss0.longest_substring_match(black_box(&pat[..]));
+                let (_, count) = sa_equal_range(&text0, &dss_sa, black_box(&pat[..]));
                 if is_miss {
-                    assert!(
-                        m.len < pat_len,
+                    assert_eq!(
+                        count, 0,
                         "suffix_array/divsufsort_rust/search_query: expected miss at idx={idx}"
                     );
                 } else {
-                    assert_eq!(
-                        m.len, pat_len,
+                    assert!(
+                        count >= 1,
                         "suffix_array/divsufsort_rust/search_query: expected hit at idx={idx}"
                     );
-                    assert_eq!(m.as_bytes(), &pat[..]);
-                    warm_hits = warm_hits.wrapping_add(1);
                 }
+                warm_hits = warm_hits.wrapping_add(count);
             }
-            assert_eq!(
-                warm_hits, expected_matched_queries,
-                "suffix_array/divsufsort_rust/search_query: matched query count mismatch"
-            );
+            if let Some(exp) = expected_occ_hits {
+                assert_eq!(
+                    warm_hits, exp,
+                    "suffix_array/divsufsort_rust/search_query: hit count mismatch vs Zipora"
+                );
+            }
             black_box(warm_hits);
 
             measure_bench(
@@ -422,22 +430,19 @@ pub fn bench_suffix_array(
                             pat[pat_len - 1] = b'~';
                         }
                         q_idx = q_idx.wrapping_add(1);
-                        let m = dss0.longest_substring_match(black_box(&pat[..]));
-                        if m.len == pat_len {
-                            hits = hits.wrapping_add(1);
-                        }
+                        let (_, count) = sa_equal_range(&text0, &dss_sa, black_box(&pat[..]));
+                        hits = hits.wrapping_add(count);
                     });
                     black_box(hits);
                 },
             );
-            let (_, sa_vec) = dss0.into_parts();
             verify_sa_i32_invariants(
                 &text0,
-                &sa_vec,
+                &dss_sa,
                 &mut expected_sa_sample,
                 "suffix_array/divsufsort_rust/search_query",
             );
-            drop(sa_vec);
+            drop(dss_sa);
             trim_allocator_arena();
         }
     }
@@ -479,7 +484,7 @@ pub fn bench_suffix_array(
         }
         if should_run_bench("suffix_array/cdivsufsort_c/search_query") {
             trim_allocator_arena();
-            let cdss0 = cdivsufsort::sort(&text0);
+            let (_, cdss_sa) = cdivsufsort::sort(&text0).into_parts();
 
             let mut warm_hits = 0usize;
             for idx in 0..warm_queries {
@@ -490,25 +495,26 @@ pub fn bench_suffix_array(
                 if is_miss {
                     pat[pat_len - 1] = b'~';
                 }
-                let m = cdss0.longest_substring_match(black_box(&pat[..]));
+                let (_, count) = sa_equal_range(&text0, &cdss_sa, black_box(&pat[..]));
                 if is_miss {
-                    assert!(
-                        m.len < pat_len,
+                    assert_eq!(
+                        count, 0,
                         "suffix_array/cdivsufsort_c/search_query: expected miss at idx={idx}"
                     );
                 } else {
-                    assert_eq!(
-                        m.len, pat_len,
+                    assert!(
+                        count >= 1,
                         "suffix_array/cdivsufsort_c/search_query: expected hit at idx={idx}"
                     );
-                    assert_eq!(m.as_bytes(), &pat[..]);
-                    warm_hits = warm_hits.wrapping_add(1);
                 }
+                warm_hits = warm_hits.wrapping_add(count);
             }
-            assert_eq!(
-                warm_hits, expected_matched_queries,
-                "suffix_array/cdivsufsort_c/search_query: matched query count mismatch"
-            );
+            if let Some(exp) = expected_occ_hits {
+                assert_eq!(
+                    warm_hits, exp,
+                    "suffix_array/cdivsufsort_c/search_query: hit count mismatch vs Zipora"
+                );
+            }
             black_box(warm_hits);
 
             measure_bench(
@@ -530,22 +536,19 @@ pub fn bench_suffix_array(
                             pat[pat_len - 1] = b'~';
                         }
                         q_idx = q_idx.wrapping_add(1);
-                        let m = cdss0.longest_substring_match(black_box(&pat[..]));
-                        if m.len == pat_len {
-                            hits = hits.wrapping_add(1);
-                        }
+                        let (_, count) = sa_equal_range(&text0, &cdss_sa, black_box(&pat[..]));
+                        hits = hits.wrapping_add(count);
                     });
                     black_box(hits);
                 },
             );
-            let (_, sa_vec) = cdss0.into_parts();
             verify_sa_i32_invariants(
                 &text0,
-                &sa_vec,
+                &cdss_sa,
                 &mut expected_sa_sample,
                 "suffix_array/cdivsufsort_c/search_query",
             );
-            drop(sa_vec);
+            drop(cdss_sa);
             trim_allocator_arena();
         }
     }
@@ -596,7 +599,7 @@ pub fn bench_suffix_array(
         }
         if should_run_bench("suffix_array/libsais_c/search_query") {
             trim_allocator_arena();
-            let sais0 = build_libsais(&text0);
+            let (_, sais_sa) = build_libsais(&text0).into_parts();
 
             let mut warm_hits = 0usize;
             for idx in 0..warm_queries {
@@ -607,25 +610,26 @@ pub fn bench_suffix_array(
                 if is_miss {
                     pat[pat_len - 1] = b'~';
                 }
-                let m = sais0.longest_substring_match(black_box(&pat[..]));
+                let (_, count) = sa_equal_range(&text0, &sais_sa, black_box(&pat[..]));
                 if is_miss {
-                    assert!(
-                        m.len < pat_len,
+                    assert_eq!(
+                        count, 0,
                         "suffix_array/libsais_c/search_query: expected miss at idx={idx}"
                     );
                 } else {
-                    assert_eq!(
-                        m.len, pat_len,
+                    assert!(
+                        count >= 1,
                         "suffix_array/libsais_c/search_query: expected hit at idx={idx}"
                     );
-                    assert_eq!(m.as_bytes(), &pat[..]);
-                    warm_hits = warm_hits.wrapping_add(1);
                 }
+                warm_hits = warm_hits.wrapping_add(count);
             }
-            assert_eq!(
-                warm_hits, expected_matched_queries,
-                "suffix_array/libsais_c/search_query: matched query count mismatch"
-            );
+            if let Some(exp) = expected_occ_hits {
+                assert_eq!(
+                    warm_hits, exp,
+                    "suffix_array/libsais_c/search_query: hit count mismatch vs Zipora"
+                );
+            }
             black_box(warm_hits);
 
             measure_bench(
@@ -647,22 +651,19 @@ pub fn bench_suffix_array(
                             pat[pat_len - 1] = b'~';
                         }
                         q_idx = q_idx.wrapping_add(1);
-                        let m = sais0.longest_substring_match(black_box(&pat[..]));
-                        if m.len == pat_len {
-                            hits = hits.wrapping_add(1);
-                        }
+                        let (_, count) = sa_equal_range(&text0, &sais_sa, black_box(&pat[..]));
+                        hits = hits.wrapping_add(count);
                     });
                     black_box(hits);
                 },
             );
-            let (_, sa_vec) = sais0.into_parts();
             verify_sa_i32_invariants(
                 &text0,
-                &sa_vec,
+                &sais_sa,
                 &mut expected_sa_sample,
                 "suffix_array/libsais_c/search_query",
             );
-            drop(sa_vec);
+            drop(sais_sa);
             trim_allocator_arena();
         }
     }

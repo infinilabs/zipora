@@ -32,8 +32,11 @@ fn write_json(path: &Path, report: &CompetitorBenchReport) {
 }
 
 fn main() {
-    init_bench_allocator_policy();
     let args: Vec<String> = std::env::args().collect();
+    if competitors::space_probe::run_if_requested(&args) {
+        return;
+    }
+    init_bench_allocator_policy();
     let smoke_mode = args.iter().any(|a| a == "--smoke")
         || std::env::var("ZIPORA_BENCH_SMOKE").as_deref() == Ok("1");
     let save_baseline = args.iter().any(|a| a == "--save-baseline")

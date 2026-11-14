@@ -38,7 +38,11 @@ use zipora::succinct::elias_fano::{
 };
 
 const SEED_E2E: u64 = 0x5A17_0E11_E2E5_EA2C;
-const BLOCK_SIZE: usize = 64;
+/// Topical-TF block granularity of the synthetic corpus generator. Never change
+/// this together with the index block size: it changes the generated corpus.
+const CORPUS_TF_BLOCK: usize = 64;
+/// Block-Max WAND block size of the bench-local index.
+const BMW_BLOCK_SIZE: usize = 64;
 const TOP_K: usize = 10;
 const DEFAULT_TRIALS: usize = 7;
 
@@ -602,11 +606,11 @@ fn generate_zipf_corpus_and_queries(
         // Topically clustered term frequencies: ~15% of 64-posting blocks are topical
         // clusters (containing high-TF bursts 3..=25), while background blocks have TF 1..=2.
         let mut tfs = Vec::with_capacity(df);
-        let num_blocks = df.div_ceil(BLOCK_SIZE);
+        let num_blocks = df.div_ceil(CORPUS_TF_BLOCK);
         let hot_block = rng.random_range(0..num_blocks.max(1));
         for blk in 0..num_blocks {
-            let start = blk * BLOCK_SIZE;
-            let end = (start + BLOCK_SIZE).min(df);
+            let start = blk * CORPUS_TF_BLOCK;
+            let end = (start + CORPUS_TF_BLOCK).min(df);
             let is_topical = blk == hot_block || rng.random_range(0u32..100) < 14;
             for _ in start..end {
                 let tf: u16 = if is_topical {
@@ -685,18 +689,18 @@ fn generate_zipf_corpus_and_queries(
 
 #[repr(C, align(64))]
 struct AlignedBlockScratch {
-    docs: [u32; BLOCK_SIZE],
-    scores: [f32; BLOCK_SIZE],
-    tfs: [u16; BLOCK_SIZE],
+    docs: [u32; BMW_BLOCK_SIZE],
+    scores: [f32; BMW_BLOCK_SIZE],
+    tfs: [u16; BMW_BLOCK_SIZE],
 }
 
 impl AlignedBlockScratch {
     #[inline]
     const fn new() -> Self {
         Self {
-            docs: [0u32; BLOCK_SIZE],
-            scores: [0.0f32; BLOCK_SIZE],
-            tfs: [0u16; BLOCK_SIZE],
+            docs: [0u32; BMW_BLOCK_SIZE],
+            scores: [0.0f32; BMW_BLOCK_SIZE],
+            tfs: [0u16; BMW_BLOCK_SIZE],
         }
     }
 }
@@ -753,7 +757,7 @@ impl ZiporaSearchEngine {
             let postings = HybridPostingList::from_sorted(docs);
             let tfs: Vec<u8> = tfs_u16.iter().map(|&tf| tf.min(255) as u8).collect();
 
-            let num_blocks = df.div_ceil(BLOCK_SIZE);
+            let num_blocks = df.div_ceil(BMW_BLOCK_SIZE);
             let mut block_max_doc_ids = Vec::with_capacity(num_blocks);
             let mut block_max_scores = Vec::with_capacity(num_blocks);
             let mut max_term_score = 0.0f32;
@@ -761,8 +765,8 @@ impl ZiporaSearchEngine {
             let mut best_blk_1 = (0u32, -1.0f32);
 
             for blk_idx in 0..num_blocks {
-                let start = blk_idx * BLOCK_SIZE;
-                let end = (start + BLOCK_SIZE).min(df);
+                let start = blk_idx * BMW_BLOCK_SIZE;
+                let end = (start + BMW_BLOCK_SIZE).min(df);
                 let last_doc = docs[end - 1];
                 let mut blk_max = 0.0f32;
                 for i in start..end {
@@ -1099,11 +1103,11 @@ impl ZiporaSearchEngine {
         collector: &mut TopKCollector,
     ) {
         let df = term.postings.len();
-        let start = blk_idx * BLOCK_SIZE;
+        let start = blk_idx * BMW_BLOCK_SIZE;
         if start >= df {
             return;
         }
-        let end = (start + BLOCK_SIZE).min(df);
+        let end = (start + BMW_BLOCK_SIZE).min(df);
         let count = end - start;
         let mut scratch = AlignedBlockScratch::new();
 
@@ -1234,8 +1238,8 @@ impl ZiporaSearchEngine {
                 continue;
             }
 
-            let start = blk_idx * BLOCK_SIZE;
-            let end = (start + BLOCK_SIZE).min(df);
+            let start = blk_idx * BMW_BLOCK_SIZE;
+            let end = (start + BMW_BLOCK_SIZE).min(df);
             let count = end - start;
 
             if let Some(slice) = dense_slice {
@@ -1403,8 +1407,8 @@ impl ZiporaSearchEngine {
                             continue;
                         }
 
-                        let start = blk_idx * BLOCK_SIZE;
-                        let end = (start + BLOCK_SIZE).min(df);
+                        let start = blk_idx * BMW_BLOCK_SIZE;
+                        let end = (start + BMW_BLOCK_SIZE).min(df);
                         let count = end - start;
 
                         if let Some(slice) = dense_slice {
@@ -2254,7 +2258,7 @@ fn main() {
         baseline_bytes_per_posting,
         qps_speedup_vs_baseline,
         top10_recall_vs_exhaustive: recall,
-        competitor_note: "Side-by-side comparison on the identical 100,000-doc Zipf corpus and 10,000 queries against tantivy v0.26.2 (Index::create_in_ram, IndexRecordOption::WithFreqs, BooleanQuery + TopDocs::with_limit(10).order_by_score()) and an in-process uncompressed inverted-index exhaustive baseline. Zipora BMW beats both Tantivy and the uncompressed baseline on QPS@10 and p50 latency, and beats the uncompressed baseline on p99 tail latency (via peak-block threshold priming, contiguous-run Clustered decoding, and tight multi-term block-max upper-bound pruning); Tantivy v0.26.2 has ~6% lower p99 on 4-term dense-tail queries due to 128-doc SIMD bitpacking vs Elias-Fano select1 decoding. Space comparison: postings-vs-postings is parity (Zipora HybridPostingList = 1.223 B/posting vs Tantivy postings = 1.227 B/posting; including Zipora's uncompressed 64-doc block-max metadata is 2.379 B/posting vs Tantivy's 1.227 B/posting, 1.94x larger), and whole-index is 2.701 B/posting for Zipora vs 1.323 B/posting for Tantivy without its empty doc store (1.643 B/posting including the 515 KB empty doc store).".to_string(),
+        competitor_note: "Side-by-side comparison on the identical 100,000-doc Zipf corpus and 10,000 queries against tantivy v0.26.2 (Index::create_in_ram, IndexRecordOption::WithFreqs, BooleanQuery + TopDocs::with_limit(10).order_by_score()) and an in-process uncompressed inverted-index exhaustive baseline. Zipora BMW beats both Tantivy and the uncompressed baseline on QPS@10 and p50 latency, and beats the uncompressed baseline on p99 tail latency (via peak-block threshold priming, contiguous-run Clustered decoding, and tight multi-term block-max upper-bound pruning); Tantivy v0.26.2 has ~6% lower p99 on 4-term dense-tail queries due to 128-doc SIMD bitpacking vs Elias-Fano select1 decoding. Space comparison: Tantivy's 1.227 B/posting postings figure includes doc IDs and term frequencies (IndexRecordOption::WithFreqs), whereas Zipora's 1.219 B/posting HybridPostingList covers doc IDs only and its term frequencies (1 B/posting u8) are counted in the BMW metadata bucket (bringing postings + BMW metadata to 2.375 B/posting, 1.94x larger than Tantivy's 1.227 B/posting postings); whole-index is 2.697 B/posting for Zipora vs 1.324 B/posting for Tantivy without its empty doc store (1.643 B/posting including the empty doc store).".to_string(),
     };
 
     let report = E2EBenchReport {

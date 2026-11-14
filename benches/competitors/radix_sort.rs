@@ -81,14 +81,25 @@ pub fn bench_radix_sort_lsd(
     sort_params.warmup_calls = 1;
     sort_params.bursts_per_trial = 1;
 
-    record_space_metric(space, "radix_sort/zipora_u32_bytes_per_elem", 8.0);
-    record_space_metric(space, "radix_sort/voracious_u32_bytes_per_elem", 8.0);
-    record_space_metric(space, "radix_sort/rdst_u32_bytes_per_elem", 8.0);
-    record_space_metric(space, "radix_sort/std_u32_bytes_per_elem", 4.0);
-    record_space_metric(space, "radix_sort/zipora_u64_bytes_per_elem", 16.0);
-    record_space_metric(space, "radix_sort/voracious_u64_bytes_per_elem", 16.0);
-    record_space_metric(space, "radix_sort/rdst_u64_bytes_per_elem", 16.0);
-    record_space_metric(space, "radix_sort/std_u64_bytes_per_elem", 8.0);
+    // `VmHWM` is too coarse below ~10^7 elements (the smoke tier's n = 10^5 read 6.38 for
+    // `std_u32`), so every tier probes at least the spec size.
+    let probe_n = n.max(10_000_000);
+    for key in [
+        "radix_sort/zipora_u32_bytes_per_elem",
+        "radix_sort/voracious_u32_bytes_per_elem",
+        "radix_sort/rdst_u32_bytes_per_elem",
+        "radix_sort/std_u32_bytes_per_elem",
+        "radix_sort/zipora_u64_bytes_per_elem",
+        "radix_sort/voracious_u64_bytes_per_elem",
+        "radix_sort/rdst_u64_bytes_per_elem",
+        "radix_sort/std_u64_bytes_per_elem",
+    ] {
+        record_space_metric(
+            space,
+            key,
+            crate::competitors::space_probe::probe(key, probe_n),
+        );
+    }
 
     // 1. u32 sorting (10^7 elements, 1 work buffer per side)
     if should_run_any(&[
@@ -300,10 +311,19 @@ pub fn bench_radix_sort_kv(
     maybe_repin_self_within_ccd();
     trim_allocator_arena();
     let n = sizes.radix_sort_elements;
-    record_space_metric(space, "radix_sort/zipora_kv_bytes_per_elem", 32.0);
-    record_space_metric(space, "radix_sort/voracious_kv_bytes_per_elem", 32.0);
-    record_space_metric(space, "radix_sort/rdst_kv_bytes_per_elem", 32.0);
-    record_space_metric(space, "radix_sort/std_kv_bytes_per_elem", 16.0);
+    let probe_n = n.max(10_000_000);
+    for key in [
+        "radix_sort/zipora_kv_bytes_per_elem",
+        "radix_sort/voracious_kv_bytes_per_elem",
+        "radix_sort/rdst_kv_bytes_per_elem",
+        "radix_sort/std_kv_bytes_per_elem",
+    ] {
+        record_space_metric(
+            space,
+            key,
+            crate::competitors::space_probe::probe(key, probe_n),
+        );
+    }
 
     let _ = primary_core;
     let rayon_core_for = |p_core: usize| -> usize {
@@ -421,4 +441,68 @@ pub fn bench_radix_sort_kv(
     }
 
     set_allow_self_repin(true);
+}
+
+/// Task 3.0: input bytes/elem + peak extra RSS/elem during one sort, in a fresh process.
+pub fn space_probe_radix_sort(key: &str, n: usize) -> Option<f64> {
+    use crate::competitors::space_probe::{peak_rss_bytes, reset_peak_rss, rss_bytes};
+    fn run<T, F: FnOnce(&mut [T])>(mut buf: Vec<T>, sort: F) -> f64 {
+        let n = buf.len().max(1);
+        reset_peak_rss();
+        let before = rss_bytes();
+        sort(&mut buf);
+        black_box(&buf);
+        std::mem::size_of::<T>() as f64 + peak_rss_bytes().saturating_sub(before) as f64 / n as f64
+    }
+    let sorter = || {
+        RadixSort::with_config(RadixSortConfig {
+            use_parallel: false,
+            use_counting_sort_threshold: 0,
+            ..RadixSortConfig::default()
+        })
+    };
+    // Same element type as the timed competitor KV rows (`RadixKvPair`, 16 B).
+    let kv_pairs = |n: usize| -> Vec<RadixKvPair> {
+        gen_radix_kv_template(n)
+            .into_iter()
+            .map(|(key, val)| RadixKvPair { key, val })
+            .collect()
+    };
+    Some(match key {
+        "radix_sort/zipora_u32_bytes_per_elem" => {
+            run(gen_radix_u32_template(n), |b| sorter().sort_u32(b).unwrap())
+        }
+        "radix_sort/voracious_u32_bytes_per_elem" => {
+            run(gen_radix_u32_template(n), |b| b.voracious_sort())
+        }
+        "radix_sort/rdst_u32_bytes_per_elem" => run(gen_radix_u32_template(n), |b| {
+            b.radix_sort_builder().with_single_threaded_tuner().sort()
+        }),
+        "radix_sort/std_u32_bytes_per_elem" => {
+            run(gen_radix_u32_template(n), |b| b.sort_unstable())
+        }
+        "radix_sort/zipora_u64_bytes_per_elem" => {
+            run(gen_radix_u64_template(n), |b| sorter().sort_u64(b).unwrap())
+        }
+        "radix_sort/voracious_u64_bytes_per_elem" => {
+            run(gen_radix_u64_template(n), |b| b.voracious_sort())
+        }
+        "radix_sort/rdst_u64_bytes_per_elem" => run(gen_radix_u64_template(n), |b| {
+            b.radix_sort_builder().with_single_threaded_tuner().sort()
+        }),
+        "radix_sort/std_u64_bytes_per_elem" => {
+            run(gen_radix_u64_template(n), |b| b.sort_unstable())
+        }
+        "radix_sort/zipora_kv_bytes_per_elem" => run(gen_radix_kv_template(n), |b| {
+            KeyValueRadixSort::<u64, u64>::new().sort_by_key(b).unwrap()
+        }),
+        "radix_sort/voracious_kv_bytes_per_elem" => run(kv_pairs(n), |b| b.voracious_sort()),
+        "radix_sort/rdst_kv_bytes_per_elem" => run(kv_pairs(n), |b| {
+            b.radix_sort_builder().with_single_threaded_tuner().sort()
+        }),
+        "radix_sort/std_kv_bytes_per_elem" => {
+            run(kv_pairs(n), |b| b.sort_unstable_by_key(|p| p.key))
+        }
+        _ => return None,
+    })
 }

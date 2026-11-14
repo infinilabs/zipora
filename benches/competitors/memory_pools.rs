@@ -56,11 +56,15 @@ pub fn bench_memory_pools(
         }
     };
 
-    record_space_metric(space, "memory_pools/lockfree_bytes_per_256b_slot", 256.0);
-    record_space_metric(space, "memory_pools/secure_bytes_per_256b_slot", 384.0);
-    record_space_metric(space, "memory_pools/mimalloc_bytes_per_256b_slot", 256.0);
-    record_space_metric(space, "memory_pools/jemalloc_bytes_per_256b_slot", 256.0);
-    record_space_metric(space, "memory_pools/system_bytes_per_256b_slot", 272.0);
+    for key in [
+        "memory_pools/lockfree_bytes_per_256b_slot",
+        "memory_pools/secure_bytes_per_256b_slot",
+        "memory_pools/mimalloc_bytes_per_256b_slot",
+        "memory_pools/jemalloc_bytes_per_256b_slot",
+        "memory_pools/system_bytes_per_256b_slot",
+    ] {
+        record_space_metric(space, key, crate::competitors::space_probe::probe(key, 0));
+    }
 
     const POOL_SIZES: [usize; 4] = [128, 256, 512, 1024];
 
@@ -554,4 +558,92 @@ pub fn bench_memory_pools(
 
     set_allow_self_repin(true);
     pin_current_thread_to_core(current_self_pinned_core());
+}
+
+/// Task 3.0: bytes per live 256 B slot, measured as an RSS delta over 65,536 live
+/// slots in a fresh process. Includes headers, size-class rounding and per-slot
+/// side tables.
+pub fn space_probe_memory_pools(key: &str) -> Option<f64> {
+    use crate::competitors::space_probe::{rss_bytes, touch_spare_capacity};
+    const N: usize = 65_536;
+    const SZ: usize = 256;
+    let layout = Layout::from_size_align(SZ, 16).unwrap();
+    // Fault in the pointer vector's pages up front so they are not counted.
+    let mut ptrs: Vec<*mut u8> = Vec::with_capacity(N);
+    touch_spare_capacity(&mut ptrs);
+    let per_slot = |before: usize, after: usize| after.saturating_sub(before) as f64 / N as f64;
+    match key {
+        "memory_pools/lockfree_bytes_per_256b_slot" => {
+            let pool = LockFreeMemoryPool::new(LockFreePoolConfig::high_performance()).ok()?;
+            let warm = pool.allocate(SZ).ok()?;
+            pool.deallocate(warm, SZ).ok()?;
+            let before = rss_bytes();
+            for _ in 0..N {
+                let p = pool.allocate(SZ).ok()?;
+                // SAFETY: `p` is a live SZ-byte block owned by this probe.
+                unsafe { p.as_ptr().write_volatile(0xA5) };
+                ptrs.push(p.as_ptr());
+            }
+            let after = rss_bytes();
+            for &p in &ptrs {
+                pool.deallocate(std::ptr::NonNull::new(p)?, SZ).ok()?;
+            }
+            Some(per_slot(before, after))
+        }
+        "memory_pools/secure_bytes_per_256b_slot" => {
+            // The timed `secure_pool/*` rows' config. `max_chunks` (1,024) is not enforced by
+            // `SecureMemoryPool`, so the probe can hold N live chunks with it unchanged.
+            let mut cfg = SecurePoolConfig::new(SZ, 1024, 8);
+            cfg.enable_hot_cold_separation = false;
+            cfg.enable_huge_pages = false;
+            let pool = SecureMemoryPool::new(cfg).ok()?;
+            drop(pool.allocate().ok()?);
+            let mut live: Vec<zipora::memory::SecurePooledPtr> = Vec::with_capacity(N);
+            touch_spare_capacity(&mut live);
+            let before = rss_bytes();
+            for _ in 0..N {
+                let p = pool.allocate().ok()?;
+                // SAFETY: `p` owns a live SZ-byte chunk.
+                unsafe { p.as_ptr().write_volatile(0xA5) };
+                live.push(p);
+            }
+            let after = rss_bytes();
+            drop(live);
+            Some(per_slot(before, after))
+        }
+        "memory_pools/mimalloc_bytes_per_256b_slot" => {
+            Some(global_alloc_probe(&MiMalloc, layout, &mut ptrs))
+        }
+        "memory_pools/jemalloc_bytes_per_256b_slot" => {
+            Some(global_alloc_probe(&Jemalloc, layout, &mut ptrs))
+        }
+        "memory_pools/system_bytes_per_256b_slot" => {
+            Some(global_alloc_probe(&SystemAlloc, layout, &mut ptrs))
+        }
+        _ => None,
+    }
+}
+
+fn global_alloc_probe<A: GlobalAlloc>(a: &A, layout: Layout, ptrs: &mut Vec<*mut u8>) -> f64 {
+    use crate::competitors::space_probe::rss_bytes;
+    let n = ptrs.capacity();
+    // SAFETY: every pointer is allocated with `layout`, checked for null, and freed once with
+    // the same `layout`.
+    unsafe {
+        let warm = a.alloc(layout);
+        assert!(!warm.is_null(), "probe allocation failed");
+        a.dealloc(warm, layout);
+        let before = rss_bytes();
+        for _ in 0..n {
+            let p = a.alloc(layout);
+            assert!(!p.is_null(), "probe allocation failed");
+            p.write_volatile(0xA5);
+            ptrs.push(p);
+        }
+        let after = rss_bytes();
+        for &p in ptrs.iter() {
+            a.dealloc(p, layout);
+        }
+        after.saturating_sub(before) as f64 / n as f64
+    }
 }

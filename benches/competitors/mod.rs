@@ -7,6 +7,7 @@ pub mod memory_pools;
 pub mod radix_sort;
 pub mod rank_select;
 pub mod search_scoring;
+pub mod space_probe;
 pub mod suffix_array;
 pub mod tries;
 

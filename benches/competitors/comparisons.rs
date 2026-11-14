@@ -248,7 +248,7 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
         "divsufsort",
         "2.0.0",
         &[],
-        "divsufsort::sort(&[u8]) & sacabase::StringIndex::longest_substring_match(&[u8])",
+        "divsufsort::sort(&[u8]) & bench-side equal_range (lower+upper bound) over the returned SA",
         "Pure-Rust port of Yuta Mori's libdivsufsort induced-sorting suffix array construction",
     ),
     (
@@ -256,7 +256,7 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
         "cdivsufsort",
         "2.0.0",
         &[],
-        "cdivsufsort::sort(&[u8]) & sacabase::StringIndex::longest_substring_match(&[u8])",
+        "cdivsufsort::sort(&[u8]) & bench-side equal_range (lower+upper bound) over the returned SA",
         "C FFI binding to Yuta Mori's libdivsufsort reference implementation",
     ),
     (
@@ -264,7 +264,7 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
         "libsais",
         "0.2.0",
         &[],
-        "libsais::SuffixArrayConstruction::for_text(&[u8]).in_owned_buffer32().single_threaded().run() & sacabase::StringIndex::longest_substring_match(&[u8])",
+        "libsais::SuffixArrayConstruction::for_text(&[u8]).in_owned_buffer32().single_threaded().run() & bench-side equal_range (lower+upper bound) over the returned SA",
         "C FFI binding to Ilya Grebnov's libsais induced-sorting suffix array construction (single-threaded)",
     ),
     (
