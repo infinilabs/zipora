@@ -1055,8 +1055,16 @@ mod tests {
     #[test]
     fn test_size_falls_back_to_decoding_when_frame_has_no_content_size() {
         use crate::blob_store::sorted_uint_vec::SortedUintVecBuilder;
+        use std::io::Write;
 
-        let frame = zstd::encode_all(&[b'x'; 4096][..], 3).unwrap();
+        // Build a frame with `ContentSizeFlag(false)` and no pledged source
+        // size explicitly (`zstd::encode_all` began pledging sizes < 128 KiB
+        // in zstd 0.14.4).
+        let mut encoder = zstd::stream::Encoder::new(Vec::new(), 3).unwrap();
+        encoder.include_contentsize(false).unwrap();
+        encoder.set_pledged_src_size(None).unwrap();
+        encoder.write_all(&[b'x'; 4096]).unwrap();
+        let frame = encoder.finish().unwrap();
         assert_eq!(
             zstd::zstd_safe::get_frame_content_size(&frame).ok(),
             Some(None)
