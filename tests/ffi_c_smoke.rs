@@ -125,6 +125,14 @@ fn test_c11_export_and_ffi_guard_parity_and_header_coverage() {
     }
 }
 
+fn strip_cbindgen_version_stamp(header: &str) -> String {
+    header
+        .lines()
+        .filter(|line| !line.starts_with("/* Generated with cbindgen:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn test_c11_cbindgen_header_matches_committed_include_header() {
     let root = repo_root();
@@ -134,8 +142,21 @@ fn test_c11_cbindgen_header_matches_committed_include_header() {
     let generated = fs::read_to_string(&generated_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {}", generated_path.display(), e));
 
+    assert!(
+        committed
+            .lines()
+            .any(|l| l.starts_with("/* Generated with cbindgen:")),
+        "include/zipora.h is missing the cbindgen banner"
+    );
+    assert!(
+        generated
+            .lines()
+            .any(|l| l.starts_with("/* Generated with cbindgen:")),
+        "generated zipora.h is missing the cbindgen banner"
+    );
     assert_eq!(
-        committed, generated,
+        strip_cbindgen_version_stamp(&committed),
+        strip_cbindgen_version_stamp(&generated),
         "include/zipora.h is out of sync with cbindgen output in {}",
         generated_path.display()
     );
