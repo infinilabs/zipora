@@ -150,7 +150,7 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
     (
         "zstd",
         "zstd",
-        "0.14.3",
+        "0.14.4",
         &["default"],
         "zstd::bulk::Compressor::new(level).compress(&[u8]) & zstd::bulk::Decompressor::new().decompress(&[u8], capacity)",
         "Whole-block LZ77 + FSE + 4-stream Huffman compressor at levels 1 and 3 with reused ZSTD_CCtx / ZSTD_DCtx (not an order-0 coder; raw huff0/FSE stages are benchmarked separately under zstd_huf0 and zstd_fse)",
@@ -158,7 +158,7 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
     (
         "zstd_huf0",
         "zstd-sys",
-        "2.1.2+zstd.1.5.7",
+        "2.1.3+zstd.1.5.7",
         &["bmi2"],
         "HUF_compress4X_repeat & HUF_decompress4X_hufOnly_wksp (HUF_flags_bmi2 = 1)",
         "Raw libzstd huff0 4-stream Order-0 Huffman entropy stage (table build + header + 4X stream encode/decode, no LZ77)",
@@ -166,7 +166,7 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
     (
         "zstd_fse",
         "zstd-sys",
-        "2.1.2+zstd.1.5.7",
+        "2.1.3+zstd.1.5.7",
         &["bmi2"],
         "HIST_count_wksp + FSE_normalizeCount + FSE_writeNCount + FSE_buildCTable_wksp + FSE_compress_usingCTable & FSE_decompress_wksp_bmi2",
         "Raw libzstd FSE (Finite State Entropy / tANS) Order-0 entropy stage (table build + header + stream encode/decode, no LZ77)",
@@ -270,7 +270,7 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
     (
         "memchr",
         "memchr",
-        "2.7.5",
+        "2.8.3",
         &["std"],
         "memchr::memchr(u8, &[u8]), memchr::memmem::find(&[u8], &[u8]), & memchr::memmem::Finder::find(&[u8])",
         "BurntSushi AVX2/SSE2 vectorized byte and substring search",
@@ -278,7 +278,7 @@ const COMPETITOR_SPECS: &[CompetitorSpec] = &[
     (
         "aho-corasick",
         "aho-corasick",
-        "1.1.3",
+        "1.1.5",
         &["std", "perf-literal"],
         "aho_corasick::AhoCorasick::new([needle]).unwrap().find(&[u8])",
         "BurntSushi Aho-Corasick automaton with SIMD prefilter",

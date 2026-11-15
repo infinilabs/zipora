@@ -42,7 +42,8 @@ pub fn touch_spare_capacity<T>(v: &mut Vec<T>) {
 
 /// Resets `VmHWM` to the current RSS (Linux >= 4.0, `clear_refs` value 5).
 pub fn reset_peak_rss() {
-    let _ = std::fs::write("/proc/self/clear_refs", "5");
+    std::fs::write("/proc/self/clear_refs", "5")
+        .expect("failed to write 5 to /proc/self/clear_refs to reset VmHWM");
 }
 
 /// Peak resident set size in bytes (`VmHWM` from `/proc/self/status`).
