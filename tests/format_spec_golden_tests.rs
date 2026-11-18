@@ -872,18 +872,19 @@ fn test_e7_f2_perf_table_and_readme_claims_audit() {
 
     for doc_rel in ["README.md", "README_cn.md", "docs/PERFORMANCE.md"] {
         let doc = std::fs::read_to_string(root.join(doc_rel)).unwrap();
+        let begin_marker = "<!-- BEGIN GENERATED PERF TABLE (scripts/perf_table.py) -->";
+        let end_marker = "<!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->";
         assert!(
-            doc.contains("<!-- BEGIN GENERATED PERF TABLE (scripts/perf_table.py) -->")
-                && doc.contains("<!-- END GENERATED PERF TABLE (scripts/perf_table.py) -->"),
+            doc.contains(begin_marker) && doc.contains(end_marker),
             "{doc_rel} must embed generated performance table from scripts/perf_table.py"
         );
+        let (before_gen, rest) = doc.split_once(begin_marker).unwrap();
+        let (_, after_gen) = rest.split_once(end_marker).unwrap();
+        let outside_perf_table = format!("{before_gen}{after_gen}");
         for stale in [
             "1,122",
             "10.7 bytes/key",
             "10.7 字节/键",
-            "20.6 ns",
-            "5.2 Gwords/s",
-            "2.46 ns",
             "CacheOptimizedHashMap",
             "NestTrieDawg",
             "8.0 B/state",
@@ -891,6 +892,14 @@ fn test_e7_f2_perf_table_and_readme_claims_audit() {
             assert!(
                 !doc.contains(stale),
                 "{doc_rel} must not contain stale or nonexistent claim `{stale}`"
+            );
+        }
+        // Check stale pre-E7 prose metrics outside the generated perf table so genuine
+        // baseline-generated entries (e.g. Rans64Decoder X4 `2.46 ns/byte`) do not collide.
+        for stale_prose in ["20.6 ns", "5.2 Gwords/s", "2.46 ns"] {
+            assert!(
+                !outside_perf_table.contains(stale_prose),
+                "{doc_rel} must not contain stale prose metric `{stale_prose}` outside generated perf table"
             );
         }
     }

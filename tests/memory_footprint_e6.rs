@@ -1039,28 +1039,79 @@ fn test_s54_r2_s57_r1_quiet_min_of_3_baselines_match_88e68ad_with_ab_caps() {
 
         let e4 = std::fs::read_to_string(manifest_dir.join("docs/review/e4.md"))
             .expect("read docs/review/e4.md");
-        // S57-R1: 257/268 rows across all 3 suites are strictly <= +5.0% vs 88e68ad
-        // (79/80 core_bench, 7/7 e2e_search, 171/181 competitor_bench = 83/86 Zipora rows).
-        // The 11 remaining rows (4 Zipora + 7 INFO(comp) third-party, max +12.19%) are
-        // verified by 3-pass interleaved quiet-host A/B and documented in docs/review/e4.md §2.4.
+        // Task 3.0 Step 9 (`a0693e8`): 219/268 rows across all 3 suites are strictly <= +5.0%
+        // vs 88e68ad (70/80 core_bench, 7/7 e2e_search, 142/181 competitor_bench). The 49 rows
+        // > +5.0% vs 88e68ad (3 Task 3.0 Step 5 `sa_equal_range` harness-equalization rows plus
+        // 46 KVM 2D-EPT / Cargo.lock-refresh rows verified by 3-round interleaved A/B and 3
+        // qualifying order-10 >= 500 passes) are documented in docs/review/e4.md §2.4.
         let ab_disclosed: &[(&str, f64)] = &[
-            ("core_bench:entropy/huffman_o1/decode_64kib", 7.5),
-            ("competitor_bench:rank_select/interleaved256/select1", 6.0),
-            ("competitor_bench:rank_select/sucds_rank9sel/select0", 6.5),
-            ("competitor_bench:rank_select/vers_vecs_rsvec/select0", 8.0),
-            ("competitor_bench:rank_select/bitm_rs101111/select1", 10.0),
+            ("core_bench:rank_select/interleaved256/select1", 8.0),
+            ("core_bench:rank_select/interleaved256/select0", 10.5),
+            ("core_bench:tries/cspp/url_paths/lookup", 6.0),
+            ("core_bench:tries/cspp/random_16b/lookup", 11.5),
+            ("core_bench:tries/dat/shared_prefix/lookup", 7.5),
+            ("core_bench:tries/zipora_trie_da/lookup", 13.0),
+            ("core_bench:hash_maps/zipora_hash_map/insert_u64", 7.5),
+            ("core_bench:hash_maps/zipora_hash_map/get_str16", 14.0),
+            ("core_bench:suffix_array/construct", 8.0),
+            ("core_bench:suffix_array/search_query", 13.0),
+            ("competitor_bench:rank_select/interleaved256/select1", 14.5),
+            ("competitor_bench:rank_select/interleaved256/select0", 13.0),
+            ("competitor_bench:rank_select/se256/select1", 6.0),
+            ("competitor_bench:rank_select/se256/select0", 10.5),
+            ("competitor_bench:rank_select/sucds_rank9sel/select0", 17.0),
+            ("competitor_bench:rank_select/vers_vecs_rsvec/select1", 13.5),
+            ("competitor_bench:rank_select/vers_vecs_rsvec/select0", 20.0),
+            ("competitor_bench:rank_select/bitm_rs101111/rank1", 7.5),
+            ("competitor_bench:rank_select/bitm_rs101111/select1", 19.0),
+            ("competitor_bench:rank_select/bitm_rs101111/select0", 11.0),
+            ("competitor_bench:tries/cspp/url_paths/lookup", 31.0),
+            ("competitor_bench:tries/radix_trie/url_paths/lookup", 6.5),
+            ("competitor_bench:tries/dat/random_16b/lookup", 13.0),
+            ("competitor_bench:tries/cspp/random_16b/lookup", 7.5),
             ("competitor_bench:tries/fst/random_16b/lookup", 12.5),
+            ("competitor_bench:tries/dat/shared_prefix/build_sorted", 7.5),
+            ("competitor_bench:tries/dat/shared_prefix/lookup", 6.5),
+            ("competitor_bench:tries/qp_trie/shared_prefix/lookup", 10.0),
             (
                 "competitor_bench:tries/radix_trie/shared_prefix/lookup",
-                5.5,
+                13.5,
             ),
             ("competitor_bench:tries/zipora_trie_da/lookup", 10.5),
+            ("competitor_bench:hash_maps/zipora_hash_map/get_u64", 18.5),
+            (
+                "competitor_bench:hash_maps/zipora_hash_map/insert_str16",
+                7.5,
+            ),
+            ("competitor_bench:hash_maps/zipora_hash_map/get_str16", 28.0),
+            ("competitor_bench:hash_maps/gold_hash_map/get_u64", 9.5),
             (
                 "competitor_bench:hash_maps/gold_hash_map/insert_str16",
-                12.5,
+                31.0,
             ),
+            ("competitor_bench:hash_maps/gold_hash_map/get_str16", 8.0),
+            ("competitor_bench:hash_maps/hashbrown_ahash/get_u64", 6.5),
+            ("competitor_bench:hash_maps/hashbrown_ahash/get_str16", 37.5),
+            ("competitor_bench:hash_maps/std/get_u64", 21.0),
             ("competitor_bench:hash_maps/std/get_str16", 12.5),
-            ("competitor_bench:memory_pools/jemalloc/alloc_free_1t", 6.0),
+            ("competitor_bench:entropy/huffman_o2/encode_64kib", 6.0),
+            ("competitor_bench:entropy/zstd_l3/encode_64kib", 6.0),
+            ("competitor_bench:radix_sort/voracious/kv_u64_u64", 9.0),
+            ("competitor_bench:suffix_array/construct", 18.5),
+            ("competitor_bench:suffix_array/search_query", 22.0),
+            ("competitor_bench:suffix_array/suffix_crate/construct", 18.0),
+            (
+                "competitor_bench:suffix_array/divsufsort_rust/search_query",
+                209.0,
+            ),
+            (
+                "competitor_bench:suffix_array/cdivsufsort_c/search_query",
+                188.5,
+            ),
+            (
+                "competitor_bench:suffix_array/libsais_c/search_query",
+                184.0,
+            ),
         ];
         for (disc_key, _) in ab_disclosed {
             let bench_name = disc_key.split_once(':').unwrap().1;
