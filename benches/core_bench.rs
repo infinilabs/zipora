@@ -2310,7 +2310,7 @@ fn bench_suffix_array(records: &mut Vec<BenchRecord>, sizes: SuiteSizes) {
             },
             |slot| {
                 let built = SuffixArray::new(black_box(&text0)).unwrap();
-                black_box(built.as_slice().len());
+                black_box(built.as_u32_slice().len());
                 *slot = Some(built);
             },
         );

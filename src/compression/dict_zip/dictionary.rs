@@ -315,11 +315,7 @@ impl SuffixArrayDictionary {
         let result =
             if match_status.depth >= self.config.min_pattern_length && !match_status.is_empty() {
                 // Found a match using two-level algorithm
-                let dict_position = if match_status.lo < self.suffix_array.as_slice().len() {
-                    self.suffix_array.as_slice()[match_status.lo]
-                } else {
-                    0
-                };
+                let dict_position = self.suffix_array.suffix_at_rank(match_status.lo).unwrap_or(0);
 
                 let match_result = Match::new(
                     match_status.depth,
@@ -384,7 +380,7 @@ impl SuffixArrayDictionary {
     /// Get memory usage statistics
     #[inline]
     pub fn memory_usage(&self) -> usize {
-        let sa_memory = std::mem::size_of_val(self.suffix_array.as_slice());
+        let sa_memory = self.suffix_array.memory_usage();
         let dict_memory = self.dictionary_text.len();
         let cache_memory = self.dfa_cache.memory_usage();
 
@@ -564,7 +560,7 @@ impl SuffixArrayDictionary {
     /// returned incorrect ranges/positions and silently corrupted compressed
     /// data; this direct suffix-array search is the source of truth.
     pub fn da_match_max_length(&self, input: &[u8]) -> MatchStatus {
-        let sa = self.suffix_array.as_slice();
+        let sa = self.suffix_array.as_u32_slice();
         let text: &[u8] = &self.dictionary_text;
         let n = sa.len();
 
@@ -589,7 +585,7 @@ impl SuffixArrayDictionary {
                 let (mut l, mut r) = (lo, hi);
                 while l < r {
                     let m = l + (r - l) / 2;
-                    match text.get(sa[m] + depth) {
+                    match text.get(sa[m] as usize + depth) {
                         Some(&b) if b >= c => r = m,
                         _ => l = m + 1,
                     }
@@ -602,7 +598,7 @@ impl SuffixArrayDictionary {
                 let (mut l, mut r) = (new_lo, hi);
                 while l < r {
                     let m = l + (r - l) / 2;
-                    match text.get(sa[m] + depth) {
+                    match text.get(sa[m] as usize + depth) {
                         Some(&b) if b > c => r = m,
                         _ => l = m + 1,
                     }
@@ -679,7 +675,7 @@ impl SuffixArrayDictionary {
     /// # Returns
     /// Tuple of (new_lo, new_hi) representing the refined range
     pub fn sa_equal_range(&self, lo: usize, hi: usize, pos: usize, ch: u8) -> (usize, usize) {
-        if lo >= hi || lo >= self.suffix_array.as_slice().len() {
+        if lo >= hi || lo >= self.suffix_array.as_u32_slice().len() {
             return (lo, lo); // Empty range
         }
 
@@ -692,12 +688,12 @@ impl SuffixArrayDictionary {
         let mut first_match = None;
         let mut last_match = None;
 
-        let actual_hi = hi.min(self.suffix_array.as_slice().len());
+        let sa = self.suffix_array.as_u32_slice();
+        let actual_hi = hi.min(sa.len());
 
-        for i in lo..actual_hi {
-            if let Some(&suffix_idx) = self.suffix_array.as_slice().get(i)
-                && suffix_idx + pos < self.dictionary_text.len()
-            {
+        for (i, &suffix_idx_u32) in sa.iter().enumerate().take(actual_hi).skip(lo) {
+            let suffix_idx = suffix_idx_u32 as usize;
+            if suffix_idx + pos < self.dictionary_text.len() {
                 let char_at_pos = self.dictionary_text[suffix_idx + pos];
                 if char_at_pos == ch {
                     if first_match.is_none() {
@@ -726,9 +722,10 @@ impl SuffixArrayDictionary {
         pos: usize,
         ch: u8,
     ) -> (usize, usize) {
+        let sa = self.suffix_array.as_u32_slice();
         // Bounds checking
         let mut search_lo = lo;
-        let search_hi = hi.min(self.suffix_array.as_slice().len());
+        let search_hi = hi.min(sa.len());
 
         if search_lo >= search_hi {
             return (search_lo, search_lo);
@@ -737,8 +734,8 @@ impl SuffixArrayDictionary {
         // Phase 1: Handle boundary cases - advance past suffixes extending beyond text
         // This mirrors the reference logic: if (unlikely(sa[lo] + depth >= saLen)) { lo++; }
         while search_lo < search_hi {
-            if let Some(&suffix_idx) = self.suffix_array.as_slice().get(search_lo) {
-                if suffix_idx + pos >= self.dictionary_text.len() {
+            if let Some(&suffix_idx) = sa.get(search_lo) {
+                if suffix_idx as usize + pos >= self.dictionary_text.len() {
                     search_lo += 1;
                 } else {
                     break;
@@ -768,8 +765,8 @@ impl SuffixArrayDictionary {
 
             let mid = lo_search + (hi_search - lo_search) / 2;
 
-            let suffix_idx = match self.suffix_array.as_slice().get(mid) {
-                Some(&idx) => idx,
+            let suffix_idx = match sa.get(mid) {
+                Some(&idx) => idx as usize,
                 None => return (lo_search, lo_search),
             };
 
@@ -803,8 +800,8 @@ impl SuffixArrayDictionary {
         while lower_lo < lower_hi {
             let mid = lower_lo + (lower_hi - lower_lo) / 2;
 
-            let suffix_idx = match self.suffix_array.as_slice().get(mid) {
-                Some(&idx) => idx,
+            let suffix_idx = match sa.get(mid) {
+                Some(&idx) => idx as usize,
                 None => break,
             };
 
@@ -827,8 +824,8 @@ impl SuffixArrayDictionary {
         while upper_lo < upper_hi {
             let mid = upper_lo + (upper_hi - upper_lo) / 2;
 
-            let suffix_idx = match self.suffix_array.as_slice().get(mid) {
-                Some(&idx) => idx,
+            let suffix_idx = match sa.get(mid) {
+                Some(&idx) => idx as usize,
                 None => break,
             };
 
@@ -1196,12 +1193,12 @@ mod tests {
         );
         println!(
             "Suffix array length: {}",
-            dictionary.suffix_array.as_slice().len()
+            dictionary.suffix_array.as_u32_slice().len()
         );
 
         // Print first few suffix array entries
-        for i in 0..std::cmp::min(10, dictionary.suffix_array.as_slice().len()) {
-            let suffix_idx = dictionary.suffix_array.as_slice()[i];
+        for i in 0..std::cmp::min(10, dictionary.suffix_array.as_u32_slice().len()) {
+            let suffix_idx = dictionary.suffix_array.as_u32_slice()[i] as usize;
             if suffix_idx < dictionary.dictionary_text.len() {
                 let suffix = &dictionary.dictionary_text[suffix_idx..];
                 let suffix_str =
@@ -1313,7 +1310,7 @@ mod tests {
         // First, let's see what's actually in this range
         println!("\nSuffix array entries in range [69, 72):");
         for i in 69..72 {
-            if let Some(&suffix_idx) = dictionary.suffix_array.as_slice().get(i)
+            if let Some(suffix_idx) = dictionary.suffix_array.suffix_at_rank(i)
                 && suffix_idx < training_data.len() {
                     let suffix_text = &training_data[suffix_idx..];
                     let preview = std::str::from_utf8(&suffix_text[..10.min(suffix_text.len())])
@@ -1383,7 +1380,7 @@ mod tests {
                     mid, lo_search, hi_search
                 );
 
-                if let Some(&suffix_idx) = dictionary.suffix_array.as_slice().get(mid) {
+                if let Some(suffix_idx) = dictionary.suffix_array.suffix_at_rank(mid) {
                     if suffix_idx + pos >= training_data.len() {
                         println!("    Out of bounds, moving lo to {}", mid + 1);
                         lo_search = mid + 1;
@@ -1416,7 +1413,7 @@ mod tests {
 
                 while lower_lo < lower_hi {
                     let m = lower_lo + (lower_hi - lower_lo) / 2;
-                    if let Some(&suffix_idx) = dictionary.suffix_array.as_slice().get(m) {
+                    if let Some(suffix_idx) = dictionary.suffix_array.suffix_at_rank(m) {
                         if suffix_idx + pos < training_data.len() {
                             let hit_char = training_data[suffix_idx + pos];
                             println!(
@@ -1441,7 +1438,7 @@ mod tests {
 
                 while upper_lo < upper_hi {
                     let m = upper_lo + (upper_hi - upper_lo) / 2;
-                    if let Some(&suffix_idx) = dictionary.suffix_array.as_slice().get(m) {
+                    if let Some(suffix_idx) = dictionary.suffix_array.suffix_at_rank(m) {
                         if suffix_idx + pos < training_data.len() {
                             let hit_char = training_data[suffix_idx + pos];
                             println!(
@@ -1489,7 +1486,7 @@ mod tests {
 
         let mut state = 0u32;
         let mut lo = 0usize;
-        let mut hi = dictionary.suffix_array.as_slice().len();
+        let mut hi = dictionary.suffix_array.as_u32_slice().len();
         let mut pos = 0usize;
 
         println!(
@@ -1573,7 +1570,7 @@ mod tests {
         // Test 1: Compare linear and binary search for 't' at position 0
         println!("\n--- Test 1: Compare linear vs binary for 't' at position 0 ---");
         let lo = 0;
-        let hi = dictionary.suffix_array.as_slice().len();
+        let hi = dictionary.suffix_array.as_u32_slice().len();
         let pos = 0;
         let ch = b't';
 
@@ -1594,8 +1591,8 @@ mod tests {
 
             // Debug: print suffix array contents
             println!("Suffix array contents around the range:");
-            for i in 0..20.min(dictionary.suffix_array.as_slice().len()) {
-                if let Some(&suffix_idx) = dictionary.suffix_array.as_slice().get(i)
+            for i in 0..20.min(dictionary.suffix_array.as_u32_slice().len()) {
+                if let Some(suffix_idx) = dictionary.suffix_array.suffix_at_rank(i)
                     && suffix_idx < dictionary.dictionary_text.len() {
                         let char_at_pos = if suffix_idx + pos < dictionary.dictionary_text.len() {
                             dictionary.dictionary_text[suffix_idx + pos] as char
@@ -1632,7 +1629,7 @@ mod tests {
             // Debug step-by-step
             println!("\nStep-by-step search for 'test':");
             let mut current_lo = 0;
-            let mut current_hi = dictionary.suffix_array.as_slice().len();
+            let mut current_hi = dictionary.suffix_array.as_u32_slice().len();
 
             for (i, &ch) in pattern.iter().enumerate() {
                 println!(
@@ -1674,8 +1671,12 @@ mod tests {
         )
         .unwrap();
 
-        let binary_only =
-            dict1.sa_equal_range_binary_optimized(0, dict1.suffix_array.as_slice().len(), 0, b't');
+        let binary_only = dict1.sa_equal_range_binary_optimized(
+            0,
+            dict1.suffix_array.as_u32_slice().len(),
+            0,
+            b't',
+        );
         println!("Binary only result: ({}, {})", binary_only.0, binary_only.1);
 
         // Fresh dictionary - linear then binary
@@ -1689,9 +1690,13 @@ mod tests {
         )
         .unwrap();
 
-        let _ = dict2.sa_equal_range_linear(0, dict2.suffix_array.as_slice().len(), 0, b't');
-        let binary_after_linear =
-            dict2.sa_equal_range_binary_optimized(0, dict2.suffix_array.as_slice().len(), 0, b't');
+        let _ = dict2.sa_equal_range_linear(0, dict2.suffix_array.as_u32_slice().len(), 0, b't');
+        let binary_after_linear = dict2.sa_equal_range_binary_optimized(
+            0,
+            dict2.suffix_array.as_u32_slice().len(),
+            0,
+            b't',
+        );
         println!(
             "Binary after linear result: ({}, {})",
             binary_after_linear.0, binary_after_linear.1

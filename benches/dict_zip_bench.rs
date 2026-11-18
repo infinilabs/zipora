@@ -228,7 +228,7 @@ fn bench_suffix_array_construction(c: &mut Criterion) {
                     use zipora::algorithms::suffix_array::SuffixArray;
                     b.iter(|| {
                         let sa = SuffixArray::new(black_box(data)).unwrap();
-                        black_box(sa.as_slice().len())
+                        black_box(sa.as_u32_slice().len())
                     });
                 },
             );
@@ -485,7 +485,7 @@ fn bench_memory_usage(c: &mut Criterion) {
                     let sa = SuffixArray::new(&sa_data).unwrap();
 
                     // Calculate memory usage
-                    let sa_memory = sa.as_slice().len() * std::mem::size_of::<u32>();
+                    let sa_memory = std::mem::size_of_val(sa.as_u32_slice());
                     let overhead = sa_memory as f64 / data.len() as f64;
 
                     black_box((sa_memory, overhead))
@@ -557,7 +557,7 @@ fn bench_scalability(c: &mut Criterion) {
                     let mut sa_data = data.clone();
                     sa_data.push(0);
                     let sa = SuffixArray::new(black_box(&sa_data)).unwrap();
-                    black_box(sa.as_slice().len())
+                    black_box(sa.as_u32_slice().len())
                 });
             },
         );

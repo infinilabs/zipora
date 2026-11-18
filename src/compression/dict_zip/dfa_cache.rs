@@ -246,13 +246,14 @@ impl DfaCache {
         min_frequency: u32,
         max_depth: u32,
     ) -> Result<Self> {
-        // Convert usize suffix array to i32 for algorithm compatibility
-        let sa_i32: Vec<i32> = suffix_array.as_slice().iter().map(|&x| x as i32).collect();
+        let sa_u32 = suffix_array.as_u32_slice();
+        // Convert u32 suffix array to i32 for algorithm compatibility
+        let sa_i32: Vec<i32> = sa_u32.iter().map(|&x| x as i32).collect();
 
         // Build cache using sophisticated BFS algorithm
         let mut cache = Self::new_empty(config.clone(), sa_i32);
-        cache.bfs_build_cache(
-            suffix_array.as_slice(),
+        cache.bfs_build_cache_u32(
+            sa_u32,
             text,
             min_frequency as usize,
             max_depth as usize,
@@ -514,7 +515,13 @@ impl DfaCache {
         }
 
         // Build temporary trie using BFS
-        let temp_trie = self.build_bfs_trie(suffix_array, text, min_freq, max_depth)?;
+        let temp_trie = self.build_bfs_trie_with(
+            suffix_array.len(),
+            |i| suffix_array[i],
+            text,
+            min_freq,
+            max_depth,
+        )?;
 
         // Convert to double array trie
         self.build_double_array_trie(temp_trie)?;
@@ -522,10 +529,35 @@ impl DfaCache {
         Ok(())
     }
 
+    pub(crate) fn bfs_build_cache_u32(
+        &mut self,
+        suffix_array: &[u32],
+        text: &[u8],
+        min_freq: usize,
+        max_depth: usize,
+    ) -> Result<()> {
+        if suffix_array.is_empty() || text.is_empty() {
+            return Ok(());
+        }
+
+        let temp_trie = self.build_bfs_trie_with(
+            suffix_array.len(),
+            |i| suffix_array[i] as usize,
+            text,
+            min_freq,
+            max_depth,
+        )?;
+
+        self.build_double_array_trie(temp_trie)?;
+
+        Ok(())
+    }
+
     /// Build temporary trie using BFS traversal
-    fn build_bfs_trie(
+    fn build_bfs_trie_with<F: Fn(usize) -> usize>(
         &self,
-        suffix_array: &[usize],
+        sa_len: usize,
+        sa_at: F,
         text: &[u8],
         min_freq: usize,
         max_depth: usize,
@@ -537,7 +569,7 @@ impl DfaCache {
         };
 
         // Initialize root state covering entire suffix array range
-        let root_state = DfaState::new(0, 0, suffix_array.len() as u32);
+        let root_state = DfaState::new(0, 0, sa_len as u32);
         trie.states.push(root_state);
 
         // BFS queue with depth and state information
@@ -562,7 +594,7 @@ impl DfaCache {
 
             // Partition range by next character
             let partitions =
-                self.partition_by_character(suffix_array, text, lo, hi, elem.depth as usize)?;
+                self.partition_by_character_with(sa_len, &sa_at, text, lo, hi, elem.depth as usize)?;
 
             // Create child states for frequent partitions
             for (byte, (start, end)) in partitions {
@@ -585,8 +617,9 @@ impl DfaCache {
                     // Check if this represents a complete pattern (terminal state)
                     if elem.depth + 1 >= 3 {
                         // Minimum meaningful pattern length
-                        let pattern = self.extract_pattern_from_state(
-                            suffix_array,
+                        let pattern = self.extract_pattern_from_state_with(
+                            sa_len,
+                            &sa_at,
                             text,
                             child_state_id,
                             &trie,
@@ -604,9 +637,10 @@ impl DfaCache {
     }
 
     /// Partition suffix array range by next character at given depth
-    fn partition_by_character(
+    fn partition_by_character_with<F: Fn(usize) -> usize>(
         &self,
-        suffix_array: &[usize],
+        sa_len: usize,
+        sa_at: &F,
         text: &[u8],
         lo: usize,
         hi: usize,
@@ -614,15 +648,15 @@ impl DfaCache {
     ) -> Result<HashMap<u8, (usize, usize)>> {
         let mut partitions = HashMap::new();
 
-        if lo >= hi || lo >= suffix_array.len() {
+        if lo >= hi || lo >= sa_len {
             return Ok(partitions);
         }
 
         // Sort range by character at current depth
         let mut range_chars: Vec<(u8, usize)> = Vec::new();
 
-        for i in lo..hi.min(suffix_array.len()) {
-            let suffix_pos = suffix_array[i];
+        for i in lo..hi.min(sa_len) {
+            let suffix_pos = sa_at(i);
             if suffix_pos + depth < text.len() {
                 let ch = text[suffix_pos + depth];
                 range_chars.push((ch, i));
@@ -659,9 +693,10 @@ impl DfaCache {
     }
 
     /// Extract pattern information from a state
-    fn extract_pattern_from_state(
+    fn extract_pattern_from_state_with<F: Fn(usize) -> usize>(
         &self,
-        suffix_array: &[usize],
+        sa_len: usize,
+        sa_at: &F,
         text: &[u8],
         state_id: u32,
         trie: &TemporaryTrie,
@@ -675,12 +710,12 @@ impl DfaCache {
         let lo = state.suffix_low as usize;
         let hi = state.suffix_hig as usize;
 
-        if lo >= hi || lo >= suffix_array.len() {
+        if lo >= hi || lo >= sa_len {
             return Ok(None);
         }
 
         // Get pattern from first suffix in range
-        let suffix_pos = suffix_array[lo];
+        let suffix_pos = sa_at(lo);
         if suffix_pos + depth as usize > text.len() {
             return Ok(None);
         }
@@ -804,7 +839,7 @@ impl DfaCache {
         max_depth: usize,
     ) -> Result<Vec<PatternInfo>> {
         let mut patterns = Vec::new();
-        let sa = suffix_array.as_slice();
+        let sa = suffix_array.as_u32_slice();
 
         if sa.is_empty() {
             return Ok(patterns);
@@ -816,6 +851,7 @@ impl DfaCache {
 
             // Count all patterns of this length
             for &start_pos in sa {
+                let start_pos = start_pos as usize;
                 if start_pos + pattern_len <= text.len() {
                     let pattern = &text[start_pos..start_pos + pattern_len];
                     let entry = pattern_counts.entry(pattern).or_insert((start_pos, 0));
@@ -1011,13 +1047,15 @@ mod tests {
     fn test_suffix_array_partitioning() {
         let text = b"abacaba";
         let sa = create_test_suffix_array(text);
-        let sa_slice: Vec<i32> = sa.as_slice().iter().map(|&x| x as i32).collect();
+        let sa_u32 = sa.as_u32_slice();
+        let sa_slice: Vec<i32> = sa_u32.iter().map(|&x| x as i32).collect();
 
         let cache = DfaCache::new_empty(DfaCacheConfig::default(), sa_slice);
 
         // Test character partitioning
+        let at = |i: usize| sa_u32[i] as usize;
         let partitions = cache
-            .partition_by_character(sa.as_slice(), text, 0, sa.as_slice().len(), 0)
+            .partition_by_character_with(sa_u32.len(), &at, text, 0, sa_u32.len(), 0)
             .unwrap();
 
         // Should have partitions for characters 'a' and 'b'
@@ -1026,7 +1064,7 @@ mod tests {
         // Verify partitions are valid ranges
         for (ch, (start, end)) in partitions {
             assert!(start <= end);
-            assert!(end <= sa.as_slice().len());
+            assert!(end <= sa_u32.len());
             assert!(ch <= b'z'); // Valid ASCII character
         }
     }
@@ -1035,17 +1073,18 @@ mod tests {
     fn test_sa_bounds_search() {
         let text = b"aaaaabbbbbccccc";
         let sa = create_test_suffix_array(text);
-        let sa_slice: Vec<i32> = sa.as_slice().iter().map(|&x| x as i32).collect();
+        let sa_u32 = sa.as_u32_slice();
+        let sa_slice: Vec<i32> = sa_u32.iter().map(|&x| x as i32).collect();
 
         let cache = DfaCache::new_empty(DfaCacheConfig::default(), sa_slice);
 
         // Test binary search bounds
-        let upper_bound = cache.sa_upper_bound(text, 0, sa.as_slice().len(), 0, b'a');
-        assert!(upper_bound <= sa.as_slice().len());
+        let upper_bound = cache.sa_upper_bound(text, 0, sa_u32.len(), 0, b'a');
+        assert!(upper_bound <= sa_u32.len());
 
-        let (lower, upper) = cache.sa_equal_range(text, 0, sa.as_slice().len(), 0, b'b');
+        let (lower, upper) = cache.sa_equal_range(text, 0, sa_u32.len(), 0, b'b');
         assert!(lower <= upper);
-        assert!(upper <= sa.as_slice().len());
+        assert!(upper <= sa_u32.len());
     }
 
     #[test]

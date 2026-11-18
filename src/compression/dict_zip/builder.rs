@@ -991,7 +991,7 @@ impl DictionaryBuilder {
         // times (count = rb - lb). We emit one PatternInfo per length within
         // [min_len, max_len]; LCP values are capped at `max_len` since longer
         // shared prefixes are irrelevant and capping bounds the stack depth.
-        let sa = suffix_array.as_slice();
+        let sa = suffix_array.as_u32_slice();
         let lcp_array = LcpArray::new(data, suffix_array)?;
         let lcp = lcp_array.as_slice();
 
@@ -1021,7 +1021,7 @@ impl DictionaryBuilder {
                     let first_l = (parent_depth + 1).max(min_len);
                     let last_l = depth.min(max_len);
                     if first_l <= last_l {
-                        let repr = sa[lb];
+                        let repr = sa[lb] as usize;
                         for l in first_l..=last_l {
                             // repr + l <= n: every suffix in [lb, rb) shares
                             // `depth` >= l characters, so it is at least l long.

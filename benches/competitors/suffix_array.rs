@@ -57,15 +57,6 @@ fn verify_sa_with<F: Fn(usize) -> usize>(
     }
 }
 
-fn verify_sa_usize_invariants(
-    text: &[u8],
-    sa: &[usize],
-    expected_sample: &mut Option<Vec<u32>>,
-    label: &str,
-) {
-    verify_sa_with(text, sa.len(), |i| sa[i], expected_sample, label);
-}
-
 fn verify_sa_u32_invariants(
     text: &[u8],
     sa: &[u32],
@@ -151,15 +142,15 @@ pub fn bench_suffix_array(
                 },
                 |slot| {
                     let built = SuffixArray::new(black_box(&text0)).unwrap();
-                    black_box(built.as_slice().len());
+                    black_box(built.as_u32_slice().len());
                     *slot = Some(built);
                 },
             );
             if let Some(ref built) = sa_pending {
                 assert_eq!(built.memory_usage(), zipora_sa_bytes);
-                verify_sa_usize_invariants(
+                verify_sa_u32_invariants(
                     &text0,
-                    built.as_slice(),
+                    built.as_u32_slice(),
                     &mut expected_sa_sample,
                     "suffix_array/construct",
                 );
@@ -171,9 +162,9 @@ pub fn bench_suffix_array(
             trim_allocator_arena();
             let sa0 = SuffixArray::new(&text0).unwrap();
             assert_eq!(sa0.memory_usage(), zipora_sa_bytes);
-            verify_sa_usize_invariants(
+            verify_sa_u32_invariants(
                 &text0,
-                sa0.as_slice(),
+                sa0.as_u32_slice(),
                 &mut expected_sa_sample,
                 "suffix_array/search_query",
             );

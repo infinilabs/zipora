@@ -42,7 +42,7 @@ use crate::algorithms::{
     Algorithm, AlgorithmStats, suffix_array::SuffixArrayBuilder as BaseSuffixArrayBuilder,
 };
 use crate::containers::specialized::IntVec;
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
 use crate::memory::secure_pool::{SecureMemoryPool, SecurePoolConfig};
 use std::sync::Arc;
 use std::time::Instant;
@@ -495,26 +495,11 @@ impl SuffixArrayCompressor {
             });
 
         let base_suffix_array = base_builder.build(text)?;
-        let raw_suffix_array = base_suffix_array.as_slice();
+        let raw_suffix_array = base_suffix_array.as_u32_slice();
 
         // Suffix order is guaranteed by the base SA-IS implementation
         // (strictly validated by test_suffix_array_sorted_pathological_inputs).
-
-        // Convert to memory-efficient IntVec storage with u32 for better compression
-        // Ensure indices fit in u32
-        if raw_suffix_array.iter().any(|&x| x > u32::MAX as usize) {
-            return Err(ZiporaError::invalid_data(
-                "Text too large for u32 suffix array indices",
-            ));
-        }
-
-        let suffix_array_u32: Vec<u32> = raw_suffix_array.iter().map(|&x| x as u32).collect();
-        let suffix_array = if self.config.use_compressed_storage {
-            IntVec::from_slice(&suffix_array_u32)?
-        } else {
-            // Construct bit-packed IntVec directly from u32 suffix ranks
-            IntVec::from_slice(&suffix_array_u32)?
-        };
+        let suffix_array = IntVec::from_slice(raw_suffix_array)?;
 
         // Compute LCP array if requested
         let lcp_array = if self.config.compute_lcp {
@@ -528,7 +513,7 @@ impl SuffixArrayCompressor {
         let construction_time = start_time.elapsed();
 
         // Calculate statistics
-        let original_sa_size = std::mem::size_of_val(raw_suffix_array);
+        let original_sa_size = raw_suffix_array.len() * std::mem::size_of::<usize>();
         let compressed_sa_size = suffix_array.memory_usage();
         let lcp_size = lcp_array.as_ref().map_or(0, |lcp| lcp.memory_usage());
         let total_compressed_size = compressed_sa_size + lcp_size;
@@ -556,7 +541,7 @@ impl SuffixArrayCompressor {
     }
 
     /// Compute LCP array using Kasai's linear-time algorithm
-    fn compute_lcp_kasai(text: &[u8], suffix_array: &[usize]) -> Result<Vec<usize>> {
+    fn compute_lcp_kasai(text: &[u8], suffix_array: &[u32]) -> Result<Vec<usize>> {
         let n = text.len();
         if n == 0 {
             return Ok(Vec::new());
@@ -564,9 +549,10 @@ impl SuffixArrayCompressor {
 
         // Compute inverse suffix array
         let mut rank = vec![0; n];
-        for i in 0..n {
-            if suffix_array[i] < n {
-                rank[suffix_array[i]] = i;
+        for (i, &pos_u32) in suffix_array.iter().enumerate().take(n) {
+            let pos = pos_u32 as usize;
+            if pos < n {
+                rank[pos] = i;
             }
         }
 
@@ -575,7 +561,7 @@ impl SuffixArrayCompressor {
 
         for i in 0..n {
             if rank[i] > 0 {
-                let j = suffix_array[rank[i] - 1];
+                let j = suffix_array[rank[i] - 1] as usize;
 
                 while i + h < n && j + h < n && text[i + h] == text[j + h] {
                     h += 1;

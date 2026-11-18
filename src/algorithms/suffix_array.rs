@@ -97,8 +97,8 @@ type Bucket2Table = Option<Box<[(u32, u32)]>>;
 /// A suffix array data structure
 #[derive(Debug)]
 pub struct SuffixArray {
-    /// The suffix array itself (indices into the original string)
-    sa: Vec<usize>,
+    /// Suffix array (`n < u32::MAX`, enforced at construction).
+    sa: Vec<u32>,
     /// Precomputed `[lo, hi)` rank intervals in `sa` for each 2-byte prefix `(b0 << 8) | b1`
     /// when `text_len >= 4096` (`E3.9`).
     bucket2: Bucket2Table,
@@ -106,6 +106,41 @@ pub struct SuffixArray {
     text_len: usize,
     /// Performance statistics
     stats: AlgorithmStats,
+    /// Lazily materialized `usize` copy for the deprecated `as_slice()`.
+    legacy_usize: std::sync::OnceLock<Box<[usize]>>,
+}
+
+#[inline]
+fn cmp_from(text: &[u8], pos: usize, pat: &[u8], skip: usize) -> (usize, Ordering) {
+    let t = &text[pos + skip.min(text.len() - pos)..];
+    let p = &pat[skip..];
+    let lim = t.len().min(p.len());
+    let mut k = 0;
+    let mut t_rem = &t[..lim];
+    let mut p_rem = &p[..lim];
+    while let (Some((&ta, t_rest)), Some((&pa, p_rest))) =
+        (t_rem.split_first_chunk::<8>(), p_rem.split_first_chunk::<8>())
+    {
+        let a = u64::from_be_bytes(ta);
+        let b = u64::from_be_bytes(pa);
+        if a != b {
+            return (skip + k + ((a ^ b).leading_zeros() / 8) as usize, a.cmp(&b));
+        }
+        k += 8;
+        t_rem = t_rest;
+        p_rem = p_rest;
+    }
+    for (&tb, &pb) in t_rem.iter().zip(p_rem.iter()) {
+        if tb != pb {
+            return (skip + k, tb.cmp(&pb));
+        }
+        k += 1;
+    }
+    if lim == p.len() {
+        (pat.len(), Ordering::Equal)
+    } else {
+        (skip + lim, Ordering::Less)
+    }
 }
 
 impl SuffixArray {
@@ -120,10 +155,20 @@ impl SuffixArray {
         builder.build(text)
     }
 
-    /// Get the suffix array
+    /// Get the suffix array as 32-bit byte offsets (`n < u32::MAX`).
     #[inline]
-    pub fn as_slice(&self) -> &[usize] {
+    pub fn as_u32_slice(&self) -> &[u32] {
         &self.sa
+    }
+
+    /// Get the suffix array
+    #[deprecated(
+        since = "5.1.0",
+        note = "allocates an 8 B/suffix copy on first call; use `as_u32_slice` or `suffix_at_rank`"
+    )]
+    pub fn as_slice(&self) -> &[usize] {
+        self.legacy_usize
+            .get_or_init(|| self.sa.iter().map(|&p| p as usize).collect())
     }
 
     /// Get the length of the original text
@@ -137,7 +182,7 @@ impl SuffixArray {
     /// (skipped under Miri to avoid slow interpreter initialization of 65,536 entries).
     #[inline]
     pub const fn memory_usage_for_text_len(n: usize) -> usize {
-        n * std::mem::size_of::<usize>()
+        n * std::mem::size_of::<u32>()
             + if n >= 4096 && !cfg!(miri) {
                 65_536 * std::mem::size_of::<(u32, u32)>()
             } else {
@@ -152,8 +197,9 @@ impl SuffixArray {
     }
 
     /// Get the suffix at the given rank
+    #[inline]
     pub fn suffix_at_rank(&self, rank: usize) -> Option<usize> {
-        self.sa.get(rank).copied()
+        self.sa.get(rank).map(|&p| p as usize)
     }
 
     /// Binary search for a pattern in the suffix array
@@ -162,13 +208,11 @@ impl SuffixArray {
         (left, right.saturating_sub(left))
     }
 
-    /// Find the range of suffixes that start with the given pattern (`E3.9`).
+    /// Find the range of suffixes that start with the given pattern.
     ///
-    /// Uses precomputed 2-gram bucket intervals (when available) + LCP-accelerated
-    /// `lower_bound` followed by early return on misses (avoiding a second full
-    /// binary search when `pattern` does not occur in `text`) and exponential
-    /// galloping from `left + 1` on hits so the upper bound is resolved in
-    /// $O(\log(\text{matches}))$ cache-local probes.
+    /// Uses precomputed 2-gram bucket intervals (when available) + a single-pass
+    /// split-point `equal_range` carrying `(llcp, rlcp)` bounds and 8-byte
+    /// big-endian word comparisons (`cmp_from`).
     pub fn search_range(&self, text: &[u8], pattern: &[u8]) -> (usize, usize) {
         if pattern.is_empty() {
             return (0, self.sa.len());
@@ -178,7 +222,7 @@ impl SuffixArray {
             return (0, 0);
         }
 
-        let (lo_bound, hi_bound, init_lcp) = if pattern.len() >= 2
+        let (mut lo, mut hi, init_lcp) = if pattern.len() >= 2
             && let Some(ref b2) = self.bucket2
         {
             let key = ((pattern[0] as usize) << 8) | (pattern[1] as usize);
@@ -193,79 +237,142 @@ impl SuffixArray {
             (0usize, n, 0usize)
         };
 
-        let left = self.lower_bound_in(text, pattern, lo_bound, hi_bound, init_lcp);
-        if left >= hi_bound || !text[self.sa[left]..].starts_with(pattern) {
-            return (left, left);
-        }
-
-        // Pattern occurs at `left`. Gallop forward from `left + 1` to bracket the
-        // upper bound in O(log(match_count)) probes instead of O(log n) DRAM misses.
-        let mut lo = left + 1;
-        if lo >= hi_bound || !text[self.sa[lo]..].starts_with(pattern) {
-            return (left, lo);
-        }
-
-        let mut step = 2usize;
-        let mut hi = (lo + step).min(hi_bound);
-        while hi < hi_bound && text[self.sa[hi]..].starts_with(pattern) {
-            lo = hi;
-            step <<= 1;
-            hi = (lo + step).min(hi_bound);
-        }
+        let mut llcp = init_lcp;
+        let mut rlcp = init_lcp;
 
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            if text[self.sa[mid]..].starts_with(pattern) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
+            let pos = self.sa[mid] as usize;
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
+            if hi - lo >= 16 {
+                let left_mid = lo + (mid - lo) / 2;
+                let right_mid = (mid + 1) + (hi - (mid + 1)) / 2;
+                // SAFETY: `hi - lo >= 16` implies `lo <= left_mid < mid < right_mid < hi <= self.sa.len()`.
+                let (pos_l, pos_r) = unsafe {
+                    (
+                        *self.sa.get_unchecked(left_mid) as usize,
+                        *self.sa.get_unchecked(right_mid) as usize,
+                    )
+                };
+                if pos_l < text.len() {
+                    // SAFETY: `pos_l < text.len()`, and `_mm_prefetch` is a non-faulting cache hint.
+                    unsafe {
+                        std::arch::x86_64::_mm_prefetch(
+                            text.as_ptr().add(pos_l) as *const i8,
+                            std::arch::x86_64::_MM_HINT_T0,
+                        );
+                    }
+                }
+                if pos_r < text.len() {
+                    // SAFETY: `pos_r < text.len()`, and `_mm_prefetch` is a non-faulting cache hint.
+                    unsafe {
+                        std::arch::x86_64::_mm_prefetch(
+                            text.as_ptr().add(pos_r) as *const i8,
+                            std::arch::x86_64::_MM_HINT_T0,
+                        );
+                    }
+                }
+                if hi - lo >= 64 {
+                    let ll = lo + (left_mid - lo) / 2;
+                    let lr = (left_mid + 1) + (mid - (left_mid + 1)) / 2;
+                    let rl = (mid + 1) + (right_mid - (mid + 1)) / 2;
+                    let rr = (right_mid + 1) + (hi - (right_mid + 1)) / 2;
+                    // SAFETY: `hi - lo >= 64` implies `lo <= ll < left_mid < lr < mid < rl < right_mid < rr < hi <= self.sa.len()`,
+                    // and `_mm_prefetch` is a non-faulting cache hint.
+                    unsafe {
+                        let base_ptr = self.sa.as_ptr();
+                        std::arch::x86_64::_mm_prefetch(
+                            base_ptr.add(ll) as *const i8,
+                            std::arch::x86_64::_MM_HINT_T0,
+                        );
+                        std::arch::x86_64::_mm_prefetch(
+                            base_ptr.add(lr) as *const i8,
+                            std::arch::x86_64::_MM_HINT_T0,
+                        );
+                        std::arch::x86_64::_mm_prefetch(
+                            base_ptr.add(rl) as *const i8,
+                            std::arch::x86_64::_MM_HINT_T0,
+                        );
+                        std::arch::x86_64::_mm_prefetch(
+                            base_ptr.add(rr) as *const i8,
+                            std::arch::x86_64::_MM_HINT_T0,
+                        );
+                    }
+                }
+            }
+            let (lcp, ord) = cmp_from(text, pos, pattern, llcp.min(rlcp));
+            match ord {
+                Ordering::Less => {
+                    lo = mid + 1;
+                    llcp = lcp;
+                }
+                Ordering::Greater => {
+                    hi = mid;
+                    rlcp = lcp;
+                }
+                Ordering::Equal => {
+                    // Check immediate neighbors `mid - 1` and `mid + 1` first (same `sa` cache line,
+                    // resolving single-occurrence hits in 1 probe), then finish `[lb_lo, lb_hi)` and
+                    // `[ub_lo, ub_hi)` with LCP-carried binary search in `O(log(mid - lo))` probes.
+                    let mut lb_lo = lo;
+                    let mut lb_hi = mid;
+                    let mut lb_llcp = llcp;
+                    if lb_lo < lb_hi {
+                        let (k, o) =
+                            cmp_from(text, self.sa[lb_hi - 1] as usize, pattern, lb_llcp);
+                        if o == Ordering::Less {
+                            lb_lo = lb_hi;
+                            lb_llcp = k;
+                        } else {
+                            lb_hi -= 1;
+                        }
+                    }
+                    let mut lb_rlcp = pattern.len();
+                    while lb_lo < lb_hi {
+                        let m = lb_lo + (lb_hi - lb_lo) / 2;
+                        let (k, o) =
+                            cmp_from(text, self.sa[m] as usize, pattern, lb_llcp.min(lb_rlcp));
+                        if o == Ordering::Less {
+                            lb_lo = m + 1;
+                            lb_llcp = k;
+                        } else {
+                            lb_hi = m;
+                            lb_rlcp = k;
+                        }
+                    }
+
+                    let mut ub_lo = mid + 1;
+                    let mut ub_hi = hi;
+                    let mut ub_rlcp = rlcp;
+                    if ub_lo < ub_hi {
+                        let (k, o) = cmp_from(text, self.sa[ub_lo] as usize, pattern, ub_rlcp);
+                        if o == Ordering::Greater {
+                            ub_hi = ub_lo;
+                            ub_rlcp = k;
+                        } else {
+                            ub_lo += 1;
+                        }
+                    }
+                    let mut ub_llcp = pattern.len();
+                    while ub_lo < ub_hi {
+                        let m = ub_lo + (ub_hi - ub_lo) / 2;
+                        let (k, o) =
+                            cmp_from(text, self.sa[m] as usize, pattern, ub_llcp.min(ub_rlcp));
+                        if o != Ordering::Greater {
+                            ub_lo = m + 1;
+                            ub_llcp = k;
+                        } else {
+                            ub_hi = m;
+                            ub_rlcp = k;
+                        }
+                    }
+
+                    return (lb_lo, ub_lo);
+                }
             }
         }
 
-        (left, lo)
-    }
-
-    fn lower_bound_in(
-        &self,
-        text: &[u8],
-        pattern: &[u8],
-        mut left: usize,
-        mut right: usize,
-        init_lcp: usize,
-    ) -> usize {
-        let mut lcp_left = init_lcp;
-        let mut lcp_right = init_lcp;
-        let pat_len = pattern.len();
-
-        while left < right {
-            let mid = left + (right - left) / 2;
-            let suffix = &text[self.sa[mid]..];
-            let skip = lcp_left.min(lcp_right);
-            let min_len = suffix.len().min(pat_len);
-            let mut k = skip.min(min_len);
-
-            while k < min_len && suffix[k] == pattern[k] {
-                k += 1;
-            }
-
-            let ord = if k == pat_len {
-                Ordering::Equal
-            } else if k == suffix.len() {
-                Ordering::Less
-            } else {
-                suffix[k].cmp(&pattern[k])
-            };
-
-            if ord == Ordering::Less {
-                left = mid + 1;
-                lcp_left = k;
-            } else {
-                right = mid;
-                lcp_right = k;
-            }
-        }
-
-        left
+        (lo, lo)
     }
 
     /// Get performance statistics
@@ -428,6 +535,7 @@ impl SuffixArrayBuilder {
                     used_parallel: false,
                     used_simd: false,
                 },
+                legacy_usize: std::sync::OnceLock::new(),
             });
         }
 
@@ -438,7 +546,7 @@ impl SuffixArrayBuilder {
         let bucket2_bytes = bucket2
             .as_ref()
             .map_or(0, |b| b.len() * std::mem::size_of::<(u32, u32)>());
-        let memory_used = sa.len() * std::mem::size_of::<usize>() + bucket2_bytes;
+        let memory_used = sa.len() * std::mem::size_of::<u32>() + bucket2_bytes;
 
         Ok(SuffixArray {
             text_len: text.len(),
@@ -451,10 +559,11 @@ impl SuffixArrayBuilder {
             },
             bucket2,
             sa,
+            legacy_usize: std::sync::OnceLock::new(),
         })
     }
 
-    fn build_sequential(&self, text: &[u8]) -> Result<(Vec<usize>, Bucket2Table)> {
+    fn build_sequential(&self, text: &[u8]) -> Result<(Vec<u32>, Bucket2Table)> {
         if text.is_empty() {
             return Ok((Vec::new(), None));
         }
@@ -482,7 +591,7 @@ impl SuffixArrayBuilder {
     /// `WordBitVec` (`1 bit/pos` = `1.25 MiB` at `10 MiB` instead of `40 MiB` `Vec<u32>` plus
     /// `10 MiB` `Vec<bool>`), keeping `text` and `t` inside the 32 MiB L3 cache during
     /// induced-sorting random lookups (`E3.9`).
-    fn sais_construct(&self, text: &[u8]) -> Result<(Vec<usize>, Bucket2Table)> {
+    fn sais_construct(&self, text: &[u8]) -> Result<(Vec<u32>, Bucket2Table)> {
         let n = text.len();
         if n == 0 {
             return Ok((Vec::new(), None));
@@ -496,26 +605,21 @@ impl SuffixArrayBuilder {
             ));
         }
 
-        let (sa, bucket2) = sais_core_bytes(text);
+        let (mut sa, bucket2) = sais_core_bytes(text);
 
         // The sentinel suffix (position n) is the global minimum, so it always
-        // occupies sa[0]; the suffix array of `text` is the remainder.
-        // Allocate `out_sa` after `sais_core_bytes` returns (when all temporary SA-IS
-        // buffers above `sa` have coalesced into `av->top`), so `SuffixArray::drop`
-        // drops `out_sa` (adjacent to `av->top`, coalescing with `sa`) and then `bucket2`
-        // into `av->top` with zero heap fragmentation.
+        // occupies sa[0]; shift the remaining `n` entries down in place without
+        // allocating a second `n`-sized output buffer.
         debug_assert_eq!(sa[0] as usize, n, "sentinel suffix must sort first");
-        let mut out_sa = Vec::with_capacity(n);
-        out_sa.extend(sa[1..].iter().map(|&x| x as usize));
-        drop(sa);
-        Ok((out_sa, bucket2))
+        sa.remove(0);
+        Ok((sa, bucket2))
     }
 
     /// DC3 entry point; construction is delegated to SA-IS for every length.
     ///
     /// The former `n == 2` shortcut returned `[0, 1]` when `text[0] == text[1]`,
     /// but the shorter suffix sorts first, so the answer is `[1, 0]` (S20-R2).
-    fn dc3_construct(&self, text: &[u8]) -> Result<(Vec<usize>, Bucket2Table)> {
+    fn dc3_construct(&self, text: &[u8]) -> Result<(Vec<u32>, Bucket2Table)> {
         if text.is_empty() {
             return Ok((Vec::new(), None));
         }
@@ -529,7 +633,7 @@ impl SuffixArrayBuilder {
 
     /// DivSufSort entry point; construction is delegated to SA-IS (there is
     /// no DivSufSort implementation).
-    fn divsufsort_construct(&self, text: &[u8]) -> Result<(Vec<usize>, Bucket2Table)> {
+    fn divsufsort_construct(&self, text: &[u8]) -> Result<(Vec<u32>, Bucket2Table)> {
         let n = text.len();
         if n == 0 {
             return Ok((Vec::new(), None));
@@ -543,7 +647,7 @@ impl SuffixArrayBuilder {
 
     /// Larsson-Sadakane entry point; construction is delegated to SA-IS
     /// (there is no Larsson-Sadakane implementation).
-    fn larsson_sadakane_construct(&self, text: &[u8]) -> Result<(Vec<usize>, Bucket2Table)> {
+    fn larsson_sadakane_construct(&self, text: &[u8]) -> Result<(Vec<u32>, Bucket2Table)> {
         let n = text.len();
         if n == 0 {
             return Ok((Vec::new(), None));
@@ -1087,8 +1191,7 @@ impl Algorithm for SuffixArrayBuilder {
     }
 
     fn estimate_memory(&self, input_size: usize) -> usize {
-        // Suffix array requires one usize per character
-        input_size * std::mem::size_of::<usize>()
+        SuffixArray::memory_usage_for_text_len(input_size)
     }
 
     fn supports_parallel(&self) -> bool {
@@ -1110,7 +1213,7 @@ impl LcpArray {
     pub fn new(text: &[u8], suffix_array: &SuffixArray) -> Result<Self> {
         let start_time = Instant::now();
 
-        let lcp = Self::compute_lcp_kasai(text, suffix_array.as_slice())?;
+        let lcp = Self::compute_lcp_kasai(text, suffix_array.as_u32_slice())?;
 
         let elapsed = start_time.elapsed();
         let memory_used = lcp.len() * std::mem::size_of::<usize>();
@@ -1144,7 +1247,7 @@ impl LcpArray {
     }
 
     // Kasai's algorithm for computing LCP array in linear time
-    fn compute_lcp_kasai(text: &[u8], sa: &[usize]) -> Result<Vec<usize>> {
+    fn compute_lcp_kasai(text: &[u8], sa: &[u32]) -> Result<Vec<usize>> {
         if text.len() != sa.len() {
             return Err(crate::error::ZiporaError::invalid_data(
                 "Text length must match suffix array length",
@@ -1156,19 +1259,20 @@ impl LcpArray {
         }
 
         // Compute inverse suffix array with bounds checking
-        let mut rank = vec![0; n];
-        for i in 0..n {
-            if sa[i] < n {
-                rank[sa[i]] = i;
+        let mut rank = vec![0usize; n];
+        for (i, &pos_u32) in sa.iter().enumerate() {
+            let pos = pos_u32 as usize;
+            if pos < n {
+                rank[pos] = i;
             }
         }
 
-        let mut lcp = vec![0; n];
-        let mut h = 0;
+        let mut lcp = vec![0usize; n];
+        let mut h = 0usize;
 
         for i in 0..n {
             if rank[i] > 0 {
-                let j = sa[rank[i] - 1];
+                let j = sa[rank[i] - 1] as usize;
 
                 while i + h < n && j + h < n && text[i + h] == text[j + h] {
                     h += 1;
@@ -1211,7 +1315,7 @@ impl EnhancedSuffixArray {
     /// Create an enhanced suffix array with BWT
     pub fn with_bwt(text: &[u8]) -> Result<Self> {
         let sa = SuffixArray::new(text)?;
-        let bwt = Some(Self::compute_bwt(text, sa.as_slice()));
+        let bwt = Some(Self::compute_bwt(text, sa.as_u32_slice()));
 
         Ok(Self { sa, lcp: None, bwt })
     }
@@ -1231,10 +1335,11 @@ impl EnhancedSuffixArray {
         self.bwt.as_deref()
     }
 
-    fn compute_bwt(text: &[u8], sa: &[usize]) -> Vec<u8> {
+    fn compute_bwt(text: &[u8], sa: &[u32]) -> Vec<u8> {
         let mut bwt = Vec::with_capacity(text.len());
 
         for &suffix_start in sa {
+            let suffix_start = suffix_start as usize;
             if suffix_start == 0 {
                 bwt.push(text[text.len() - 1]);
             } else {
@@ -1247,6 +1352,7 @@ impl EnhancedSuffixArray {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 
@@ -1358,7 +1464,7 @@ mod tests {
         assert!(!builder.supports_simd());
 
         let memory_estimate = builder.estimate_memory(1000);
-        assert_eq!(memory_estimate, 1000 * std::mem::size_of::<usize>());
+        assert_eq!(memory_estimate, 1000 * std::mem::size_of::<u32>());
     }
 
     #[test]
@@ -2280,7 +2386,7 @@ mod tests {
         let sa_small = SuffixArray::new(&small).unwrap();
         assert_eq!(
             sa_small.stats().memory_used,
-            small.len() * std::mem::size_of::<usize>()
+            small.len() * std::mem::size_of::<u32>()
         );
 
         let large: Vec<u8> = (0..4096usize).map(|i| (i * 31) as u8).collect();
@@ -2292,7 +2398,58 @@ mod tests {
         };
         assert_eq!(
             sa_large.stats().memory_used,
-            large.len() * std::mem::size_of::<usize>() + expected_bucket2
+            large.len() * std::mem::size_of::<u32>() + expected_bucket2
         );
+    }
+
+    #[test]
+    fn test_v2_sa_uses_four_bytes_per_suffix() {
+        let n = 100_000;
+        assert_eq!(
+            SuffixArray::memory_usage_for_text_len(n),
+            n * 4 + if cfg!(miri) { 0 } else { 65_536 * 8 }
+        );
+    }
+
+    #[test]
+    fn test_v2_sa_matches_naive_and_search_is_exact() {
+        // `make miri_algorithms` runs this module under Miri: keep the naive sort small there.
+        let len = if cfg!(miri) { 2_000 } else { 20_000 };
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let text: Vec<u8> = (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                b"acgt"[(x & 3) as usize]
+            })
+            .collect();
+        let sa = SuffixArray::new(&text).unwrap();
+        let mut naive: Vec<usize> = (0..text.len()).collect();
+        naive.sort_by(|&a, &b| text[a..].cmp(&text[b..]));
+        for (rank, &pos) in naive.iter().enumerate() {
+            assert_eq!(sa.suffix_at_rank(rank), Some(pos));
+        }
+        assert_eq!(sa.suffix_at_rank(text.len()), None);
+        for pat in [
+            &b"acg"[..],
+            b"tttt",
+            b"gattaca",
+            b"a",
+            b"",
+            b"cgtacgtacgtacgtacgt",
+        ] {
+            let (start, c) = sa.search(&text, pat);
+            if pat.is_empty() {
+                assert_eq!((start, c), (0, text.len()));
+                continue;
+            }
+            let count = text.windows(pat.len()).filter(|w| *w == pat).count();
+            assert_eq!(c, count, "pattern {:?}", std::str::from_utf8(pat));
+            // Every rank in [start, start + c) is an occurrence (the range is exact, not just its size).
+            for r in start..start + c {
+                assert!(text[naive[r]..].starts_with(pat));
+            }
+        }
     }
 }

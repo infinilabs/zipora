@@ -1127,14 +1127,15 @@ mod performance_tests {
                 config_name, dict_size, memory_usage
             );
 
-            // Memory usage should be reasonable
-            // Following referenced project approach: suffix array is ~4-8x text, DFA cache adds overhead
+            // Memory usage should be reasonable: 4 B/suffix + fixed 512 KiB `bucket2` table
+            // when dict_size >= 4096 + dictionary text + DFA cache.
             assert!(memory_usage > 0);
-            // Total memory can be 10-20x dictionary size due to suffix array and cache
+            let max_expected = dict_size * 20 + 512 * 1024;
             assert!(
-                memory_usage < dict_size * 20,
-                "Memory usage {} should be less than 20x dictionary size {}",
+                memory_usage < max_expected,
+                "Memory usage {} should be less than {} (20x dictionary size {} + 512 KiB bucket2)",
                 memory_usage,
+                max_expected,
                 dict_size
             );
         }

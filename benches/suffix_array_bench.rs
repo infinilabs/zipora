@@ -68,7 +68,7 @@ fn bench_construction(c: &mut Criterion) {
                 |b, data| {
                     b.iter(|| {
                         let sa = BaseSuffixArray::new(black_box(data)).unwrap();
-                        black_box(sa.as_slice().len())
+                        black_box(sa.as_u32_slice().len())
                     })
                 },
             );
