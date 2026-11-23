@@ -1623,9 +1623,12 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "sucds"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5daf36f30cf37a5a99eed7a86c0c717a7f70e6b45aab14374fe75702e1f69494"
+checksum = "13154d84875590003dc24e73e9ebd1c1884cada7e44d042bc60b56ff2268ec93"
+dependencies = [
+ "bytes",
+]
 
 [[package]]
 name = "suffix"
