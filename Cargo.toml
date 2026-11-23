@@ -98,7 +98,7 @@ serde_json = "1.0"
 tantivy = { version = "0.26", default-features = false }
 sucds = { version = "0.10", features = ["intrinsics"] }
 vers-vecs = { version = "1.10", features = ["simd"] }
-bitm = "0.5"
+bitm = "0.6"
 dyn_size_of = "0.4"
 fst = "0.4"
 qp-trie = "0.8"
