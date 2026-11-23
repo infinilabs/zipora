@@ -2290,7 +2290,7 @@ dependencies = [
  "dyn_size_of",
  "fastrand",
  "fst",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
  "huffman-compress",
  "libc",
  "libsais",
