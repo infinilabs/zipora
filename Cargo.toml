@@ -108,7 +108,7 @@ mimalloc = { version = "0.1", default-features = false }
 tikv-jemallocator = "0.6"
 constriction = "0.5"
 huffman-compress = "0.7"
-bit-vec = "0.8"
+bit-vec = "0.10"
 stream-vbyte = "0.4"
 bitpacking = "0.9"
 voracious_radix_sort = "1.2"
