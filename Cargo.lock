@@ -2088,9 +2088,9 @@ checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 
 [[package]]
 name = "voracious_radix_sort"
-version = "1.2.0"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446e7ffcb6c27a71d05af7e51ef2ee5b71c48424b122a832f2439651e1914899"
+checksum = "a26840011ddd3172ced523e372fc18d141e68f3b72a17312e51c5fb80b13fe78"
 
 [[package]]
 name = "wait-timeout"
